@@ -4,17 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
 	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree"
 	"github.com/spf13/cobra"
 
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
 	"github.com/alexgorbatchev/agent-status/packages/agent-server/internal/api"
 	"github.com/alexgorbatchev/agent-status/packages/agent-server/internal/config"
 	"github.com/alexgorbatchev/agent-status/packages/agent-server/internal/store"
@@ -57,20 +56,7 @@ func run(ctx context.Context, cfg config.Config) error {
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	var logLevel slog.Level
-	switch strings.ToLower(cfg.LogLevel) {
-	case "debug":
-		logLevel = slog.LevelDebug
-	case "warn":
-		logLevel = slog.LevelWarn
-	case "error":
-		logLevel = slog.LevelError
-	default:
-		logLevel = slog.LevelInfo
-	}
-
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel}))
-	slog.SetDefault(logger)
+	logger := logging.Setup(cfg.LogLevel)
 
 	logger.InfoContext(ctx, "opening database (read-only)", "path", cfg.DBPath)
 	sqliteStore, err := store.OpenReadOnly(cfg.DBPath)

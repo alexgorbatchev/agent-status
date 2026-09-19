@@ -5,8 +5,8 @@ default:
     @just --list
 
 # Start the full agent-status stack (ingester, server, observer, web UI)
-start:
-    bun run scripts/dev-stack.ts start
+start *args:
+    bun run scripts/dev-stack.ts start {{args}}
 
 # Stop the full agent-status stack and free ports
 stop:

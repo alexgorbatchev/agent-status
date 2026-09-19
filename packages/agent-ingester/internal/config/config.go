@@ -16,6 +16,7 @@ type Config struct {
 	GeminiAPIKey    string
 	AnthropicAPIKey string
 	SummarizerModel string
+	LogLevel        string
 }
 
 func Load() *Config {
@@ -63,5 +64,6 @@ func Load() *Config {
 		GeminiAPIKey:    os.Getenv("GEMINI_API_KEY"),
 		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
 		SummarizerModel: os.Getenv("AIR_SUMMARIZER_MODEL"),
+		LogLevel:        "info",
 	}
 }

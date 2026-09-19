@@ -11,6 +11,22 @@ if (!existsSync(runDir)) {
 const pidFile = resolve(runDir, "pids.json");
 const action = process.argv[2] || "start";
 
+function getLogLevel(): string {
+  const args = process.argv.slice(2);
+  if (args.includes("--debug") || args.includes("-d")) {
+    return "debug";
+  }
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--log-level" && i + 1 < args.length) {
+      return args[i + 1];
+    }
+    if (args[i].startsWith("--log-level=")) {
+      return args[i].split("=")[1];
+    }
+  }
+  return "info";
+}
+
 function getRunningPIDs(): number[] {
   if (!existsSync(pidFile)) return [];
   try {
@@ -83,13 +99,14 @@ async function startStack() {
   const pids: number[] = [];
   const procs: Subprocess[] = [];
 
+  const logLevel = getLogLevel();
   const dbDir = resolve(runDir, "data");
   mkdirSync(dbDir, { recursive: true });
   const notifySock = "/tmp/agent-status/notify.sock";
 
   // 1. Ingester
   console.log("   [1/4] Starting air-ingester (:4501)...");
-  const ingester = Bun.spawn([ingesterBin, "--no-summarize"], {
+  const ingester = Bun.spawn([ingesterBin, "--no-summarize", "--log-level", logLevel], {
     cwd: rootDir,
     env: {
       ...process.env,
@@ -110,7 +127,7 @@ async function startStack() {
 
   // 2. Server
   console.log("   [2/4] Starting air-server (:4502)...");
-  const server = Bun.spawn([serverBin, "--cors-origin", "http://localhost:3000"], {
+  const server = Bun.spawn([serverBin, "--cors-origin", "http://localhost:3000", "--log-level", logLevel], {
     cwd: rootDir,
     env: {
       ...process.env,
@@ -130,7 +147,7 @@ async function startStack() {
 
   // 3. Observer
   console.log("   [3/4] Starting air-observer...");
-  const observer = Bun.spawn([observerBin, "--token", "dev-secret-token", "--ingester-url", "ws://127.0.0.1:4501/ws/ingest"], {
+  const observer = Bun.spawn([observerBin, "--token", "dev-secret-token", "--ingester-url", "ws://127.0.0.1:4501/ws/ingest", "--log-level", logLevel], {
     cwd: rootDir,
     env: {
       ...process.env,

@@ -58,7 +58,11 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		slog.Error("websocket accept error", "err", err)
 		return
 	}
-	defer conn.Close(websocket.StatusInternalError, "closing connection")
+	slog.Debug("observer connected", "remoteAddr", req.RemoteAddr)
+	defer func() {
+		slog.Debug("observer disconnected", "remoteAddr", req.RemoteAddr)
+		_ = conn.Close(websocket.StatusInternalError, "closing connection")
+	}()
 
 	ctx := req.Context()
 	for {
@@ -75,12 +79,14 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		var msg types.IObserverMessage
 		if err := json.Unmarshal(data, &msg); err != nil {
+			slog.Warn("malformed message from observer", "err", err)
 			r.sendError(ctx, conn, "malformed", "invalid json payload")
 			continue
 		}
 
 		switch msg.Type {
 		case "hello":
+			slog.Debug("received hello message", "envId", msg.EnvID, "dropped", msg.Dropped, "since", msg.Since)
 			if msg.Environment != nil {
 				_ = r.store.UpsertEnvironment(*msg.Environment)
 				if msg.Dropped > 0 {
@@ -96,11 +102,13 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 
 		case "frames":
+			slog.Debug("received frames batch", "envId", msg.EnvID, "count", len(msg.Frames))
 			var highestSeq int64 = 0
 			var lastEnvID string
 
 			for _, frame := range msg.Frames {
 				if frame.Version != "1.0" {
+					slog.Warn("unsupported frame version", "version", frame.Version, "envId", frame.EnvID)
 					r.sendError(ctx, conn, "unsupported_version", "frame version must be 1.0")
 					continue
 				}
@@ -109,8 +117,11 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				lastSeq, err := r.store.GetLastSeq(frame.EnvID)
 				if err == nil && frame.Seq <= lastSeq {
 					// Deduplicate frame
+					slog.Debug("deduplicating already processed frame", "envId", frame.EnvID, "seq", frame.Seq, "lastSeq", lastSeq)
 					continue
 				}
+
+				slog.Debug("processing frame", "envId", frame.EnvID, "agentId", frame.AgentID, "seq", frame.Seq, "eventType", frame.EventType)
 
 				// Process frame through deterministic classifier
 				agent, err := r.classifier.ProcessFrame(frame)
@@ -142,6 +153,7 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 
 			if highestSeq > 0 && lastEnvID != "" {
+				slog.Debug("sending ack", "envId", lastEnvID, "upTo", highestSeq)
 				r.sendAck(ctx, conn, highestSeq)
 			}
 		}

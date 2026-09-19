@@ -9,13 +9,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/config"
 	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/git"
 	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/parser"
 	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/scanner"
 	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/shipper"
 	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/tailer"
-	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree"
 	"github.com/spf13/cobra"
 )
@@ -28,12 +29,14 @@ type observerOptions struct {
 	envFlag      string
 	scanInterval time.Duration
 	cursorPath   string
+	logLevel     string
 }
 
 func main() {
 	opts := observerOptions{
 		ingesterURL:  "ws://127.0.0.1:4501/ws/ingest",
 		scanInterval: 2 * time.Second,
+		logLevel:     "info",
 	}
 
 	if envURL := os.Getenv("AGENT_INGESTER_URL"); envURL != "" {
@@ -59,6 +62,7 @@ func main() {
 	rootCmd.Flags().StringVar(&opts.envFlag, "env", "", "Environment label override")
 	rootCmd.Flags().DurationVar(&opts.scanInterval, "scan-interval", opts.scanInterval, "Interval between session scans (default 2s)")
 	rootCmd.Flags().StringVar(&opts.cursorPath, "cursor-path", "", "Custom path for persistent cursor file")
+	rootCmd.Flags().StringVar(&opts.logLevel, "log-level", opts.logLevel, "Log level (debug, info, warn, error)")
 
 	cobrahelptree.Setup(rootCmd)
 
@@ -71,6 +75,8 @@ func main() {
 func runObserver(opts observerOptions) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	logging.Setup(opts.logLevel)
 
 	env, err := config.ResolveEnvironment(opts.envFlag)
 	if err != nil {

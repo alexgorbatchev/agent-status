@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/classifier"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/config"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/notify"
@@ -30,6 +31,8 @@ func main() {
 		Use:   "air-ingester",
 		Short: "Agent Status Central Telemetry Ingestion Daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			logging.Setup(cfg.LogLevel)
+
 			slog.Info("starting air-ingester", "addr", cfg.Addr, "db", cfg.DBPath, "notifySock", cfg.NotifySock, "noSummarize", cfg.NoSummarize)
 
 			st, err := store.Open(cfg.DBPath)
@@ -124,6 +127,7 @@ func main() {
 	rootCmd.Flags().StringVar(&cfg.LiteLLMBaseURL, "litellm-url", cfg.LiteLLMBaseURL, "OpenAI-compatible / LiteLLM proxy base URL")
 	rootCmd.Flags().StringVar(&cfg.LiteLLMAPIKey, "litellm-key", cfg.LiteLLMAPIKey, "OpenAI-compatible / LiteLLM API key")
 	rootCmd.Flags().StringVar(&cfg.SummarizerModel, "summarizer-model", cfg.SummarizerModel, "Model to use for action summarization")
+	rootCmd.Flags().StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "Log level (debug, info, warn, error)")
 
 	cobrahelptree.Setup(rootCmd)
 
