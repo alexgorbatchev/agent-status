@@ -110,6 +110,21 @@ type IAgentState struct {
 	Activity    IAgentActivity   `json:"activity"`
 }
 
+type StatusResponse struct {
+	Status                 string             `json:"status"`
+	Environments           []IEnvironmentInfo `json:"environments"`
+	ActiveAgentCount       int                `json:"activeAgentCount"`
+	RequiresAttentionCount int                `json:"requiresAttentionCount"`
+	TotalFleetSpend        float64            `json:"totalFleetSpend"`
+}
+
+type ProjectGroup struct {
+	Project          IProjectInfo  `json:"project"`
+	Agents           []IAgentState `json:"agents"`
+	TotalCost        float64       `json:"totalCost"`
+	ActiveAgentCount int           `json:"activeAgentCount"`
+}
+
 type TelemetryFrameData struct {
 	Role           *string                `json:"role,omitempty"`
 	Content        *string                `json:"content,omitempty"`
@@ -146,28 +161,29 @@ type ITelemetryFrame struct {
 	Data           TelemetryFrameData `json:"data"`
 }
 
+type IObserverMessage struct {
+	Type        string            `json:"type"` // "hello" | "frames"
+	EnvID       string            `json:"envId,omitempty"`
+	Environment *IEnvironmentInfo `json:"environment,omitempty"`
+	Since       int64             `json:"since,omitempty"`
+	Dropped     int64             `json:"dropped,omitempty"`
+	Frames      []ITelemetryFrame `json:"frames,omitempty"`
+}
+
+type IIngesterMessage struct {
+	Type    string `json:"type"` // "ack" | "error"
+	UpTo    int64  `json:"upTo,omitempty"`
+	Code    string `json:"code,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
 type IServerEvent struct {
-	Type         string            `json:"type"` // "snapshot" | "agent_upsert" | "agent_removed" | "environment_upsert" | "log_append"
-	At           int64             `json:"at"`
-	Agent        *IAgentState      `json:"agent,omitempty"`
-	Agents       []IAgentState     `json:"agents,omitempty"`
-	AgentID      string            `json:"agentId,omitempty"`
-	Environment  *IEnvironmentInfo `json:"environment,omitempty"`
-	Environments []IEnvironmentInfo`json:"environments,omitempty"`
-	Event        *ITelemetryFrame  `json:"event,omitempty"`
-}
-
-type StatusResponse struct {
-	Status                 string             `json:"status"`
-	Environments           []IEnvironmentInfo `json:"environments"`
-	ActiveAgentCount       int                `json:"activeAgentCount"`
-	TotalFleetSpend        float64            `json:"totalFleetSpend"`
-	RequiresAttentionCount int                `json:"requiresAttentionCount"`
-}
-
-type ProjectGroup struct {
-	Project          IProjectInfo  `json:"project"`
-	Agents           []IAgentState `json:"agents"`
-	TotalCost        float64       `json:"totalCost"`
-	ActiveAgentCount int           `json:"activeAgentCount"`
+	Type         string              `json:"type"` // "snapshot" | "agent_upsert" | "agent_removed" | "environment_upsert" | "log_append"
+	At           int64               `json:"at"`
+	Agent        *IAgentState        `json:"agent,omitempty"`
+	Agents       []IAgentState       `json:"agents,omitempty"`
+	AgentID      string              `json:"agentId,omitempty"`
+	Environment  *IEnvironmentInfo   `json:"environment,omitempty"`
+	Environments []IEnvironmentInfo  `json:"environments,omitempty"`
+	Event        *ITelemetryFrame    `json:"event,omitempty"`
 }

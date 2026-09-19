@@ -3,6 +3,7 @@ module github.com/alexgorbatchev/agent-status/packages/agent-observer
 go 1.26.2
 
 require (
+	github.com/alexgorbatchev/agent-status/packages/agent-common v0.0.0-00010101000000-000000000000
 	github.com/alexgorbatchev/cobra-help-tree v1.1.0
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/coder/websocket v1.8.15
@@ -25,3 +26,5 @@ require (
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/term v0.45.0 // indirect
 )
+
+replace github.com/alexgorbatchev/agent-status/packages/agent-common => ../agent-common

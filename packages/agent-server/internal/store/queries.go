@@ -11,7 +11,7 @@ import (
 
 	_ "github.com/ncruces/go-sqlite3/driver"
 
-	"github.com/alexgorbatchev/agent-status/packages/agent-server/internal/types"
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 )
 
 var ErrNotFound = errors.New("not found")

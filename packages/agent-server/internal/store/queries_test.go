@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alexgorbatchev/agent-status/packages/agent-server/internal/types"
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 )
 
 const schemaSQL = `

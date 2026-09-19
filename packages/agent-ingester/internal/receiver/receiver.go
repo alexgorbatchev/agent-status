@@ -13,7 +13,7 @@ import (
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/classifier"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/notify"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/store"
-	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/types"
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/coder/websocket"
 )
 

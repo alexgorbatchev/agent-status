@@ -15,7 +15,7 @@ import (
 	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/scanner"
 	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/shipper"
 	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/tailer"
-	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/types"
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree"
 	"github.com/spf13/cobra"
 )

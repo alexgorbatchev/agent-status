@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/types"
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/cenkalti/backoff/v4"
 	"github.com/coder/websocket"
 	"github.com/gammazero/deque"

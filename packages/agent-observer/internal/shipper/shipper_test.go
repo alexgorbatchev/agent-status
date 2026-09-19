@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/types"
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/coder/websocket"
 )
 

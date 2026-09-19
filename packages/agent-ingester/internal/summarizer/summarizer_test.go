@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/types"
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	anyllm "github.com/mozilla-ai/any-llm-go"
 	"github.com/mozilla-ai/any-llm-go/providers/openai"
 )

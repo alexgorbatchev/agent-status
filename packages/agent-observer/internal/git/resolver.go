@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/types"
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 )
 
 const DefaultCacheTTL = 30 * time.Second

@@ -17,7 +17,7 @@ import (
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-server/internal/store"
 	"github.com/alexgorbatchev/agent-status/packages/agent-server/internal/stream"
-	"github.com/alexgorbatchev/agent-status/packages/agent-server/internal/types"
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 )
 
 type StoreInterface interface {

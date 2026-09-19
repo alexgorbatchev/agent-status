@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/types"
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 )
 
 type rawPiContentBlock struct {

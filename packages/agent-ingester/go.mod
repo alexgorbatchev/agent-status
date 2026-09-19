@@ -3,6 +3,7 @@ module github.com/alexgorbatchev/agent-status/packages/agent-ingester
 go 1.26.2
 
 require (
+	github.com/alexgorbatchev/agent-status/packages/agent-common v0.0.0-00010101000000-000000000000
 	github.com/alexgorbatchev/cobra-help-tree v1.1.0
 	github.com/coder/websocket v1.8.15
 	github.com/mozilla-ai/any-llm-go v0.9.0
@@ -42,3 +43,5 @@ require (
 	google.golang.org/grpc v1.66.2 // indirect
 	google.golang.org/protobuf v1.34.2 // indirect
 )
+
+replace github.com/alexgorbatchev/agent-status/packages/agent-common => ../agent-common
