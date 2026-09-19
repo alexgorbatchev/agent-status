@@ -1,0 +1,30 @@
+# Agent and tooling scratch
+.pi-subagents
+.codegraph
+.tmp
+.cache
+
+# Build output
+dist
+.dist
+packages/*/bin/
+
+# Dependencies
+node_modules
+
+# Git worktrees
+.workspaces
+
+# SQLite sidecar files
+*.sqlite-wal
+*.sqlite-shm
+*.db-wal
+*.db-shm
+
+# Secrets and local config
+.env
+.env.*
+*.token
+
+# OS
+.DS_Store
