@@ -1,6 +1,6 @@
 ---
 created_on: 2026-09-18 20:07
-last_modified: 2026-09-19 10:30
+last_modified: 2026-09-19 10:35
 status: current
 ---
 
@@ -26,6 +26,7 @@ It answers five questions without the engineer cycling through terminals:
 - Host platforms: **darwin** and **linux**.
 - Four packages: `agent-observer`, `agent-ingester`, `agent-server`, `ui-web`.
 - Core Go implementation built with verified ecosystem libraries (`gopsutil/v4`, `coder/websocket`, `go-chi/chi/v5`, `ncruces/go-sqlite3`, `github.com/mozilla-ai/any-llm-go`, `spf13/cobra`).
+- Multi-provider LLM Action Summarization supporting OpenAI-compatible endpoints (including self-hosted LiteLLM proxies e.g. `https://litellm.example.com` via `LITELLM_BASE_URL` / `LITELLM_API_KEY`), direct Google Gemini, and direct Anthropic Claude.
 - Live token usage (5-way breakdown: input, output, cache read, cache write, reasoning) and cost computation using a centrally synced model pricing map.
 - Live cost roll-ups across Agent cards, Project groups, Environment groups, and the Fleet header.
 - Subagent observation for delegated runs (nested execution traces in the drawer, usage/cost roll-up to the parent Agent).
@@ -139,7 +140,8 @@ Entries form a tree via `{id, parentId}`. The first record is the header:
 │  1. Ingestion gateway    :4501/ws/ingest  (coder/websocket on overlay interface)       │
 │  2. Deterministic classifier — 0-ms state reducer (Question, Busy, Error, Idle, Exit)  │
 │  3. Model pricing calculator — vendored LiteLLM pricing + daily refresh                 │
-│  4. Debounced AI summarizer — github.com/mozilla-ai/any-llm-go (Gemini & Claude)        │
+│  4. Debounced AI summarizer — github.com/mozilla-ai/any-llm-go                          │
+│     (Supports OpenAI/LiteLLM proxy, Gemini 2.5 Flash, Claude Haiku 4.5)                 │
 │  5. SQLite writer (WAL, sole writer) — ncruces/go-sqlite3 (Cgo-free, pure-Wasm)        │
 │  6. Notify publisher — net.Listen("unix", notify.sock) (0600)                           │
 └──────────────┬──────────────────────────────────────────────┬───────────────────────────┘
@@ -297,9 +299,11 @@ Subagent events update parent token usage and cost roll-ups, but do not override
 - **Title**: Extracted from harness metadata (Claude Code `ai-title` record or Pi session info). Stored in `agents.title`. Free, no LLM call.
 - **Action Summarizer**:
   - Unified Client: **`github.com/mozilla-ai/any-llm-go`** providing multi-provider model completions.
-  - Primary Provider: Gemini 2.5 Flash via `any-llm-go/providers/gemini`.
-  - Fallback Provider: `claude-haiku-4-5` via `any-llm-go/providers/anthropic`.
-  - Fallback triggers: HTTP 429, 5xx, or 10-second timeout after 2 retries with jitter.
+  - Supported Providers & Configuration:
+    - **OpenAI-compatible / LiteLLM Proxy** (Primary for local/custom testing): Configured via `any-llm-go/providers/openai` using options `anyllm.WithBaseURL(url)` and `anyllm.WithAPIKey(key)`. Reads `LITELLM_BASE_URL` (e.g. `https://litellm.example.com/v1` or `https://litellm.example.com`) / `OPENAI_BASE_URL` and `LITELLM_API_KEY` / `OPENAI_API_KEY`.
+    - **Google Gemini**: via `any-llm-go/providers/gemini` using `GEMINI_API_KEY`.
+    - **Anthropic Claude**: via `any-llm-go/providers/anthropic` using `ANTHROPIC_API_KEY`.
+  - Fallback logic: Configurable primary provider with automatic failover to alternative provider on HTTP 429, 5xx, or 10-second timeout with jittered backoff.
   - Rate limit / Debounce: `golang.org/x/time/rate` enforcing at most one call per active agent per 12 seconds.
   - Triggers: On `turn_end`, on transition to `WAITING_QUESTION` or `ERROR`, or after 12 seconds of continuous tool activity.
   - Prompt input: `lastPrompt` string, latest 3 tool calls and targets, latest thinking excerpt (max 300 tokens).
@@ -508,7 +512,7 @@ agent-status/
 | `agent-observer` | WebSocket Client & Backoff | `github.com/coder/websocket` + `github.com/cenkalti/backoff/v4` | Zero-allocation WebSocket framing, context-aware dialer, exponential jitter backoff. |
 | `agent-observer` | Unacknowledged Ring Buffer | `github.com/gammazero/deque` | Thread-safe circular ring buffer for 1,000 seq/ack unacknowledged frames. |
 | `agent-ingester` | WebSocket Server | `github.com/coder/websocket` | High-throughput server binding with bearer token auth on connection upgrade. |
-| `agent-ingester` | Unified LLM Summarizer | `github.com/mozilla-ai/any-llm-go` | Unified completion client wrapping Google Gemini & Anthropic with interchangeable providers. |
+| `agent-ingester` | Unified LLM Summarizer | `github.com/mozilla-ai/any-llm-go` | Unified completion client wrapping OpenAI-compatible APIs (LiteLLM proxy `https://litellm.example.com`), Google Gemini, and Anthropic Claude. |
 | `agent-ingester` | Rate Limiter | `golang.org/x/time/rate` | 12-second debouncing token bucket per active agent. |
 | `agent-ingester` | SQLite Store & Migrations | `github.com/ncruces/go-sqlite3` | Pure-Go, Cgo-free Wasm-based SQLite driver with WAL mode, `PRAGMA user_version` migrations, and cross-compilation support. |
 | `agent-server` | HTTP Routing & Middleware | `github.com/go-chi/chi/v5` + `github.com/rs/cors` | 100% standard library `net/http` router with zero external abstraction overhead. |
@@ -781,7 +785,7 @@ CREATE TABLE IF NOT EXISTS observer_cursors (
 | Ingester Notify Socket | Unix domain socket, mode `0600`, under `${XDG_RUNTIME_DIR:-/tmp}/agent-status/`. |
 | Server API & Streams | Binds `127.0.0.1:4502` and overlay interface. Bearer token required on all REST, SSE, and WS routes. CORS restricted to explicit allowlist. |
 | Database | Mode `0600`. Ingester is sole read-write connection; Server is strictly read-only. |
-| AI Summarizer Egress | Only `lastPrompt`, active tool names/targets, and truncated thought excerpts leave the network to Gemini / Anthropic. File contents, tool outputs, and command results are never sent. `--no-summarize` disables all egress. |
+| AI Summarizer Egress | Only `lastPrompt`, active tool names/targets, and truncated thought excerpts leave the network to LiteLLM / Gemini / Anthropic. File contents, tool outputs, and command results are never sent. `--no-summarize` disables all egress. |
 | Credential Protection | Claude Code `.key` files are never parsed, read, or shipped. `AGENT_STATUS_TOKEN` is never persisted in cursor files or database logs. |
 
 ---
@@ -819,7 +823,7 @@ CREATE TABLE IF NOT EXISTS observer_cursors (
 - [ ] Verification: Multi-host aggregation with agents running on Darwin and Linux over overlay network.
 
 ### Phase 3: AI Action Summarizer
-- [ ] Ingester: Multi-provider client via `github.com/mozilla-ai/any-llm-go` (Gemini 2.5 Flash primary, `claude-haiku-4-5` fallback).
+- [ ] Ingester: Multi-provider client via `github.com/mozilla-ai/any-llm-go` supporting OpenAI-compatible endpoints (LiteLLM proxy e.g. `https://litellm.example.com` via `LITELLM_BASE_URL` and `LITELLM_API_KEY`), Google Gemini, and Anthropic Claude.
 - [ ] Ingester: 12-second debouncer (`golang.org/x/time/rate`) and event trigger scheduler.
 - [ ] Ingester: `--no-summarize` toggle verification.
 

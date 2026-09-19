@@ -1,6 +1,6 @@
 ---
 created_on: 2026-09-19 10:22
-last_modified: 2026-09-19 10:30
+last_modified: 2026-09-19 10:35
 status: current
 ---
 
@@ -140,8 +140,10 @@ All development must be strictly grounded in:
 - [ ] Implement `internal/summarizer/summarizer.go` in `agent-ingester`:
   - Token-bucket rate limiter via `golang.org/x/time/rate` enforcing 12-second debounce per active agent.
   - Unified multi-provider LLM client via `github.com/mozilla-ai/any-llm-go`.
-  - Primary provider: Gemini 2.5 Flash via `any-llm-go/providers/gemini`.
-  - Fallback provider: Claude Haiku 4.5 via `any-llm-go/providers/anthropic`.
+  - Configurable providers:
+    - OpenAI-compatible / LiteLLM proxy via `any-llm-go/providers/openai` (reading `LITELLM_BASE_URL` / `LITELLM_API_KEY` for local or proxy instances like `https://litellm.example.com`).
+    - Google Gemini via `any-llm-go/providers/gemini` (`GEMINI_API_KEY`).
+    - Anthropic Claude via `any-llm-go/providers/anthropic` (`ANTHROPIC_API_KEY`).
   - Handles fallback on 429, 5xx, or 10-second timeout with jittered backoff.
   - `--no-summarize` CLI flag to bypass external LLM calls completely.
 

@@ -1,6 +1,6 @@
 ---
 created_on: 2026-09-18 22:30
-last_modified: 2026-09-19 10:30
+last_modified: 2026-09-19 10:35
 status: current
 ---
 
@@ -191,8 +191,9 @@ The following source checkouts are retained on disk:
 1. **Unified Multi-Provider Completion Client**: `github.com/mozilla-ai/any-llm-go`
    - **Adoption**: Mozilla.ai open-source Go library providing normalized multi-provider interfaces.
    - **Providers Configured**:
-     - Primary: Gemini 2.5 Flash (`providers/gemini`)
-     - Fallback: Claude Haiku 4.5 (`providers/anthropic`)
+     - OpenAI-compatible / LiteLLM Proxy: `providers/openai` with `anyllm.WithBaseURL(url)` supporting self-hosted instances e.g. `https://litellm.example.com` via `LITELLM_BASE_URL` / `LITELLM_API_KEY`.
+     - Direct Google Gemini: `providers/gemini`
+     - Direct Anthropic Claude: `providers/anthropic`
    - **Features**: Single client abstraction, structured schema enforcement, unified error handling on 429/5xx with retry backoff.
 2. **Debounce Rate Limiter**: `golang.org/x/time/rate` + `sync.Map`
    - Enforces the 12-second debounce window per active agent.
