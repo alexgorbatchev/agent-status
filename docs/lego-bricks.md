@@ -1,6 +1,6 @@
 ---
 created_on: 2026-09-18 22:30
-last_modified: 2026-09-18 23:25
+last_modified: 2026-09-19 10:30
 status: current
 ---
 
@@ -188,13 +188,13 @@ The following source checkouts are retained on disk:
 ### 3.2. Debounced AI Summarizer
 
 #### Chosen Building Blocks:
-1. **Primary Provider (Gemini 2.5 Flash)**: `google.golang.org/genai`
-   - **Adoption**: Official Google Gen AI Go SDK.
-   - **Features**: Structured JSON output schema enforcing `{ "action": string, "phase": string, "activeTarget": string }`.
-2. **Fallback Provider (Claude Haiku 4.5)**: `github.com/anthropics/anthropic-sdk-go`
-   - **Adoption**: Official Anthropic Go SDK.
-   - **Features**: Automated fallback on Gemini 429/5xx errors or 10s timeout after 2 retries with jitter.
-3. **Debounce Rate Limiter**: `golang.org/x/time/rate` + `sync.Map`
+1. **Unified Multi-Provider Completion Client**: `github.com/mozilla-ai/any-llm-go`
+   - **Adoption**: Mozilla.ai open-source Go library providing normalized multi-provider interfaces.
+   - **Providers Configured**:
+     - Primary: Gemini 2.5 Flash (`providers/gemini`)
+     - Fallback: Claude Haiku 4.5 (`providers/anthropic`)
+   - **Features**: Single client abstraction, structured schema enforcement, unified error handling on 429/5xx with retry backoff.
+2. **Debounce Rate Limiter**: `golang.org/x/time/rate` + `sync.Map`
    - Enforces the 12-second debounce window per active agent.
 
 ---

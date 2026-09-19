@@ -1,6 +1,6 @@
 ---
 created_on: 2026-09-19 10:22
-last_modified: 2026-09-19 10:22
+last_modified: 2026-09-19 10:30
 status: current
 ---
 
@@ -139,8 +139,9 @@ All development must be strictly grounded in:
 #### 3.1. Summarizer Pipeline
 - [ ] Implement `internal/summarizer/summarizer.go` in `agent-ingester`:
   - Token-bucket rate limiter via `golang.org/x/time/rate` enforcing 12-second debounce per active agent.
-  - Primary provider: Gemini 2.5 Flash via `google.golang.org/genai` enforcing structured JSON response.
-  - Fallback provider: Claude Haiku 4.5 via `github.com/anthropics/anthropic-sdk-go`.
+  - Unified multi-provider LLM client via `github.com/mozilla-ai/any-llm-go`.
+  - Primary provider: Gemini 2.5 Flash via `any-llm-go/providers/gemini`.
+  - Fallback provider: Claude Haiku 4.5 via `any-llm-go/providers/anthropic`.
   - Handles fallback on 429, 5xx, or 10-second timeout with jittered backoff.
   - `--no-summarize` CLI flag to bypass external LLM calls completely.
 

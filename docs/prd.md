@@ -1,6 +1,6 @@
 ---
 created_on: 2026-09-18 20:07
-last_modified: 2026-09-18 23:25
+last_modified: 2026-09-19 10:30
 status: current
 ---
 
@@ -25,7 +25,7 @@ It answers five questions without the engineer cycling through terminals:
 - Harnesses: **Claude Code** and **Pi**.
 - Host platforms: **darwin** and **linux**.
 - Four packages: `agent-observer`, `agent-ingester`, `agent-server`, `ui-web`.
-- Core Go implementation built with verified ecosystem libraries (`gopsutil/v4`, `coder/websocket`, `go-chi/chi/v5`, `ncruces/go-sqlite3`, `google.golang.org/genai`, `anthropic-sdk-go`, `spf13/cobra`).
+- Core Go implementation built with verified ecosystem libraries (`gopsutil/v4`, `coder/websocket`, `go-chi/chi/v5`, `ncruces/go-sqlite3`, `github.com/mozilla-ai/any-llm-go`, `spf13/cobra`).
 - Live token usage (5-way breakdown: input, output, cache read, cache write, reasoning) and cost computation using a centrally synced model pricing map.
 - Live cost roll-ups across Agent cards, Project groups, Environment groups, and the Fleet header.
 - Subagent observation for delegated runs (nested execution traces in the drawer, usage/cost roll-up to the parent Agent).
@@ -139,7 +139,7 @@ Entries form a tree via `{id, parentId}`. The first record is the header:
 │  1. Ingestion gateway    :4501/ws/ingest  (coder/websocket on overlay interface)       │
 │  2. Deterministic classifier — 0-ms state reducer (Question, Busy, Error, Idle, Exit)  │
 │  3. Model pricing calculator — vendored LiteLLM pricing + daily refresh                 │
-│  4. Debounced AI summarizer — google.golang.org/genai, fallback anthropic-sdk-go        │
+│  4. Debounced AI summarizer — github.com/mozilla-ai/any-llm-go (Gemini & Claude)        │
 │  5. SQLite writer (WAL, sole writer) — ncruces/go-sqlite3 (Cgo-free, pure-Wasm)        │
 │  6. Notify publisher — net.Listen("unix", notify.sock) (0600)                           │
 └──────────────┬──────────────────────────────────────────────┬───────────────────────────┘
@@ -296,8 +296,9 @@ Subagent events update parent token usage and cost roll-ups, but do not override
 
 - **Title**: Extracted from harness metadata (Claude Code `ai-title` record or Pi session info). Stored in `agents.title`. Free, no LLM call.
 - **Action Summarizer**:
-  - Primary Provider: **Gemini 2.5 Flash** via `google.golang.org/genai` (structured JSON output schema).
-  - Fallback Provider: **`claude-haiku-4-5`** via `github.com/anthropics/anthropic-sdk-go`.
+  - Unified Client: **`github.com/mozilla-ai/any-llm-go`** providing multi-provider model completions.
+  - Primary Provider: Gemini 2.5 Flash via `any-llm-go/providers/gemini`.
+  - Fallback Provider: `claude-haiku-4-5` via `any-llm-go/providers/anthropic`.
   - Fallback triggers: HTTP 429, 5xx, or 10-second timeout after 2 retries with jitter.
   - Rate limit / Debounce: `golang.org/x/time/rate` enforcing at most one call per active agent per 12 seconds.
   - Triggers: On `turn_end`, on transition to `WAITING_QUESTION` or `ERROR`, or after 12 seconds of continuous tool activity.
@@ -421,6 +422,7 @@ agent-status/
 │   ├── user-spec.md
 │   ├── refs.md
 │   ├── lego-bricks.md
+│   ├── implementation.md
 │   └── internal/
 │       └── tickets/
 │           └── 2026-09-18-wave-1-investigate-prior-art-agent-liveness-and-session-pairing.md
@@ -453,8 +455,6 @@ agent-status/
 │   │   │   ├── pricing/pricing.go
 │   │   │   ├── pricing/models.json
 │   │   │   ├── summarizer/summarizer.go
-│   │   │   ├── summarizer/gemini.go
-│   │   │   ├── summarizer/anthropic.go
 │   │   │   ├── notify/publisher.go
 │   │   │   ├── store/store.go
 │   │   │   ├── store/migrations.go
@@ -508,8 +508,7 @@ agent-status/
 | `agent-observer` | WebSocket Client & Backoff | `github.com/coder/websocket` + `github.com/cenkalti/backoff/v4` | Zero-allocation WebSocket framing, context-aware dialer, exponential jitter backoff. |
 | `agent-observer` | Unacknowledged Ring Buffer | `github.com/gammazero/deque` | Thread-safe circular ring buffer for 1,000 seq/ack unacknowledged frames. |
 | `agent-ingester` | WebSocket Server | `github.com/coder/websocket` | High-throughput server binding with bearer token auth on connection upgrade. |
-| `agent-ingester` | Gemini Summarizer | `google.golang.org/genai` | Official Google Gen AI Go SDK with native structured JSON schema constraints. |
-| `agent-ingester` | Claude Fallback | `github.com/anthropics/anthropic-sdk-go` | Official Anthropic Go SDK for `claude-haiku-4-5` fallback execution. |
+| `agent-ingester` | Unified LLM Summarizer | `github.com/mozilla-ai/any-llm-go` | Unified completion client wrapping Google Gemini & Anthropic with interchangeable providers. |
 | `agent-ingester` | Rate Limiter | `golang.org/x/time/rate` | 12-second debouncing token bucket per active agent. |
 | `agent-ingester` | SQLite Store & Migrations | `github.com/ncruces/go-sqlite3` | Pure-Go, Cgo-free Wasm-based SQLite driver with WAL mode, `PRAGMA user_version` migrations, and cross-compilation support. |
 | `agent-server` | HTTP Routing & Middleware | `github.com/go-chi/chi/v5` + `github.com/rs/cors` | 100% standard library `net/http` router with zero external abstraction overhead. |
@@ -820,8 +819,7 @@ CREATE TABLE IF NOT EXISTS observer_cursors (
 - [ ] Verification: Multi-host aggregation with agents running on Darwin and Linux over overlay network.
 
 ### Phase 3: AI Action Summarizer
-- [ ] Ingester: Gemini 2.5 Flash client (`google.golang.org/genai`) with structured JSON output and phase classification.
-- [ ] Ingester: `claude-haiku-4-5` fallback (`github.com/anthropics/anthropic-sdk-go`) with retry backoff.
+- [ ] Ingester: Multi-provider client via `github.com/mozilla-ai/any-llm-go` (Gemini 2.5 Flash primary, `claude-haiku-4-5` fallback).
 - [ ] Ingester: 12-second debouncer (`golang.org/x/time/rate`) and event trigger scheduler.
 - [ ] Ingester: `--no-summarize` toggle verification.
 
