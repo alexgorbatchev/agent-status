@@ -191,6 +191,39 @@ func runObserver(opts observerOptions) error {
 		if err == nil {
 			for _, s := range ccSessions {
 				newCCMap[s.SessionID] = true
+
+				// If newly discovered active session, emit run_started so it registers as RUNNING
+				mu.Lock()
+				isNew := !activeClaudeSessions[s.SessionID]
+				if isNew {
+					activeClaudeSessions[s.SessionID] = true
+				}
+				mu.Unlock()
+
+				if isNew {
+					proj, ws, _ := gitResolver.Resolve(ctx, s.CWD, "")
+					agentID := fmt.Sprintf("%s:%s:%s", env.ID, types.HarnessClaudeCode, s.SessionID)
+					now := time.Now().UnixMilli()
+					if s.StartedAt > 0 {
+						now = s.StartedAt
+					}
+					ship.Enqueue(types.ITelemetryFrame{
+						Version:        "1.0",
+						EnvID:          env.ID,
+						Environment:    *env,
+						AgentID:        agentID,
+						SessionID:      s.SessionID,
+						PID:            s.PID,
+						Harness:        types.HarnessClaudeCode,
+						HarnessVersion: s.HarnessVersion,
+						Project:        proj,
+						Workspace:      ws,
+						Timestamp:      now,
+						EventType:      "run_started",
+						Data:           types.TelemetryFrameData{},
+					})
+				}
+
 				if s.TranscriptPath != "" {
 					attachTailer(s.TranscriptPath, types.HarnessClaudeCode, s.HarnessVersion, s.SessionID, s.CWD, s.PID, nil)
 				}
@@ -231,6 +264,31 @@ func runObserver(opts observerOptions) error {
 		if err == nil {
 			for _, s := range piSessions {
 				newPiMap[s.SessionID] = s
+				if s.IsActive {
+					mu.Lock()
+					isNew := !activePiSessions[s.SessionID].IsActive
+					mu.Unlock()
+
+					if isNew {
+						proj, ws, _ := gitResolver.Resolve(ctx, s.CWD, "")
+						agentID := fmt.Sprintf("%s:%s:%s", env.ID, types.HarnessPi, s.SessionID)
+						ship.Enqueue(types.ITelemetryFrame{
+							Version:        "1.0",
+							EnvID:          env.ID,
+							Environment:    *env,
+							AgentID:        agentID,
+							SessionID:      s.SessionID,
+							PID:            s.PID,
+							Harness:        types.HarnessPi,
+							HarnessVersion: s.HarnessVersion,
+							Project:        proj,
+							Workspace:      ws,
+							Timestamp:      time.Now().UnixMilli(),
+							EventType:      "run_started",
+							Data:           types.TelemetryFrameData{},
+						})
+					}
+				}
 				if s.TranscriptPath != "" {
 					attachTailer(s.TranscriptPath, types.HarnessPi, s.HarnessVersion, s.SessionID, s.CWD, s.PID, nil)
 				}

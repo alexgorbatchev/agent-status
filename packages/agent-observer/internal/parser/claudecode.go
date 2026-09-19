@@ -56,6 +56,8 @@ type rawJSONLine struct {
 	GitBranch   string      `json:"gitBranch"`
 	IsSidechain bool        `json:"isSidechain"`
 	Title       string      `json:"title"`
+	AITitle     string      `json:"aiTitle"`
+	LastPrompt  string      `json:"lastPrompt"`
 	Message     *rawMessage `json:"message"`
 	Content     interface{} `json:"content"`
 	Question    string      `json:"question"`
@@ -120,7 +122,10 @@ func ParseClaudeCodeLine(line []byte) ([]ParsedEvent, error) {
 
 	switch raw.Type {
 	case "ai-title", "title":
-		titleVal := raw.Title
+		titleVal := raw.AITitle
+		if titleVal == "" {
+			titleVal = raw.Title
+		}
 		if titleVal == "" && raw.Content != nil {
 			titleVal = extractContentString(raw.Content)
 		}
@@ -132,6 +137,23 @@ func ParseClaudeCodeLine(line []byte) ([]ParsedEvent, error) {
 				GitBranch: raw.GitBranch,
 				Data: types.TelemetryFrameData{
 					Title: stringPtr(titleVal),
+				},
+			})
+		}
+
+	case "last-prompt":
+		promptVal := raw.LastPrompt
+		if promptVal == "" && raw.Content != nil {
+			promptVal = extractContentString(raw.Content)
+		}
+		if promptVal != "" {
+			events = append(events, ParsedEvent{
+				EventType: "turn_start",
+				Timestamp: ts,
+				CWD:       raw.CWD,
+				GitBranch: raw.GitBranch,
+				Data: types.TelemetryFrameData{
+					LastPrompt: stringPtr(promptVal),
 				},
 			})
 		}
