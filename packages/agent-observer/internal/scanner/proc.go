@@ -43,9 +43,9 @@ func VerifyProcessMatch(pid int, expectedStartTime int64) bool {
 		return true // If create time is unavailable, assume alive
 	}
 
-	// Allow up to 5 seconds clock / initialization drift
+	// Allow up to 60 seconds clock / initialization drift between proc start and session record
 	diff := math.Abs(float64(createTime - expectedStartTime))
-	return diff < 5000
+	return diff < 60000
 }
 
 func GetProcessCWD(pid int) (string, error) {
