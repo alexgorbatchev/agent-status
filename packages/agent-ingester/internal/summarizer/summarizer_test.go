@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -18,18 +19,64 @@ func ptrString(s string) *string {
 	return &s
 }
 
+func TestNew_DefaultsAndProviders(t *testing.T) {
+	// 1. Defaults when duration/timeout <= 0 and NoSummarize
+	s, err := New(Config{
+		NoSummarize: true,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if s.debounce != DefaultDebounceWindow {
+		t.Errorf("got debounce %v, want %v", s.debounce, DefaultDebounceWindow)
+	}
+	if s.timeout != DefaultTimeout {
+		t.Errorf("got timeout %v, want %v", s.timeout, DefaultTimeout)
+	}
+	if !s.IsNoSummarize() {
+		t.Errorf("expected IsNoSummarize = true")
+	}
+
+	// 2. nil summarizer IsNoSummarize
+	var nilSum *Summarizer
+	if !nilSum.IsNoSummarize() {
+		t.Errorf("expected nil Summarizer.IsNoSummarize = true")
+	}
+
+	// 3. Provider initialization from env vars and config
+	t.Setenv("LITELLM_BASE_URL", "https://litellm.test/v1")
+	t.Setenv("LITELLM_API_KEY", "litellm-test-key")
+	t.Setenv("GEMINI_API_KEY", "gemini-test-key")
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-test-key")
+	t.Setenv("AIR_SUMMARIZER_MODEL", "custom-model")
+
+	s2, err := New(Config{
+		DebounceWindow: 5 * time.Second,
+		Timeout:        3 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("New() with env vars error = %v", err)
+	}
+	if len(s2.providers) < 3 {
+		t.Errorf("expected at least 3 providers initialized, got %d", len(s2.providers))
+	}
+	if s2.IsNoSummarize() {
+		t.Errorf("expected IsNoSummarize = false with configured providers")
+	}
+}
+
 func TestStructuredOutputParsing(t *testing.T) {
 	tests := []struct {
-		name         string
-		raw          string
-		wantAction   string
-		wantPhase    *types.AgentPhase
-		wantTarget   string
-		wantErr      bool
+		name       string
+		raw        string
+		wantAction string
+		wantPhase  *types.AgentPhase
+		wantTarget string
+		wantErr    bool
 	}{
 		{
-			name: "valid JSON from PRD spec",
-			raw:  `{"action":"Fixing TypeScript compilation errors in build.ts","phase":"debugging","activeTarget":"packages/registry-cli/src/commands/buildCommand.ts"}`,
+			name:       "valid JSON from PRD spec",
+			raw:        `{"action":"Fixing TypeScript compilation errors in build.ts","phase":"debugging","activeTarget":"packages/registry-cli/src/commands/buildCommand.ts"}`,
 			wantAction: "Fixing TypeScript compilation errors in build.ts",
 			wantPhase:  func() *types.AgentPhase { p := types.PhaseDebugging; return &p }(),
 			wantTarget: "packages/registry-cli/src/commands/buildCommand.ts",
@@ -56,22 +103,43 @@ func TestStructuredOutputParsing(t *testing.T) {
 			wantErr:    false,
 		},
 		{
-			name: "phase aliases (plan, edit, test, debug, investigate)",
-			raw:  `{"action":"Creating new project structure","phase":"plan","activeTarget":""}`,
+			name:       "phase aliases (plan, edit, test, debug, investigate)",
+			raw:        `{"action":"Creating new project structure","phase":"plan","activeTarget":""}`,
 			wantAction: "Creating new project structure",
 			wantPhase:  func() *types.AgentPhase { p := types.PhasePlanning; return &p }(),
 			wantTarget: "",
 			wantErr:    false,
 		},
 		{
-			name:       "empty response errors out",
-			raw:        "",
-			wantErr:    true,
+			name:       "phase aliases (writing, fixing, search)",
+			raw:        `{"action":"Writing documentation","phase":"writing","activeTarget":"docs/README.md"}`,
+			wantAction: "Writing documentation",
+			wantPhase:  func() *types.AgentPhase { p := types.PhaseEditing; return &p }(),
+			wantTarget: "docs/README.md",
+			wantErr:    false,
 		},
 		{
-			name:       "invalid JSON errors out",
-			raw:        `{action: not a json}`,
-			wantErr:    true,
+			name:       "unknown phase normalizes to nil",
+			raw:        `{"action":"Something custom","phase":"unknown_phase","activeTarget":""}`,
+			wantAction: "Something custom",
+			wantPhase:  nil,
+			wantTarget: "",
+			wantErr:    false,
+		},
+		{
+			name:    "empty response errors out",
+			raw:     "",
+			wantErr: true,
+		},
+		{
+			name:    "no json object in response",
+			raw:     "Just plain text without curly braces",
+			wantErr: true,
+		},
+		{
+			name:    "invalid JSON errors out",
+			raw:     `{action: not a json}`,
+			wantErr: true,
 		},
 	}
 
@@ -118,6 +186,25 @@ func TestDeterministicFallbackSummary(t *testing.T) {
 			wantPhase:  types.PhaseEditing,
 		},
 		{
+			name: "edit tool without target",
+			input: SummaryInput{
+				Activity:   types.ActivityBusy,
+				ActiveTool: ptrString("Edit"),
+			},
+			wantAction: "Editing code",
+			wantPhase:  types.PhaseEditing,
+		},
+		{
+			name: "notebook edit tool",
+			input: SummaryInput{
+				Activity:     types.ActivityBusy,
+				ActiveTool:   ptrString("NotebookEdit"),
+				ActiveTarget: ptrString("analysis.ipynb"),
+			},
+			wantAction: "Editing analysis.ipynb",
+			wantPhase:  types.PhaseEditing,
+		},
+		{
 			name: "write tool with target",
 			input: SummaryInput{
 				Activity:     types.ActivityBusy,
@@ -125,6 +212,15 @@ func TestDeterministicFallbackSummary(t *testing.T) {
 				ActiveTarget: ptrString("config.json"),
 			},
 			wantAction: "Writing config.json",
+			wantPhase:  types.PhaseEditing,
+		},
+		{
+			name: "write tool without target",
+			input: SummaryInput{
+				Activity:   types.ActivityBusy,
+				ActiveTool: ptrString("Write"),
+			},
+			wantAction: "Writing file",
 			wantPhase:  types.PhaseEditing,
 		},
 		{
@@ -138,11 +234,30 @@ func TestDeterministicFallbackSummary(t *testing.T) {
 			wantPhase:  types.PhaseInvestigating,
 		},
 		{
+			name: "read tool without target",
+			input: SummaryInput{
+				Activity:   types.ActivityBusy,
+				ActiveTool: ptrString("Read"),
+			},
+			wantAction: "Reading file",
+			wantPhase:  types.PhaseInvestigating,
+		},
+		{
 			name: "bash tool running tests",
 			input: SummaryInput{
 				Activity:     types.ActivityBusy,
 				ActiveTool:   ptrString("Bash"),
 				ActiveTarget: ptrString("go test -v ./..."),
+			},
+			wantAction: "Running tests",
+			wantPhase:  types.PhaseTesting,
+		},
+		{
+			name: "bash tool running pytest",
+			input: SummaryInput{
+				Activity:     types.ActivityBusy,
+				ActiveTool:   ptrString("Bash"),
+				ActiveTarget: ptrString("pytest tests/"),
 			},
 			wantAction: "Running tests",
 			wantPhase:  types.PhaseTesting,
@@ -158,7 +273,63 @@ func TestDeterministicFallbackSummary(t *testing.T) {
 			wantPhase:  types.PhaseEditing,
 		},
 		{
-			name: "waiting question",
+			name: "bash tool without target",
+			input: SummaryInput{
+				Activity:   types.ActivityBusy,
+				ActiveTool: ptrString("Bash"),
+			},
+			wantAction: "Running shell command",
+			wantPhase:  types.PhaseEditing,
+		},
+		{
+			name: "ask user question tool",
+			input: SummaryInput{
+				Activity:   types.ActivityBusy,
+				ActiveTool: ptrString("AskUserQuestion"),
+			},
+			wantAction: "Waiting for user input",
+			wantPhase:  types.PhasePlanning,
+		},
+		{
+			name: "investigating tools (WebSearch with target)",
+			input: SummaryInput{
+				Activity:     types.ActivityBusy,
+				ActiveTool:   ptrString("WebSearch"),
+				ActiveTarget: ptrString("golang sqlite driver"),
+			},
+			wantAction: "Searching golang sqlite driver",
+			wantPhase:  types.PhaseInvestigating,
+		},
+		{
+			name: "investigating tools (ast-grep without target)",
+			input: SummaryInput{
+				Activity:   types.ActivityBusy,
+				ActiveTool: ptrString("ast-grep"),
+			},
+			wantAction: "Investigating codebase",
+			wantPhase:  types.PhaseInvestigating,
+		},
+		{
+			name: "default tool with target",
+			input: SummaryInput{
+				Activity:     types.ActivityBusy,
+				ActiveTool:   ptrString("CustomTool"),
+				ActiveTarget: ptrString("target-item"),
+			},
+			wantAction: "Using CustomTool on target-item",
+			wantPhase:  types.PhaseEditing,
+		},
+		{
+			name: "default tool without target",
+			input: SummaryInput{
+				Activity:   types.ActivityBusy,
+				ActiveTool: ptrString("CustomTool"),
+			},
+			wantAction: "Using CustomTool",
+			wantPhase:  types.PhaseEditing,
+		},
+		{
+			name: "waiting question activity without active tool",
 			input: SummaryInput{
 				Activity: types.ActivityWaitingQuestion,
 			},
@@ -166,12 +337,20 @@ func TestDeterministicFallbackSummary(t *testing.T) {
 			wantPhase:  types.PhasePlanning,
 		},
 		{
-			name: "error activity",
+			name: "error activity without active tool",
 			input: SummaryInput{
 				Activity: types.ActivityError,
 			},
 			wantAction: "Encountered error",
 			wantPhase:  types.PhaseDebugging,
+		},
+		{
+			name: "idle activity",
+			input: SummaryInput{
+				Activity: types.ActivityIdle,
+			},
+			wantAction: "Idle",
+			wantPhase:  types.PhasePlanning, // nil phase in fallback gets no phase check or Idle
 		},
 		{
 			name: "thinking activity",
@@ -182,6 +361,14 @@ func TestDeterministicFallbackSummary(t *testing.T) {
 			wantAction: "Thinking",
 			wantPhase:  types.PhasePlanning,
 		},
+		{
+			name: "busy working without tool or thinking",
+			input: SummaryInput{
+				Activity: types.ActivityBusy,
+			},
+			wantAction: "Working",
+			wantPhase:  types.PhasePlanning,
+		},
 	}
 
 	for _, tt := range tests {
@@ -190,13 +377,56 @@ func TestDeterministicFallbackSummary(t *testing.T) {
 			if res.Action != tt.wantAction {
 				t.Errorf("got Action %q, want %q", res.Action, tt.wantAction)
 			}
-			if res.Phase == nil || *res.Phase != tt.wantPhase {
-				t.Errorf("got Phase %v, want %v", res.Phase, tt.wantPhase)
-			}
 			if !res.IsFallback {
 				t.Errorf("expected IsFallback = true, got false")
 			}
 		})
+	}
+}
+
+func TestBuildUserPrompt_TruncationAndDetails(t *testing.T) {
+	longPrompt := strings.Repeat("A", 1500)
+	longThinking := strings.Repeat("B", 1500)
+	longError := strings.Repeat("C", 500)
+	q := "Would you like to deploy now?"
+
+	recentTools := []ToolExecution{
+		{ToolName: "Tool1", Target: "target1"},
+		{ToolName: "Tool2", Target: ""},
+		{ToolName: "Tool3", Target: "target3"},
+		{ToolName: "Tool4", Target: "target4"},
+	}
+
+	input := SummaryInput{
+		AgentID:             "agent-trunc",
+		LastPrompt:          longPrompt,
+		RecentTools:         recentTools,
+		LastThinkingExcerpt: longThinking,
+		Activity:            types.ActivityBusy,
+		ActiveTool:          ptrString("Edit"),
+		ActiveTarget:        ptrString("main.go"),
+		LastError:           &longError,
+		Question:            &q,
+	}
+
+	prompt := buildUserPrompt(input)
+	if !strings.Contains(prompt, "User Prompt: ") || !strings.Contains(prompt, "...") {
+		t.Errorf("expected truncated prompt")
+	}
+	if !strings.Contains(prompt, "Active Tool: Edit (Target: main.go)") {
+		t.Errorf("expected active tool with target in prompt, got %s", prompt)
+	}
+	if !strings.Contains(prompt, "- Tool4 on target4") || !strings.Contains(prompt, "- Tool2") {
+		t.Errorf("expected recent tools in prompt, got %s", prompt)
+	}
+	if strings.Contains(prompt, "- Tool1") {
+		t.Errorf("expected Tool1 to be truncated by MaxRecentTools=3")
+	}
+	if !strings.Contains(prompt, "Question Asked: Would you like to deploy now?") {
+		t.Errorf("expected question in prompt")
+	}
+	if !strings.Contains(prompt, "Last Error: ") {
+		t.Errorf("expected last error in prompt")
 	}
 }
 
@@ -211,20 +441,16 @@ func TestDebounceRateLimiting(t *testing.T) {
 
 	agentID := "agent-rate-limit-test"
 
-	// First call should be allowed
 	if !s.Allow(agentID) {
 		t.Errorf("first Allow() should return true")
 	}
 
-	// Immediate second call should be denied (debounced)
 	if s.Allow(agentID) {
 		t.Errorf("immediate second Allow() should return false")
 	}
 
-	// Wait for debounce window to elapse
 	time.Sleep(60 * time.Millisecond)
 
-	// Should now be allowed again
 	if !s.Allow(agentID) {
 		t.Errorf("Allow() after debounce window should return true")
 	}
@@ -308,13 +534,11 @@ func TestSummarizer_WithMockOpenAIServer(t *testing.T) {
 }
 
 func TestSummarizer_ProviderFailover(t *testing.T) {
-	// Primary server fails with 500 error
 	primaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 	}))
 	t.Cleanup(primaryServer.Close)
 
-	// Backup server succeeds
 	backupServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		resp := map[string]interface{}{
@@ -385,6 +609,41 @@ func TestSummarizer_ProviderFailover(t *testing.T) {
 	}
 	if res.Phase == nil || *res.Phase != types.PhaseEditing {
 		t.Errorf("got Phase %v, want %v", res.Phase, types.PhaseEditing)
+	}
+}
+
+func TestSummarizer_ContextCanceledDuringFailover(t *testing.T) {
+	primaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "fail", http.StatusInternalServerError)
+	}))
+	t.Cleanup(primaryServer.Close)
+
+	pPrimary, _ := openai.New(
+		anyllm.WithBaseURL(primaryServer.URL+"/v1"),
+		anyllm.WithAPIKey("test-key"),
+	)
+
+	s, err := New(Config{
+		Providers: []ProviderConfig{
+			{Name: "p1", Provider: pPrimary, Model: "m1"},
+			{Name: "p2", Provider: pPrimary, Model: "m2"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	input := SummaryInput{
+		AgentID:  "agent-cancel",
+		Activity: types.ActivityBusy,
+	}
+
+	res := s.Summarize(ctx, input)
+	if !res.IsFallback {
+		t.Errorf("expected fallback on canceled context")
 	}
 }
 

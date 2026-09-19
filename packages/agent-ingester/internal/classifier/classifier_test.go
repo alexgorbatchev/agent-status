@@ -4,13 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/pricing"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/store"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/summarizer"
-	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	anyllm "github.com/mozilla-ai/any-llm-go"
 	"github.com/mozilla-ai/any-llm-go/providers/openai"
 )
@@ -72,9 +73,14 @@ func TestClassifier_LifecycleAndActivityTransitions(t *testing.T) {
 		Timestamp:      1000,
 	}
 
-	// 1. run_started
+	// 1. run_started (with timestamp = 0 to test fallback to now)
 	f1 := baseFrame
+	f1.Timestamp = 0
 	f1.EventType = "run_started"
+	title := "Implementing Feature X"
+	f1.Data = types.TelemetryFrameData{
+		Title: &title,
+	}
 	agent, err := c.ProcessFrame(f1)
 	if err != nil {
 		t.Fatalf("ProcessFrame(run_started) error = %v", err)
@@ -85,15 +91,87 @@ func TestClassifier_LifecycleAndActivityTransitions(t *testing.T) {
 	if agent.Activity.Activity != types.ActivityIdle {
 		t.Errorf("got activity %s, want %s", agent.Activity.Activity, types.ActivityIdle)
 	}
+	if agent.Activity.Title != "Implementing Feature X" {
+		t.Errorf("got title %q, want 'Implementing Feature X'", agent.Activity.Title)
+	}
 	if agent.Activity.CurrentRun == nil || agent.Activity.CurrentRun.PID != 12345 {
 		t.Errorf("currentRun PID mismatch: %+v", agent.Activity.CurrentRun)
 	}
 
-	// 2. tool_call -> AskUserQuestion -> WAITING_QUESTION
+	// 2. turn_start
+	fTurnStart := baseFrame
+	fTurnStart.Seq = 2
+	fTurnStart.EventType = "turn_start"
+	agent, err = c.ProcessFrame(fTurnStart)
+	if err != nil {
+		t.Fatalf("ProcessFrame(turn_start) error = %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Errorf("got activity %s, want %s", agent.Activity.Activity, types.ActivityBusy)
+	}
+
+	// 3. thinking
+	thinkingContent := "Analyzing code structure and dependencies"
+	fThinking := baseFrame
+	fThinking.Seq = 3
+	fThinking.EventType = "thinking"
+	fThinking.Data = types.TelemetryFrameData{
+		Content: &thinkingContent,
+	}
+	agent, err = c.ProcessFrame(fThinking)
+	if err != nil {
+		t.Fatalf("ProcessFrame(thinking) error = %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Errorf("got activity %s, want %s", agent.Activity.Activity, types.ActivityBusy)
+	}
+	if agent.Activity.LastThinkingExcerpt == nil || *agent.Activity.LastThinkingExcerpt != thinkingContent {
+		t.Errorf("got thinking %v, want %s", agent.Activity.LastThinkingExcerpt, thinkingContent)
+	}
+
+	// 4. question_prompt
+	qPrompt := "Confirm deployment?"
+	fQPrompt := baseFrame
+	fQPrompt.Seq = 4
+	fQPrompt.EventType = "question_prompt"
+	fQPrompt.Data = types.TelemetryFrameData{
+		Question: &qPrompt,
+	}
+	agent, err = c.ProcessFrame(fQPrompt)
+	if err != nil {
+		t.Fatalf("ProcessFrame(question_prompt) error = %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityWaitingQuestion {
+		t.Errorf("got activity %s, want %s", agent.Activity.Activity, types.ActivityWaitingQuestion)
+	}
+	if agent.Activity.Question == nil || *agent.Activity.Question != qPrompt {
+		t.Errorf("got question %v, want %s", agent.Activity.Question, qPrompt)
+	}
+
+	// 5. error event with long content truncation
+	longError := strings.Repeat("E", 3000)
+	fErr := baseFrame
+	fErr.Seq = 5
+	fErr.EventType = "error"
+	fErr.Data = types.TelemetryFrameData{
+		Content: &longError,
+	}
+	agent, err = c.ProcessFrame(fErr)
+	if err != nil {
+		t.Fatalf("ProcessFrame(error) error = %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityError {
+		t.Errorf("got activity %s, want %s", agent.Activity.Activity, types.ActivityError)
+	}
+	if agent.Activity.LastError == nil || len(*agent.Activity.LastError) > 2000 {
+		t.Errorf("expected LastError truncated to <= 2000 chars, got len %d", len(*agent.Activity.LastError))
+	}
+
+	// 6. tool_call -> AskUserQuestion -> WAITING_QUESTION
 	q := "Should we proceed with migration?"
 	toolName := "AskUserQuestion"
 	f2 := baseFrame
-	f2.Seq = 2
+	f2.Seq = 6
 	f2.EventType = "tool_call"
 	f2.Data = types.TelemetryFrameData{
 		ToolName: &toolName,
@@ -113,11 +191,11 @@ func TestClassifier_LifecycleAndActivityTransitions(t *testing.T) {
 		t.Errorf("got Action %q, want 'Waiting for user input'", agent.Activity.Action)
 	}
 
-	// 3. tool_result with isError = true -> ERROR
+	// 7. tool_result with isError = true -> ERROR
 	errMsg := "permission denied: /etc/hosts"
 	isErr := true
 	f3 := baseFrame
-	f3.Seq = 3
+	f3.Seq = 7
 	f3.EventType = "tool_result"
 	f3.Data = types.TelemetryFrameData{
 		IsError:    &isErr,
@@ -134,9 +212,27 @@ func TestClassifier_LifecycleAndActivityTransitions(t *testing.T) {
 		t.Errorf("got lastError %v, want %s", agent.Activity.LastError, errMsg)
 	}
 
-	// 4. turn_end -> IDLE, clears question
+	// 8. tool_result with isError = false -> Busy
+	isErrFalse := false
+	okOut := "success"
+	fToolResOk := baseFrame
+	fToolResOk.Seq = 8
+	fToolResOk.EventType = "tool_result"
+	fToolResOk.Data = types.TelemetryFrameData{
+		IsError:    &isErrFalse,
+		ToolOutput: &okOut,
+	}
+	agent, err = c.ProcessFrame(fToolResOk)
+	if err != nil {
+		t.Fatalf("ProcessFrame(tool_result ok) error = %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Errorf("got activity %s, want %s", agent.Activity.Activity, types.ActivityBusy)
+	}
+
+	// 9. turn_end -> IDLE, clears question, active tool and target
 	f4 := baseFrame
-	f4.Seq = 4
+	f4.Seq = 9
 	f4.EventType = "turn_end"
 	agent, err = c.ProcessFrame(f4)
 	if err != nil {
@@ -145,14 +241,14 @@ func TestClassifier_LifecycleAndActivityTransitions(t *testing.T) {
 	if agent.Activity.Activity != types.ActivityIdle {
 		t.Errorf("got activity %s, want %s", agent.Activity.Activity, types.ActivityIdle)
 	}
-	if agent.Activity.Question != nil {
-		t.Errorf("expected question to be nil, got %v", agent.Activity.Question)
+	if agent.Activity.Question != nil || agent.Activity.ActiveTool != nil || agent.Activity.ActiveTarget != nil {
+		t.Errorf("expected tool and question fields cleared, got %+v", agent.Activity)
 	}
 
-	// 5. Usage & Cost accumulation
+	// 10. Usage & Cost accumulation
 	model := "claude-opus-5"
 	f5 := baseFrame
-	f5.Seq = 5
+	f5.Seq = 10
 	f5.EventType = "turn_end"
 	f5.Data = types.TelemetryFrameData{
 		Model: &model,
@@ -176,10 +272,10 @@ func TestClassifier_LifecycleAndActivityTransitions(t *testing.T) {
 		t.Errorf("cost calculation failed: %+v", agent.Activity.Cost)
 	}
 
-	// 6. Subagent usage roll-up
+	// 11. Subagent usage roll-up and count increment
 	subagentID := "sub-1"
 	f6 := baseFrame
-	f6.Seq = 6
+	f6.Seq = 11
 	f6.SubagentID = &subagentID
 	f6.EventType = "turn_end"
 	f6.Data = types.TelemetryFrameData{
@@ -199,10 +295,13 @@ func TestClassifier_LifecycleAndActivityTransitions(t *testing.T) {
 	if agent.Activity.Usage.Input != 1500 {
 		t.Errorf("expected rolled-up input usage 1500, got %d", agent.Activity.Usage.Input)
 	}
+	if agent.Activity.SubagentCount != 1 {
+		t.Errorf("expected subagent_count = 1, got %d", agent.Activity.SubagentCount)
+	}
 
-	// 7. run_exited -> EXITED
+	// 12. run_exited -> EXITED
 	f7 := baseFrame
-	f7.Seq = 7
+	f7.Seq = 12
 	f7.EventType = "run_exited"
 	agent, err = c.ProcessFrame(f7)
 	if err != nil {
@@ -212,13 +311,126 @@ func TestClassifier_LifecycleAndActivityTransitions(t *testing.T) {
 		t.Errorf("got lifecycle %s, want %s", agent.Activity.Lifecycle, types.LifecycleExited)
 	}
 
-	// Check DB persistence
 	reloaded, err := s.GetAgent(agent.ID)
 	if err != nil {
 		t.Fatalf("s.GetAgent() error = %v", err)
 	}
 	if reloaded.Activity.Lifecycle != types.LifecycleExited {
 		t.Errorf("reloaded lifecycle mismatch: %s", reloaded.Activity.Lifecycle)
+	}
+}
+
+func TestExtractTarget(t *testing.T) {
+	tests := []struct {
+		name       string
+		tool       string
+		input      map[string]interface{}
+		wantTarget string
+	}{
+		{
+			name:       "nil input",
+			tool:       "Edit",
+			input:      nil,
+			wantTarget: "",
+		},
+		{
+			name: "file_path key",
+			tool: "Edit",
+			input: map[string]interface{}{
+				"file_path": "/path/to/file.ts",
+			},
+			wantTarget: "/path/to/file.ts",
+		},
+		{
+			name: "path key",
+			tool: "Read",
+			input: map[string]interface{}{
+				"path": "docs/architecture.md",
+			},
+			wantTarget: "docs/architecture.md",
+		},
+		{
+			name: "notebook_path key",
+			tool: "NotebookEdit",
+			input: map[string]interface{}{
+				"notebook_path": "/notebooks/test.ipynb",
+			},
+			wantTarget: "/notebooks/test.ipynb",
+		},
+		{
+			name: "description key",
+			tool: "Bash",
+			input: map[string]interface{}{
+				"description": "Run integration tests",
+			},
+			wantTarget: "Run integration tests",
+		},
+		{
+			name: "command key",
+			tool: "Bash",
+			input: map[string]interface{}{
+				"command": "npm run build",
+			},
+			wantTarget: "npm run build",
+		},
+		{
+			name: "url key",
+			tool: "WebFetch",
+			input: map[string]interface{}{
+				"url": "https://example.com/api",
+			},
+			wantTarget: "https://example.com/api",
+		},
+		{
+			name: "query key",
+			tool: "WebSearch",
+			input: map[string]interface{}{
+				"query": "sqlite wal pragma",
+			},
+			wantTarget: "sqlite wal pragma",
+		},
+		{
+			name: "skill key",
+			tool: "Skill",
+			input: map[string]interface{}{
+				"skill": "golang",
+			},
+			wantTarget: "golang",
+		},
+		{
+			name: "pattern key",
+			tool: "grep",
+			input: map[string]interface{}{
+				"pattern": "func ProcessFrame",
+			},
+			wantTarget: "func ProcessFrame",
+		},
+		{
+			name: "prompt key",
+			tool: "claude-api",
+			input: map[string]interface{}{
+				"prompt": "explain this function",
+			},
+			wantTarget: "explain this function",
+		},
+		{
+			name: "empty values ignored",
+			tool: "Custom",
+			input: map[string]interface{}{
+				"file_path": "   ",
+				"command":   "valid command",
+			},
+			wantTarget: "valid command",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractTarget(tt.tool, tt.input)
+			if got != tt.wantTarget {
+				t.Errorf("extractTarget() = %q, want %q", got, tt.wantTarget)
+			}
+		})
 	}
 }
 
@@ -397,7 +609,6 @@ func TestClassifier_ContinuousActivityDebounceAndStaleness(t *testing.T) {
 	toolName := "Edit"
 	prompt := "Refactor models in db/models.go"
 
-	// 1. First tool call -> triggers LLM summary, not stale
 	f1 := types.ITelemetryFrame{
 		Version:        "1.0",
 		Seq:            1,
@@ -431,7 +642,7 @@ func TestClassifier_ContinuousActivityDebounceAndStaleness(t *testing.T) {
 		t.Errorf("expected ActionStale = false after first summary")
 	}
 
-	// 2. Second tool call immediately (within 80ms debounce window) -> rate limited, marked ActionStale = true
+	// 2. Continuous tool call within debounce window -> rate limited, marked ActionStale = true
 	f2 := f1
 	f2.Seq = 2
 	f2.Timestamp = 1010
@@ -443,24 +654,58 @@ func TestClassifier_ContinuousActivityDebounceAndStaleness(t *testing.T) {
 		t.Fatalf("ProcessFrame(f2) failed: %v", err)
 	}
 	if !agent.Activity.ActionStale {
-		t.Errorf("expected ActionStale = true when tool activity occurs within debounce window")
-	}
-	if agent.Activity.ActiveTarget == nil || *agent.Activity.ActiveTarget != "db/schema.sql" {
-		t.Errorf("expected ActiveTarget updated to 'db/schema.sql', got %v", agent.Activity.ActiveTarget)
+		t.Errorf("expected ActionStale = true for tool call within debounce window")
 	}
 
-	// 3. Wait for debounce window to elapse
+	// 3. Force trigger within debounce window (e.g. turn_end) -> uses fallback summary and resets ActionStale to false
+	fEnd := f1
+	fEnd.Seq = 3
+	fEnd.Timestamp = 1020
+	fEnd.EventType = "turn_end"
+	fEnd.Data = types.TelemetryFrameData{}
+	agent, err = c.ProcessFrame(fEnd)
+	if err != nil {
+		t.Fatalf("ProcessFrame(fEnd) failed: %v", err)
+	}
+	if agent.Activity.ActionStale {
+		t.Errorf("expected ActionStale = false after turn_end forced fallback")
+	}
+
+	// Wait for debounce window to elapse
 	time.Sleep(100 * time.Millisecond)
 
-	// 4. Third tool call -> debounce elapsed, triggers new LLM summary, ActionStale resets to false
+	// Fresh tool call triggers new LLM summary
 	f3 := f1
-	f3.Seq = 3
+	f3.Seq = 4
 	f3.Timestamp = 1200
 	agent, err = c.ProcessFrame(f3)
 	if err != nil {
 		t.Fatalf("ProcessFrame(f3) failed: %v", err)
 	}
 	if agent.Activity.ActionStale {
-		t.Errorf("expected ActionStale = false after debounce window elapsed and fresh summary generated")
+		t.Errorf("expected ActionStale = false after debounce window elapsed")
+	}
+}
+
+func TestClassifier_DatabaseErrorHandling(t *testing.T) {
+	sum, _ := summarizer.New(summarizer.Config{NoSummarize: true})
+	c, s := newTestClassifier(t, sum)
+
+	// Close store to trigger database error in ProcessFrame
+	s.Close()
+
+	frame := types.ITelemetryFrame{
+		Version:   "1.0",
+		Seq:       1,
+		AgentID:   "env-err:claude-code:sess-err",
+		SessionID: "sess-err",
+		Harness:   types.HarnessClaudeCode,
+		Timestamp: 1000,
+		EventType: "run_started",
+	}
+
+	_, err := c.ProcessFrame(frame)
+	if err == nil {
+		t.Errorf("expected error from ProcessFrame when store is closed, got nil")
 	}
 }

@@ -22,8 +22,19 @@ func TestCalculateCost(t *testing.T) {
 				CacheWrite: 1000,
 				Reasoning:  100,
 			},
-			// (1000 * 0.000015) + (200 * 0.000075) + (5000 * 0.0000015) + (1000 * 0.00001875)
-			// = 0.015 + 0.015 + 0.0075 + 0.01875 = 0.05625
+			wantCost:   0.05625,
+			wantHasVal: true,
+		},
+		{
+			name:  "case insensitivity and whitespace trim",
+			model: "  CLAUDE-OPUS-5  ",
+			usage: Usage{
+				Input:      1000,
+				Output:     200,
+				CacheRead:  5000,
+				CacheWrite: 1000,
+				Reasoning:  100,
+			},
 			wantCost:   0.05625,
 			wantHasVal: true,
 		},
@@ -36,10 +47,27 @@ func TestCalculateCost(t *testing.T) {
 				CacheRead:  10000,
 				CacheWrite: 2000,
 			},
-			// (2000 * 1e-6) + (500 * 5e-6) + (10000 * 1e-7) + (2000 * 1.25e-6)
-			// = 0.002 + 0.0025 + 0.001 + 0.0025 = 0.008
 			wantCost:   0.008,
 			wantHasVal: true,
+		},
+		{
+			name:  "claude-3-7-sonnet prefix match for date suffixed key in map",
+			model: "claude-3-7-sonnet",
+			usage: Usage{
+				Input:  1000,
+				Output: 200,
+			},
+			wantCost:   0.006,
+			wantHasVal: true,
+		},
+		{
+			name:  "empty model returns false",
+			model: "",
+			usage: Usage{
+				Input: 1000,
+			},
+			wantCost:   0,
+			wantHasVal: false,
 		},
 		{
 			name:  "unrecognized model returns hasValue false",
@@ -68,5 +96,15 @@ func TestCalculateCost(t *testing.T) {
 				t.Fatalf("CalculateCost() gotCost = %f, want %f", gotCost, tt.wantCost)
 			}
 		})
+	}
+}
+
+func TestPricingEngine_LoadJSONError(t *testing.T) {
+	e := &Engine{
+		prices: make(map[string]ModelPricing),
+	}
+	err := e.loadJSON([]byte(`invalid-json`))
+	if err == nil {
+		t.Errorf("expected error on invalid json, got nil")
 	}
 }

@@ -15,6 +15,12 @@ import (
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 )
 
+var (
+	platformMachineIDFunc = getPlatformMachineID
+	currentUserFunc       = user.Current
+	hostnameFunc          = os.Hostname
+)
+
 type telemetryConfig struct {
 	Environment string `json:"environment"`
 	Env         string `json:"env"`
@@ -66,7 +72,7 @@ func resolveLabel(flagVal string, configFilePath string) string {
 	}
 
 	// 4. os.Hostname()
-	hostname, err := os.Hostname()
+	hostname, err := hostnameFunc()
 	if err == nil && hostname != "" {
 		return hostname
 	}
@@ -75,9 +81,9 @@ func resolveLabel(flagVal string, configFilePath string) string {
 }
 
 func GetEnvironmentID() (string, error) {
-	machineID, err := getPlatformMachineID()
+	machineID, err := platformMachineIDFunc()
 	if err != nil || machineID == "" {
-		hostname, hErr := os.Hostname()
+		hostname, hErr := hostnameFunc()
 		if hErr != nil {
 			machineID = "fallback-machine"
 		} else {
@@ -86,7 +92,7 @@ func GetEnvironmentID() (string, error) {
 	}
 
 	uid := "0"
-	if u, err := user.Current(); err == nil {
+	if u, err := currentUserFunc(); err == nil {
 		uid = u.Uid
 	} else if osUID := os.Getenv("UID"); osUID != "" {
 		uid = osUID
@@ -108,13 +114,13 @@ func ResolveEnvironment(envFlag string) (*types.IEnvironmentInfo, error) {
 	}
 
 	label := resolveLabel(envFlag, "")
-	hostname, _ := os.Hostname()
+	hostname, _ := hostnameFunc()
 	if hostname == "" {
 		hostname = "unknown"
 	}
 
 	username := "unknown"
-	if u, err := user.Current(); err == nil {
+	if u, err := currentUserFunc(); err == nil {
 		username = u.Username
 	} else if uEnv := os.Getenv("USER"); uEnv != "" {
 		username = uEnv

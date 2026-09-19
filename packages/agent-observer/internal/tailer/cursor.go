@@ -29,11 +29,13 @@ type CursorStore struct {
 	cursors  map[string]*Cursor
 }
 
+var userHomeDirFunc = os.UserHomeDir
+
 func DefaultCursorPath() string {
 	if cacheHome := os.Getenv("XDG_CACHE_HOME"); cacheHome != "" {
 		return filepath.Join(cacheHome, "agent-status", "observer-cursors.json")
 	}
-	home, err := os.UserHomeDir()
+	home, err := userHomeDirFunc()
 	if err != nil {
 		return filepath.Join(os.TempDir(), "agent-status", "observer-cursors.json")
 	}

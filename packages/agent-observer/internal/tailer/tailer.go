@@ -16,6 +16,8 @@ import (
 
 const maxScanTokenSize = 16 * 1024 * 1024 // 16MB buffer
 
+var tailerPollInterval = 1 * time.Second
+
 type LineHandler func(line []byte) error
 
 type Tailer struct {
@@ -59,7 +61,9 @@ func (t *Tailer) Start(ctx context.Context) error {
 	dir := filepath.Dir(t.filePath)
 	if err := t.watcher.Add(dir); err != nil {
 		// If watching dir fails, try watching file directly
-		_ = t.watcher.Add(t.filePath)
+		if fErr := t.watcher.Add(t.filePath); fErr != nil {
+			return fmt.Errorf("watching file path: %w", fErr)
+		}
 	}
 
 	// Initial read
@@ -67,7 +71,7 @@ func (t *Tailer) Start(ctx context.Context) error {
 		// Log or return error if severe, but continue watching
 	}
 
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(tailerPollInterval)
 	defer ticker.Stop()
 
 	for {

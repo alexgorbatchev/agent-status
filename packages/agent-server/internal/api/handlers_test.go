@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -18,18 +19,30 @@ import (
 )
 
 type mockStore struct {
-	status       *types.StatusResponse
-	projects     []types.ProjectGroup
-	environments []types.IEnvironmentInfo
-	agents       []types.IAgentState
-	agentMap     map[string]*types.IAgentState
-	logs         []types.ITelemetryFrame
-	err          error
+	mu              sync.Mutex
+	status          *types.StatusResponse
+	statusErr       error
+	projects        []types.ProjectGroup
+	projectsErr     error
+	environments    []types.IEnvironmentInfo
+	environmentsErr error
+	agents          []types.IAgentState
+	agentsErr       error
+	agentMap        map[string]*types.IAgentState
+	agentErr        error
+	lastRequestedID string
+	logs            []types.ITelemetryFrame
+	logsErr         error
+	lastLogsLimit   int
+	lastLogsBefore  int64
+	lastLogsSub     string
 }
 
 func (m *mockStore) GetStatus(ctx context.Context) (*types.StatusResponse, error) {
-	if m.err != nil {
-		return nil, m.err
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.statusErr != nil {
+		return nil, m.statusErr
 	}
 	if m.status != nil {
 		return m.status, nil
@@ -38,22 +51,28 @@ func (m *mockStore) GetStatus(ctx context.Context) (*types.StatusResponse, error
 }
 
 func (m *mockStore) GetProjects(ctx context.Context) ([]types.ProjectGroup, error) {
-	if m.err != nil {
-		return nil, m.err
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.projectsErr != nil {
+		return nil, m.projectsErr
 	}
 	return m.projects, nil
 }
 
 func (m *mockStore) GetEnvironments(ctx context.Context) ([]types.IEnvironmentInfo, error) {
-	if m.err != nil {
-		return nil, m.err
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.environmentsErr != nil {
+		return nil, m.environmentsErr
 	}
 	return m.environments, nil
 }
 
 func (m *mockStore) GetAgents(ctx context.Context, filter store.AgentFilter) ([]types.IAgentState, error) {
-	if m.err != nil {
-		return nil, m.err
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.agentsErr != nil {
+		return nil, m.agentsErr
 	}
 	var filtered []types.IAgentState
 	for _, a := range m.agents {
@@ -75,8 +94,11 @@ func (m *mockStore) GetAgents(ctx context.Context, filter store.AgentFilter) ([]
 }
 
 func (m *mockStore) GetAgentByID(ctx context.Context, id string) (*types.IAgentState, error) {
-	if m.err != nil {
-		return nil, m.err
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastRequestedID = id
+	if m.agentErr != nil {
+		return nil, m.agentErr
 	}
 	if a, ok := m.agentMap[id]; ok {
 		return a, nil
@@ -85,14 +107,21 @@ func (m *mockStore) GetAgentByID(ctx context.Context, id string) (*types.IAgentS
 }
 
 func (m *mockStore) GetAgentLogs(ctx context.Context, agentID string, limit int, beforeID int64, subagentID string) ([]types.ITelemetryFrame, error) {
-	if m.err != nil {
-		return nil, m.err
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastRequestedID = agentID
+	m.lastLogsLimit = limit
+	m.lastLogsBefore = beforeID
+	m.lastLogsSub = subagentID
+	if m.logsErr != nil {
+		return nil, m.logsErr
 	}
 	return m.logs, nil
 }
 
 func setupTestServer(t *testing.T) (*Server, *mockStore, *stream.Hub) {
 	t.Helper()
+	encodedID := "885d9dd12b6d62a9:claude-code:be20b445"
 	mock := &mockStore{
 		status: &types.StatusResponse{
 			Status:                 "ok",
@@ -123,6 +152,19 @@ func setupTestServer(t *testing.T) (*Server, *mockStore, *stream.Hub) {
 					Activity:  types.ActivityBusy,
 				},
 			},
+			{
+				ID:        encodedID,
+				SessionID: "be20b445",
+				Harness:   types.HarnessClaudeCode,
+				Project:   types.IProjectInfo{ID: "p1", Name: "project1"},
+				Environment: types.IEnvironmentInfo{
+					ID: "885d9dd12b6d62a9",
+				},
+				Activity: types.IAgentActivity{
+					Lifecycle: types.LifecycleRunning,
+					Activity:  types.ActivityBusy,
+				},
+			},
 		},
 		agentMap: make(map[string]*types.IAgentState),
 		logs: []types.ITelemetryFrame{
@@ -134,6 +176,7 @@ func setupTestServer(t *testing.T) (*Server, *mockStore, *stream.Hub) {
 		},
 	}
 	mock.agentMap["agent-1"] = &mock.agents[0]
+	mock.agentMap[encodedID] = &mock.agents[1]
 
 	hub := stream.NewHub()
 	t.Cleanup(func() { hub.Close() })
@@ -148,6 +191,24 @@ func setupTestServer(t *testing.T) (*Server, *mockStore, *stream.Hub) {
 	return srv, mock, hub
 }
 
+func TestNewServer_Defaults(t *testing.T) {
+	mock := &mockStore{}
+	hub := stream.NewHub()
+	defer hub.Close()
+
+	srv := NewServer(ServerConfig{
+		Store: mock,
+		Hub:   hub,
+	})
+
+	if srv.logger == nil {
+		t.Errorf("expected default logger")
+	}
+	if len(srv.cfg.CORSOrigins) != 1 || srv.cfg.CORSOrigins[0] != "http://localhost:3000" {
+		t.Errorf("expected default CORS origin http://localhost:3000, got: %v", srv.cfg.CORSOrigins)
+	}
+}
+
 func TestAuthMiddleware(t *testing.T) {
 	srv, _, _ := setupTestServer(t)
 
@@ -158,10 +219,15 @@ func TestAuthMiddleware(t *testing.T) {
 		wantStatus int
 	}{
 		{"no auth", "", "", http.StatusUnauthorized},
-		{"invalid header", "Bearer wrong", "", http.StatusUnauthorized},
+		{"invalid header wrong scheme", "Basic secret-token", "", http.StatusUnauthorized},
+		{"invalid header token", "Bearer wrong-token", "", http.StatusUnauthorized},
+		{"malformed auth header single word", "Bearer", "", http.StatusUnauthorized},
 		{"valid header", "Bearer secret-token", "", http.StatusOK},
-		{"valid query param", "", "?token=secret-token", http.StatusOK},
+		{"valid header lowercase bearer", "bearer secret-token", "", http.StatusOK},
+		{"valid query param token", "", "?token=secret-token", http.StatusOK},
+		{"invalid query param token", "", "?token=wrong-token", http.StatusUnauthorized},
 		{"valid query param access_token", "", "?access_token=secret-token", http.StatusOK},
+		{"invalid query param access_token", "", "?access_token=wrong-token", http.StatusUnauthorized},
 	}
 
 	for _, tt := range tests {
@@ -178,6 +244,20 @@ func TestAuthMiddleware(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("empty expected token allows unauthenticated access", func(t *testing.T) {
+		unauthSrv := NewServer(ServerConfig{
+			Store:     &mockStore{},
+			Hub:       stream.NewHub(),
+			AuthToken: "",
+		})
+		req := httptest.NewRequest("GET", "/api/v1/status", nil)
+		w := httptest.NewRecorder()
+		unauthSrv.Router().ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+		}
+	})
 }
 
 func TestGetStatus(t *testing.T) {
@@ -203,9 +283,15 @@ func TestGetStatus(t *testing.T) {
 		}
 	})
 
-	t.Run("error", func(t *testing.T) {
-		mock.err = errors.New("db error")
-		defer func() { mock.err = nil }()
+	t.Run("error 500", func(t *testing.T) {
+		mock.mu.Lock()
+		mock.statusErr = errors.New("db error")
+		mock.mu.Unlock()
+		defer func() {
+			mock.mu.Lock()
+			mock.statusErr = nil
+			mock.mu.Unlock()
+		}()
 
 		req := httptest.NewRequest("GET", "/api/v1/status", nil)
 		req.Header.Set("Authorization", "Bearer secret-token")
@@ -241,9 +327,15 @@ func TestGetProjects(t *testing.T) {
 		}
 	})
 
-	t.Run("error", func(t *testing.T) {
-		mock.err = errors.New("db error")
-		defer func() { mock.err = nil }()
+	t.Run("error 500", func(t *testing.T) {
+		mock.mu.Lock()
+		mock.projectsErr = errors.New("db error")
+		mock.mu.Unlock()
+		defer func() {
+			mock.mu.Lock()
+			mock.projectsErr = nil
+			mock.mu.Unlock()
+		}()
 
 		req := httptest.NewRequest("GET", "/api/v1/projects", nil)
 		req.Header.Set("Authorization", "Bearer secret-token")
@@ -279,9 +371,15 @@ func TestGetEnvironments(t *testing.T) {
 		}
 	})
 
-	t.Run("error", func(t *testing.T) {
-		mock.err = errors.New("db error")
-		defer func() { mock.err = nil }()
+	t.Run("error 500", func(t *testing.T) {
+		mock.mu.Lock()
+		mock.environmentsErr = errors.New("db error")
+		mock.mu.Unlock()
+		defer func() {
+			mock.mu.Lock()
+			mock.environmentsErr = nil
+			mock.mu.Unlock()
+		}()
 
 		req := httptest.NewRequest("GET", "/api/v1/environments", nil)
 		req.Header.Set("Authorization", "Bearer secret-token")
@@ -312,13 +410,13 @@ func TestGetAgents(t *testing.T) {
 			t.Fatalf("decoding json: %v", err)
 		}
 
-		if len(agents) != 1 {
-			t.Fatalf("len(agents) = %d, want 1", len(agents))
+		if len(agents) != 2 {
+			t.Fatalf("len(agents) = %d, want 2", len(agents))
 		}
 	})
 
 	t.Run("filter matches", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/v1/agents?project=p1&lifecycle=RUNNING", nil)
+		req := httptest.NewRequest("GET", "/api/v1/agents?project=p1&environment=env1&lifecycle=RUNNING&activity=BUSY", nil)
 		req.Header.Set("Authorization", "Bearer secret-token")
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)
@@ -343,9 +441,15 @@ func TestGetAgents(t *testing.T) {
 		}
 	})
 
-	t.Run("error", func(t *testing.T) {
-		mock.err = errors.New("db error")
-		defer func() { mock.err = nil }()
+	t.Run("error 500", func(t *testing.T) {
+		mock.mu.Lock()
+		mock.agentsErr = errors.New("db error")
+		mock.mu.Unlock()
+		defer func() {
+			mock.mu.Lock()
+			mock.agentsErr = nil
+			mock.mu.Unlock()
+		}()
 
 		req := httptest.NewRequest("GET", "/api/v1/agents", nil)
 		req.Header.Set("Authorization", "Bearer secret-token")
@@ -361,7 +465,7 @@ func TestGetAgents(t *testing.T) {
 func TestGetAgentByID(t *testing.T) {
 	srv, mock, _ := setupTestServer(t)
 
-	t.Run("found", func(t *testing.T) {
+	t.Run("found with plain ID", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/agents/agent-1", nil)
 		req.Header.Set("Authorization", "Bearer secret-token")
 		w := httptest.NewRecorder()
@@ -380,7 +484,30 @@ func TestGetAgentByID(t *testing.T) {
 		}
 	})
 
-	t.Run("not found", func(t *testing.T) {
+	t.Run("found with URL-encoded agent ID", func(t *testing.T) {
+		// URL-encoded 885d9dd12b6d62a9%3Aclaude-code%3Abe20b445
+		req := httptest.NewRequest("GET", "/api/v1/agents/885d9dd12b6d62a9%3Aclaude-code%3Abe20b445", nil)
+		req.Header.Set("Authorization", "Bearer secret-token")
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+		}
+
+		var agent types.IAgentState
+		if err := json.NewDecoder(w.Body).Decode(&agent); err != nil {
+			t.Fatalf("decoding json: %v", err)
+		}
+		if agent.ID != "885d9dd12b6d62a9:claude-code:be20b445" {
+			t.Errorf("agent.ID = %q, want '885d9dd12b6d62a9:claude-code:be20b445'", agent.ID)
+		}
+		if mock.lastRequestedID != "885d9dd12b6d62a9:claude-code:be20b445" {
+			t.Errorf("mock received ID = %q, want unescaped '885d9dd12b6d62a9:claude-code:be20b445'", mock.lastRequestedID)
+		}
+	})
+
+	t.Run("not found 404", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/agents/agent-non-existent", nil)
 		req.Header.Set("Authorization", "Bearer secret-token")
 		w := httptest.NewRecorder()
@@ -391,9 +518,15 @@ func TestGetAgentByID(t *testing.T) {
 		}
 	})
 
-	t.Run("error", func(t *testing.T) {
-		mock.err = errors.New("db error")
-		defer func() { mock.err = nil }()
+	t.Run("error 500", func(t *testing.T) {
+		mock.mu.Lock()
+		mock.agentErr = errors.New("db error")
+		mock.mu.Unlock()
+		defer func() {
+			mock.mu.Lock()
+			mock.agentErr = nil
+			mock.mu.Unlock()
+		}()
 
 		req := httptest.NewRequest("GET", "/api/v1/agents/agent-1", nil)
 		req.Header.Set("Authorization", "Bearer secret-token")
@@ -409,7 +542,7 @@ func TestGetAgentByID(t *testing.T) {
 func TestGetAgentLogs(t *testing.T) {
 	srv, mock, _ := setupTestServer(t)
 
-	t.Run("success", func(t *testing.T) {
+	t.Run("success with valid parameters", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/agents/agent-1/logs?limit=50&before=100&subagent=sub1", nil)
 		req.Header.Set("Authorization", "Bearer secret-token")
 		w := httptest.NewRecorder()
@@ -427,11 +560,67 @@ func TestGetAgentLogs(t *testing.T) {
 		if len(logs) != 1 {
 			t.Fatalf("len(logs) = %d, want 1", len(logs))
 		}
+		if mock.lastLogsLimit != 50 || mock.lastLogsBefore != 100 || mock.lastLogsSub != "sub1" {
+			t.Errorf("mock received params limit=%d before=%d sub=%s", mock.lastLogsLimit, mock.lastLogsBefore, mock.lastLogsSub)
+		}
 	})
 
-	t.Run("error", func(t *testing.T) {
-		mock.err = errors.New("db error")
-		defer func() { mock.err = nil }()
+	t.Run("success with URL-encoded agent ID", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/agents/885d9dd12b6d62a9%3Aclaude-code%3Abe20b445/logs", nil)
+		req.Header.Set("Authorization", "Bearer secret-token")
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+		}
+
+		if mock.lastRequestedID != "885d9dd12b6d62a9:claude-code:be20b445" {
+			t.Errorf("mock received unescaped agentID = %q", mock.lastRequestedID)
+		}
+		// Default limit when unspecified is 100, before is 0
+		if mock.lastLogsLimit != 100 || mock.lastLogsBefore != 0 {
+			t.Errorf("default limit/before = %d/%d, want 100/0", mock.lastLogsLimit, mock.lastLogsBefore)
+		}
+	})
+
+	t.Run("invalid query parameters gracefully fallback to defaults", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/agents/agent-1/logs?limit=not-a-number&before=invalid-number", nil)
+		req.Header.Set("Authorization", "Bearer secret-token")
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+		}
+		if mock.lastLogsLimit != 100 || mock.lastLogsBefore != 0 {
+			t.Errorf("invalid params should fallback to defaults: limit=%d before=%d", mock.lastLogsLimit, mock.lastLogsBefore)
+		}
+	})
+
+	t.Run("negative limit/before parameters fallback to defaults", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/agents/agent-1/logs?limit=-10&before=-5", nil)
+		req.Header.Set("Authorization", "Bearer secret-token")
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+		}
+		if mock.lastLogsLimit != 100 || mock.lastLogsBefore != 0 {
+			t.Errorf("negative params should fallback to defaults: limit=%d before=%d", mock.lastLogsLimit, mock.lastLogsBefore)
+		}
+	})
+
+	t.Run("error 500", func(t *testing.T) {
+		mock.mu.Lock()
+		mock.logsErr = errors.New("db error")
+		mock.mu.Unlock()
+		defer func() {
+			mock.mu.Lock()
+			mock.logsErr = nil
+			mock.mu.Unlock()
+		}()
 
 		req := httptest.NewRequest("GET", "/api/v1/agents/agent-1/logs", nil)
 		req.Header.Set("Authorization", "Bearer secret-token")
@@ -444,10 +633,31 @@ func TestGetAgentLogs(t *testing.T) {
 	})
 }
 
+// nonFlushingRecorder implements http.ResponseWriter without http.Flusher
+type nonFlushingRecorder struct {
+	header http.Header
+	code   int
+}
+
+func (n *nonFlushingRecorder) Header() http.Header {
+	if n.header == nil {
+		n.header = make(http.Header)
+	}
+	return n.header
+}
+
+func (n *nonFlushingRecorder) Write(b []byte) (int, error) {
+	return len(b), nil
+}
+
+func (n *nonFlushingRecorder) WriteHeader(statusCode int) {
+	n.code = statusCode
+}
+
 func TestEventsSSE(t *testing.T) {
 	srv, mock, hub := setupTestServer(t)
 
-	t.Run("success stream", func(t *testing.T) {
+	t.Run("success stream and heartbeats", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
@@ -482,9 +692,26 @@ func TestEventsSSE(t *testing.T) {
 		}
 	})
 
+	t.Run("streaming unsupported when flusher missing", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/events", nil)
+		req.Header.Set("Authorization", "Bearer secret-token")
+		rec := &nonFlushingRecorder{}
+
+		srv.Router().ServeHTTP(rec, req)
+		if rec.code != http.StatusInternalServerError {
+			t.Errorf("status = %d, want %d", rec.code, http.StatusInternalServerError)
+		}
+	})
+
 	t.Run("environments error on sse connect", func(t *testing.T) {
-		mock.err = errors.New("load error")
-		defer func() { mock.err = nil }()
+		mock.mu.Lock()
+		mock.environmentsErr = errors.New("load error")
+		mock.mu.Unlock()
+		defer func() {
+			mock.mu.Lock()
+			mock.environmentsErr = nil
+			mock.mu.Unlock()
+		}()
 
 		req := httptest.NewRequest("GET", "/api/v1/events", nil)
 		req.Header.Set("Authorization", "Bearer secret-token")
@@ -492,64 +719,190 @@ func TestEventsSSE(t *testing.T) {
 
 		srv.Router().ServeHTTP(w, req)
 	})
+
+	t.Run("agents error on sse connect", func(t *testing.T) {
+		mock.mu.Lock()
+		mock.agentsErr = errors.New("agents load error")
+		mock.mu.Unlock()
+		defer func() {
+			mock.mu.Lock()
+			mock.agentsErr = nil
+			mock.mu.Unlock()
+		}()
+
+		req := httptest.NewRequest("GET", "/api/v1/events", nil)
+		req.Header.Set("Authorization", "Bearer secret-token")
+		w := httptest.NewRecorder()
+
+		srv.Router().ServeHTTP(w, req)
+	})
+
+	t.Run("hub closed terminates stream", func(t *testing.T) {
+		testHub := stream.NewHub()
+		testSrv := NewServer(ServerConfig{
+			Store:       mock,
+			Hub:         testHub,
+			AuthToken:   "secret-token",
+			CORSOrigins: []string{"*"},
+		})
+
+		req := httptest.NewRequest("GET", "/api/v1/events", nil)
+		req.Header.Set("Authorization", "Bearer secret-token")
+		w := httptest.NewRecorder()
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			testSrv.Router().ServeHTTP(w, req)
+		}()
+
+		time.Sleep(50 * time.Millisecond)
+		testHub.Close()
+
+		select {
+		case <-done:
+			// Terminated cleanly
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("SSE handler did not exit after hub close")
+		}
+	})
 }
 
 func TestEventsWS(t *testing.T) {
-	srv, _, hub := setupTestServer(t)
+	srv, mock, hub := setupTestServer(t)
 
 	ts := httptest.NewServer(srv.Router())
 	defer ts.Close()
 
-	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws/events?token=secret-token"
+	t.Run("success connect and message delivery", func(t *testing.T) {
+		wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws/events?token=secret-token"
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, wsURL, nil)
-	if err != nil {
-		t.Fatalf("websocket dial failed: %v", err)
-	}
-	defer conn.CloseNow()
+		conn, _, err := websocket.Dial(ctx, wsURL, nil)
+		if err != nil {
+			t.Fatalf("websocket dial failed: %v", err)
+		}
+		defer conn.CloseNow()
 
-	// 1. First message should be the initial snapshot
-	_, msgBytes, err := conn.Read(ctx)
-	if err != nil {
-		t.Fatalf("reading first ws message: %v", err)
-	}
+		// 1. First message should be the initial snapshot
+		_, msgBytes, err := conn.Read(ctx)
+		if err != nil {
+			t.Fatalf("reading first ws message: %v", err)
+		}
 
-	var snapshotEvt types.IServerEvent
-	if err := json.Unmarshal(msgBytes, &snapshotEvt); err != nil {
-		t.Fatalf("unmarshaling snapshot: %v", err)
-	}
-	if snapshotEvt.Type != "snapshot" {
-		t.Errorf("expected snapshot event, got %q", snapshotEvt.Type)
-	}
+		var snapshotEvt types.IServerEvent
+		if err := json.Unmarshal(msgBytes, &snapshotEvt); err != nil {
+			t.Fatalf("unmarshaling snapshot: %v", err)
+		}
+		if snapshotEvt.Type != "snapshot" {
+			t.Errorf("expected snapshot event, got %q", snapshotEvt.Type)
+		}
 
-	// 2. Broadcast a live event and assert receipt
-	hub.Broadcast(&types.IServerEvent{
-		Type:    "agent_removed",
-		At:      time.Now().UnixMilli(),
-		AgentID: "agent-1",
+		// 2. Broadcast a live event and assert receipt
+		hub.Broadcast(&types.IServerEvent{
+			Type:    "agent_removed",
+			At:      time.Now().UnixMilli(),
+			AgentID: "agent-1",
+		})
+
+		_, msgBytes, err = conn.Read(ctx)
+		if err != nil {
+			t.Fatalf("reading second ws message: %v", err)
+		}
+
+		var liveEvt types.IServerEvent
+		if err := json.Unmarshal(msgBytes, &liveEvt); err != nil {
+			t.Fatalf("unmarshaling live event: %v", err)
+		}
+		if liveEvt.Type != "agent_removed" {
+			t.Errorf("expected agent_removed event, got %q", liveEvt.Type)
+		}
 	})
 
-	_, msgBytes, err = conn.Read(ctx)
-	if err != nil {
-		t.Fatalf("reading second ws message: %v", err)
-	}
+	t.Run("environments error on ws connect", func(t *testing.T) {
+		mock.mu.Lock()
+		mock.environmentsErr = errors.New("load error")
+		mock.mu.Unlock()
+		defer func() {
+			mock.mu.Lock()
+			mock.environmentsErr = nil
+			mock.mu.Unlock()
+		}()
 
-	var liveEvt types.IServerEvent
-	if err := json.Unmarshal(msgBytes, &liveEvt); err != nil {
-		t.Fatalf("unmarshaling live event: %v", err)
-	}
-	if liveEvt.Type != "agent_removed" {
-		t.Errorf("expected agent_removed event, got %q", liveEvt.Type)
-	}
+		wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws/events?token=secret-token"
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+
+		conn, _, err := websocket.Dial(ctx, wsURL, nil)
+		if err == nil {
+			// If connect was accepted, reading should fail immediately due to early exit
+			_, _, _ = conn.Read(ctx)
+			conn.CloseNow()
+		}
+	})
+
+	t.Run("agents error on ws connect", func(t *testing.T) {
+		mock.mu.Lock()
+		mock.agentsErr = errors.New("agents load error")
+		mock.mu.Unlock()
+		defer func() {
+			mock.mu.Lock()
+			mock.agentsErr = nil
+			mock.mu.Unlock()
+		}()
+
+		wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/ws/events?token=secret-token"
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+		defer cancel()
+
+		conn, _, err := websocket.Dial(ctx, wsURL, nil)
+		if err == nil {
+			_, _, _ = conn.Read(ctx)
+			conn.CloseNow()
+		}
+	})
+
+	t.Run("hub closed terminates ws stream", func(t *testing.T) {
+		testHub := stream.NewHub()
+		testSrv := NewServer(ServerConfig{
+			Store:       mock,
+			Hub:         testHub,
+			AuthToken:   "secret-token",
+			CORSOrigins: []string{"*"},
+		})
+		wsServer := httptest.NewServer(testSrv.Router())
+		defer wsServer.Close()
+
+		wsURL := "ws" + strings.TrimPrefix(wsServer.URL, "http") + "/ws/events?token=secret-token"
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		conn, _, err := websocket.Dial(ctx, wsURL, nil)
+		if err != nil {
+			t.Fatalf("dial failed: %v", err)
+		}
+		defer conn.CloseNow()
+
+		// Read snapshot
+		_, _, _ = conn.Read(ctx)
+
+		// Close hub
+		testHub.Close()
+
+		// Next read should return error/close
+		_, _, err = conn.Read(ctx)
+		if err == nil {
+			t.Error("expected read error after hub closed")
+		}
+	})
 }
 
 func TestAgentLiveTailSSE(t *testing.T) {
 	srv, _, hub := setupTestServer(t)
 
-	t.Run("success", func(t *testing.T) {
+	t.Run("success with plain agent ID", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
@@ -582,6 +935,84 @@ func TestAgentLiveTailSSE(t *testing.T) {
 		body := w.Body.String()
 		if !strings.Contains(body, "thinking") {
 			t.Errorf("expected live-tail body to contain 'thinking', got: %s", body)
+		}
+	})
+
+	t.Run("success with URL-encoded agent ID", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		// URL-encoded 885d9dd12b6d62a9%3Aclaude-code%3Abe20b445
+		req := httptest.NewRequest("GET", "/api/v1/agents/885d9dd12b6d62a9%3Aclaude-code%3Abe20b445/live-tail", nil).WithContext(ctx)
+		req.Header.Set("Authorization", "Bearer secret-token")
+		w := httptest.NewRecorder()
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			srv.Router().ServeHTTP(w, req)
+		}()
+
+		time.Sleep(50 * time.Millisecond)
+
+		hub.Broadcast(&types.IServerEvent{
+			Type:    "log_append",
+			At:      time.Now().UnixMilli(),
+			AgentID: "885d9dd12b6d62a9:claude-code:be20b445",
+			Event: &types.ITelemetryFrame{
+				AgentID:   "885d9dd12b6d62a9:claude-code:be20b445",
+				EventType: "tool_call",
+			},
+		})
+
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+		<-done
+
+		body := w.Body.String()
+		if !strings.Contains(body, "tool_call") {
+			t.Errorf("expected live-tail body to contain 'tool_call', got: %s", body)
+		}
+	})
+
+	t.Run("streaming unsupported when flusher missing", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/agents/agent-1/live-tail", nil)
+		req.Header.Set("Authorization", "Bearer secret-token")
+		rec := &nonFlushingRecorder{}
+
+		srv.Router().ServeHTTP(rec, req)
+		if rec.code != http.StatusInternalServerError {
+			t.Errorf("status = %d, want %d", rec.code, http.StatusInternalServerError)
+		}
+	})
+
+	t.Run("hub closed terminates live-tail stream", func(t *testing.T) {
+		testHub := stream.NewHub()
+		testSrv := NewServer(ServerConfig{
+			Store:       &mockStore{},
+			Hub:         testHub,
+			AuthToken:   "secret-token",
+			CORSOrigins: []string{"*"},
+		})
+
+		req := httptest.NewRequest("GET", "/api/v1/agents/agent-1/live-tail", nil)
+		req.Header.Set("Authorization", "Bearer secret-token")
+		w := httptest.NewRecorder()
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			testSrv.Router().ServeHTTP(w, req)
+		}()
+
+		time.Sleep(50 * time.Millisecond)
+		testHub.Close()
+
+		select {
+		case <-done:
+			// Terminated cleanly
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("live-tail handler did not exit after hub close")
 		}
 	})
 }

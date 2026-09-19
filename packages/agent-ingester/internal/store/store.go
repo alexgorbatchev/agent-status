@@ -33,6 +33,9 @@ func Open(dbPath string) (*Store, error) {
 		"_pragma=busy_timeout(5000)&" +
 		"_pragma=foreign_keys(on)&" +
 		"_pragma=auto_vacuum(incremental)"
+	if dbPath == ":memory:" {
+		dsn += "&cache=shared"
+	}
 
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
@@ -372,12 +375,21 @@ func (s *Store) GetAllActiveAgents() ([]types.IAgentState, error) {
 	}
 	defer rows.Close()
 
-	var agents []types.IAgentState
+	var ids []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			return nil, err
 		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	_ = rows.Close()
+
+	var agents []types.IAgentState
+	for _, id := range ids {
 		a, err := s.GetAgent(id)
 		if err != nil {
 			return nil, err

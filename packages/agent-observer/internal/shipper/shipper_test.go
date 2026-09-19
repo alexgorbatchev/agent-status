@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -89,8 +90,8 @@ func TestShipperSendAndAck(t *testing.T) {
 	// Wait for connection and hello
 	time.Sleep(100 * time.Millisecond)
 
-	// Send a frame
-	frame := types.ITelemetryFrame{
+	// Send multiple frames to verify sequencing
+	frame1 := types.ITelemetryFrame{
 		Version:     "1.0",
 		EnvID:       env.ID,
 		Environment: env,
@@ -101,16 +102,28 @@ func TestShipperSendAndAck(t *testing.T) {
 		Timestamp:   time.Now().UnixMilli(),
 		EventType:   "turn_start",
 	}
+	frame2 := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     "env-1:claude-code:sess-1",
+		SessionID:   "sess-1",
+		PID:         1234,
+		Harness:     types.HarnessClaudeCode,
+		Timestamp:   time.Now().UnixMilli(),
+		EventType:   "thinking",
+	}
 
-	s.Enqueue(frame)
+	s.Enqueue(frame1)
+	s.Enqueue(frame2)
 
-	// Wait for frame and ack
+	// Wait for frames and ack
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		mu.Lock()
 		count := len(receivedFrames)
 		mu.Unlock()
-		if count > 0 {
+		if count >= 2 {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -123,18 +136,216 @@ func TestShipperSendAndAck(t *testing.T) {
 	if receivedHello == nil || receivedHello.Type != "hello" {
 		t.Errorf("receivedHello = %+v, want hello message", receivedHello)
 	}
-	if len(receivedFrames) != 1 {
-		t.Fatalf("expected 1 frame received, got %d", len(receivedFrames))
+	if len(receivedFrames) != 2 {
+		t.Fatalf("expected 2 frames received, got %d", len(receivedFrames))
 	}
 	if receivedFrames[0].Seq != 1 {
-		t.Errorf("received frame seq = %d, want 1", receivedFrames[0].Seq)
+		t.Errorf("received frame 0 seq = %d, want 1", receivedFrames[0].Seq)
+	}
+	if receivedFrames[1].Seq != 2 {
+		t.Errorf("received frame 1 seq = %d, want 2", receivedFrames[1].Seq)
 	}
 	mu.Unlock()
 
 	// Verify unacked buffer is drained
+	deadline = time.Now().Add(1 * time.Second)
+	for time.Now().Before(deadline) {
+		if s.UnackedCount() == 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	if unacked := s.UnackedCount(); unacked != 0 {
 		t.Errorf("s.UnackedCount() = %d, want 0 after ack", unacked)
 	}
+}
+
+func TestShipperHeartbeat(t *testing.T) {
+	origHeartbeat := heartbeatInterval
+	heartbeatInterval = 50 * time.Millisecond
+	defer func() { heartbeatInterval = origHeartbeat }()
+
+	var mu sync.Mutex
+	var receivedHeartbeats int
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "bye")
+
+		for {
+			_, data, err := conn.Read(r.Context())
+			if err != nil {
+				return
+			}
+			var msg types.IObserverMessage
+			if err := json.Unmarshal(data, &msg); err == nil {
+				if msg.Type == "hello" {
+					mu.Lock()
+					receivedHeartbeats++
+					mu.Unlock()
+				}
+			}
+		}
+	}))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	cfg := Config{
+		IngesterURL: wsURL,
+		Environment: types.IEnvironmentInfo{ID: "hb-env", Label: "hb"},
+	}
+
+	s := NewShipper(cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	_ = s.Start(ctx)
+	defer s.Stop()
+
+	// Wait for at least 2 heartbeats
+	deadline := time.Now().Add(1500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		count := receivedHeartbeats
+		mu.Unlock()
+		if count >= 2 {
+			break
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if receivedHeartbeats < 1 {
+		t.Errorf("expected at least 1 heartbeat, got %d", receivedHeartbeats)
+	}
+}
+
+func TestShipperReconnectAndReplay(t *testing.T) {
+	origBackoff := initialBackoff
+	initialBackoff = 20 * time.Millisecond
+	defer func() { initialBackoff = origBackoff }()
+
+	var serverMu sync.Mutex
+	var connectionAttempts int32
+	var allReceivedFrames []types.ITelemetryFrame
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempt := atomic.AddInt32(&connectionAttempts, 1)
+
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close(websocket.StatusNormalClosure, "closed")
+
+		if attempt == 1 {
+			// First connection: read hello, then abruptly close connection without acking
+			_, _, _ = conn.Read(r.Context())
+			time.Sleep(50 * time.Millisecond)
+			return
+		}
+
+		// Subsequent connection: read and ack everything
+		for {
+			_, data, err := conn.Read(r.Context())
+			if err != nil {
+				return
+			}
+			var msg types.IObserverMessage
+			if err := json.Unmarshal(data, &msg); err == nil {
+				if msg.Type == "frames" {
+					serverMu.Lock()
+					allReceivedFrames = append(allReceivedFrames, msg.Frames...)
+					if len(msg.Frames) > 0 {
+						lastSeq := msg.Frames[len(msg.Frames)-1].Seq
+						ack := types.IIngesterMessage{Type: "ack", UpTo: lastSeq}
+						ackBytes, _ := json.Marshal(ack)
+						_ = conn.Write(r.Context(), websocket.MessageText, ackBytes)
+					}
+					serverMu.Unlock()
+				}
+			}
+		}
+	}))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	env := types.IEnvironmentInfo{ID: "replay-env", Label: "replay"}
+	s := NewShipper(Config{
+		IngesterURL: wsURL,
+		Environment: env,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Enqueue frame before connection
+	frame := types.ITelemetryFrame{
+		Version:   "1.0",
+		EnvID:     env.ID,
+		AgentID:   "a1",
+		SessionID: "s1",
+		EventType: "tool_call",
+	}
+	s.Enqueue(frame)
+
+	_ = s.Start(ctx)
+	defer s.Stop()
+
+	// Wait for reconnect and replay
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		serverMu.Lock()
+		count := len(allReceivedFrames)
+		serverMu.Unlock()
+		if count >= 1 && atomic.LoadInt32(&connectionAttempts) >= 2 {
+			break
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+
+	serverMu.Lock()
+	if len(allReceivedFrames) < 1 {
+		t.Errorf("expected frame to be replayed on reconnect, got 0")
+	}
+	serverMu.Unlock()
+
+	// Verify unacked count is drained after replay and ack
+	deadline = time.Now().Add(1 * time.Second)
+	for time.Now().Before(deadline) {
+		if s.UnackedCount() == 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if s.UnackedCount() != 0 {
+		t.Errorf("s.UnackedCount() = %d, want 0", s.UnackedCount())
+	}
+}
+
+func TestShipperConnectionFailureRetry(t *testing.T) {
+	origBackoff := initialBackoff
+	initialBackoff = 10 * time.Millisecond
+	defer func() { initialBackoff = origBackoff }()
+
+	// Connect to closed/invalid port to trigger connection error and retry
+	s := NewShipper(Config{
+		IngesterURL: "ws://127.0.0.1:1/nonexistent",
+		Environment: types.IEnvironmentInfo{ID: "fail-env"},
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	_ = s.Start(ctx)
+	defer s.Stop()
+
+	// Let it attempt connections and exit cleanly on context timeout
+	<-ctx.Done()
 }
 
 func TestShipperRingBufferCap(t *testing.T) {

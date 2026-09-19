@@ -1,6 +1,7 @@
 package tailer
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
@@ -49,6 +50,61 @@ func TestCursorStore(t *testing.T) {
 	if got.Offset != 1024 || got.PrefixHash != "abcdef123456" || got.Inode != 456 {
 		t.Errorf("got cursor %+v, mismatch", got)
 	}
+
+	// Non-existent key
+	if _, ok := store2.Get("nonexistent-key"); ok {
+		t.Errorf("expected not found for nonexistent key")
+	}
+}
+
+func TestCursorStoreSaveError(t *testing.T) {
+	tmpDir := t.TempDir()
+	blockingFile := filepath.Join(tmpDir, "file_as_dir")
+	_ = os.WriteFile(blockingFile, []byte("blocker"), 0600)
+
+	badStore := &CursorStore{
+		filePath: filepath.Join(blockingFile, "sub", "cursors.json"),
+		cursors:  make(map[string]*Cursor),
+	}
+
+	if err := badStore.Save(); err == nil {
+		t.Errorf("expected error when saving to invalid dir path")
+	}
+
+	// Target is an existing directory -> Rename fails
+	badStoreDir := &CursorStore{
+		filePath: tmpDir,
+		cursors:  make(map[string]*Cursor),
+	}
+	if err := badStoreDir.Save(); err == nil {
+		t.Errorf("expected error when saving over an existing directory")
+	}
+}
+
+type dummyFileInfo struct {
+	os.FileInfo
+}
+
+func (d dummyFileInfo) Sys() any {
+	return "not-stat-t"
+}
+
+func TestGetFileInfoStat(t *testing.T) {
+	_, _, err := getFileInfoStat(dummyFileInfo{})
+	if err == nil {
+		t.Errorf("expected error when Sys() cannot be cast to *syscall.Stat_t")
+	}
+}
+
+func TestNewCursorStoreCorruptedFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	badFile := filepath.Join(tmpDir, "corrupted-cursors.json")
+	_ = os.WriteFile(badFile, []byte("{invalid-json"), 0600)
+
+	_, err := NewCursorStore(badFile)
+	if err == nil {
+		t.Errorf("expected error for corrupted cursor store file")
+	}
 }
 
 func TestCursorResetTriggers(t *testing.T) {
@@ -85,6 +141,14 @@ func TestCursorResetTriggers(t *testing.T) {
 		currentHash string
 		wantReset   bool
 	}{
+		{
+			name:        "nil cursor",
+			cursor:      nil,
+			currentSize: 100,
+			currentIno:  ino,
+			currentHash: pHash,
+			wantReset:   false,
+		},
 		{
 			name: "valid cursor - no reset",
 			cursor: &Cursor{
@@ -151,4 +215,94 @@ func TestCursorResetTriggers(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestComputePrefixHash(t *testing.T) {
+	t.Run("size < 512", func(t *testing.T) {
+		r := bytes.NewReader([]byte("short content"))
+		h, err := ComputePrefixHash(r, int64(len("short content")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if h != "" {
+			t.Errorf("expected empty hash for size < 512, got %q", h)
+		}
+	})
+
+	t.Run("size >= 512 with short read", func(t *testing.T) {
+		r := bytes.NewReader([]byte("short")) // len 5 < 512
+		h, err := ComputePrefixHash(r, 1000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if h != "" {
+			t.Errorf("expected empty hash for short read, got %q", h)
+		}
+	})
+
+	t.Run("size >= 512", func(t *testing.T) {
+		data := make([]byte, 1000)
+		for i := range data {
+			data[i] = byte(i % 256)
+		}
+		r := bytes.NewReader(data)
+		h, err := ComputePrefixHash(r, 1000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		expectedSum := sha256.Sum256(data[:512])
+		expectedHex := hex.EncodeToString(expectedSum[:])
+		if h != expectedHex {
+			t.Errorf("ComputePrefixHash() = %q, want %q", h, expectedHex)
+		}
+	})
+}
+
+func TestDefaultCursorPath(t *testing.T) {
+	t.Run("with XDG_CACHE_HOME set", func(t *testing.T) {
+		t.Setenv("XDG_CACHE_HOME", "/custom/cache")
+		path := DefaultCursorPath()
+		if path != "/custom/cache/agent-status/observer-cursors.json" {
+			t.Errorf("got DefaultCursorPath = %q, want %q", path, "/custom/cache/agent-status/observer-cursors.json")
+		}
+	})
+
+	t.Run("with XDG_CACHE_HOME unset", func(t *testing.T) {
+		t.Setenv("XDG_CACHE_HOME", "")
+		home, err := os.UserHomeDir()
+		if err != nil {
+			t.Skip("cannot get user home dir")
+		}
+		path := DefaultCursorPath()
+		want := filepath.Join(home, ".cache", "agent-status", "observer-cursors.json")
+		if path != want {
+			t.Errorf("DefaultCursorPath() = %q, want %q", path, want)
+		}
+	})
+
+	t.Run("with XDG_CACHE_HOME unset and UserHomeDir error", func(t *testing.T) {
+		t.Setenv("XDG_CACHE_HOME", "")
+		origHome := userHomeDirFunc
+		defer func() { userHomeDirFunc = origHome }()
+		userHomeDirFunc = func() (string, error) {
+			return "", os.ErrNotExist
+		}
+
+		path := DefaultCursorPath()
+		want := filepath.Join(os.TempDir(), "agent-status", "observer-cursors.json")
+		if path != want {
+			t.Errorf("DefaultCursorPath() fallback = %q, want %q", path, want)
+		}
+	})
+
+	t.Run("NewCursorStore with empty string uses default", func(t *testing.T) {
+		t.Setenv("XDG_CACHE_HOME", t.TempDir())
+		store, err := NewCursorStore("")
+		if err != nil {
+			t.Fatalf("NewCursorStore(\"\") error: %v", err)
+		}
+		if store.filePath == "" {
+			t.Errorf("expected store.filePath to be set")
+		}
+	})
 }

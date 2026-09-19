@@ -16,6 +16,11 @@ import (
 
 const MaxRingBufferSize = 1000
 
+var (
+	heartbeatInterval = 10 * time.Second
+	initialBackoff    = 500 * time.Millisecond
+)
+
 type Config struct {
 	IngesterURL string
 	BearerToken string
@@ -89,7 +94,7 @@ func (s *Shipper) Stop() {
 
 func (s *Shipper) runConnectionLoop(ctx context.Context) {
 	expBackoff := backoff.NewExponentialBackOff()
-	expBackoff.InitialInterval = 500 * time.Millisecond
+	expBackoff.InitialInterval = initialBackoff
 	expBackoff.Multiplier = 2.0
 	expBackoff.MaxInterval = 30 * time.Second
 	expBackoff.RandomizationFactor = 0.5
@@ -211,7 +216,7 @@ func (s *Shipper) connectAndStream(ctx context.Context) error {
 		}
 	}()
 
-	heartbeatTicker := time.NewTicker(10 * time.Second)
+	heartbeatTicker := time.NewTicker(heartbeatInterval)
 	defer heartbeatTicker.Stop()
 
 	// 4. Stream incoming frames and heartbeats

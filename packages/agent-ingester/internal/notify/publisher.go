@@ -104,8 +104,11 @@ func (p *Publisher) writeLoop(c *client) {
 			if !ok {
 				return
 			}
+			payload := make([]byte, len(msg)+1)
+			copy(payload, msg)
+			payload[len(msg)] = '\n'
 			_ = c.conn.SetWriteDeadline(time.Now().Add(2 * time.Second))
-			if _, err := c.conn.Write(append(msg, '\n')); err != nil {
+			if _, err := c.conn.Write(payload); err != nil {
 				return
 			}
 		}

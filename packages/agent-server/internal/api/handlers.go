@@ -172,6 +172,7 @@ func (s *Server) handleGetAgentByID(w http.ResponseWriter, r *http.Request) {
 	if unescaped, err := url.PathUnescape(id); err == nil && unescaped != "" {
 		id = unescaped
 	}
+
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "missing agent id")
 		return
