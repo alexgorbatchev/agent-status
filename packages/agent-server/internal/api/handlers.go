@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -168,6 +169,9 @@ func (s *Server) handleGetAgents(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetAgentByID(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	if unescaped, err := url.PathUnescape(id); err == nil && unescaped != "" {
+		id = unescaped
+	}
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "missing agent id")
 		return
@@ -189,6 +193,9 @@ func (s *Server) handleGetAgentByID(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetAgentLogs(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	if unescaped, err := url.PathUnescape(id); err == nil && unescaped != "" {
+		id = unescaped
+	}
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "missing agent id")
 		return
@@ -346,6 +353,9 @@ func (s *Server) handleEventsWS(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAgentLiveTailSSE(w http.ResponseWriter, r *http.Request) {
 	agentID := chi.URLParam(r, "id")
+	if unescaped, err := url.PathUnescape(agentID); err == nil && unescaped != "" {
+		agentID = unescaped
+	}
 	if agentID == "" {
 		writeError(w, http.StatusBadRequest, "missing agent id")
 		return
