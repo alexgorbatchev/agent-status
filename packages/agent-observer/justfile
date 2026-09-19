@@ -1,0 +1,21 @@
+# Default recipe: list available tasks
+default:
+    @just --list
+
+# Build air-observer binary strictly into bin/
+build:
+    @mkdir -p bin
+    go build -o bin/air-observer ./cmd/air-observer
+
+# Run all unit tests with race detector
+test:
+    go test -race ./...
+
+# Check module hygiene and run vet
+lint:
+    go mod tidy -diff
+    go vet ./...
+
+# Clean build artifacts
+clean:
+    rm -rf bin/

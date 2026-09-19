@@ -1,0 +1,31 @@
+# Justfile for agent-server
+
+# Default recipe: list available tasks
+default:
+    @just --list
+
+# Run in human-facing interactive mode
+run:
+    go run ./cmd/air-server
+
+# Run in agent-facing token-conservative mode
+run-ai:
+    @AGENT=1 go run ./cmd/air-server
+
+# Build compiled binary strictly into bin/
+build:
+    @mkdir -p bin
+    go build -o bin/air-server ./cmd/air-server
+
+# Run all unit tests with race detector
+test:
+    go test -race ./...
+
+# Check module hygiene and run vet
+lint:
+    go mod tidy -diff
+    go vet ./...
+
+# Clean build artifacts
+clean:
+    rm -rf bin/

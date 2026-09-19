@@ -1,0 +1,128 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+
+	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree"
+	"github.com/spf13/cobra"
+
+	"github.com/alexgorbatchev/agent-status/packages/agent-server/internal/api"
+	"github.com/alexgorbatchev/agent-status/packages/agent-server/internal/config"
+	"github.com/alexgorbatchev/agent-status/packages/agent-server/internal/store"
+	"github.com/alexgorbatchev/agent-status/packages/agent-server/internal/stream"
+)
+
+var version = "dev"
+
+func main() {
+	cfg := config.DefaultConfig()
+
+	rootCmd := &cobra.Command{
+		Use:   "air-server",
+		Short: "Agent Status central REST & streaming server",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return run(cmd.Context(), cfg)
+		},
+	}
+
+	rootCmd.Version = version
+	rootCmd.SetVersionTemplate("{{.Version}}\n")
+
+	flags := rootCmd.Flags()
+	flags.StringVarP(&cfg.Addr, "addr", "a", cfg.Addr, "HTTP listen address (e.g. :4502 or 127.0.0.1:4502)")
+	flags.StringVar(&cfg.DBPath, "db", cfg.DBPath, "Path to agent-status SQLite database (read-only)")
+	flags.StringVar(&cfg.SocketPath, "socket", cfg.SocketPath, "Path to notify unix domain socket")
+	flags.StringSliceVar(&cfg.CORSOrigins, "cors-origin", cfg.CORSOrigins, "Allowed CORS origins")
+	flags.StringVar(&cfg.AuthToken, "token", cfg.AuthToken, "Bearer authentication token (or AGENT_STATUS_TOKEN env)")
+	flags.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "Log level (debug, info, warn, error)")
+
+	cobrahelptree.Setup(rootCmd)
+
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func run(ctx context.Context, cfg config.Config) error {
+	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	var logLevel slog.Level
+	switch strings.ToLower(cfg.LogLevel) {
+	case "debug":
+		logLevel = slog.LevelDebug
+	case "warn":
+		logLevel = slog.LevelWarn
+	case "error":
+		logLevel = slog.LevelError
+	default:
+		logLevel = slog.LevelInfo
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel}))
+	slog.SetDefault(logger)
+
+	logger.InfoContext(ctx, "opening database (read-only)", "path", cfg.DBPath)
+	sqliteStore, err := store.OpenReadOnly(cfg.DBPath)
+	if err != nil {
+		return fmt.Errorf("opening store: %w", err)
+	}
+	defer sqliteStore.Close()
+
+	hub := stream.NewHub()
+	defer hub.Close()
+
+	subscriber := stream.NewSubscriber(stream.SubscriberConfig{
+		SocketPath:    cfg.SocketPath,
+		ReconnectWait: 1 * time.Second,
+		Logger:        logger,
+	}, sqliteStore, hub)
+
+	go subscriber.Run(ctx)
+
+	server := api.NewServer(api.ServerConfig{
+		Store:       sqliteStore,
+		Hub:         hub,
+		AuthToken:   cfg.AuthToken,
+		CORSOrigins: cfg.CORSOrigins,
+		Logger:      logger,
+	})
+
+	httpServer := &http.Server{
+		Addr:              cfg.Addr,
+		Handler:           server.Router(),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	serverErr := make(chan error, 1)
+	go func() {
+		logger.InfoContext(ctx, "starting agent server", "addr", cfg.Addr)
+		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErr <- err
+		}
+		close(serverErr)
+	}()
+
+	select {
+	case <-ctx.Done():
+		logger.Info("shutting down agent server...")
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			logger.Error("server shutdown error", "err", err)
+		}
+		return nil
+	case err := <-serverErr:
+		return fmt.Errorf("http server error: %w", err)
+	}
+}

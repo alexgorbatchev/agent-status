@@ -1,0 +1,133 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/classifier"
+	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/config"
+	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/notify"
+	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/pricing"
+	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/receiver"
+	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/store"
+	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/summarizer"
+	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree"
+	"github.com/spf13/cobra"
+)
+
+var version = "dev"
+
+func main() {
+	cfg := config.Load()
+
+	rootCmd := &cobra.Command{
+		Use:   "air-ingester",
+		Short: "Agent Status Central Telemetry Ingestion Daemon",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			slog.Info("starting air-ingester", "addr", cfg.Addr, "db", cfg.DBPath, "notifySock", cfg.NotifySock, "noSummarize", cfg.NoSummarize)
+
+			st, err := store.Open(cfg.DBPath)
+			if err != nil {
+				return fmt.Errorf("opening store: %w", err)
+			}
+			defer st.Close()
+
+			priceEngine, err := pricing.NewPricingEngine()
+			if err != nil {
+				return fmt.Errorf("initializing pricing engine: %w", err)
+			}
+
+			sumEngine, err := summarizer.New(summarizer.Config{
+				NoSummarize:     cfg.NoSummarize,
+				LiteLLMBaseURL:  cfg.LiteLLMBaseURL,
+				LiteLLMAPIKey:   cfg.LiteLLMAPIKey,
+				LiteLLMModel:    cfg.SummarizerModel,
+				GeminiAPIKey:    cfg.GeminiAPIKey,
+				AnthropicAPIKey: cfg.AnthropicAPIKey,
+			})
+			if err != nil {
+				return fmt.Errorf("initializing summarizer engine: %w", err)
+			}
+
+			pub, err := notify.NewPublisher(cfg.NotifySock)
+			if err != nil {
+				return fmt.Errorf("initializing notify publisher: %w", err)
+			}
+			defer pub.Close()
+
+			cls := classifier.New(st, priceEngine, sumEngine)
+			rcv := receiver.New(st, cls, pub, cfg.BearerToken)
+
+			mux := http.NewServeMux()
+			mux.Handle("/ws/ingest", rcv)
+			mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("ok\n"))
+			})
+
+			srv := &http.Server{
+				Addr:         cfg.Addr,
+				Handler:      mux,
+				ReadTimeout:  15 * time.Second,
+				WriteTimeout: 15 * time.Second,
+			}
+
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
+			// Hourly retention pruner
+			go func() {
+				ticker := time.NewTicker(1 * time.Hour)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-ticker.C:
+						now := time.Now().UnixMilli()
+						retentionCutoff := now - (48 * 3600 * 1000)
+						exitedCutoff := now - (30 * 24 * 3600 * 1000)
+						_ = st.PruneOldEventsAndExitedAgents(retentionCutoff, exitedCutoff)
+					}
+				}
+			}()
+
+			go func() {
+				if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+					slog.Error("ingestion server error", "err", err)
+				}
+			}()
+
+			<-ctx.Done()
+			slog.Info("shutting down air-ingester")
+
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			return srv.Shutdown(shutdownCtx)
+		},
+	}
+
+	rootCmd.Version = version
+	rootCmd.SetVersionTemplate("{{.Version}}\n")
+
+	rootCmd.Flags().StringVar(&cfg.Addr, "addr", cfg.Addr, "HTTP/WebSocket listen address")
+	rootCmd.Flags().StringVar(&cfg.BearerToken, "token", cfg.BearerToken, "Bearer authentication token")
+	rootCmd.Flags().StringVar(&cfg.DBPath, "db", cfg.DBPath, "SQLite database path")
+	rootCmd.Flags().StringVar(&cfg.NotifySock, "notify-sock", cfg.NotifySock, "Unix domain socket path for server event notifications")
+	rootCmd.Flags().BoolVar(&cfg.NoSummarize, "no-summarize", cfg.NoSummarize, "Disable LLM action summarization")
+	rootCmd.Flags().StringVar(&cfg.LiteLLMBaseURL, "litellm-url", cfg.LiteLLMBaseURL, "OpenAI-compatible / LiteLLM proxy base URL")
+	rootCmd.Flags().StringVar(&cfg.LiteLLMAPIKey, "litellm-key", cfg.LiteLLMAPIKey, "OpenAI-compatible / LiteLLM API key")
+	rootCmd.Flags().StringVar(&cfg.SummarizerModel, "summarizer-model", cfg.SummarizerModel, "Model to use for action summarization")
+
+	cobrahelptree.Setup(rootCmd)
+
+	if err := rootCmd.Execute(); err != nil {
+		os.Exit(1)
+	}
+}

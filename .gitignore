@@ -5,19 +5,28 @@
 .cache
 
 # Build output
-dist
-.dist
+bin/
+dist/
+.dist/
 packages/*/bin/
+packages/ui-web/dist/
+
+# Test binaries & coverage
+*.test
+*.out
+*.prof
 
 # Dependencies
-node_modules
+node_modules/
 
 # Git worktrees
-.workspaces
+.workspaces/
 
 # SQLite sidecar files
+*.sqlite
 *.sqlite-wal
 *.sqlite-shm
+*.db
 *.db-wal
 *.db-shm
 
@@ -26,5 +35,7 @@ node_modules
 .env.*
 *.token
 
-# OS
+# OS and IDE
 .DS_Store
+.idea/
+.vscode/

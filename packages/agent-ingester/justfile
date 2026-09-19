@@ -1,0 +1,32 @@
+# Justfile for agent-ingester
+
+# Default recipe: list available tasks
+default:
+    @just --list
+
+# Run in human-facing interactive mode
+run *args:
+    @mkdir -p bin
+    go run ./cmd/air-ingester {{args}}
+
+# Run in agent-facing token-conservative mode
+run-ai *args:
+    AGENT=1 just run {{args}}
+
+# Build compiled binary into bin/
+build:
+    @mkdir -p bin
+    go build -o bin/air-ingester ./cmd/air-ingester
+
+# Run all unit and integration tests with race detector
+test:
+    go test -race ./...
+
+# Lint and check module hygiene
+lint:
+    go mod tidy -diff
+    go vet ./...
+
+# Clean build artifacts
+clean:
+    rm -rf bin/

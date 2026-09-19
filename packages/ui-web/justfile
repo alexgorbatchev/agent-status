@@ -1,0 +1,29 @@
+# Justfile for ui-web
+
+# Default recipe
+default:
+    @just --list
+
+# Run dev server
+run:
+    bun run src/server.ts
+
+# Run dev server in AI mode
+run-ai:
+    AGENT=1 bun run src/server.ts
+
+# Build frontend bundle
+build:
+    bun build src/main.tsx --outdir dist --minify
+
+# Run type check
+lint:
+    bun x tsc --noEmit
+
+# Run unit tests
+test:
+    bun test
+
+# Clean artifacts
+clean:
+    rm -rf dist/
