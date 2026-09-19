@@ -85,16 +85,14 @@ async function startStack() {
 
   console.log("🚀 Starting agent-status stack (ingester, server, observer, ui)...");
 
-  // 1. Build Go binaries if not already built
+  // 1. Build Go binaries
   const ingesterBin = resolve(rootDir, "packages", "agent-ingester", "bin", "air-ingester");
   const serverBin = resolve(rootDir, "packages", "agent-server", "bin", "air-server");
   const observerBin = resolve(rootDir, "packages", "agent-observer", "bin", "air-observer");
 
-  if (!existsSync(ingesterBin) || !existsSync(serverBin) || !existsSync(observerBin)) {
-    console.log("📦 Building Go binaries...");
-    const buildProc = Bun.spawn(["just", "build-all"], { cwd: rootDir, stdout: "inherit", stderr: "inherit" });
-    await buildProc.exited;
-  }
+  console.log("📦 Building Go binaries...");
+  const buildProc = Bun.spawn(["just", "build-all"], { cwd: rootDir, stdout: "inherit", stderr: "inherit" });
+  await buildProc.exited;
 
   const pids: number[] = [];
   const procs: Subprocess[] = [];
