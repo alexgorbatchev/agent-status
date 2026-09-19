@@ -8,7 +8,7 @@ const server = Bun.serve({
     "/": indexHTML,
   },
   development: process.env.NODE_ENV !== "production",
-  fetch(req) {
+  fetch(_req) {
     return new Response("Not Found", { status: 404 });
   },
 });

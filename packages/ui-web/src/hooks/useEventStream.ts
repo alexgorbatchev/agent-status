@@ -1,20 +1,23 @@
 import { useEffect, useState, useCallback } from "react";
-import type { IAgentState, IEnvironmentInfo, IServerEvent } from "../types";
+import type { IAgentState, IEnvironmentInfo, ServerEvent } from "../types";
 
-interface EventStreamState {
+export interface IEventStreamState {
   agents: IAgentState[];
   environments: IEnvironmentInfo[];
   isConnected: boolean;
   error: string | null;
 }
 
-export function useEventStream(apiBaseUrl: string = "http://localhost:4502", token: string = "dev-secret-token"): EventStreamState {
+export function useEventStream(
+  apiBaseUrl: string = "http://localhost:4502",
+  token: string = "dev-secret-token",
+): IEventStreamState {
   const [agents, setAgents] = useState<IAgentState[]>([]);
   const [environments, setEnvironments] = useState<IEnvironmentInfo[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleServerEvent = useCallback((event: IServerEvent) => {
+  const handleServerEvent = useCallback((event: ServerEvent) => {
     switch (event.type) {
       case "snapshot":
         if (event.agents) setAgents(event.agents);
@@ -27,10 +30,10 @@ export function useEventStream(apiBaseUrl: string = "http://localhost:4502", tok
             const idx = prev.findIndex((a) => a.id === event.agent?.id);
             if (idx >= 0) {
               const updated = [...prev];
-              updated[idx] = event.agent!;
+              updated[idx] = event.agent;
               return updated;
             }
-            return [event.agent!, ...prev];
+            return [event.agent, ...prev];
           });
         }
         break;
@@ -47,10 +50,10 @@ export function useEventStream(apiBaseUrl: string = "http://localhost:4502", tok
             const idx = prev.findIndex((e) => e.id === event.environment?.id);
             if (idx >= 0) {
               const updated = [...prev];
-              updated[idx] = event.environment!;
+              updated[idx] = event.environment;
               return updated;
             }
-            return [...prev, event.environment!];
+            return [...prev, event.environment];
           });
         }
         break;
@@ -73,14 +76,14 @@ export function useEventStream(apiBaseUrl: string = "http://localhost:4502", tok
 
         es.onmessage = (msg) => {
           try {
-            const data: IServerEvent = JSON.parse(msg.data);
+            const data: ServerEvent = JSON.parse(msg.data);
             handleServerEvent(data);
-          } catch (err) {
-            console.error("Failed to parse SSE event:", err);
+          } catch (error) {
+            console.error("Failed to parse SSE event:", error);
           }
         };
 
-        es.onerror = (err) => {
+        es.onerror = () => {
           setIsConnected(false);
           setError("Disconnected from agent-server stream. Reconnecting...");
           if (es) {
@@ -89,8 +92,8 @@ export function useEventStream(apiBaseUrl: string = "http://localhost:4502", tok
           }
           retryTimeout = setTimeout(connect, 3000);
         };
-      } catch (err) {
-        setError(String(err));
+      } catch (error) {
+        setError(String(error));
         retryTimeout = setTimeout(connect, 3000);
       }
     };

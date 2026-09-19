@@ -1,29 +1,26 @@
 import React from "react";
-import type { IAgentState, IEnvironmentInfo } from "../types";
+import type { IEnvironmentGroupProps } from "./types";
 import { AgentCard } from "./AgentCard";
 import { Server, DollarSign } from "lucide-react";
 
-interface EnvironmentGroupProps {
-  environment: IEnvironmentInfo;
-  agents: IAgentState[];
-  onSelectAgent: (agent: IAgentState) => void;
-}
-
-export const EnvironmentGroup: React.FC<EnvironmentGroupProps> = ({
-  environment,
-  agents,
-  onSelectAgent,
-}) => {
+export function EnvironmentGroup({ environment, agents, onSelectAgent }: IEnvironmentGroupProps) {
   const envSpend = agents.reduce((acc, a) => acc + (a.activity.cost?.total || 0), 0);
   const activeCount = agents.filter((a) => a.activity.lifecycle === "RUNNING").length;
 
   return (
-    <div className="mb-8">
+    <div data-testid="EnvironmentGroup" className="mb-8">
       {/* Environment Header */}
-      <div className="flex items-center justify-between gap-4 mb-3 pb-2 border-b border-slate-800/80">
+      <div
+        data-testid="EnvironmentGroup--header"
+        className="flex items-center justify-between gap-4 mb-3 pb-2 border-b border-slate-800/80"
+      >
         <div className="flex items-center gap-2">
-          <Server className="w-4 h-4 text-purple-400" />
-          <h2 className="text-sm font-bold text-slate-100">{environment.label}</h2>
+          <span className="w-4 h-4 text-purple-400 flex items-center justify-center">
+            <Server size={16} />
+          </span>
+          <h2 data-testid="EnvironmentGroup--title" className="text-sm font-bold text-slate-100">
+            {environment.label}
+          </h2>
           <span className="text-xs text-slate-500 font-mono">
             ({environment.user}@{environment.hostname})
           </span>
@@ -43,18 +40,23 @@ export const EnvironmentGroup: React.FC<EnvironmentGroupProps> = ({
           )}
         </div>
 
-        <div className="flex items-center gap-1 text-xs font-mono text-emerald-400">
-          <DollarSign className="w-3.5 h-3.5" />
+        <div
+          data-testid="EnvironmentGroup--spend"
+          className="flex items-center gap-1 text-xs font-mono text-emerald-400"
+        >
+          <span className="w-3.5 h-3.5 flex items-center justify-center">
+            <DollarSign size={14} />
+          </span>
           <span>${envSpend.toFixed(3)}</span>
         </div>
       </div>
 
       {/* Agents Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div data-testid="EnvironmentGroup--grid" className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {agents.map((agent) => (
           <AgentCard key={agent.id} agent={agent} onOpenDrawer={onSelectAgent} />
         ))}
       </div>
     </div>
   );
-};
+}

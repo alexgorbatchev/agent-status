@@ -14,14 +14,16 @@ run-ai:
 
 # Build frontend bundle
 build:
-    bun build src/main.tsx --outdir dist --minify
+    bun build src/main.ts --outdir dist --minify
 
-# Run type check
+# Run policy checks and TypeScript compiler check
 lint:
+    bun run check
     bun x tsc --noEmit
 
-# Run unit tests
+# Run policy checks followed by unit test suite
 test:
+    bun run check
     bun test
 
 # Clean artifacts

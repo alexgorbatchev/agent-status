@@ -4,9 +4,11 @@
   "type": "module",
   "scripts": {
     "dev": "bun run src/server.ts",
-    "build": "bun build src/main.tsx --outdir dist --minify",
+    "build": "bun build src/main.ts --outdir dist --minify",
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "check": "bun run typescript-ai-policy -- check",
+    "lint": "bun run typescript-ai-policy -- check && bun x tsc --noEmit",
+    "test": "bun run check && bun test"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.0.0",
@@ -19,9 +21,14 @@
     "tailwindcss": "^4.0.0"
   },
   "devDependencies": {
+    "@alexgorbatchev/typescript-ai-policy": "^13.0.0",
+    "@storybook/react": "^10.6.0",
+    "@storybook/test": "^8.6.15",
     "@types/bun": "latest",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "oxfmt": "^0.68.0",
+    "oxlint": "^1.83.0",
     "typescript": "^5.7.0"
   }
 }

@@ -13,10 +13,10 @@ import type {
   IAgentActivity,
   IAgentState,
   ITelemetryFrame,
-  IObserverMessage,
-  IIngesterMessage,
-  IServerEvent,
-} from "./types";
+  ObserverMessage,
+  IngesterMessage,
+  ServerEvent,
+} from "../index";
 
 describe("TypeScript Shared Contracts", () => {
   it("verifies all LifecycleState values", () => {
@@ -178,17 +178,17 @@ describe("TypeScript Shared Contracts", () => {
       },
     };
 
-    const obsMsg: IObserverMessage = {
+    const obsMsg: ObserverMessage = {
       type: "frames",
       frames: [frame],
     };
 
-    const ingMsg: IIngesterMessage = {
+    const ingMsg: IngesterMessage = {
       type: "ack",
       upTo: 42,
     };
 
-    const srvEvent: IServerEvent = {
+    const srvEvent: ServerEvent = {
       type: "log_append",
       at: 3000,
       agentId: frame.agentId,

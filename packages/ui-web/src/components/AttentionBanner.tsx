@@ -1,46 +1,51 @@
 import React from "react";
-import type { IAgentState } from "../types";
+import type { IAttentionBannerProps } from "./types";
 import { AlertCircle, HelpCircle, AlertTriangle, ArrowRight } from "lucide-react";
 
-interface AttentionBannerProps {
-  agents: IAgentState[];
-  onSelectAgent: (agent: IAgentState) => void;
-}
-
-export const AttentionBanner: React.FC<AttentionBannerProps> = ({ agents, onSelectAgent }) => {
+export function AttentionBanner({ agents, onSelectAgent }: IAttentionBannerProps) {
   // Tier 1: ACT NOW (Running agents with WAITING_QUESTION or ERROR)
   const actNowAgents = agents.filter(
     (a) =>
       a.activity.lifecycle === "RUNNING" &&
       !a.environment.isStale &&
-      (a.activity.activity === "WAITING_QUESTION" || a.activity.activity === "ERROR")
+      (a.activity.activity === "WAITING_QUESTION" || a.activity.activity === "ERROR"),
   );
 
   if (actNowAgents.length === 0) return null;
 
   return (
-    <div className="mb-6 p-4 rounded-xl bg-amber-950/30 border border-amber-800/80 shadow-lg shadow-amber-950/20">
-      <div className="flex items-center gap-2 mb-3">
-        <AlertCircle className="w-5 h-5 text-amber-400" />
-        <h2 className="text-sm font-bold tracking-wide uppercase text-amber-300">
+    <div
+      data-testid="AttentionBanner"
+      className="mb-6 p-4 rounded-xl bg-amber-950/30 border border-amber-800/80 shadow-lg shadow-amber-950/20"
+    >
+      <div data-testid="AttentionBanner--header" className="flex items-center gap-2 mb-3">
+        <span className="w-5 h-5 text-amber-400 flex items-center justify-center">
+          <AlertCircle size={20} />
+        </span>
+        <h2 data-testid="AttentionBanner--title" className="text-sm font-bold tracking-wide uppercase text-amber-300">
           Act Now — {actNowAgents.length} Agent{actNowAgents.length > 1 ? "s" : ""} Require Attention
         </h2>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <div data-testid="AttentionBanner--grid" className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {actNowAgents.map((agent) => {
           const isQuestion = agent.activity.activity === "WAITING_QUESTION";
           return (
             <div
               key={agent.id}
+              data-testid="AttentionBanner--agent-card"
               onClick={() => onSelectAgent(agent)}
               className="flex items-start justify-between gap-3 p-3 rounded-lg bg-slate-900/90 border border-amber-900/60 hover:border-amber-600 transition-all cursor-pointer group"
             >
               <div className="flex items-start gap-2.5">
                 {isQuestion ? (
-                  <HelpCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <span className="w-4 h-4 text-amber-400 shrink-0 mt-0.5 flex items-center justify-center">
+                    <HelpCircle size={16} />
+                  </span>
                 ) : (
-                  <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                  <span className="w-4 h-4 text-red-400 shrink-0 mt-0.5 flex items-center justify-center">
+                    <AlertTriangle size={16} />
+                  </span>
                 )}
                 <div>
                   <div className="flex items-center gap-2 text-xs font-semibold text-slate-200 group-hover:text-amber-300 transition-colors">
@@ -57,11 +62,13 @@ export const AttentionBanner: React.FC<AttentionBannerProps> = ({ agents, onSele
                 </div>
               </div>
 
-              <ArrowRight className="w-4 h-4 text-slate-500 group-hover:text-amber-400 shrink-0 transition-colors self-center" />
+              <span className="w-4 h-4 text-slate-500 group-hover:text-amber-400 shrink-0 transition-colors self-center flex items-center justify-center">
+                <ArrowRight size={16} />
+              </span>
             </div>
           );
         })}
       </div>
     </div>
   );
-};
+}
