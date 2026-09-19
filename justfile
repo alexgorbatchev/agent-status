@@ -4,13 +4,25 @@
 default:
     @just --list
 
+# Start the full agent-status stack (ingester, server, observer, web UI)
+start:
+    bun run scripts/dev-stack.ts start
+
+# Stop the full agent-status stack and free ports
+stop:
+    bun run scripts/dev-stack.ts stop
+
+# Check status of running dev stack
+status:
+    bun run scripts/dev-stack.ts status
+
 # Run in human-facing interactive mode
 run *args:
-    @echo "Specify component: just run-observer, just run-ingester, just run-server, or just run-ui"
+    @just start
 
 # Run in agent-facing token-conservative mode
 run-ai *args:
-    @AGENT=1 just run {{args}}
+    AGENT=1 just start
 
 # Build all Go binaries and bundle ui-web
 build-all:
@@ -44,4 +56,5 @@ lint:
 
 # Clean all build and test artifacts
 clean:
-    rm -rf packages/*/bin packages/ui-web/dist .tmp/test-*
+    @just stop
+    rm -rf packages/*/bin packages/ui-web/dist .tmp/test-* .tmp/dev-stack
