@@ -1,6 +1,6 @@
 ---
 created_on: 2026-09-18 22:30
-last_modified: 2026-09-18 22:30
+last_modified: 2026-09-18 23:25
 status: current
 ---
 
@@ -82,7 +82,7 @@ The following source checkouts are retained on disk:
          IsError   bool   `json:"is_error"`
      }
      ```
-   - **Buffer Handling**: Both packages configure `bufio.Scanner` with a 10MB–16MB max buffer (`scanner.Buffer(make([]byte, 64*1024), 10*1024*1024)`) to absorb large tool outputs and file snapshots without scanner truncation errors.
+   - **Buffer Handling**: Both packages configure `bufio.Scanner` with a 10MB–16MB max buffer (`scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)`) to absorb large tool outputs and file snapshots without scanner truncation errors.
 2. **Descriptor Discovery**: `github.com/janekbaraniewski/openusage`
    - **Location on Disk**: `.tmp/gitsnip/openusage/internal/providers/claude_code/`
    - **Why Chosen**: Demonstrates discovery across symlink paths (`${XDG_DATA_HOME}/ai-registry/claude-code/sessions` and `~/.claude/sessions`), reading `<pid>.json` descriptors, ignoring `*.key` files, and extracting `status: "busy" | "idle"`.
@@ -142,7 +142,7 @@ The following source checkouts are retained on disk:
   - Branch resolution for Claude Code requires zero subprocesses because `gitBranch` is present on every transcript line.
   - For Pi and worktree topology resolution, two lightweight commands are executed:
     1. `git rev-parse --show-toplevel` (Worktree root)
-    2. `git rev-parse --git-common-dir` (Shared Git directory)
+    2. `git rev-parse --path-format=absolute --git-common-dir` (Shared Git directory)
   - When common dir $\neq$ `<toplevel>/.git`, `isWorktree: true` and `relPath` is calculated relative to canonical root.
   - Results cached with a 30-second TTL per CWD; invalidated immediately if a new `gitBranch` appears in telemetry.
 
@@ -175,12 +175,13 @@ The following source checkouts are retained on disk:
 2. **Deterministic State Machine**:
    - Reference: `.tmp/gitsnip/agenthud/src/data/sessionLiveness.ts` and `.tmp/gitsnip/claude-code-ui/packages/daemon/src/status-machine.ts`.
    - Ordered pure-Go reducer rules:
-     1. `agent_exited` $\to$ `DONE` (clears active tools/questions)
-     2. `question_prompt` / `AskUserQuestion` $\to$ `WAITING_QUESTION` (stores question text)
-     3. `isError: true` $\to$ `ERROR` (stores `lastError` truncated to 2,000 chars; sticky until next tool/turn)
-     4. `tool_call` $\to$ `BUSY` (records `activeTool` and `activeTarget`)
-     5. `turn_end` $\to$ `IDLE` (clears `activeTool`, `activeTarget`, and `question`)
-     6. `thinking` / `turn_start` $\to$ `BUSY`
+     1. `run_exited` $\to$ `lifecycle: EXITED`
+     2. `run_started` $\to$ `lifecycle: RUNNING`
+     3. `question_prompt` / `AskUserQuestion` $\to$ `activity: WAITING_QUESTION` (stores question text)
+     4. `tool_result` (`isError: true`) $\to$ `activity: ERROR` (stores `lastError` truncated to 2,000 chars)
+     5. `tool_call` $\to$ `activity: BUSY` (records `activeTool` and `activeTarget`)
+     6. `turn_end` $\to$ `activity: IDLE` (clears `activeTool`, `activeTarget`, and `question`)
+     7. `thinking` / `turn_start` $\to$ `activity: BUSY`
 
 ---
 
@@ -189,8 +190,8 @@ The following source checkouts are retained on disk:
 #### Chosen Building Blocks:
 1. **Primary Provider (Gemini 2.5 Flash)**: `google.golang.org/genai`
    - **Adoption**: Official Google Gen AI Go SDK.
-   - **Features**: Structured JSON output schema enforcing `{ "summary": string, "phase": string, "activeTarget": string }`.
-2. **Fallback Provider (Claude Haiku 3.5 / 4.5)**: `github.com/anthropics/anthropic-sdk-go`
+   - **Features**: Structured JSON output schema enforcing `{ "action": string, "phase": string, "activeTarget": string }`.
+2. **Fallback Provider (Claude Haiku 4.5)**: `github.com/anthropics/anthropic-sdk-go`
    - **Adoption**: Official Anthropic Go SDK.
    - **Features**: Automated fallback on Gemini 429/5xx errors or 10s timeout after 2 retries with jitter.
 3. **Debounce Rate Limiter**: `golang.org/x/time/rate` + `sync.Map`
@@ -200,14 +201,32 @@ The following source checkouts are retained on disk:
 
 ### 3.3. SQLite Store & Migrations
 
-#### Chosen Building Block: `github.com/mattn/go-sqlite3` (or `modernc.org/sqlite` for Cgo-free)
-- **Adoption**: 8k+ stars, de facto Go database driver.
+#### Chosen Building Block: `github.com/ncruces/go-sqlite3`
+- **Adoption**: Modern pure-Go / Wasm-based SQLite driver providing complete Cgo-free execution across Darwin and Linux.
+- **Why Chosen**: Eliminates Cgo build toolchain requirements and cross-compilation headaches while supporting native WAL mode, high concurrency, and standard `database/sql` interfaces.
 - **Connection Configuration**:
   ```go
-  db, err := sql.Open("sqlite3", "file:"+dbPath+"?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000&_foreign_keys=ON")
+  import (
+      _ "github.com/ncruces/go-sqlite3/driver"
+      _ "github.com/ncruces/go-sqlite3/embed"
+  )
+
+  dsn := "file:" + dbPath + "?" +
+      "_pragma=journal_mode(wal)&" +
+      "_pragma=synchronous(normal)&" +
+      "_pragma=busy_timeout(5000)&" +
+      "_pragma=foreign_keys(on)&" +
+      "_pragma=auto_vacuum(incremental)"
+
+  db, err := sql.Open("sqlite3", dsn)
+  ```
+- **Connection Pool Tuning**:
+  ```go
+  db.SetMaxOpenConns(max(4, runtime.GOMAXPROCS(0)))
+  db.SetMaxIdleConns(max(4, runtime.GOMAXPROCS(0)))
   ```
 - **Migrations**: Custom transactional runner checking `PRAGMA user_version` sequentially inside single transactions.
-- **Retention Pruning**: Background `time.Ticker` (hourly) executing cleanup queries followed by `PRAGMA incremental_vacuum`.
+- **Retention Pruning**: Background `time.Ticker` (hourly) executing cleanup queries followed by `PRAGMA incremental_vacuum(1000)`.
 
 ---
 

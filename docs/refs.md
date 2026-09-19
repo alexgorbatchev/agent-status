@@ -45,8 +45,8 @@ All repository URLs in this document were verified live via HTTP status checks a
 | Repository | Purpose & Relevance |
 |---|---|
 | [`github.com/coder/websocket`](https://github.com/coder/websocket) | Idiomatic, high-performance WebSocket client and server library in Go (formerly `nhooyr.io/websocket`). |
-| [`github.com/mattn/go-sqlite3`](https://github.com/mattn/go-sqlite3) | Cgo SQLite3 driver supporting WAL mode, `PRAGMA incremental_vacuum`, and `PRAGMA user_version` migrations. |
-| [`gitlab.com/cznic/sqlite`](https://gitlab.com/cznic/sqlite) | Pure-Go SQLite driver without Cgo requirements, simplifying cross-compilation across Darwin and Linux. |
+| [`github.com/ncruces/go-sqlite3`](https://github.com/ncruces/go-sqlite3) | Modern pure-Go / Wasm-translated SQLite driver (`CGO_ENABLED=0`). Full support for WAL mode, `PRAGMA incremental_vacuum`, and `PRAGMA user_version` migrations across Darwin and Linux without C toolchain requirements. |
+| [`github.com/mattn/go-sqlite3`](https://github.com/mattn/go-sqlite3) | Reference Cgo SQLite3 driver. |
 
 ### 1.5. CLI & Help Generation
 
