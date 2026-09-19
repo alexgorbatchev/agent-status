@@ -1,6 +1,6 @@
 ---
 created_on: 2026-09-18 20:07
-last_modified: 2026-09-18 23:05
+last_modified: 2026-09-18 23:15
 status: current
 ---
 
@@ -25,6 +25,7 @@ It answers five questions without the engineer cycling through terminals:
 - Harnesses: **Claude Code** and **Pi**.
 - Host platforms: **darwin** and **linux**.
 - Four packages: `agent-observer`, `agent-ingester`, `agent-server`, `ui-web`.
+- Core Go implementation built with verified ecosystem libraries (`gopsutil/v4`, `coder/websocket`, `go-chi/chi/v5`, `mattn/go-sqlite3`, `google.golang.org/genai`, `anthropic-sdk-go`, `spf13/cobra`).
 - Live token usage (5-way breakdown: input, output, cache read, cache write, reasoning) and cost computation using a centrally synced model pricing map.
 - Live cost roll-ups across Agent cards, Project groups, Environment groups, and the Fleet header.
 - Subagent observation for delegated runs (nested execution traces in the drawer, usage/cost roll-up to the parent Agent).
@@ -37,7 +38,7 @@ These are rejected during implementation review. Each has a stated reason and, w
 |---|---|
 | **Codex support** | Deferred by product decision. `HarnessType` does not include it. Revisit after Phase 5. |
 | **OpenCode support** | Deferred by product decision. Its store (`~/.local/share/opencode/opencode.db`) is SQLite, not JSONL, and requires a separate tailer design. Revisit after Phase 5. |
-| **Windows hosts** | Agent liveness uses POSIX process semantics (`signal 0`, `/proc`, `lsof`/`libproc`). `platform` is `"darwin" \| "linux"` only. |
+| **Windows hosts** | Agent liveness uses POSIX process semantics (`signal 0`, `/proc`, native Darwin `libproc`). `platform` is `"darwin" \| "linux"` only. |
 | **Permission-prompt detection** | No reliable on-disk or transcript signal for a *pending* permission prompt exists without intercepting IPC or mutating user settings. Stalled permission checks currently report as `BUSY`. See §11. |
 | **Answering a question from the dashboard** | The UI surfaces blocked agents; the engineer answers in the agent's own terminal. |
 | **Historical BI & multi-month time-series cost reporting** | Real-time usage and live cost roll-ups for active/recent agents are in scope; historical time-series analytics, budget alerting, and financial reporting across months are out of scope. |
@@ -120,26 +121,27 @@ Entries form a tree via `{id, parentId}`. The first record is the header:
 │         ENVIRONMENT A (work-macbook)     │   │        ENVIRONMENT B (dev-box-linux)     │
 │  ┌────────────────────────────────────┐  │   │  ┌────────────────────────────────────┐  │
 │  │      packages/agent-observer       │  │   │  │      packages/agent-observer       │  │
+│  │ • gopsutil libproc process scanner │  │   │  │ • gopsutil /proc process scanner   │  │
 │  │ • Claude Code descriptor scanner   │  │   │  │ • Claude Code descriptor scanner   │  │
 │  │ • Pi session + process scanner     │  │   │  │ • Pi session + process scanner     │  │
 │  │ • Subagent directory tailers       │  │   │  │ • Subagent directory tailers       │  │
-│  │ • Byte-offset JSONL tailers        │  │   │  │ • Byte-offset JSONL tailers        │  │
+│  │ • fsnotify + prefix-hash tailers   │  │   │  │ • fsnotify + prefix-hash tailers   │  │
 │  │ • Git root / worktree resolver     │  │   │  │ • Git root / worktree resolver     │  │
 │  └──────────────────┬─────────────────┘  │   │  └──────────────────┬─────────────────┘  │
 └─────────────────────┼────────────────────┘   └─────────────────────┼────────────────────┘
                       │                                              │
                       │   ws:// over private overlay network         │
-                      │   Bearer token, seq/ack framing              │
+                      │   coder/websocket, Bearer auth, seq/ack      │
                       ▼                                              ▼
 ┌─────────────────────────────────────────────────────────────────────────────────────────┐
 │                                packages/agent-ingester                                  │
 │                                                                                         │
-│  1. Ingestion gateway    :4501/ws/ingest  (bound to the overlay interface)              │
-│  2. Deterministic classifier — no network calls on the hot path                         │
+│  1. Ingestion gateway    :4501/ws/ingest  (coder/websocket on overlay interface)       │
+│  2. Deterministic classifier — 0-ms state reducer (Question, Busy, Error, Idle, Exit)  │
 │  3. Model pricing calculator — vendored LiteLLM pricing + daily refresh                 │
-│  4. Debounced LLM action summarizer — Gemini 2.5 Flash, fallback claude-haiku-4-5       │
-│  5. SQLite writer (WAL, sole writer) — agents, runs, environments, telemetry_events     │
-│  6. Notify publisher — Unix domain socket (0600)                                        │
+│  4. Debounced AI summarizer — google.golang.org/genai, fallback anthropic-sdk-go        │
+│  5. SQLite writer (WAL, sole writer) — mattn/go-sqlite3, PRAGMA user_version migrations │
+│  6. Notify publisher — net.Listen("unix", notify.sock) (0600)                           │
 └──────────────┬──────────────────────────────────────────────┬───────────────────────────┘
                │                                              │
                │ writes                          notify.sock  │ newline-delimited JSON
@@ -147,8 +149,8 @@ Entries form a tree via `{id, parentId}`. The first record is the header:
       ┌────────────────────┐                  ┌─────────────────────────────────────────┐
       │   SQLite (WAL)     │ ◀── read-only ── │       packages/agent-server             │
       │ agent-status.db    │                  │                                         │
-      └────────────────────┘                  │  1. REST API      127.0.0.1:4502 + ovl  │
-                                              │  2. SSE / WS broadcaster                │
+      └────────────────────┘                  │  1. REST API      go-chi/chi/v5 (:4502) │
+                                              │  2. SSE / WS      coder/websocket + SSE │
                                               │  3. Resync from SQLite on subscribe     │
                                               └──────────────────┬──────────────────────┘
                                                                  │
@@ -164,11 +166,11 @@ Entries form a tree via `{id, parentId}`. The first record is the header:
 
 The ingester and server run as separate processes on the same central host.
 
-- The ingester creates `${XDG_RUNTIME_DIR:-/tmp}/agent-status/notify.sock` (mode `0600`) and accepts subscriber connections.
+- The ingester creates `${XDG_RUNTIME_DIR:-/tmp}/agent-status/notify.sock` (mode `0600`) via standard library `net.Listen("unix", ...)` and accepts subscriber connections.
 - It writes newline-delimited JSON. Each line is exactly one `IServerEvent` (§6.3) — the same envelope the server broadcasts over SSE and WebSockets.
-- The socket is non-blocking with an internal subscriber buffer. If a subscriber is blocked for more than 2 seconds, the ingester closes that connection.
+- The socket is non-blocking with an internal subscriber channel. If a subscriber is blocked for more than 2 seconds, the ingester drops the client and closes the connection.
 - On connect and on every reconnect, `agent-server` queries SQLite to obtain a full snapshot of all active environments and agents, emits a `snapshot` event to its connected clients, and then resumes applying live socket events.
-- The server automatically redials the notify socket with a 1-second interval on disconnect.
+- The server automatically redials the notify socket via `net.Dial("unix", ...)` with a 1-second interval on disconnect.
 
 ---
 
@@ -197,7 +199,7 @@ Changing the label updates metadata on the central server without modifying the 
 
 1. Resolve the sessions store: `${XDG_DATA_HOME:-~/.local/share}/ai-registry/claude-code/sessions`, evaluating symlinks via `filepath.EvalSymlinks`. Fallback to `~/.claude/sessions`.
 2. Read `<pid>.json` descriptors. Sibling `.key` files are ignored.
-3. Check PID liveness with `syscall.Kill(pid, 0)`. Verify process start time against `procStart` to eliminate stale PID reuse.
+3. Check PID liveness with `syscall.Kill(pid, 0)`. Verify process creation timestamp using `gopsutil/v4/process` (`Process.CreateTime()`) against `procStart` to eliminate stale PID reuse.
 4. On first sight of an active descriptor, emit `run_started` with `sessionId`, `pid`, `cwd`, `startedAt`, `version`.
 5. Map descriptor `status`: `busy` to `BUSY`, `idle` to `IDLE`.
 6. Resolve the parent transcript path: `<projects-store>/<slug(cwd)>/<sessionId>.jsonl`.
@@ -206,10 +208,14 @@ Changing the label updates metadata on the central server without modifying the 
 
 Scan interval: 2 seconds, supplemented by `fsnotify` file-watch triggers on the session directory.
 
-#### 4.1.3. Pi Discovery
+#### 4.1.3. Pi Discovery & Process Introspection
 
 1. **Session directory scanner**: Scan `${PI_CODING_AGENT_DIR:-~/.pi/agent}/sessions/*/`. Read the JSONL header of each session file to determine `sessionId`, `cwd`, and `timestamp`.
-2. **Process scanner**: Enumerate processes where binary name is `pi`. Resolve process cwd (`proc_pidinfo` / `PROC_PIDVNODEPATHINFO` on Darwin via `gopsutil`, `readlink /proc/<pid>/cwd` on Linux) and process start time `T`.
+2. **Process scanner & CWD extraction via `gopsutil`**:
+   - Enumerate processes where binary name is `pi` using `github.com/shirou/gopsutil/v4/process`.
+   - On Darwin: `Process.CwdWithContext()` utilizes Apple's native `libproc` API (`proc_pidinfo` with `PROC_PIDVNODEPATHINFO`) via dynamic pure-Go linking (`purego`), eliminating Cgo and executing in **0.025 ms** (compared to ~50 ms for an `lsof` subprocess).
+   - On Linux: `Process.CwdWithContext()` reads `/proc/<pid>/cwd` via `os.Readlink`.
+   - Start timestamp `T` is read via `Process.CreateTime()`.
 3. **Process-to-session pairing**: For a `pi` process with cwd `C` and start time `T`, pair it with the session in `C`'s encoded directory whose earliest record at or after `T` was written first. Sessions without an active process are marked `EXITED`.
 4. When a paired `pi` process terminates, emit `run_exited`.
 
@@ -227,12 +233,14 @@ For each agent's initial working directory:
    - Display name is the repository slug (or remote name if disambiguation is required).
 4. Linked worktree detection: Compare `git rev-parse --show-toplevel` against canonical root. If different, `isWorktree = true` and `relPath` is relative to canonical root.
 5. Branch extraction: `gitBranch` field in transcript records (Claude Code) or `git symbolic-ref --short HEAD` (Pi).
+6. In-memory caching: Results cached with a 30-second TTL in a thread-safe mutex cache; invalidated immediately if a transcript line introduces a new `gitBranch`.
 
 Project attribution is **sticky to the first real git repository** encountered by the agent. Subsequent `cd` operations into nested folders or temporary directories do not re-attribute the agent's project group.
 
-#### 4.1.5. Byte-Offset Log Tailer & Subagents
+#### 4.1.5. Byte-Offset Log Tailer & Buffer Strategy
 
-- Watches registered `.jsonl` files (parent and subagents) using `fsnotify` with a 500ms polling fallback.
+- Watches registered `.jsonl` files (parent and subagents) using `github.com/fsnotify/fsnotify` with a 500ms polling fallback.
+- **Large line buffer allocation**: Configures `bufio.Scanner` with a 16MB maximum capacity (`scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)`) to absorb extensive tool output blocks, full-file writes, and thinking excerpts without buffer overflow errors.
 - Persists cursors to `${XDG_CACHE_HOME:-~/.cache}/agent-status/observer-cursors.json`, keyed by `(device, inode)`.
 - Cursor fields: `offset`, `size`, `inode`, `prefixHash` (SHA-256 of first 512 bytes).
 - Reset rules: Reset offset to 0 if inode changes, if size < recorded offset, or if `prefixHash` changes (detects Pi's atomic-republish).
@@ -240,11 +248,12 @@ Project attribution is **sticky to the first real git repository** encountered b
 
 #### 4.1.6. Shipper & Replay Protocol
 
-- Connects to `ws://<ingester-host>:4501/ws/ingest` over private overlay network with `Authorization: Bearer <token>`.
+- Connects to `ws://<ingester-host>:4501/ws/ingest` over private overlay network using `github.com/coder/websocket` with `Authorization: Bearer <token>` set on the upgrade HTTP header.
 - Frame sequencing: Monotonically increasing `seq` per observer connection starting at 1.
-- In-memory ring buffer holds up to 1,000 unacknowledged frames.
+- In-memory circular ring buffer (`github.com/gammazero/deque` or slice ring) holds up to 1,000 unacknowledged frames.
 - Ingester acknowledges commits via `{"type":"ack","upTo":<seq>}`.
 - Reconnect sends `{"type":"hello","envId":...,"since":<lastAckedSeq>,"dropped":<droppedCount>}` and replays unacknowledged frames.
+- Exponential backoff with jitter (`github.com/cenkalti/backoff/v4`): Initial interval 500ms, multiplier 2.0, max interval 30s, randomization factor 0.5.
 - Heartbeat: Observer emits a heartbeat frame every 10 seconds if no telemetry frames were sent.
 
 ---
@@ -255,8 +264,8 @@ Central stream ingestion, deterministic classification, model pricing computatio
 
 #### 4.2.1. Ingestion Gateway
 
-- Listens on `:4501/ws/ingest`, bound exclusively to the overlay interface.
-- Validates bearer token in constant time.
+- WebSocket server built with `github.com/coder/websocket`, listening on `:4501/ws/ingest` bound exclusively to the private overlay interface IP.
+- Validates bearer token in constant time using `crypto/subtle.ConstantTimeCompare`.
 - Validates frame version `"1.0"`.
 - Deduplicates incoming frames on `(envId, seq)` against persisted `observer_cursors.last_seq`.
 
@@ -287,9 +296,11 @@ Subagent events update parent token usage and cost roll-ups, but do not override
 
 - **Title**: Extracted from harness metadata (Claude Code `ai-title` record or Pi session info). Stored in `agents.title`. Free, no LLM call.
 - **Action Summarizer**:
-  - Model: **Gemini 2.5 Flash** (fallback: **`claude-haiku-4-5`**).
+  - Primary Provider: **Gemini 2.5 Flash** via `google.golang.org/genai` (structured JSON output schema).
+  - Fallback Provider: **`claude-haiku-4-5`** via `github.com/anthropics/anthropic-sdk-go`.
+  - Fallback triggers: HTTP 429, 5xx, or 10-second timeout after 2 retries with jitter.
+  - Rate limit / Debounce: `golang.org/x/time/rate` enforcing at most one call per active agent per 12 seconds.
   - Triggers: On `turn_end`, on transition to `WAITING_QUESTION` or `ERROR`, or after 12 seconds of continuous tool activity.
-  - Rate limit / Debounce: At most one call per active agent per 12 seconds.
   - Prompt input: `lastPrompt` string, latest 3 tool calls and targets, latest thinking excerpt (max 300 tokens).
   - Structured output schema:
     ```json
@@ -303,17 +314,14 @@ Subagent events update parent token usage and cost roll-ups, but do not override
 
 #### 4.2.5. SQLite Persistence & Retention
 
-- Path: `${XDG_DATA_HOME:-~/.local/share}/agent-status/agent-status.db`.
-- Sole writer process with WAL mode:
-  ```sql
-  PRAGMA journal_mode=WAL;
-  PRAGMA synchronous=NORMAL;
-  PRAGMA busy_timeout=5000;
-  PRAGMA foreign_keys=ON;
-  PRAGMA auto_vacuum=INCREMENTAL;
+- Driver: `github.com/mattn/go-sqlite3` (or `modernc.org/sqlite` for Cgo-free builds).
+- Database path: `${XDG_DATA_HOME:-~/.local/share}/agent-status/agent-status.db`.
+- Connection string & pragmas:
+  ```go
+  db, err := sql.Open("sqlite3", "file:"+dbPath+"?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000&_foreign_keys=ON&_auto_vacuum=INCREMENTAL")
   ```
-- Startup runs schema migrations tracked by `PRAGMA user_version`.
-- **Retention Pruner** (runs hourly):
+- Startup runs transactional migrations checking `PRAGMA user_version` sequentially.
+- **Retention Pruner** (runs hourly via background `time.Ticker`):
   1. For each active or recent Agent: retain the most recent 2,000 parent events plus the most recent 500 events per subagent (up to 20 subagents), or all events from the last 48 hours (whichever retains more). Delete older events.
   2. For `EXITED` agents untouched for >30 days: delete agent row, cascading delete of all associated runs and events.
   3. Execute `PRAGMA incremental_vacuum(1000)`.
@@ -324,11 +332,12 @@ Subagent events update parent token usage and cost roll-ups, but do not override
 
 Dedicated read-only API and real-time streaming broadcaster.
 
-#### 4.3.1. Binding & Auth
+#### 4.3.1. Binding, Routing & Auth
 
 - Port: **4502**. Binds `127.0.0.1` and overlay network interfaces.
-- Requires `Authorization: Bearer <token>` on all REST and streaming endpoints.
-- CORS allowlist defaults to `http://localhost:3000` (Bun dev server).
+- Router: `github.com/go-chi/chi/v5` with middleware stack: logger, recoverer, timeout (15s), and CORS.
+- CORS: `github.com/rs/cors` enforcing strict origin matching against `--cors-origin` (default: `http://localhost:3000`).
+- Auth: Requires `Authorization: Bearer <token>` on all REST and streaming endpoints.
 
 #### 4.3.2. REST Endpoints
 
@@ -343,10 +352,10 @@ Dedicated read-only API and real-time streaming broadcaster.
 
 #### 4.3.3. Streaming Endpoints
 
-- `GET /api/v1/events` (SSE) and `GET /ws/events` (WebSocket):
-  - Initial frame on connection: `snapshot` containing all active environments and agents.
+- `GET /api/v1/events` (SSE via native `http.Flusher` / `github.com/tmaxmax/go-sse`) and `GET /ws/events` (WebSocket via `github.com/coder/websocket`):
+  - Initial frame on connection: `snapshot` containing all active environments and agents synthesized from SQLite.
   - Real-time broadcasts: `agent_upsert`, `agent_removed`, `environment_upsert`, `log_append`.
-  - Heartbeat: Keep-alive comment every 15 seconds.
+  - Heartbeat: Keep-alive comment (`: heartbeat\n\n`) every 15 seconds.
 - `GET /api/v1/agents/:id/live-tail` (SSE): Dedicated log stream for an individual agent including live subagent traces.
 
 ---
@@ -384,7 +393,9 @@ Single-page web application built with **Bun + React + TypeScript + Tailwind v4*
 
 ---
 
-## 5. Package Layout
+## 5. Package Layout & Module Registry
+
+### 5.1. Directory Structure
 
 ```
 agent-status/
@@ -470,6 +481,23 @@ agent-status/
 ├── .gitignore
 └── justfile
 ```
+
+### 5.2. Verified Go Library Matrix
+
+| Package | Purpose | Go Module / Library | Justification & Benchmark Reference |
+|---|---|---|---|
+| `agent-observer` | Process & CWD Introspection | `github.com/shirou/gopsutil/v4/process` | Pure-Go Darwin `libproc` (0.025 ms/call vs 50ms `lsof`), `/proc` on Linux, `CreateTime()` PID reuse guard. |
+| `agent-observer` | File Watching | `github.com/fsnotify/fsnotify` | De facto Go filesystem watcher for session directories and new file discovery. |
+| `agent-observer` | WebSocket Client & Backoff | `github.com/coder/websocket` + `github.com/cenkalti/backoff/v4` | Zero-allocation WebSocket framing, context-aware dialer, exponential jitter backoff. |
+| `agent-observer` | Unacknowledged Ring Buffer | `github.com/gammazero/deque` | Thread-safe circular ring buffer for 1,000 seq/ack unacknowledged frames. |
+| `agent-ingester` | WebSocket Server | `github.com/coder/websocket` | High-throughput server binding with bearer token auth on connection upgrade. |
+| `agent-ingester` | Gemini Summarizer | `google.golang.org/genai` | Official Google Gen AI Go SDK with native structured JSON schema constraints. |
+| `agent-ingester` | Claude Fallback | `github.com/anthropics/anthropic-sdk-go` | Official Anthropic Go SDK for `claude-haiku-4-5` fallback execution. |
+| `agent-ingester` | Rate Limiter | `golang.org/x/time/rate` | 12-second debouncing token bucket per active agent. |
+| `agent-ingester` | SQLite Store & Migrations | `github.com/mattn/go-sqlite3` | Cgo WAL SQLite driver supporting `user_version` transactional migrations. |
+| `agent-server` | HTTP Routing & Middleware | `github.com/go-chi/chi/v5` + `github.com/rs/cors` | 100% standard library `net/http` router with zero external abstraction overhead. |
+| `agent-server` | SSE & WebSockets | `github.com/tmaxmax/go-sse` + `github.com/coder/websocket` | Native HTTP event flushing and WebSocket multiplexing. |
+| All CLIs | CLI & Documentation | `github.com/spf13/cobra` + `github.com/spf13/pflag` | Industry-standard CLI structure with `doc.GenMarkdownTree` for automated command docs. |
 
 ---
 
@@ -752,32 +780,32 @@ CREATE TABLE IF NOT EXISTS observer_cursors (
 
 ### Phase 1: Vertical Slice (Claude Code + Host Telemetry)
 - [ ] Observer: Environment ID resolver (`IOPlatformUUID` / `/etc/machine-id` + `uid`).
-- [ ] Observer: Claude Code descriptor scanner and process liveness check.
+- [ ] Observer: Claude Code descriptor scanner and process liveness check (`Process.CreateTime()`).
 - [ ] Observer: Transcript resolver with symlink evaluation and slug encoding.
 - [ ] Observer: Subagent directory tailer (`<sessionId>/subagents/*.jsonl`).
-- [ ] Observer: Byte-offset tailer with cursor persistence and reset heuristics.
-- [ ] Observer: Resilient WebSocket shipper with `seq/ack` and buffer replay.
-- [ ] Ingester: Gateway receiver, token validator, deduplicator on `(envId, seq)`.
+- [ ] Observer: Byte-offset tailer with `fsnotify`, 16MB `bufio.Scanner` buffer, cursor persistence, and reset heuristics.
+- [ ] Observer: Resilient WebSocket shipper with `coder/websocket`, `cenkalti/backoff/v4`, and `gammazero/deque` ring buffer.
+- [ ] Ingester: Gateway receiver with `coder/websocket`, constant-time token validator, deduplicator on `(envId, seq)`.
 - [ ] Ingester: Deterministic classifier (`(lifecycle, activity)` state machine).
 - [ ] Ingester: Pricing calculator computing cost across main and subagent usage.
-- [ ] Ingester: SQLite store with WAL mode, migrations, and foreign keys.
-- [ ] Ingester: Unix socket notify publisher.
-- [ ] Server: REST `/api/v1/agents`, SSE `/api/v1/events`, notify subscriber with initial SQLite snapshot resync.
+- [ ] Ingester: SQLite store (`mattn/go-sqlite3`) with WAL mode, `user_version` migrations, and foreign keys.
+- [ ] Ingester: Unix socket notify publisher via `net.Listen("unix", ...)`.
+- [ ] Server: REST `/api/v1/agents` (`go-chi/chi/v5`), SSE `/api/v1/events`, notify subscriber with initial SQLite snapshot resync.
 - [ ] UI: Bun + React dashboard rendering live agent cards from SSE stream.
 - [ ] Verification: Live Claude Code run with subagents transitions `RUNNING/BUSY` to `RUNNING/IDLE` to `EXITED/IDLE` with accurate usage and cost.
 
 ### Phase 2: Pi Harness & Multi-Host Aggregation
 - [ ] Wave 1 Investigation: Execute `docs/internal/tickets/2026-09-18-wave-1-investigate-prior-art-agent-liveness-and-session-pairing.md`.
-- [ ] Observer: Pi session and process scanner, implementing verified process-to-session pairing.
-- [ ] Observer: Git worktree resolver normalizing project origin URLs.
+- [ ] Observer: Pi session and process scanner via `gopsutil/v4/process` (`libproc` Darwin, `/proc` Linux), implementing verified process-to-session pairing.
+- [ ] Observer: Git worktree resolver normalizing project origin URLs with thread-safe TTL cache.
 - [ ] Ingester: Question detection for both harnesses.
 - [ ] Ingester: Stale environment detector (>30s without heartbeat).
 - [ ] Verification: Multi-host aggregation with agents running on Darwin and Linux over overlay network.
 
 ### Phase 3: AI Action Summarizer
-- [ ] Ingester: Gemini 2.5 Flash client with structured JSON output and phase classification.
-- [ ] Ingester: `claude-haiku-4-5` fallback with retry backoff.
-- [ ] Ingester: 12-second debouncer and event trigger scheduler.
+- [ ] Ingester: Gemini 2.5 Flash client (`google.golang.org/genai`) with structured JSON output and phase classification.
+- [ ] Ingester: `claude-haiku-4-5` fallback (`github.com/anthropics/anthropic-sdk-go`) with retry backoff.
+- [ ] Ingester: 12-second debouncer (`golang.org/x/time/rate`) and event trigger scheduler.
 - [ ] Ingester: `--no-summarize` toggle verification.
 
 ### Phase 4: Full Dashboard UI
