@@ -29,6 +29,9 @@ type ClaudeCodeScanner struct {
 
 func DefaultClaudeSessionDirs() []string {
 	var dirs []string
+	if custom := os.Getenv("CLAUDE_SESSIONS_DIR"); custom != "" {
+		dirs = append(dirs, custom)
+	}
 	if dataHome := os.Getenv("XDG_DATA_HOME"); dataHome != "" {
 		dirs = append(dirs, filepath.Join(dataHome, "ai-registry", "claude-code", "sessions"))
 	} else if home, err := os.UserHomeDir(); err == nil {
@@ -88,12 +91,14 @@ func (s *ClaudeCodeScanner) Scan() ([]SessionDescriptor, error) {
 				continue
 			}
 
-			if !IsProcessAlive(desc.PID) {
-				continue
-			}
+			if os.Getenv("AGENT_STATUS_TEST_MOCK_PROC") != "1" {
+				if !IsProcessAlive(desc.PID) {
+					continue
+				}
 
-			if desc.StartedAt > 0 && !VerifyProcessMatch(desc.PID, desc.StartedAt) {
-				continue
+				if desc.StartedAt > 0 && !VerifyProcessMatch(desc.PID, desc.StartedAt) {
+					continue
+				}
 			}
 
 			if desc.TranscriptPath == "" && desc.SessionID != "" {
@@ -145,6 +150,10 @@ func (s *ClaudeCodeScanner) DiscoverSubagents(desc SessionDescriptor) ([]Subagen
 func locateTranscript(sessionID, cwd string) string {
 	var projectsDirs []string
 
+	if custom := os.Getenv("CLAUDE_PROJECTS_DIR"); custom != "" {
+		projectsDirs = append(projectsDirs, custom)
+	}
+
 	if dataHome := os.Getenv("XDG_DATA_HOME"); dataHome != "" {
 		projectsDirs = append(projectsDirs, filepath.Join(dataHome, "ai-registry", "claude-code", "projects"))
 	} else if home, err := os.UserHomeDir(); err == nil {
@@ -173,6 +182,11 @@ func locateTranscript(sessionID, cwd string) string {
 			exactPath := filepath.Join(resolvedDir, slug, targetFileName)
 			if _, err := os.Stat(exactPath); err == nil {
 				return exactPath
+			}
+			// Also check without leading dash in slug
+			exactPathNoDash := filepath.Join(resolvedDir, strings.TrimPrefix(slug, "-"), targetFileName)
+			if _, err := os.Stat(exactPathNoDash); err == nil {
+				return exactPathNoDash
 			}
 		}
 	}

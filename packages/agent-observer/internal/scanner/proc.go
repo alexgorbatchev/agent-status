@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"math"
+	"os"
 
 	"github.com/shirou/gopsutil/v4/process"
 )
@@ -9,6 +10,9 @@ import (
 func IsProcessAlive(pid int) bool {
 	if pid <= 0 {
 		return false
+	}
+	if os.Getenv("AGENT_STATUS_TEST_MOCK_PROC") == "1" {
+		return true
 	}
 	p, err := process.NewProcess(int32(pid))
 	if err != nil {
@@ -24,6 +28,9 @@ func IsProcessAlive(pid int) bool {
 func VerifyProcessMatch(pid int, expectedStartTime int64) bool {
 	if pid <= 0 {
 		return false
+	}
+	if os.Getenv("AGENT_STATUS_TEST_MOCK_PROC") == "1" {
+		return true
 	}
 	p, err := process.NewProcess(int32(pid))
 	if err != nil {

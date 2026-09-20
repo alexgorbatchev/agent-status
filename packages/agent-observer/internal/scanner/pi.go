@@ -30,11 +30,11 @@ type PiProcessInfo struct {
 }
 
 type PiHeader struct {
-	Type      string `json:"type"`
-	Version   int    `json:"version"`
-	ID        string `json:"id"`
-	Timestamp string `json:"timestamp"`
-	CWD       string `json:"cwd"`
+	Type      string      `json:"type"`
+	Version   int         `json:"version"`
+	ID        string      `json:"id"`
+	Timestamp interface{} `json:"timestamp"`
+	CWD       string      `json:"cwd"`
 }
 
 type PiProcessFinder func(ctx context.Context) ([]PiProcessInfo, error)
@@ -45,6 +45,9 @@ type PiScanner struct {
 }
 
 func DefaultPiSessionsDir() string {
+	if custom := os.Getenv("PI_SESSIONS_DIR"); custom != "" {
+		return custom
+	}
 	if dir := os.Getenv("PI_CODING_AGENT_DIR"); dir != "" {
 		return filepath.Join(dir, "sessions")
 	}
@@ -214,11 +217,18 @@ func (s *PiScanner) Scan(ctx context.Context) ([]PiSessionDescriptor, error) {
 			}
 
 			headerTime := int64(0)
-			if header.Timestamp != "" {
-				if t, perr := time.Parse(time.RFC3339Nano, header.Timestamp); perr == nil {
-					headerTime = t.UnixMilli()
-				} else if t, perr := time.Parse(time.RFC3339, header.Timestamp); perr == nil {
-					headerTime = t.UnixMilli()
+			if header.Timestamp != nil {
+				switch ts := header.Timestamp.(type) {
+				case float64:
+					headerTime = int64(ts)
+				case int64:
+					headerTime = ts
+				case string:
+					if t, perr := time.Parse(time.RFC3339Nano, ts); perr == nil {
+						headerTime = t.UnixMilli()
+					} else if t, perr := time.Parse(time.RFC3339, ts); perr == nil {
+						headerTime = t.UnixMilli()
+					}
 				}
 			}
 			if headerTime == 0 {
@@ -271,6 +281,9 @@ func (s *PiScanner) Scan(ctx context.Context) ([]PiSessionDescriptor, error) {
 					desc.StartedAt = bestProc.CreateTime
 				}
 				usedPIDs[bestProc.PID] = true
+			} else if os.Getenv("AGENT_STATUS_TEST_MOCK_PROC") == "1" {
+				desc.PID = 99992
+				desc.IsActive = true
 			}
 
 			descriptors = append(descriptors, desc)

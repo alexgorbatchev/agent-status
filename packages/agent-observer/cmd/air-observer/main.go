@@ -24,16 +24,19 @@ import (
 var version = "dev"
 
 type observerOptions struct {
-	ingesterURL  string
-	token        string
-	envFlag      string
-	scanInterval time.Duration
-	cursorPath   string
-	logLevel     string
+	ingesterURL       string
+	token             string
+	envFlag           string
+	scanInterval      time.Duration
+	cursorPath        string
+	claudeSessionsDir string
+	claudeProjectsDir string
+	piSessionsDir     string
+	logLevel          string
 }
 
 func main() {
-	opts := observerOptions{
+	opts := &observerOptions{
 		ingesterURL:  "ws://127.0.0.1:4501/ws/ingest",
 		scanInterval: 2 * time.Second,
 		logLevel:     "info",
@@ -50,19 +53,23 @@ func main() {
 		Use:   "air-observer",
 		Short: "Observer agent for local harness session monitoring and telemetry shipping",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runObserver(opts)
+			return runObserver(*opts)
 		},
 	}
 
 	rootCmd.Version = version
 	rootCmd.SetVersionTemplate("{{.Version}}\n")
 
-	rootCmd.Flags().StringVar(&opts.ingesterURL, "ingester-url", opts.ingesterURL, "Ingester WebSocket URL (default ws://127.0.0.1:4501/ws/ingest)")
-	rootCmd.Flags().StringVar(&opts.token, "token", opts.token, "Bearer token for ingester authentication")
-	rootCmd.Flags().StringVar(&opts.envFlag, "env", "", "Environment label override")
-	rootCmd.Flags().DurationVar(&opts.scanInterval, "scan-interval", opts.scanInterval, "Interval between session scans (default 2s)")
-	rootCmd.Flags().StringVar(&opts.cursorPath, "cursor-path", "", "Custom path for persistent cursor file")
-	rootCmd.Flags().StringVar(&opts.logLevel, "log-level", opts.logLevel, "Log level (debug, info, warn, error)")
+	flags := rootCmd.Flags()
+	flags.StringVar(&opts.ingesterURL, "ingester-url", opts.ingesterURL, "Ingester WebSocket URL (default ws://127.0.0.1:4501/ws/ingest)")
+	flags.StringVar(&opts.token, "token", opts.token, "Bearer token for ingester authentication")
+	flags.StringVar(&opts.envFlag, "env", "", "Environment label override")
+	flags.DurationVar(&opts.scanInterval, "scan-interval", opts.scanInterval, "Interval between session scans (default 2s)")
+	flags.StringVar(&opts.cursorPath, "cursor-path", "", "Custom path for persistent cursor file")
+	flags.StringVar(&opts.claudeSessionsDir, "claude-sessions-dir", "", "Custom directory for Claude Code sessions")
+	flags.StringVar(&opts.claudeProjectsDir, "claude-projects-dir", "", "Custom directory for Claude Code projects/transcripts")
+	flags.StringVar(&opts.piSessionsDir, "pi-sessions-dir", "", "Custom directory for Pi sessions")
+	flags.StringVar(&opts.logLevel, "log-level", opts.logLevel, "Log level (debug, info, warn, error)")
 
 	cobrahelptree.Setup(rootCmd)
 
@@ -77,6 +84,16 @@ func runObserver(opts observerOptions) error {
 	defer cancel()
 
 	logging.Setup(opts.logLevel)
+
+	if opts.claudeProjectsDir != "" {
+		_ = os.Setenv("CLAUDE_PROJECTS_DIR", opts.claudeProjectsDir)
+	}
+	if opts.claudeSessionsDir != "" {
+		_ = os.Setenv("CLAUDE_SESSIONS_DIR", opts.claudeSessionsDir)
+	}
+	if opts.piSessionsDir != "" {
+		_ = os.Setenv("PI_SESSIONS_DIR", opts.piSessionsDir)
+	}
 
 	env, err := config.ResolveEnvironment(opts.envFlag)
 	if err != nil {
@@ -100,8 +117,24 @@ func runObserver(opts observerOptions) error {
 	defer ship.Stop()
 
 	gitResolver := git.NewResolver(30 * time.Second)
-	ccScanner := scanner.NewClaudeCodeScanner(nil)
-	piScanner := scanner.NewPiScanner("", nil)
+
+	var ccDirs []string
+	if opts.claudeSessionsDir != "" {
+		ccDirs = []string{opts.claudeSessionsDir}
+	} else if custom := os.Getenv("CLAUDE_SESSIONS_DIR"); custom != "" {
+		ccDirs = []string{custom}
+	}
+	if opts.claudeProjectsDir != "" {
+		_ = os.Setenv("CLAUDE_PROJECTS_DIR", opts.claudeProjectsDir)
+	}
+	ccScanner := scanner.NewClaudeCodeScanner(ccDirs)
+	var piDir string
+	if opts.piSessionsDir != "" {
+		piDir = opts.piSessionsDir
+	} else if custom := os.Getenv("PI_SESSIONS_DIR"); custom != "" {
+		piDir = custom
+	}
+	piScanner := scanner.NewPiScanner(piDir, nil)
 
 	type activeTail struct {
 		tailer *tailer.Tailer
@@ -206,8 +239,8 @@ func runObserver(opts observerOptions) error {
 				}
 				mu.Unlock()
 
+				proj, ws, _ := gitResolver.Resolve(ctx, s.CWD, "")
 				if isNew {
-					proj, ws, _ := gitResolver.Resolve(ctx, s.CWD, "")
 					agentID := fmt.Sprintf("%s:%s:%s", env.ID, types.HarnessClaudeCode, s.SessionID)
 					now := time.Now().UnixMilli()
 					if s.StartedAt > 0 {
@@ -270,30 +303,36 @@ func runObserver(opts observerOptions) error {
 		if err == nil {
 			for _, s := range piSessions {
 				newPiMap[s.SessionID] = s
-				if s.IsActive {
-					mu.Lock()
-					isNew := !activePiSessions[s.SessionID].IsActive
-					mu.Unlock()
 
-					if isNew {
-						proj, ws, _ := gitResolver.Resolve(ctx, s.CWD, "")
-						agentID := fmt.Sprintf("%s:%s:%s", env.ID, types.HarnessPi, s.SessionID)
-						ship.Enqueue(types.ITelemetryFrame{
-							Version:        "1.0",
-							EnvID:          env.ID,
-							Environment:    *env,
-							AgentID:        agentID,
-							SessionID:      s.SessionID,
-							PID:            s.PID,
-							Harness:        types.HarnessPi,
-							HarnessVersion: s.HarnessVersion,
-							Project:        proj,
-							Workspace:      ws,
-							Timestamp:      time.Now().UnixMilli(),
-							EventType:      "run_started",
-							Data:           types.TelemetryFrameData{},
-						})
+				mu.Lock()
+				isNew := !activePiSessions[s.SessionID].IsActive
+				if s.IsActive && isNew {
+					activePiSessions[s.SessionID] = s
+				}
+				mu.Unlock()
+
+				if s.IsActive && isNew {
+					proj, ws, _ := gitResolver.Resolve(ctx, s.CWD, "")
+					agentID := fmt.Sprintf("%s:%s:%s", env.ID, types.HarnessPi, s.SessionID)
+					now := time.Now().UnixMilli()
+					if s.StartedAt > 0 {
+						now = s.StartedAt
 					}
+					ship.Enqueue(types.ITelemetryFrame{
+						Version:        "1.0",
+						EnvID:          env.ID,
+						Environment:    *env,
+						AgentID:        agentID,
+						SessionID:      s.SessionID,
+						PID:            s.PID,
+						Harness:        types.HarnessPi,
+						HarnessVersion: s.HarnessVersion,
+						Project:        proj,
+						Workspace:      ws,
+						Timestamp:      now,
+						EventType:      "run_started",
+						Data:           types.TelemetryFrameData{},
+					})
 				}
 				if s.TranscriptPath != "" {
 					attachTailer(s.TranscriptPath, types.HarnessPi, s.HarnessVersion, s.SessionID, s.CWD, s.PID, nil)
