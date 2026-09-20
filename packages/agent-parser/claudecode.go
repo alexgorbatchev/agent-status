@@ -45,28 +45,33 @@ type rawUsage struct {
 }
 
 type rawMessage struct {
-	Role       string            `json:"role"`
-	Model      string            `json:"model"`
-	StopReason string            `json:"stop_reason"`
-	Content    interface{}       `json:"content"`
-	Usage      *rawUsage         `json:"usage"`
+	Role           string      `json:"role"`
+	Model          string      `json:"model"`
+	StopReason     string      `json:"stop_reason"`
+	Content        interface{} `json:"content"`
+	Usage          *rawUsage   `json:"usage"`
+	Error          string      `json:"error,omitempty"`
+	ApiErrorStatus *int        `json:"apiErrorStatus,omitempty"`
 }
 
 type rawJSONLine struct {
-	Type        string            `json:"type"`
-	UUID        string            `json:"uuid"`
-	ParentUUID  *string           `json:"parentUuid"`
-	SessionID   string            `json:"sessionId"`
-	Timestamp   interface{}       `json:"timestamp"`
-	CWD         string            `json:"cwd"`
-	GitBranch   string            `json:"gitBranch"`
-	IsSidechain bool              `json:"isSidechain"`
-	Title       string            `json:"title"`
-	AITitle     string            `json:"aiTitle"`
-	LastPrompt  string            `json:"lastPrompt"`
-	Message     *rawMessage       `json:"message"`
-	Content     interface{}       `json:"content"`
-	Question    string            `json:"question"`
+	Type              string      `json:"type"`
+	UUID              string      `json:"uuid"`
+	ParentUUID        *string     `json:"parentUuid"`
+	SessionID         string      `json:"sessionId"`
+	Timestamp         interface{} `json:"timestamp"`
+	CWD               string      `json:"cwd"`
+	GitBranch         string      `json:"gitBranch"`
+	IsSidechain       bool        `json:"isSidechain"`
+	Title             string      `json:"title"`
+	AITitle           string      `json:"aiTitle"`
+	LastPrompt        string      `json:"lastPrompt"`
+	Message           *rawMessage `json:"message"`
+	Content           interface{} `json:"content"`
+	Question          string      `json:"question"`
+	Error             string      `json:"error,omitempty"`
+	ApiErrorStatus    *int        `json:"apiErrorStatus,omitempty"`
+	IsApiErrorMessage bool        `json:"isApiErrorMessage,omitempty"`
 }
 
 func parseTimestamp(v interface{}) int64 {
@@ -140,6 +145,9 @@ func parseClaudeContentBlocks(content interface{}) []rawContentBlock {
 				var b rawContentBlock
 				data, err := json.Marshal(m)
 				if err == nil && json.Unmarshal(data, &b) == nil {
+					if b.Type == "" && b.Text != "" {
+						b.Type = "text"
+					}
 					blocks = append(blocks, b)
 				}
 			}
@@ -149,6 +157,9 @@ func parseClaudeContentBlocks(content interface{}) []rawContentBlock {
 		var b rawContentBlock
 		data, err := json.Marshal(v)
 		if err == nil && json.Unmarshal(data, &b) == nil {
+			if b.Type == "" && b.Text != "" {
+				b.Type = "text"
+			}
 			return []rawContentBlock{b}
 		}
 	}
@@ -269,10 +280,21 @@ func ParseClaudeCodeLine(line []byte) ([]ParsedEvent, error) {
 		}
 
 	case "assistant":
+		var modelPtr *string
+		if raw.Message != nil && raw.Message.Model != "" {
+			modelPtr = stringPtr(raw.Message.Model)
+		}
+
 		if raw.Message != nil {
 			blocks := parseClaudeContentBlocks(raw.Message.Content)
+			var textParts []string
+
 			for _, b := range blocks {
 				switch b.Type {
+				case "text":
+					if b.Text != "" {
+						textParts = append(textParts, b.Text)
+					}
 				case "thinking":
 					if b.Thinking != "" {
 						events = append(events, ParsedEvent{
@@ -283,7 +305,7 @@ func ParseClaudeCodeLine(line []byte) ([]ParsedEvent, error) {
 							Data: types.TelemetryFrameData{
 								Role:    stringPtr("assistant"),
 								Content: stringPtr(b.Thinking),
-								Model:   stringPtr(raw.Message.Model),
+								Model:   modelPtr,
 							},
 						})
 					}
@@ -320,7 +342,7 @@ func ParseClaudeCodeLine(line []byte) ([]ParsedEvent, error) {
 								ToolCallID: callID,
 								ToolInput:  b.Input,
 								Question:   stringPtr(qText),
-								Model:      stringPtr(raw.Message.Model),
+								Model:      modelPtr,
 							},
 						})
 					} else {
@@ -334,7 +356,7 @@ func ParseClaudeCodeLine(line []byte) ([]ParsedEvent, error) {
 								ToolName:   stringPtr(toolName),
 								ToolCallID: callID,
 								ToolInput:  b.Input,
-								Model:      stringPtr(raw.Message.Model),
+								Model:      modelPtr,
 							},
 						})
 					}
@@ -349,7 +371,7 @@ func ParseClaudeCodeLine(line []byte) ([]ParsedEvent, error) {
 				if reasoning == 0 {
 					reasoning = u.ReasoningTokens
 				}
-				total := u.InputTokens + u.OutputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens + reasoning
+				total := u.InputTokens + u.OutputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
 				usage = &types.ITokenUsage{
 					Input:      u.InputTokens,
 					Output:     u.OutputTokens,
@@ -365,9 +387,9 @@ func ParseClaudeCodeLine(line []byte) ([]ParsedEvent, error) {
 				stopReason = stringPtr(raw.Message.StopReason)
 			}
 
-			var modelPtr *string
-			if raw.Message.Model != "" {
-				modelPtr = stringPtr(raw.Message.Model)
+			var contentPtr *string
+			if len(textParts) > 0 {
+				contentPtr = stringPtr(strings.Join(textParts, "\n"))
 			}
 
 			events = append(events, ParsedEvent{
@@ -380,6 +402,48 @@ func ParseClaudeCodeLine(line []byte) ([]ParsedEvent, error) {
 					Model:      modelPtr,
 					StopReason: stopReason,
 					Usage:      usage,
+					Content:    contentPtr,
+				},
+			})
+		}
+
+		// Check for error fields
+		hasError := raw.Error != "" ||
+			raw.IsApiErrorMessage ||
+			(raw.ApiErrorStatus != nil && *raw.ApiErrorStatus > 0) ||
+			(raw.Message != nil && (raw.Message.Error != "" || (raw.Message.ApiErrorStatus != nil && *raw.Message.ApiErrorStatus > 0)))
+
+		if hasError {
+			errText := raw.Error
+			if errText == "" && raw.Message != nil && raw.Message.Error != "" {
+				errText = raw.Message.Error
+			}
+			if errText == "" && raw.Message != nil && raw.Message.Content != nil {
+				errText = extractContentString(raw.Message.Content)
+			}
+			if errText == "" && raw.Content != nil {
+				errText = extractContentString(raw.Content)
+			}
+			if errText == "" {
+				if raw.ApiErrorStatus != nil && *raw.ApiErrorStatus > 0 {
+					errText = fmt.Sprintf("API error: status %d", *raw.ApiErrorStatus)
+				} else if raw.Message != nil && raw.Message.ApiErrorStatus != nil && *raw.Message.ApiErrorStatus > 0 {
+					errText = fmt.Sprintf("API error: status %d", *raw.Message.ApiErrorStatus)
+				} else {
+					errText = "API error"
+				}
+			}
+
+			events = append(events, ParsedEvent{
+				EventType: "error",
+				Timestamp: ts,
+				CWD:       raw.CWD,
+				GitBranch: raw.GitBranch,
+				Data: types.TelemetryFrameData{
+					Role:    stringPtr("assistant"),
+					Content: stringPtr(errText),
+					Model:   modelPtr,
+					IsError: boolPtr(true),
 				},
 			})
 		}
