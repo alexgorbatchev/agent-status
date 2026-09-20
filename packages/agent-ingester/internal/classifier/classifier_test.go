@@ -709,3 +709,137 @@ func TestClassifier_DatabaseErrorHandling(t *testing.T) {
 		t.Errorf("expected error from ProcessFrame when store is closed, got nil")
 	}
 }
+
+func TestClassifier_UsageAccumulation_ReasoningTokens(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+
+	c, _ := newTestClassifier(t, sum)
+
+	env := types.IEnvironmentInfo{
+		ID:              "env-usage",
+		Label:           "work-macbook",
+		Hostname:        "macbook",
+		Platform:        "darwin",
+		User:            "alex",
+		LastHeartbeatAt: time.Now().UnixMilli(),
+	}
+	ws := types.IWorkspaceInfo{
+		Branch: "main",
+		CWD:    "/Users/alex/dev/repo",
+	}
+	proj := types.IProjectInfo{
+		ID:            "github.com/org/repo",
+		Name:          "repo",
+		CanonicalRoot: "/Users/alex/dev/repo",
+	}
+
+	baseFrame := types.ITelemetryFrame{
+		Version:        "1.0",
+		Seq:            1,
+		EnvID:          "env-usage",
+		Environment:    env,
+		AgentID:        "env-usage:claude-code:session-usage",
+		SessionID:      "session-usage",
+		PID:            12345,
+		Harness:        types.HarnessClaudeCode,
+		HarnessVersion: "2.1.277",
+		Project:        proj,
+		Workspace:      ws,
+		Timestamp:      1000,
+		EventType:      "run_started",
+	}
+
+	// 1. Initial frame to start session
+	agent, err := c.ProcessFrame(baseFrame)
+	if err != nil {
+		t.Fatalf("ProcessFrame(run_started) failed: %v", err)
+	}
+
+	// 2. Turn 1: Frame with explicit Total (u.Total > 0)
+	model := "claude-3-7-sonnet"
+	fTurn1 := baseFrame
+	fTurn1.Seq = 2
+	fTurn1.Timestamp = 2000
+	fTurn1.EventType = "turn_end"
+	fTurn1.Data = types.TelemetryFrameData{
+		Model: &model,
+		Usage: &types.ITokenUsage{
+			Input:      1000,
+			Output:     500, // already includes 300 reasoning tokens
+			CacheRead:  2000,
+			CacheWrite: 100,
+			Reasoning:  300,
+			Total:      3600, // 1000 + 500 + 2000 + 100
+		},
+	}
+
+	agent, err = c.ProcessFrame(fTurn1)
+	if err != nil {
+		t.Fatalf("ProcessFrame(turn 1) failed: %v", err)
+	}
+
+	if agent.Activity.Usage.Input != 1000 {
+		t.Errorf("got Input %d, want 1000", agent.Activity.Usage.Input)
+	}
+	if agent.Activity.Usage.Output != 500 {
+		t.Errorf("got Output %d, want 500", agent.Activity.Usage.Output)
+	}
+	if agent.Activity.Usage.Reasoning != 300 {
+		t.Errorf("got Reasoning %d, want 300", agent.Activity.Usage.Reasoning)
+	}
+	if agent.Activity.Usage.CacheRead != 2000 {
+		t.Errorf("got CacheRead %d, want 2000", agent.Activity.Usage.CacheRead)
+	}
+	if agent.Activity.Usage.CacheWrite != 100 {
+		t.Errorf("got CacheWrite %d, want 100", agent.Activity.Usage.CacheWrite)
+	}
+	// Total must be exactly 3600, NOT 3600 + 300 = 3900
+	if agent.Activity.Usage.Total != 3600 {
+		t.Errorf("got Total %d, want 3600 (reasoning tokens double-counted)", agent.Activity.Usage.Total)
+	}
+
+	// 3. Turn 2: Frame with Total = 0 (tests fallback without double-counting reasoning)
+	fTurn2 := baseFrame
+	fTurn2.Seq = 3
+	fTurn2.Timestamp = 3000
+	fTurn2.EventType = "turn_end"
+	fTurn2.Data = types.TelemetryFrameData{
+		Model: &model,
+		Usage: &types.ITokenUsage{
+			Input:      500,
+			Output:     250, // already includes 150 reasoning tokens
+			CacheRead:  1000,
+			CacheWrite: 50,
+			Reasoning:  150,
+			Total:      0, // fallback to Input + Output + CacheRead + CacheWrite = 1800
+		},
+	}
+
+	agent, err = c.ProcessFrame(fTurn2)
+	if err != nil {
+		t.Fatalf("ProcessFrame(turn 2) failed: %v", err)
+	}
+
+	if agent.Activity.Usage.Input != 1500 {
+		t.Errorf("got Input %d, want 1500", agent.Activity.Usage.Input)
+	}
+	if agent.Activity.Usage.Output != 750 {
+		t.Errorf("got Output %d, want 750", agent.Activity.Usage.Output)
+	}
+	if agent.Activity.Usage.Reasoning != 450 {
+		t.Errorf("got Reasoning %d, want 450", agent.Activity.Usage.Reasoning)
+	}
+	if agent.Activity.Usage.CacheRead != 3000 {
+		t.Errorf("got CacheRead %d, want 3000", agent.Activity.Usage.CacheRead)
+	}
+	if agent.Activity.Usage.CacheWrite != 150 {
+		t.Errorf("got CacheWrite %d, want 150", agent.Activity.Usage.CacheWrite)
+	}
+	// Total must be 3600 + 1800 = 5400, NOT 5400 + 150 = 5550
+	if agent.Activity.Usage.Total != 5400 {
+		t.Errorf("got Total %d, want 5400 (reasoning tokens double-counted on fallback)", agent.Activity.Usage.Total)
+	}
+}
