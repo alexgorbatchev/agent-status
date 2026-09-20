@@ -7,6 +7,7 @@ Centralized monitoring dashboard and telemetry aggregation pipeline for AI codin
 - Start dev stack: `just start`
 - Stop dev stack: `just stop`
 - Check status: `just status`
+- Tail daemon logs: `just logs` (or `tail -f ~/.local/state/agent-status/logs/*.log`)
 - Build all: `just build-all`
 - Test all: `just test-all`
 - Lint all: `just lint-all`
@@ -25,6 +26,7 @@ Centralized monitoring dashboard and telemetry aggregation pipeline for AI codin
 - Port collisions on 3000, 4501, or 4502 -> Run `just stop` to terminate orphaned processes and clean up `.tmp/dev-stack/pids.json`.
 - SQLite database concurrency -> `air-server` opens SQLite strictly in read-only mode (`?mode=ro`); all mutations occur through `air-ingester`.
 - Unix domain socket binding -> `air-ingester` creates `$XDG_RUNTIME_DIR/agent-status/notify.sock`; `air-server` reconnects automatically when the socket becomes available.
+- Daemon disk logs -> Stored at `~/.local/state/agent-status/logs/{observer,ingester,server}.log` (or `$AIR_LOG_DIR`). Active logs rotate at 10 MB with 5 backups, 14-day retention, and gzip compression. Tail with `just logs` or view directly on disk.
 
 ## Shared boundaries
 - Always: automatically record all new instructions in the most appropriate `AGENTS.md` file immediately upon receipt (check with user if existing instructions conflict)
