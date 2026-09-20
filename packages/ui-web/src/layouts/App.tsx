@@ -6,6 +6,7 @@ import { AttentionBanner } from "../components/AttentionBanner";
 import { ProjectGroup } from "../components/ProjectGroup";
 import { EnvironmentGroup } from "../components/EnvironmentGroup";
 import { LogDrawer } from "../components/LogDrawer";
+import { StateHelpDialog } from "../components/StateHelpDialog";
 import { groupAgentsByProject, groupAgentsByEnvironment } from "../utils/groupingUtils";
 import { ViewSwitcher } from "../components/ViewSwitcher";
 import { Layers, Server } from "lucide-react";
@@ -14,13 +15,19 @@ export function App(): React.JSX.Element {
   const { agents, environments, isConnected, error } = useEventStream();
   const [groupBy, setGroupBy] = useState<GroupByOption>("project");
   const [selectedAgent, setSelectedAgent] = useState<IAgentState | null>(null);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
 
   const projectGroups = useMemo(() => groupAgentsByProject(agents), [agents]);
   const environmentGroups = useMemo(() => groupAgentsByEnvironment(agents, environments), [agents, environments]);
 
   return (
     <div data-testid="App" className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
-      <Header agents={agents} environments={environments} isConnected={isConnected} />
+      <Header
+        agents={agents}
+        environments={environments}
+        isConnected={isConnected}
+        onOpenHelp={() => setIsHelpOpen(true)}
+      />
 
       <main data-testid="App--main" className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6">
         {error && (
@@ -97,6 +104,9 @@ export function App(): React.JSX.Element {
 
       {/* Slide-over Log Drawer */}
       <LogDrawer agent={selectedAgent} onClose={() => setSelectedAgent(null)} />
+
+      {/* State & Lifecycle Help Modal */}
+      {isHelpOpen && <StateHelpDialog onClose={() => setIsHelpOpen(false)} />}
     </div>
   );
 }

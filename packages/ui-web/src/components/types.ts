@@ -47,6 +47,11 @@ export interface IHeaderProps {
   agents: IAgentState[];
   environments: IEnvironmentInfo[];
   isConnected: boolean;
+  onOpenHelp?: () => void;
+}
+
+export interface IStateHelpDialogProps {
+  onClose: () => void;
 }
 
 export interface IAttentionBannerProps {

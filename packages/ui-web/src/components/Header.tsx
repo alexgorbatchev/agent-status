@@ -7,9 +7,9 @@ import {
   formatCurrency,
   isAgentRequiringAttention,
 } from "../utils/agentUtils";
-import { Bot, AlertCircle, DollarSign, Activity, Server } from "lucide-react";
+import { Bot, AlertCircle, DollarSign, Activity, Server, HelpCircle } from "lucide-react";
 
-export function Header({ agents, environments, isConnected }: IHeaderProps): React.JSX.Element {
+export function Header({ agents, environments, isConnected, onOpenHelp }: IHeaderProps): React.JSX.Element {
   const activeAgents = filterActiveAgents(agents);
   const attentionAgents = agents.filter(isAgentRequiringAttention);
 
@@ -85,6 +85,22 @@ export function Header({ agents, environments, isConnected }: IHeaderProps): Rea
           </IconWrapper>
           <span className="font-semibold">{formatCurrency(totalSpend)}</span>
         </div>
+
+        {/* State Legend Help Button */}
+        {onOpenHelp && (
+          <button
+            type="button"
+            aria-label="Open state legend help dialog"
+            data-testid="Header--help-button"
+            onClick={onOpenHelp}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700 transition-colors cursor-pointer"
+          >
+            <IconWrapper size="md" tone="muted">
+              <HelpCircle size={16} />
+            </IconWrapper>
+            <span>Legend</span>
+          </button>
+        )}
       </div>
     </header>
   );

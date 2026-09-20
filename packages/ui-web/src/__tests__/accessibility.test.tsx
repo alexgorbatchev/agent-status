@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { AgentCard } from "../components/AgentCard";
 import { AttentionBanner } from "../components/AttentionBanner";
 import { LogDrawer } from "../components/LogDrawer";
+import { StateHelpDialog } from "../components/StateHelpDialog";
 import { fixture_agentStateRunning, fixture_agentStateWaitingQuestion, fixture_agentStateError } from "./fixtures";
 
 describe("Accessibility & ARIA semantics", () => {
@@ -171,6 +172,18 @@ describe("Accessibility & ARIA semantics", () => {
       expect(html).toContain('type="button"');
       expect(html).toContain('aria-label="Close log drawer"');
       expect(html).toContain('data-testid="LogDrawer--close-button"');
+    });
+  });
+
+  describe("StateHelpDialog", () => {
+    it("renders dialog with role='dialog', aria-modal='true', and close button with type='button'", () => {
+      const html = renderToStaticMarkup(<StateHelpDialog onClose={() => {}} />);
+
+      expect(html).toContain('role="dialog"');
+      expect(html).toContain('aria-modal="true"');
+      expect(html).toContain('aria-labelledby="StateHelpDialog--title"');
+      expect(html).toContain('type="button"');
+      expect(html).toContain('aria-label="Close state legend help dialog"');
     });
   });
 });
