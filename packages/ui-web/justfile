@@ -14,7 +14,7 @@ run-ai:
 
 # Build frontend bundle
 build:
-    bun build src/main.ts --outdir dist --minify
+    bun run build
 
 # Run policy checks and TypeScript compiler check
 lint:

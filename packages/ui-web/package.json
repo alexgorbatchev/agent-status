@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "bun run src/server.ts",
-    "build": "bun build src/main.ts --outdir dist --minify",
+    "build": "bun run src/build.ts",
     "typecheck": "tsc --noEmit",
     "check": "bun run typescript-ai-policy -- check",
     "lint": "bun run typescript-ai-policy -- check && bun x tsc --noEmit",
