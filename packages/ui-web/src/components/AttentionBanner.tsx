@@ -2,6 +2,7 @@ import React from "react";
 import type { IAttentionBannerProps } from "./types";
 import { isAgentRequiringAttention } from "../utils/agentUtils";
 import { AlertCircle, HelpCircle, AlertTriangle, ArrowRight } from "lucide-react";
+import { isAgentRequiringAttention } from "../utils/agentUtils";
 
 export function AttentionBanner({ agents, onSelectAgent }: IAttentionBannerProps) {
   // Tier 1: ACT NOW (Running agents with WAITING_QUESTION or ERROR)
