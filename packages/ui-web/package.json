@@ -8,7 +8,7 @@
     "typecheck": "tsc --noEmit",
     "check": "bun run typescript-ai-policy -- check",
     "lint": "bun run typescript-ai-policy -- check && bun x tsc --noEmit",
-    "test": "bun run check && bun test",
+    "test": "bun run check && bun test src",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui"
   },
