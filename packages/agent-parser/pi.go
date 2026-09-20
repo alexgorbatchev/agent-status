@@ -326,11 +326,6 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 				modelPtr = stringPtr(msg.Model)
 			}
 
-			var thinkingExcerpt *string
-			if lastThinking != "" {
-				thinkingExcerpt = stringPtr(lastThinking)
-			}
-
 			events = append(events, ParsedEvent{
 				EventType: "turn_end",
 				Timestamp: ts,
@@ -341,7 +336,6 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 					StopReason:     stopReason,
 					Usage:          usage,
 					RawHarnessCost: harnessCost,
-					Content:        thinkingExcerpt,
 				},
 			})
 		}

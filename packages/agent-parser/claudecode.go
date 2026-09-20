@@ -48,7 +48,7 @@ type rawMessage struct {
 	Role       string            `json:"role"`
 	Model      string            `json:"model"`
 	StopReason string            `json:"stop_reason"`
-	Content    []rawContentBlock `json:"content"`
+	Content    interface{}       `json:"content"`
 	Usage      *rawUsage         `json:"usage"`
 }
 
@@ -125,6 +125,36 @@ func extractContentString(c interface{}) string {
 	}
 }
 
+func parseClaudeContentBlocks(content interface{}) []rawContentBlock {
+	if content == nil {
+		return nil
+	}
+
+	switch v := content.(type) {
+	case string:
+		return []rawContentBlock{{Type: "text", Text: v}}
+	case []interface{}:
+		var blocks []rawContentBlock
+		for _, item := range v {
+			if m, ok := item.(map[string]interface{}); ok {
+				var b rawContentBlock
+				data, err := json.Marshal(m)
+				if err == nil && json.Unmarshal(data, &b) == nil {
+					blocks = append(blocks, b)
+				}
+			}
+		}
+		return blocks
+	case map[string]interface{}:
+		var b rawContentBlock
+		data, err := json.Marshal(v)
+		if err == nil && json.Unmarshal(data, &b) == nil {
+			return []rawContentBlock{b}
+		}
+	}
+	return nil
+}
+
 // ParseClaudeCodeLine parses a single line of Claude Code JSONL log output into ParsedEvent structs.
 func ParseClaudeCodeLine(line []byte) ([]ParsedEvent, error) {
 	if len(line) == 0 {
@@ -178,11 +208,12 @@ func ParseClaudeCodeLine(line []byte) ([]ParsedEvent, error) {
 		}
 
 	case "user":
-		if raw.Message != nil && len(raw.Message.Content) > 0 {
+		if raw.Message != nil {
+			blocks := parseClaudeContentBlocks(raw.Message.Content)
 			var textParts []string
 			hasToolResult := false
 
-			for _, b := range raw.Message.Content {
+			for _, b := range blocks {
 				switch b.Type {
 				case "text":
 					if b.Text != "" {
@@ -239,12 +270,11 @@ func ParseClaudeCodeLine(line []byte) ([]ParsedEvent, error) {
 
 	case "assistant":
 		if raw.Message != nil {
-			var lastThinking string
-			for _, b := range raw.Message.Content {
+			blocks := parseClaudeContentBlocks(raw.Message.Content)
+			for _, b := range blocks {
 				switch b.Type {
 				case "thinking":
 					if b.Thinking != "" {
-						lastThinking = b.Thinking
 						events = append(events, ParsedEvent{
 							EventType: "thinking",
 							Timestamp: ts,
@@ -340,11 +370,6 @@ func ParseClaudeCodeLine(line []byte) ([]ParsedEvent, error) {
 				modelPtr = stringPtr(raw.Message.Model)
 			}
 
-			var thinkingExcerpt *string
-			if lastThinking != "" {
-				thinkingExcerpt = stringPtr(lastThinking)
-			}
-
 			events = append(events, ParsedEvent{
 				EventType: "turn_end",
 				Timestamp: ts,
@@ -355,7 +380,6 @@ func ParseClaudeCodeLine(line []byte) ([]ParsedEvent, error) {
 					Model:      modelPtr,
 					StopReason: stopReason,
 					Usage:      usage,
-					Content:    thinkingExcerpt,
 				},
 			})
 		}

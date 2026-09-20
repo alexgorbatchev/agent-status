@@ -144,6 +144,20 @@ func TestParseClaudeCodeLine(t *testing.T) {
 		}
 	})
 
+	t.Run("user prompt raw string content", func(t *testing.T) {
+		line := `{"type":"user","uuid":"u-raw","timestamp":"2026-09-19T10:00:00.000Z","message":{"role":"user","content":"How do I fix this build error?"}}`
+		evs, err := ParseClaudeCodeLine([]byte(line))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(evs) != 1 {
+			t.Fatalf("expected 1 event, got %d", len(evs))
+		}
+		if evs[0].EventType != "turn_start" || *evs[0].Data.Content != "How do I fix this build error?" {
+			t.Errorf("unexpected event: %+v", evs[0])
+		}
+	})
+
 	t.Run("user tool_result with is_error false and ID fallback", func(t *testing.T) {
 		isErr := false
 		line := `{"type":"user","uuid":"u-2","timestamp":"2026-09-19T10:00:05.000Z","message":{"role":"user","content":[{"type":"tool_result","id":"call_999","text":"success output","is_error":false}]}}`
