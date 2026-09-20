@@ -1,15 +1,14 @@
 import React, { useState, useEffect } from "react";
 import type { ILogDrawerProps } from "./types";
-import type { ITelemetryFrame } from "../types";
+import type { ITelemetryFrame, IWindowWithAgentStatus } from "../types";
 import { StatusBadge } from "./StatusBadge";
 import { X, Brain, Wrench, AlertTriangle } from "lucide-react";
 
-export function LogDrawer({
-  agent,
-  apiBaseUrl = "http://localhost:4502",
-  token = "dev-secret-token",
-  onClose,
-}: ILogDrawerProps) {
+export function LogDrawer({ agent, apiBaseUrl, token = "dev-secret-token", onClose }: ILogDrawerProps) {
+  const resolvedBaseUrl =
+    apiBaseUrl ||
+    (typeof window !== "undefined" && (window as unknown as IWindowWithAgentStatus).__AGENT_STATUS_API_URL__) ||
+    "http://localhost:4502";
   const [logs, setLogs] = useState<ITelemetryFrame[]>([]);
 
   useEffect(() => {
@@ -18,7 +17,7 @@ export function LogDrawer({
     }
 
     // Fetch initial logs
-    fetch(`${apiBaseUrl}/api/v1/agents/${encodeURIComponent(agent.id)}/logs?limit=100`, {
+    fetch(`${resolvedBaseUrl}/api/v1/agents/${encodeURIComponent(agent.id)}/logs?limit=100`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((res) => res.json())
@@ -31,7 +30,7 @@ export function LogDrawer({
 
     // Live tail SSE connection
     const es = new EventSource(
-      `${apiBaseUrl}/api/v1/agents/${encodeURIComponent(agent.id)}/live-tail?token=${encodeURIComponent(token)}`,
+      `${resolvedBaseUrl}/api/v1/agents/${encodeURIComponent(agent.id)}/live-tail?token=${encodeURIComponent(token)}`,
     );
 
     es.onmessage = (msg) => {
@@ -46,7 +45,7 @@ export function LogDrawer({
     return () => {
       es.close();
     };
-  }, [agent, apiBaseUrl, token]);
+  }, [agent, resolvedBaseUrl, token]);
 
   if (!agent) return null;
 

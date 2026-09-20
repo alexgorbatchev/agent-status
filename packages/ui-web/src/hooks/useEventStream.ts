@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import type { IAgentState, IEnvironmentInfo, ServerEvent } from "../types";
+import type { IAgentState, IEnvironmentInfo, IWindowWithAgentStatus, ServerEvent } from "../types";
 
 export interface IEventStreamState {
   agents: IAgentState[];
@@ -8,10 +8,11 @@ export interface IEventStreamState {
   error: string | null;
 }
 
-export function useEventStream(
-  apiBaseUrl: string = "http://localhost:4502",
-  token: string = "dev-secret-token",
-): IEventStreamState {
+export function useEventStream(apiBaseUrl?: string, token: string = "dev-secret-token"): IEventStreamState {
+  const resolvedBaseUrl =
+    apiBaseUrl ||
+    (typeof window !== "undefined" && (window as unknown as IWindowWithAgentStatus).__AGENT_STATUS_API_URL__) ||
+    "http://localhost:4502";
   const [agents, setAgents] = useState<IAgentState[]>([]);
   const [environments, setEnvironments] = useState<IEnvironmentInfo[]>([]);
   const [isConnected, setIsConnected] = useState(false);
@@ -66,7 +67,7 @@ export function useEventStream(
 
     const connect = () => {
       try {
-        const url = `${apiBaseUrl}/api/v1/events?token=${encodeURIComponent(token)}`;
+        const url = `${resolvedBaseUrl}/api/v1/events?token=${encodeURIComponent(token)}`;
         es = new EventSource(url);
 
         es.onopen = () => {
@@ -82,6 +83,20 @@ export function useEventStream(
             console.error("Failed to parse SSE event:", error);
           }
         };
+
+        // Allow test environment to dispatch mock events
+        if (typeof window !== "undefined") {
+          const handleMockEvent = (e: Event) => {
+            const customEvent = e as CustomEvent<ServerEvent>;
+            if (customEvent.detail) {
+              handleServerEvent(customEvent.detail);
+            }
+          };
+          window.addEventListener("mock-sse-event", handleMockEvent);
+          return () => {
+            window.removeEventListener("mock-sse-event", handleMockEvent);
+          };
+        }
 
         es.onerror = () => {
           setIsConnected(false);
@@ -104,7 +119,7 @@ export function useEventStream(
       if (es) es.close();
       if (retryTimeout) clearTimeout(retryTimeout);
     };
-  }, [apiBaseUrl, token, handleServerEvent]);
+  }, [resolvedBaseUrl, token, handleServerEvent]);
 
   return { agents, environments, isConnected, error };
 }
