@@ -28,14 +28,48 @@ type rawPiContentBlock struct {
 	IsError    *bool                  `json:"isError,omitempty"`
 }
 
+type rawPiCostBreakdown struct {
+	Input      float64 `json:"input"`
+	Output     float64 `json:"output"`
+	CacheRead  float64 `json:"cacheRead"`
+	CacheWrite float64 `json:"cacheWrite"`
+	Total      float64 `json:"total"`
+}
+
 type rawPiUsage struct {
-	Input      int64    `json:"input"`
-	Output     int64    `json:"output"`
-	CacheRead  int64    `json:"cacheRead"`
-	CacheWrite int64    `json:"cacheWrite"`
-	Reasoning  int64    `json:"reasoning"`
-	Total      int64    `json:"total"`
-	Cost       *float64 `json:"cost,omitempty"`
+	Input       int64    `json:"input"`
+	Output      int64    `json:"output"`
+	CacheRead   int64    `json:"cacheRead"`
+	CacheWrite  int64    `json:"cacheWrite"`
+	Reasoning   int64    `json:"reasoning"`
+	Total       int64    `json:"total"`
+	TotalTokens int64    `json:"totalTokens,omitempty"`
+	Cost        *float64 `json:"cost,omitempty"`
+}
+
+func (u *rawPiUsage) UnmarshalJSON(data []byte) error {
+	type rawUsageAlias rawPiUsage
+	var aux struct {
+		rawUsageAlias
+		RawCost json.RawMessage `json:"cost"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*u = rawPiUsage(aux.rawUsageAlias)
+
+	if len(aux.RawCost) > 0 && string(aux.RawCost) != "null" {
+		var numCost float64
+		if err := json.Unmarshal(aux.RawCost, &numCost); err == nil {
+			u.Cost = &numCost
+		} else {
+			var costObj rawPiCostBreakdown
+			if err := json.Unmarshal(aux.RawCost, &costObj); err == nil {
+				u.Cost = &costObj.Total
+			}
+		}
+	}
+	return nil
 }
 
 type rawPiMessage struct {
@@ -51,16 +85,21 @@ type rawPiMessage struct {
 }
 
 type rawPiLine struct {
-	Type      string        `json:"type"` // "session" | "message" | "model_change" | "thinking_level_change" | "custom_message" | "label" | "session_info"
-	ID        string        `json:"id"`
-	ParentID  *string       `json:"parentId"`
-	Timestamp interface{}   `json:"timestamp"`
-	CWD       string        `json:"cwd,omitempty"`
-	Message   *rawPiMessage `json:"message,omitempty"`
-	Model     string        `json:"model,omitempty"`
-	Provider  string        `json:"provider,omitempty"`
-	Title     string        `json:"title,omitempty"`
-	Name      string        `json:"name,omitempty"`
+	Type          string        `json:"type"` // "session" | "message" | "model_change" | "thinking_level_change" | "custom_message" | "label" | "session_info"
+	ID            string        `json:"id"`
+	ParentID      *string       `json:"parentId"`
+	Timestamp     interface{}   `json:"timestamp"`
+	CWD           string        `json:"cwd,omitempty"`
+	Message       *rawPiMessage `json:"message,omitempty"`
+	Model         string        `json:"model,omitempty"`
+	ModelID       string        `json:"modelId,omitempty"`
+	Model_ID      string        `json:"model_id,omitempty"`
+	Provider      string        `json:"provider,omitempty"`
+	Title         string        `json:"title,omitempty"`
+	Name          string        `json:"name,omitempty"`
+	Label         string        `json:"label,omitempty"`
+	TargetID      string        `json:"targetId,omitempty"`
+	ThinkingLevel string        `json:"thinkingLevel,omitempty"`
 }
 
 func parsePiContentBlocks(content interface{}) []rawPiContentBlock {
@@ -125,7 +164,10 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 		})
 
 	case "label", "session_info":
-		titleText := raw.Title
+		titleText := raw.Label
+		if titleText == "" {
+			titleText = raw.Title
+		}
 		if titleText == "" {
 			titleText = raw.Name
 		}
@@ -141,7 +183,13 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 		}
 
 	case "model_change":
-		modelName := raw.Model
+		modelName := raw.ModelID
+		if modelName == "" {
+			modelName = raw.Model
+		}
+		if modelName == "" {
+			modelName = raw.Model_ID
+		}
 		if modelName != "" {
 			events = append(events, ParsedEvent{
 				EventType: "model_change",
@@ -215,27 +263,31 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 
 		case "assistant":
 			blocks := parsePiContentBlocks(msg.Content)
-			var lastThinking string
+			var textParts []string
 
 			for _, b := range blocks {
 				switch b.Type {
 				case "thinking":
-					if b.Thinking != "" {
-						lastThinking = b.Thinking
-					} else if b.Text != "" {
-						lastThinking = b.Text
+					thought := b.Thinking
+					if thought == "" {
+						thought = b.Text
 					}
-					if lastThinking != "" {
+					if thought != "" {
 						events = append(events, ParsedEvent{
 							EventType: "thinking",
 							Timestamp: ts,
 							CWD:       cwd,
 							Data: types.TelemetryFrameData{
 								Role:    stringPtr("assistant"),
-								Content: stringPtr(lastThinking),
+								Content: stringPtr(thought),
 								Model:   stringPtr(msg.Model),
 							},
 						})
+					}
+
+				case "text":
+					if b.Text != "" {
+						textParts = append(textParts, b.Text)
 					}
 
 				case "toolCall", "tool_use":
@@ -303,6 +355,9 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 				u := msg.Usage
 				total := u.Total
 				if total == 0 {
+					total = u.TotalTokens
+				}
+				if total == 0 {
 					total = u.Input + u.Output + u.CacheRead + u.CacheWrite + u.Reasoning
 				}
 				usage = &types.ITokenUsage{
@@ -326,12 +381,18 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 				modelPtr = stringPtr(msg.Model)
 			}
 
+			var contentPtr *string
+			if len(textParts) > 0 {
+				contentPtr = stringPtr(strings.Join(textParts, "\n"))
+			}
+
 			events = append(events, ParsedEvent{
 				EventType: "turn_end",
 				Timestamp: ts,
 				CWD:       cwd,
 				Data: types.TelemetryFrameData{
 					Role:           stringPtr("assistant"),
+					Content:        contentPtr,
 					Model:          modelPtr,
 					StopReason:     stopReason,
 					Usage:          usage,

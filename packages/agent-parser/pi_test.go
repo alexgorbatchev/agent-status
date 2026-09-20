@@ -65,6 +65,12 @@ func TestParsePiLine(t *testing.T) {
 	})
 
 	t.Run("label and session_info", func(t *testing.T) {
+		lineLabel := []byte(`{"type":"label","label":"Bookmark Step 1","timestamp":"2026-09-18T20:53:30.000Z","targetId":"entry-1","cwd":"/cwd"}`)
+		evsLabel, err := ParsePiLine(lineLabel, "")
+		if err != nil || len(evsLabel) != 1 || *evsLabel[0].Data.Title != "Bookmark Step 1" {
+			t.Errorf("label event with label field mismatch: %+v", evsLabel)
+		}
+
 		line1 := []byte(`{"type":"label","title":"My Session Title","timestamp":"2026-09-18T20:53:30.000Z","cwd":"/cwd"}`)
 		evs1, err := ParsePiLine(line1, "")
 		if err != nil || len(evs1) != 1 || *evs1[0].Data.Title != "My Session Title" {
@@ -79,6 +85,18 @@ func TestParsePiLine(t *testing.T) {
 	})
 
 	t.Run("model_change", func(t *testing.T) {
+		lineModelId := []byte(`{"type":"model_change","provider":"anthropic","modelId":"claude-3-7-sonnet","timestamp":"2026-09-18T20:53:30.000Z"}`)
+		evsModelId, err := ParsePiLine(lineModelId, "/cwd")
+		if err != nil || len(evsModelId) != 1 || evsModelId[0].EventType != "model_change" || *evsModelId[0].Data.Model != "claude-3-7-sonnet" {
+			t.Errorf("model_change with modelId mismatch: %+v", evsModelId)
+		}
+
+		lineModel_Id := []byte(`{"type":"model_change","model_id":"gpt-4o","timestamp":"2026-09-18T20:53:30.000Z"}`)
+		evsModel_Id, err := ParsePiLine(lineModel_Id, "/cwd")
+		if err != nil || len(evsModel_Id) != 1 || evsModel_Id[0].EventType != "model_change" || *evsModel_Id[0].Data.Model != "gpt-4o" {
+			t.Errorf("model_change with model_id mismatch: %+v", evsModel_Id)
+		}
+
 		line := []byte(`{"type":"model_change","model":"gemini-3.7-flash","timestamp":"2026-09-18T20:53:30.000Z"}`)
 		evs, err := ParsePiLine(line, "/cwd")
 		if err != nil || len(evs) != 1 || evs[0].EventType != "model_change" || *evs[0].Data.Model != "gemini-3.7-flash" {
@@ -166,6 +184,92 @@ func TestParsePiLine(t *testing.T) {
 		}
 		if evs[2].Data.RawHarnessCost == nil || *evs[2].Data.RawHarnessCost != 0.005 {
 			t.Errorf("cost mismatch: %v", evs[2].Data.RawHarnessCost)
+		}
+	})
+
+	t.Run("assistant message with object-shaped cost and distinct thinking vs text blocks", func(t *testing.T) {
+		line := []byte(`{
+			"type": "message",
+			"message": {
+				"role": "assistant",
+				"model": "claude-3-7-sonnet",
+				"stopReason": "stop",
+				"content": [
+					{"type": "thinking", "thinking": "Internal chain of thought reasoning"},
+					{"type": "text", "text": "Conversational assistant response to user"}
+				],
+				"usage": {
+					"input": 100,
+					"output": 50,
+					"cacheRead": 20,
+					"cacheWrite": 10,
+					"reasoning": 30,
+					"total": 180,
+					"cost": {
+						"input": 0.001,
+						"output": 0.003,
+						"cacheRead": 0.0002,
+						"cacheWrite": 0.0001,
+						"total": 0.0043
+					}
+				}
+			}
+		}`)
+		evs, err := ParsePiLine(line, "/cwd")
+		if err != nil {
+			t.Fatalf("ParsePiLine error: %v", err)
+		}
+		// Expect exactly 2 events: 1 thinking event, 1 turn_end event (no thinking event for the text block!)
+		if len(evs) != 2 {
+			t.Fatalf("expected 2 events, got %d", len(evs))
+		}
+
+		// Event 0: thinking
+		if evs[0].EventType != "thinking" {
+			t.Errorf("expected EventType thinking, got %s", evs[0].EventType)
+		}
+		if *evs[0].Data.Content != "Internal chain of thought reasoning" {
+			t.Errorf("thinking content mismatch: %q", *evs[0].Data.Content)
+		}
+
+		// Event 1: turn_end
+		if evs[1].EventType != "turn_end" {
+			t.Errorf("expected EventType turn_end, got %s", evs[1].EventType)
+		}
+		if evs[1].Data.Content == nil || *evs[1].Data.Content != "Conversational assistant response to user" {
+			t.Errorf("turn_end content mismatch: %v", evs[1].Data.Content)
+		}
+		if evs[1].Data.Usage == nil || evs[1].Data.Usage.Total != 180 {
+			t.Errorf("usage total mismatch: %+v", evs[1].Data.Usage)
+		}
+		if evs[1].Data.RawHarnessCost == nil || *evs[1].Data.RawHarnessCost != 0.0043 {
+			t.Errorf("cost breakdown total mismatch: %v", evs[1].Data.RawHarnessCost)
+		}
+	})
+
+	t.Run("assistant message with string content", func(t *testing.T) {
+		line := []byte(`{
+			"type": "message",
+			"message": {
+				"role": "assistant",
+				"model": "claude-3-7-sonnet",
+				"content": "Just a plain string response",
+				"stopReason": "stop"
+			}
+		}`)
+		evs, err := ParsePiLine(line, "/cwd")
+		if err != nil {
+			t.Fatalf("ParsePiLine error: %v", err)
+		}
+		// Should only produce turn_end, no thinking event
+		if len(evs) != 1 {
+			t.Fatalf("expected 1 event, got %d", len(evs))
+		}
+		if evs[0].EventType != "turn_end" {
+			t.Errorf("expected EventType turn_end, got %s", evs[0].EventType)
+		}
+		if evs[0].Data.Content == nil || *evs[0].Data.Content != "Just a plain string response" {
+			t.Errorf("content mismatch: %v", evs[0].Data.Content)
 		}
 	})
 
