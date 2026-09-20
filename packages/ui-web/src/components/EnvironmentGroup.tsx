@@ -1,9 +1,10 @@
 import React from "react";
 import type { IEnvironmentGroupProps } from "./types";
 import { AgentCard } from "./AgentCard";
+import { IconWrapper } from "./IconWrapper";
 import { Server, DollarSign } from "lucide-react";
 
-export function EnvironmentGroup({ environment, agents, onSelectAgent }: IEnvironmentGroupProps) {
+export function EnvironmentGroup({ environment, agents, onSelectAgent }: IEnvironmentGroupProps): React.JSX.Element {
   const envSpend = agents.reduce((acc, a) => acc + (a.activity.cost?.total || 0), 0);
   const activeCount = agents.filter((a) => a.activity.lifecycle === "RUNNING").length;
 
@@ -15,9 +16,9 @@ export function EnvironmentGroup({ environment, agents, onSelectAgent }: IEnviro
         className="flex items-center justify-between gap-4 mb-3 pb-2 border-b border-slate-800/80"
       >
         <div className="flex items-center gap-2">
-          <span className="w-4 h-4 text-purple-400 flex items-center justify-center">
+          <IconWrapper size="md" tone="purple">
             <Server size={16} />
-          </span>
+          </IconWrapper>
           <h2 data-testid="EnvironmentGroup--title" className="text-sm font-bold text-slate-100">
             {environment.label}
           </h2>
@@ -44,9 +45,9 @@ export function EnvironmentGroup({ environment, agents, onSelectAgent }: IEnviro
           data-testid="EnvironmentGroup--spend"
           className="flex items-center gap-1 text-xs font-mono text-emerald-400"
         >
-          <span className="w-3.5 h-3.5 flex items-center justify-center">
+          <IconWrapper size="sm">
             <DollarSign size={14} />
-          </span>
+          </IconWrapper>
           <span>${envSpend.toFixed(3)}</span>
         </div>
       </div>

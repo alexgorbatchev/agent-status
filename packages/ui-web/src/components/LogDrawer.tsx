@@ -2,10 +2,16 @@ import React, { useState, useEffect } from "react";
 import type { ILogDrawerProps } from "./types";
 import type { ITelemetryFrame, IWindowWithAgentStatus } from "../types";
 import { StatusBadge } from "./StatusBadge";
+import { IconWrapper } from "./IconWrapper";
 import { X, Brain, Wrench, AlertTriangle, User, Play, CheckCircle2 } from "lucide-react";
 import Markdown from "react-markdown";
 
-export function LogDrawer({ agent, apiBaseUrl, token = "dev-secret-token", onClose }: ILogDrawerProps) {
+export function LogDrawer({
+  agent,
+  apiBaseUrl,
+  token = "dev-secret-token",
+  onClose,
+}: ILogDrawerProps): React.JSX.Element | null {
   const resolvedBaseUrl =
     apiBaseUrl ||
     (typeof window !== "undefined" && (window as unknown as IWindowWithAgentStatus).__AGENT_STATUS_API_URL__) ||
@@ -77,9 +83,9 @@ export function LogDrawer({ agent, apiBaseUrl, token = "dev-secret-token", onClo
           onClick={onClose}
           className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
         >
-          <span className="w-5 h-5 flex items-center justify-center">
+          <IconWrapper size="lg">
             <X size={20} />
-          </span>
+          </IconWrapper>
         </button>
       </div>
 
@@ -105,29 +111,29 @@ export function LogDrawer({ agent, apiBaseUrl, token = "dev-secret-token", onClo
                 <div className="flex items-center justify-between gap-2 mb-1 text-[11px] text-slate-400 font-mono">
                   <div className="flex items-center gap-1.5">
                     {isUser ? (
-                      <span className="w-3.5 h-3.5 text-blue-400 flex items-center justify-center">
+                      <IconWrapper size="sm" tone="primary">
                         <User size={14} />
-                      </span>
+                      </IconWrapper>
                     ) : log.eventType === "thinking" ? (
-                      <span className="w-3.5 h-3.5 text-blue-400 flex items-center justify-center">
+                      <IconWrapper size="sm" tone="primary">
                         <Brain size={14} />
-                      </span>
+                      </IconWrapper>
                     ) : log.eventType === "tool_call" ? (
-                      <span className="w-3.5 h-3.5 text-amber-400 flex items-center justify-center">
+                      <IconWrapper size="sm" tone="warning">
                         <Wrench size={14} />
-                      </span>
+                      </IconWrapper>
                     ) : log.eventType === "error" ? (
-                      <span className="w-3.5 h-3.5 text-red-400 flex items-center justify-center">
+                      <IconWrapper size="sm" tone="error">
                         <AlertTriangle size={14} />
-                      </span>
+                      </IconWrapper>
                     ) : log.eventType === "run_started" ? (
-                      <span className="w-3.5 h-3.5 text-emerald-400 flex items-center justify-center">
+                      <IconWrapper size="sm" tone="success">
                         <Play size={14} />
-                      </span>
+                      </IconWrapper>
                     ) : log.eventType === "turn_end" ? (
-                      <span className="w-3.5 h-3.5 text-slate-400 flex items-center justify-center">
+                      <IconWrapper size="sm" tone="muted">
                         <CheckCircle2 size={14} />
-                      </span>
+                      </IconWrapper>
                     ) : null}
                     {isSubagent && (
                       <span className="px-1.5 py-0.2 rounded bg-purple-900/50 text-purple-300 text-[10px]">

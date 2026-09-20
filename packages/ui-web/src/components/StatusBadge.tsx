@@ -1,7 +1,7 @@
 import React from "react";
 import type { IStatusBadgeProps } from "./types";
 
-export function StatusBadge({ lifecycle, activity }: IStatusBadgeProps) {
+export function StatusBadge({ lifecycle, activity }: IStatusBadgeProps): React.JSX.Element {
   if (lifecycle === "RUNNING") {
     switch (activity) {
       case "BUSY":

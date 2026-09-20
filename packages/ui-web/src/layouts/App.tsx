@@ -6,9 +6,10 @@ import { AttentionBanner } from "../components/AttentionBanner";
 import { ProjectGroup } from "../components/ProjectGroup";
 import { EnvironmentGroup } from "../components/EnvironmentGroup";
 import { LogDrawer } from "../components/LogDrawer";
+import { ViewSwitcher } from "../components/ViewSwitcher";
 import { Layers, Server } from "lucide-react";
 
-export function App() {
+export function App(): React.JSX.Element {
   const { agents, environments, isConnected, error } = useEventStream();
   const [groupBy, setGroupBy] = useState<GroupByOption>("project");
   const [selectedAgent, setSelectedAgent] = useState<IAgentState | null>(null);
@@ -69,37 +70,24 @@ export function App() {
           data-testid="App--controls"
           className="flex items-center justify-between mb-6 pb-2 border-b border-slate-800"
         >
-          <div className="flex items-center gap-2">
-            <button
-              data-testid="App--group-by-project"
-              onClick={() => setGroupBy("project")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                groupBy === "project"
-                  ? "bg-blue-600 text-white shadow-md shadow-blue-600/30"
-                  : "bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800"
-              }`}
-            >
-              <span className="w-3.5 h-3.5 flex items-center justify-center">
-                <Layers size={14} />
-              </span>
-              Group by Project
-            </button>
-
-            <button
-              data-testid="App--group-by-environment"
-              onClick={() => setGroupBy("environment")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                groupBy === "environment"
-                  ? "bg-blue-600 text-white shadow-md shadow-blue-600/30"
-                  : "bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800"
-              }`}
-            >
-              <span className="w-3.5 h-3.5 flex items-center justify-center">
-                <Server size={14} />
-              </span>
-              Group by Environment
-            </button>
-          </div>
+          <ViewSwitcher<GroupByOption>
+            options={[
+              {
+                id: "project",
+                label: "Group by Project",
+                icon: <Layers size={14} />,
+                testId: "App--group-by-project",
+              },
+              {
+                id: "environment",
+                label: "Group by Environment",
+                icon: <Server size={14} />,
+                testId: "App--group-by-environment",
+              },
+            ]}
+            value={groupBy}
+            onChange={setGroupBy}
+          />
 
           <span data-testid="App--agent-count" className="text-xs text-slate-500 font-mono">
             {agents.length} Total Agent{agents.length !== 1 ? "s" : ""}

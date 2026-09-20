@@ -1,9 +1,10 @@
 import React from "react";
 import type { IAgentCardProps } from "./types";
 import { StatusBadge } from "./StatusBadge";
+import { IconWrapper } from "./IconWrapper";
 import { GitBranch, FolderGit2, Bot, Layers, DollarSign, HelpCircle, AlertTriangle } from "lucide-react";
 
-export function AgentCard({ agent, onOpenDrawer }: IAgentCardProps) {
+export function AgentCard({ agent, onOpenDrawer }: IAgentCardProps): React.JSX.Element {
   const { activity, environment, workspace, harness } = agent;
 
   const formattedCost = activity.cost ? `$${activity.cost.total.toFixed(4)}` : "—";
@@ -23,9 +24,9 @@ export function AgentCard({ agent, onOpenDrawer }: IAgentCardProps) {
             <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono">{environment.label}</span>
             <span className="text-slate-600">•</span>
             <span className="flex items-center gap-1 font-medium text-slate-300">
-              <span className="w-3.5 h-3.5 flex items-center justify-center">
+              <IconWrapper size="sm">
                 <Bot size={14} />
-              </span>
+              </IconWrapper>
               {harness === "claude-code" ? "Claude Code" : "Pi"}
             </span>
           </div>
@@ -51,9 +52,9 @@ export function AgentCard({ agent, onOpenDrawer }: IAgentCardProps) {
             data-testid="AgentCard--question"
             className="mb-3 p-2 rounded-lg bg-amber-950/40 border border-amber-800/60 text-xs text-amber-200 flex items-start gap-1.5"
           >
-            <span className="w-4 h-4 text-amber-400 shrink-0 mt-0.5 flex items-center justify-center">
+            <IconWrapper size="md" tone="warning" align="top">
               <HelpCircle size={16} />
-            </span>
+            </IconWrapper>
             <span className="line-clamp-2">{activity.question}</span>
           </div>
         )}
@@ -63,9 +64,9 @@ export function AgentCard({ agent, onOpenDrawer }: IAgentCardProps) {
             data-testid="AgentCard--error"
             className="mb-3 p-2 rounded-lg bg-red-950/40 border border-red-800/60 text-xs text-red-200 flex items-start gap-1.5"
           >
-            <span className="w-4 h-4 text-red-400 shrink-0 mt-0.5 flex items-center justify-center">
+            <IconWrapper size="md" tone="error" align="top">
               <AlertTriangle size={16} />
-            </span>
+            </IconWrapper>
             <span className="line-clamp-2 font-mono text-[11px]">{activity.lastError}</span>
           </div>
         )}
@@ -73,26 +74,26 @@ export function AgentCard({ agent, onOpenDrawer }: IAgentCardProps) {
         {/* Metadata Badges */}
         <div data-testid="AgentCard--badges" className="flex flex-wrap items-center gap-2 text-xs text-slate-400 mb-3">
           <div className="flex items-center gap-1 bg-slate-800/50 px-2 py-0.5 rounded border border-slate-700/50">
-            <span className="w-3 h-3 text-slate-400 flex items-center justify-center">
+            <IconWrapper size="xs" tone="muted">
               <GitBranch size={12} />
-            </span>
+            </IconWrapper>
             <span className="font-mono text-[11px] text-slate-300">{workspace.branch || "HEAD"}</span>
           </div>
 
           {workspace.isWorktree && workspace.relPath && (
             <div className="flex items-center gap-1 bg-slate-800/50 px-2 py-0.5 rounded border border-slate-700/50">
-              <span className="w-3 h-3 text-slate-400 flex items-center justify-center">
+              <IconWrapper size="xs" tone="muted">
                 <FolderGit2 size={12} />
-              </span>
+              </IconWrapper>
               <span className="font-mono text-[11px] text-slate-300">{workspace.relPath}</span>
             </div>
           )}
 
           {activity.subagentCount > 0 && (
             <div className="flex items-center gap-1 bg-purple-950/40 border border-purple-800/50 text-purple-300 px-2 py-0.5 rounded text-[11px]">
-              <span className="w-3 h-3 text-purple-400 flex items-center justify-center">
+              <IconWrapper size="xs" tone="purple">
                 <Layers size={12} />
-              </span>
+              </IconWrapper>
               <span>
                 {activity.subagentCount} subagent{activity.subagentCount > 1 ? "s" : ""}
               </span>
@@ -107,9 +108,9 @@ export function AgentCard({ agent, onOpenDrawer }: IAgentCardProps) {
         className="flex items-center justify-between pt-2 border-t border-slate-800 text-xs text-slate-400"
       >
         <div className="flex items-center gap-1 font-mono text-emerald-400">
-          <span className="w-3.5 h-3.5 flex items-center justify-center">
+          <IconWrapper size="sm">
             <DollarSign size={14} />
-          </span>
+          </IconWrapper>
           <span>{formattedCost}</span>
         </div>
 
