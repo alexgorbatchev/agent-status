@@ -161,7 +161,6 @@ func TestParsePiLine(t *testing.T) {
 		if u == nil {
 			t.Fatalf("usage is nil")
 		}
-		// total = 50 + 25 + 10 + 5 + 15 = 105
 		if u.Total != 105 {
 			t.Errorf("u.Total = %d, want 105", u.Total)
 		}

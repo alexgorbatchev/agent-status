@@ -1,3 +1,9 @@
+// Package parser provides streaming log parsers for AI agent harnesses.
+//
+// Attribution:
+// Derived from and inspired by Chitragupt (https://github.com/sonnes/chitragupt),
+// OpenUsage (https://github.com/janekbaraniewski/openusage), and
+// Claude Agent SDK Golang (https://github.com/ProjAnvil/claude-agent-sdk-golang).
 package parser
 
 import (
@@ -47,31 +53,43 @@ type rawMessage struct {
 }
 
 type rawJSONLine struct {
-	Type        string      `json:"type"`
-	UUID        string      `json:"uuid"`
-	ParentUUID  *string     `json:"parentUuid"`
-	SessionID   string      `json:"sessionId"`
-	Timestamp   string      `json:"timestamp"`
-	CWD         string      `json:"cwd"`
-	GitBranch   string      `json:"gitBranch"`
-	IsSidechain bool        `json:"isSidechain"`
-	Title       string      `json:"title"`
-	AITitle     string      `json:"aiTitle"`
-	LastPrompt  string      `json:"lastPrompt"`
-	Message     *rawMessage `json:"message"`
-	Content     interface{} `json:"content"`
-	Question    string      `json:"question"`
+	Type        string            `json:"type"`
+	UUID        string            `json:"uuid"`
+	ParentUUID  *string           `json:"parentUuid"`
+	SessionID   string            `json:"sessionId"`
+	Timestamp   interface{}       `json:"timestamp"`
+	CWD         string            `json:"cwd"`
+	GitBranch   string            `json:"gitBranch"`
+	IsSidechain bool              `json:"isSidechain"`
+	Title       string            `json:"title"`
+	AITitle     string            `json:"aiTitle"`
+	LastPrompt  string            `json:"lastPrompt"`
+	Message     *rawMessage       `json:"message"`
+	Content     interface{}       `json:"content"`
+	Question    string            `json:"question"`
 }
 
-func parseTimestamp(tsStr string) int64 {
-	if tsStr == "" {
+func parseTimestamp(v interface{}) int64 {
+	if v == nil {
 		return time.Now().UnixMilli()
 	}
-	if t, err := time.Parse(time.RFC3339Nano, tsStr); err == nil {
-		return t.UnixMilli()
-	}
-	if t, err := time.Parse(time.RFC3339, tsStr); err == nil {
-		return t.UnixMilli()
+	switch val := v.(type) {
+	case float64:
+		return int64(val)
+	case int64:
+		return val
+	case int:
+		return int64(val)
+	case string:
+		if val == "" {
+			return time.Now().UnixMilli()
+		}
+		if t, err := time.Parse(time.RFC3339Nano, val); err == nil {
+			return t.UnixMilli()
+		}
+		if t, err := time.Parse(time.RFC3339, val); err == nil {
+			return t.UnixMilli()
+		}
 	}
 	return time.Now().UnixMilli()
 }
@@ -107,6 +125,7 @@ func extractContentString(c interface{}) string {
 	}
 }
 
+// ParseClaudeCodeLine parses a single line of Claude Code JSONL log output into ParsedEvent structs.
 func ParseClaudeCodeLine(line []byte) ([]ParsedEvent, error) {
 	if len(line) == 0 {
 		return nil, nil
@@ -252,6 +271,12 @@ func ParseClaudeCodeLine(line []byte) ([]ParsedEvent, error) {
 								qText = q
 							} else if p, ok := b.Input["prompt"].(string); ok {
 								qText = p
+							} else if qs, ok := b.Input["questions"].([]interface{}); ok && len(qs) > 0 {
+								if qObj, ok := qs[0].(map[string]interface{}); ok {
+									if q, ok := qObj["question"].(string); ok {
+										qText = q
+									}
+								}
 							}
 						}
 						events = append(events, ParsedEvent{

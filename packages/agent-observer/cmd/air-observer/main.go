@@ -13,10 +13,10 @@ import (
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/config"
 	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/git"
-	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/parser"
 	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/scanner"
 	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/shipper"
 	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/tailer"
+	"github.com/alexgorbatchev/agent-status/packages/agent-parser"
 	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree"
 	"github.com/spf13/cobra"
 )

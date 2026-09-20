@@ -8,13 +8,19 @@ import (
 func TestParseTimestamp(t *testing.T) {
 	tests := []struct {
 		name    string
-		input   string
+		input   interface{}
+		wantVal int64
 		wantNow bool
 	}{
-		{"empty string", "", true},
-		{"rfc3339 nano", "2026-09-19T10:00:00.123456Z", false},
-		{"rfc3339 standard", "2026-09-19T10:00:00Z", false},
-		{"invalid format", "not-a-date", true},
+		{"nil", nil, 0, true},
+		{"empty string", "", 0, true},
+		{"float64", float64(1700000000000), 1700000000000, false},
+		{"int64", int64(1700000000000), 1700000000000, false},
+		{"int", int(1700000000), 1700000000, false},
+		{"rfc3339 nano", "2026-09-19T10:00:00.123456Z", 0, false},
+		{"rfc3339 standard", "2026-09-19T10:00:00Z", 0, false},
+		{"invalid format", "not-a-date", 0, true},
+		{"unsupported type", true, 0, true},
 	}
 
 	for _, tt := range tests {
@@ -23,6 +29,10 @@ func TestParseTimestamp(t *testing.T) {
 			if tt.wantNow {
 				if time.Since(time.UnixMilli(got)) > 5*time.Second {
 					t.Errorf("expected recent timestamp, got %d", got)
+				}
+			} else if tt.wantVal > 0 {
+				if got != tt.wantVal {
+					t.Errorf("got %d, want %d", got, tt.wantVal)
 				}
 			} else {
 				if got <= 0 {
@@ -212,7 +222,6 @@ func TestParseClaudeCodeLine(t *testing.T) {
 		if u.Input != 100 || u.Output != 50 || u.CacheRead != 500 || u.CacheWrite != 50 || u.Reasoning != 20 {
 			t.Errorf("token usage breakdown mismatch: %+v", u)
 		}
-		// total: 100 + 50 + 500 + 50 + 20 = 720
 		if u.Total != 720 {
 			t.Errorf("u.Total = %d, want 720", u.Total)
 		}

@@ -1,3 +1,8 @@
+// Package parser provides streaming log parsers for AI agent harnesses.
+//
+// Attribution:
+// Derived from and inspired by Nick Nisi Sessions (https://github.com/nicknisi/sessions)
+// and OpenUsage (https://github.com/janekbaraniewski/openusage).
 package parser
 
 import (
@@ -49,7 +54,7 @@ type rawPiLine struct {
 	Type      string        `json:"type"` // "session" | "message" | "model_change" | "thinking_level_change" | "custom_message" | "label" | "session_info"
 	ID        string        `json:"id"`
 	ParentID  *string       `json:"parentId"`
-	Timestamp string        `json:"timestamp"`
+	Timestamp interface{}   `json:"timestamp"`
 	CWD       string        `json:"cwd,omitempty"`
 	Message   *rawPiMessage `json:"message,omitempty"`
 	Model     string        `json:"model,omitempty"`

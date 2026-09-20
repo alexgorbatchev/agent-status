@@ -27,6 +27,7 @@ run-ai *args:
 # Build all Go binaries and bundle ui-web
 build-all:
     @mkdir -p packages/agent-observer/bin packages/agent-ingester/bin packages/agent-server/bin
+    cd packages/agent-parser && just test
     cd packages/agent-observer && just build
     cd packages/agent-ingester && just build
     cd packages/agent-server && just build
@@ -34,6 +35,7 @@ build-all:
 
 # Run all test suites across Go and Bun
 test-all:
+    cd packages/agent-parser && just test
     cd packages/agent-observer && just test
     cd packages/agent-ingester && just test
     cd packages/agent-server && just test
@@ -45,6 +47,7 @@ test:
 
 # Lint all packages (Go vet + golangci-lint, Bun typecheck + linter)
 lint-all:
+    cd packages/agent-parser && just lint
     cd packages/agent-observer && just lint
     cd packages/agent-ingester && just lint
     cd packages/agent-server && just lint
