@@ -51,6 +51,8 @@ func TestDefaultConfig(t *testing.T) {
 		t.Setenv("AGENT_STATUS_TOKEN", "test-token")
 		t.Setenv("XDG_DATA_HOME", "/custom/data")
 		t.Setenv("XDG_RUNTIME_DIR", "/custom/runtime")
+		t.Setenv("AIR_LOG_DIR", "/custom/logs")
+		t.Setenv("AIR_LOG_FILE", "/custom/logs/server.log")
 
 		cfg := DefaultConfig()
 		if cfg.Addr != ":4502" {
@@ -70,6 +72,12 @@ func TestDefaultConfig(t *testing.T) {
 		}
 		if cfg.LogLevel != "info" {
 			t.Errorf("cfg.LogLevel = %q, want 'info'", cfg.LogLevel)
+		}
+		if cfg.LogDir != "/custom/logs" {
+			t.Errorf("cfg.LogDir = %q, want '/custom/logs'", cfg.LogDir)
+		}
+		if cfg.LogFile != "/custom/logs/server.log" {
+			t.Errorf("cfg.LogFile = %q, want '/custom/logs/server.log'", cfg.LogFile)
 		}
 	})
 

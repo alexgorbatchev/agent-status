@@ -12,6 +12,8 @@ type Config struct {
 	AuthToken     string
 	CORSOrigins   []string
 	LogLevel      string
+	LogDir        string
+	LogFile       string
 }
 
 func DefaultDBPath() string {
@@ -42,5 +44,7 @@ func DefaultConfig() Config {
 		AuthToken:   token,
 		CORSOrigins: []string{"http://localhost:3000"},
 		LogLevel:    "info",
+		LogDir:      os.Getenv("AIR_LOG_DIR"),
+		LogFile:     os.Getenv("AIR_LOG_FILE"),
 	}
 }

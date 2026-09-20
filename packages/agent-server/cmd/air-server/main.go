@@ -41,6 +41,8 @@ func newRootCmd(cfg *config.Config) *cobra.Command {
 	flags.StringSliceVar(&cfg.CORSOrigins, "cors-origin", cfg.CORSOrigins, "Allowed CORS origins")
 	flags.StringVar(&cfg.AuthToken, "token", cfg.AuthToken, "Bearer authentication token (or AGENT_STATUS_TOKEN env)")
 	flags.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "Log level (debug, info, warn, error)")
+	flags.StringVar(&cfg.LogDir, "log-dir", cfg.LogDir, "Directory for rotating log files on disk (default: $XDG_STATE_HOME/agent-status/logs)")
+	flags.StringVar(&cfg.LogFile, "log-file", cfg.LogFile, "Custom path for rotating log file on disk")
 
 	cobrahelptree.Setup(rootCmd)
 
@@ -61,7 +63,25 @@ func run(ctx context.Context, cfg config.Config) error {
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	logger := logging.Setup("server", cfg.LogLevel)
+	var fileCfg *logging.FileConfig
+	if cfg.LogFile != "" || cfg.LogDir != "" {
+		fc := logging.LoadFileConfigFromEnv("server")
+		if cfg.LogFile != "" {
+			fc.Filename = cfg.LogFile
+		}
+		if cfg.LogDir != "" {
+			fc.Dir = cfg.LogDir
+		}
+		fileCfg = &fc
+	}
+	logger := logging.SetupWithOptions(logging.SetupOptions{
+		Service:    "server",
+		Level:      cfg.LogLevel,
+		FileConfig: fileCfg,
+	})
+	defer func() {
+		_ = logging.Close()
+	}()
 
 	logger.InfoContext(ctx, "db_opened", "path", cfg.DBPath)
 	sqliteStore, err := store.OpenReadOnly(cfg.DBPath)

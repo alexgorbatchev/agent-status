@@ -29,6 +29,8 @@ func TestServerCommandHelp(t *testing.T) {
 		"--cors-origin",
 		"--token",
 		"--log-level",
+		"--log-dir",
+		"--log-file",
 	}
 
 	for _, s := range requiredHelpStrings {
@@ -66,6 +68,8 @@ func TestServerCommandFlagParsing(t *testing.T) {
 		"--socket", "/custom/path/notify.sock",
 		"--token", "secret-server-token",
 		"--log-level", "debug",
+		"--log-dir", "/tmp/logs",
+		"--log-file", "/tmp/logs/server.log",
 	}
 
 	if err := cmd.ParseFlags(args); err != nil {
@@ -86,6 +90,12 @@ func TestServerCommandFlagParsing(t *testing.T) {
 	}
 	if cfg.LogLevel != "debug" {
 		t.Errorf("LogLevel = %q, want debug", cfg.LogLevel)
+	}
+	if cfg.LogDir != "/tmp/logs" {
+		t.Errorf("LogDir = %q, want /tmp/logs", cfg.LogDir)
+	}
+	if cfg.LogFile != "/tmp/logs/server.log" {
+		t.Errorf("LogFile = %q, want /tmp/logs/server.log", cfg.LogFile)
 	}
 }
 
