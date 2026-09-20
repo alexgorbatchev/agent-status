@@ -3,6 +3,7 @@ import assert from "node:assert";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AgentCard } from "../components/AgentCard";
 import type { IAgentState } from "../types";
+import { setupMockDomEnvironment, mountComponent } from "./helpers";
 import {
   fixture_agentStateRunning,
   fixture_agentStateWaitingQuestion,
@@ -23,6 +24,7 @@ describe("AgentCard Component", () => {
     expect(html).toContain("Compiling typescript and verifying bundles");
     expect(html).toContain("main");
     expect(html).toContain("2 subagents");
+    expect(html).toContain('data-testid="AgentCard--last-active"');
     expect(html).toContain("$0.0560");
     expect(html).toContain("7,300 tokens");
   });
@@ -79,22 +81,37 @@ describe("AgentCard Component", () => {
     expect(html).toContain("Executing GrepSearch");
   });
 
-  it("invokes onOpenDrawer callback with agent when card is clicked", () => {
+  it("invokes onOpenDrawer callback with agent when card is clicked", async () => {
+    const { mockDoc, cleanup } = setupMockDomEnvironment();
     let receivedAgent: IAgentState | null = null;
     const onOpenDrawer = (agent: IAgentState) => {
       receivedAgent = agent;
     };
 
-    const element = AgentCard({ agent: fixture_agentStateRunning, onOpenDrawer });
-    element.props.onClick();
+    const { container, unmount } = await mountComponent(
+      <AgentCard agent={fixture_agentStateRunning} onOpenDrawer={onOpenDrawer} />,
+      mockDoc,
+    );
+
+    const card = container.querySelector('[data-testid="AgentCard"]');
+    assert(card);
+    card.click();
 
     assert(receivedAgent);
     expect<IAgentState | null>(receivedAgent).toBe(fixture_agentStateRunning);
+    await unmount();
+    cleanup();
   });
 
-  it("handles card click safely when onOpenDrawer is undefined", () => {
-    const element = AgentCard({ agent: fixture_agentStateRunning });
-    expect(() => element.props.onClick()).not.toThrow();
+  it("handles card click safely when onOpenDrawer is undefined", async () => {
+    const { mockDoc, cleanup } = setupMockDomEnvironment();
+    const { container, unmount } = await mountComponent(<AgentCard agent={fixture_agentStateRunning} />, mockDoc);
+
+    const card = container.querySelector('[data-testid="AgentCard"]');
+    assert(card);
+    expect(() => card.click()).not.toThrow();
+    await unmount();
+    cleanup();
   });
 
   it("applies reduced opacity 0.6 and hover:opacity-100 for finished (EXITED) agents", () => {
@@ -106,5 +123,32 @@ describe("AgentCard Component", () => {
   it("does not apply reduced opacity for active (RUNNING) agents", () => {
     const html = renderToStaticMarkup(<AgentCard agent={fixture_agentStateRunning} />);
     expect(html).not.toContain("opacity-60");
+  });
+
+  it("renders last active timestamp badge with relative time and title tooltip", () => {
+    const agent = factory_agentState({
+      activity: {
+        ...fixture_agentStateRunning.activity,
+        updatedAt: Date.now() - 30000,
+      },
+    });
+    const html = renderToStaticMarkup(<AgentCard agent={agent} />);
+
+    expect(html).toContain('data-testid="AgentCard--last-active"');
+    expect(html).toContain("30s ago");
+    expect(html).toContain(`title="Last active: ${new Date(agent.activity.updatedAt).toLocaleString()}"`);
+  });
+
+  it("renders fallback '—' when updatedAt is 0 or negative", () => {
+    const agent = factory_agentState({
+      activity: {
+        ...fixture_agentStateRunning.activity,
+        updatedAt: 0,
+      },
+    });
+    const html = renderToStaticMarkup(<AgentCard agent={agent} />);
+
+    expect(html).toContain('data-testid="AgentCard--last-active"');
+    expect(html).toContain('title="Last active: Never"');
   });
 });

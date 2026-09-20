@@ -53,7 +53,7 @@ describe("AgentGroupSection Component", () => {
     expect(html).toContain("Default Project");
     expect(html).toContain('data-testid="AgentGroupSection--spend"');
     expect(html).toContain("$0.000");
-    expect(html).not.toContain("active");
+    expect(html).not.toContain("active</span>");
   });
 
   it("renders custom badges slot when provided", () => {
@@ -71,7 +71,7 @@ describe("AgentGroupSection Component", () => {
 
     expect(html).toContain('data-testid="custom-badge"');
     expect(html).toContain("Special Tag");
-    expect(html).not.toContain("active");
+    expect(html).not.toContain("active</span>");
   });
 
   it("delegates from EnvironmentGroup correctly for live and stale environments", () => {

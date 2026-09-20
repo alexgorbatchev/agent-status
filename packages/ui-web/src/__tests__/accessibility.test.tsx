@@ -1,4 +1,5 @@
 import { describe, it, expect, mock } from "bun:test";
+import assert from "node:assert";
 import type { KeyboardEvent } from "react";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -6,6 +7,7 @@ import { AgentCard } from "../components/AgentCard";
 import { AttentionBanner } from "../components/AttentionBanner";
 import { LogDrawer } from "../components/LogDrawer";
 import { StateHelpDialog } from "../components/StateHelpDialog";
+import { setupMockDomEnvironment, mountComponent } from "./helpers";
 import { fixture_agentStateRunning, fixture_agentStateWaitingQuestion, fixture_agentStateError } from "./fixtures";
 
 describe("Accessibility & ARIA semantics", () => {
@@ -18,63 +20,96 @@ describe("Accessibility & ARIA semantics", () => {
       expect(html).toContain('aria-label="View details for Build agent-status dashboard"');
     });
 
-    it("triggers onOpenDrawer callback on click", () => {
+    it("triggers onOpenDrawer callback on click", async () => {
+      const { mockDoc, cleanup } = setupMockDomEnvironment();
       const onOpenDrawer = mock();
-      const element = AgentCard({ agent: fixture_agentStateRunning, onOpenDrawer });
+      const { container, unmount } = await mountComponent(
+        <AgentCard agent={fixture_agentStateRunning} onOpenDrawer={onOpenDrawer} />,
+        mockDoc,
+      );
 
-      element.props.onClick();
+      const card = container.querySelector('[data-testid="AgentCard"]');
+      assert(card);
+      card.click();
+
       expect(onOpenDrawer).toHaveBeenCalledTimes(1);
       expect(onOpenDrawer).toHaveBeenCalledWith(fixture_agentStateRunning);
+      await unmount();
+      cleanup();
     });
 
-    it("triggers onOpenDrawer callback on Enter key down", () => {
+    it("triggers onOpenDrawer callback on Enter key down", async () => {
+      const { mockDoc, cleanup } = setupMockDomEnvironment();
       const onOpenDrawer = mock();
-      const element = AgentCard({ agent: fixture_agentStateRunning, onOpenDrawer });
+      const { container, unmount } = await mountComponent(
+        <AgentCard agent={fixture_agentStateRunning} onOpenDrawer={onOpenDrawer} />,
+        mockDoc,
+      );
+
+      const card = container.querySelector('[data-testid="AgentCard"]');
+      assert(card);
 
       const preventDefault = mock();
-      const event = {
+      card.dispatchEvent({
+        type: "keydown",
         key: "Enter",
         preventDefault,
-      } as unknown as KeyboardEvent<HTMLDivElement>;
-
-      element.props.onKeyDown(event);
+      });
 
       expect(preventDefault).toHaveBeenCalledTimes(1);
       expect(onOpenDrawer).toHaveBeenCalledTimes(1);
       expect(onOpenDrawer).toHaveBeenCalledWith(fixture_agentStateRunning);
+      await unmount();
+      cleanup();
     });
 
-    it("triggers onOpenDrawer callback on Space key down", () => {
+    it("triggers onOpenDrawer callback on Space key down", async () => {
+      const { mockDoc, cleanup } = setupMockDomEnvironment();
       const onOpenDrawer = mock();
-      const element = AgentCard({ agent: fixture_agentStateRunning, onOpenDrawer });
+      const { container, unmount } = await mountComponent(
+        <AgentCard agent={fixture_agentStateRunning} onOpenDrawer={onOpenDrawer} />,
+        mockDoc,
+      );
+
+      const card = container.querySelector('[data-testid="AgentCard"]');
+      assert(card);
 
       const preventDefault = mock();
-      const event = {
+      card.dispatchEvent({
+        type: "keydown",
         key: " ",
         preventDefault,
-      } as unknown as KeyboardEvent<HTMLDivElement>;
-
-      element.props.onKeyDown(event);
+      });
 
       expect(preventDefault).toHaveBeenCalledTimes(1);
       expect(onOpenDrawer).toHaveBeenCalledTimes(1);
       expect(onOpenDrawer).toHaveBeenCalledWith(fixture_agentStateRunning);
+      await unmount();
+      cleanup();
     });
 
-    it("does not trigger onOpenDrawer on other keys", () => {
+    it("does not trigger onOpenDrawer on other keys", async () => {
+      const { mockDoc, cleanup } = setupMockDomEnvironment();
       const onOpenDrawer = mock();
-      const element = AgentCard({ agent: fixture_agentStateRunning, onOpenDrawer });
+      const { container, unmount } = await mountComponent(
+        <AgentCard agent={fixture_agentStateRunning} onOpenDrawer={onOpenDrawer} />,
+        mockDoc,
+      );
+
+      const card = container.querySelector('[data-testid="AgentCard"]');
+      assert(card);
 
       const preventDefault = mock();
-      const event = {
+      card.dispatchEvent({
+        type: "keydown",
         key: "Tab",
         preventDefault,
-      } as unknown as KeyboardEvent<HTMLDivElement>;
-
-      element.props.onKeyDown(event);
+      });
 
       expect(preventDefault).toHaveBeenCalledTimes(0);
       expect(onOpenDrawer).toHaveBeenCalledTimes(0);
+      await unmount();
+      cleanup();
     });
   });
 

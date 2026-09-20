@@ -5,6 +5,8 @@ import {
   filterActiveAgents,
   filterRunningAgents,
   isAgentRequiringAttention,
+  formatRelativeTime,
+  formatExactTime,
 } from "../agentUtils";
 import { factory_createAgent, fixture_testEnvironment, fixture_testStaleEnvironment } from "./fixtures";
 import type { IAgentState } from "../../types";
@@ -226,6 +228,59 @@ describe("agentUtils", () => {
         },
       });
       expect(isAgentRequiringAttention(agent)).toBe(false);
+    });
+  });
+
+  describe("formatRelativeTime", () => {
+    const baseTime = 1789850000000;
+
+    it("returns '—' for missing, non-positive or NaN timestamps", () => {
+      expect(formatRelativeTime(0, baseTime)).toBe("—");
+      expect(formatRelativeTime(-1000, baseTime)).toBe("—");
+      expect(formatRelativeTime(Number.NaN, baseTime)).toBe("—");
+    });
+
+    it("returns 'just now' for future timestamps or difference < 5s", () => {
+      expect(formatRelativeTime(baseTime + 10000, baseTime)).toBe("just now");
+      expect(formatRelativeTime(baseTime, baseTime)).toBe("just now");
+      expect(formatRelativeTime(baseTime - 2000, baseTime)).toBe("just now");
+      expect(formatRelativeTime(baseTime - 4999, baseTime)).toBe("just now");
+    });
+
+    it("formats seconds ago for difference between 5s and 59s", () => {
+      expect(formatRelativeTime(baseTime - 5000, baseTime)).toBe("5s ago");
+      expect(formatRelativeTime(baseTime - 12000, baseTime)).toBe("12s ago");
+      expect(formatRelativeTime(baseTime - 59000, baseTime)).toBe("59s ago");
+    });
+
+    it("formats minutes ago for difference between 1m and 59m", () => {
+      expect(formatRelativeTime(baseTime - 60000, baseTime)).toBe("1m ago");
+      expect(formatRelativeTime(baseTime - 120000, baseTime)).toBe("2m ago");
+      expect(formatRelativeTime(baseTime - 3540000, baseTime)).toBe("59m ago");
+    });
+
+    it("formats hours ago for difference between 1h and 23h", () => {
+      expect(formatRelativeTime(baseTime - 3600000, baseTime)).toBe("1h ago");
+      expect(formatRelativeTime(baseTime - 7200000, baseTime)).toBe("2h ago");
+      expect(formatRelativeTime(baseTime - 82800000, baseTime)).toBe("23h ago");
+    });
+
+    it("formats days ago for difference >= 24h", () => {
+      expect(formatRelativeTime(baseTime - 86400000, baseTime)).toBe("1d ago");
+      expect(formatRelativeTime(baseTime - 172800000, baseTime)).toBe("2d ago");
+    });
+  });
+
+  describe("formatExactTime", () => {
+    it("returns 'Never' for missing, non-positive or NaN timestamps", () => {
+      expect(formatExactTime(0)).toBe("Never");
+      expect(formatExactTime(-500)).toBe("Never");
+      expect(formatExactTime(Number.NaN)).toBe("Never");
+    });
+
+    it("formats valid timestamp as locale date time string", () => {
+      const ts = 1789850000000;
+      expect(formatExactTime(ts)).toBe(new Date(ts).toLocaleString());
     });
   });
 });

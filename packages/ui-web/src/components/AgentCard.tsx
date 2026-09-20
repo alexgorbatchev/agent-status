@@ -4,7 +4,9 @@ import type { IAgentCardProps } from "./types";
 import type { HarnessType } from "../types";
 import { StatusBadge } from "./StatusBadge";
 import { IconWrapper } from "./IconWrapper";
-import { GitBranch, FolderGit2, Bot, Layers, DollarSign, HelpCircle, AlertTriangle } from "lucide-react";
+import { GitBranch, FolderGit2, Bot, Layers, DollarSign, HelpCircle, AlertTriangle, Clock } from "lucide-react";
+import { useRelativeTime } from "../hooks/useRelativeTime";
+import { formatExactTime } from "../utils/agentUtils";
 
 const HARNESS_LABELS: Record<HarnessType, string> = {
   "claude-code": "Claude Code",
@@ -20,6 +22,8 @@ export function AgentCard({ agent, onOpenDrawer }: IAgentCardProps): React.JSX.E
   const title = activity.title || "Untitled Agent Session";
   const action = activity.action || (activity.activeTool ? `Executing ${activity.activeTool}` : "Idle");
   const isFinished = activity.lifecycle === "EXITED";
+  const relativeTime = useRelativeTime(activity.updatedAt);
+  const exactTime = formatExactTime(activity.updatedAt);
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Enter" || event.key === " ") {
@@ -123,6 +127,17 @@ export function AgentCard({ agent, onOpenDrawer }: IAgentCardProps): React.JSX.E
               </span>
             </div>
           )}
+
+          <div
+            data-testid="AgentCard--last-active"
+            className="flex items-center gap-1 bg-slate-800/50 px-2 py-0.5 rounded border border-slate-700/50"
+            title={`Last active: ${exactTime}`}
+          >
+            <IconWrapper size="xs" tone="muted">
+              <Clock size={12} />
+            </IconWrapper>
+            <span className="font-mono text-[11px] text-slate-300">{relativeTime}</span>
+          </div>
         </div>
       </div>
 

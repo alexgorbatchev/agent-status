@@ -9,6 +9,7 @@ Web frontend dashboard for agent-status built with React 19, Tailwind CSS v4, Lu
 - Test: `just test`
 - Test E2E: `just test-e2e`
 - Lint: `just lint`
+- Guidance: `bun x typescript-ai-policy guidance`
 
 ## Local conventions
 
@@ -25,6 +26,7 @@ Web frontend dashboard for agent-status built with React 19, Tailwind CSS v4, Lu
 
 ## Boundaries
 
+- Always: read typescript-ai-policy guidelines (`bun x typescript-ai-policy guidance`) before making changes
 - Always (code-based projects only): any time code is changed such that results from running that code are changed, a test file must be changed as well; 90% code coverage is required (scripts/ folder is excluded from this rule)
 - Ask first: adding UI state management libraries or changing top-level component architecture
 - Never: use inline `import("...").Type` or unsafe type casts
@@ -37,4 +39,6 @@ Web frontend dashboard for agent-status built with React 19, Tailwind CSS v4, Lu
 - SSE hook: `src/hooks/useEventStream.ts`
 - State machine: `src/machines/logDrawerMachine.ts`
 - Log buffer store: `src/utils/LogBuffer.ts`
+- Relative time hook: `src/hooks/useRelativeTime.ts`
 - Dev server: `src/server.ts`
+- Policy guidance: `bun x typescript-ai-policy guidance`
