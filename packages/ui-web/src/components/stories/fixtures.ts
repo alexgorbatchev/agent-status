@@ -1,4 +1,4 @@
-import type { IAgentState, IEnvironmentInfo, ITelemetryFrame } from "../../types";
+import type { IAgentState, IEnvironmentInfo, ITelemetryFrame, ITokenUsage } from "../../types";
 
 export const fixture_environmentInfo: IEnvironmentInfo = {
   id: "env-1",
@@ -18,6 +18,15 @@ export const fixture_staleEnvironmentInfo: IEnvironmentInfo = {
   user: "ubuntu",
   isStale: true,
   lastHeartbeatAt: Date.now() - 60000,
+};
+
+export const fixture_tokenUsage: ITokenUsage = {
+  input: 1000,
+  output: 200,
+  cacheRead: 5000,
+  cacheWrite: 1000,
+  reasoning: 100,
+  total: 7300,
 };
 
 export const fixture_agentStateRunning: IAgentState = {
@@ -49,14 +58,7 @@ export const fixture_agentStateRunning: IAgentState = {
     question: null,
     lastThinkingExcerpt: "Writing unit tests for frontend components...",
     lastError: null,
-    usage: {
-      input: 1000,
-      output: 200,
-      cacheRead: 5000,
-      cacheWrite: 1000,
-      reasoning: 100,
-      total: 7300,
-    },
+    usage: fixture_tokenUsage,
     cost: {
       currency: "USD",
       total: 0.056,
@@ -271,6 +273,38 @@ export const fixture_telemetryFrame: ITelemetryFrame = {
     toolOutput: "1 pass, 0 fail",
     isError: false,
     exitCode: 0,
+    question: null,
+    stopReason: null,
+    usage: null,
+    rawHarnessCost: null,
+  },
+};
+
+export const fixture_telemetryFrameSubagent: ITelemetryFrame = {
+  ...fixture_telemetryFrame,
+  subagentId: "sub-worker-1",
+  eventType: "tool_call",
+  data: {
+    ...fixture_telemetryFrame.data,
+    content: "Subagent running test task.",
+  },
+};
+
+export const fixture_telemetryFrameUserPrompt: ITelemetryFrame = {
+  ...fixture_telemetryFrame,
+  eventType: "turn_start",
+  data: {
+    role: "user",
+    content: "Please build the new telemetry component.",
+    title: "Build agent-status dashboard",
+    lastPrompt: "Please build the new telemetry component.",
+    model: null,
+    toolName: null,
+    toolCallId: null,
+    toolInput: null,
+    toolOutput: null,
+    isError: false,
+    exitCode: null,
     question: null,
     stopReason: null,
     usage: null,

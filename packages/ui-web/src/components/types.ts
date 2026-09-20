@@ -1,8 +1,21 @@
-import type { IAgentState, IEnvironmentInfo } from "../types";
+import type {
+  IAgentState,
+  IEnvironmentInfo,
+  ITelemetryFrame,
+  ITokenUsage,
+  LifecycleState,
+  ActivityState,
+} from "../types";
+
+export interface IStatusBadgeConfig {
+  label: string;
+  badgeClass: string;
+  indicatorClass: string;
+}
 
 export interface IStatusBadgeProps {
-  lifecycle: IAgentState["activity"]["lifecycle"];
-  activity: IAgentState["activity"]["activity"];
+  lifecycle: LifecycleState;
+  activity: ActivityState;
 }
 
 export interface IHeaderProps {
@@ -39,4 +52,18 @@ export interface ILogDrawerProps {
   apiBaseUrl?: string;
   token?: string;
   onClose: () => void;
+}
+
+export interface ILogFrameItemProps {
+  frame: ITelemetryFrame;
+}
+
+export interface IToolExecutionBlockProps {
+  toolName: string;
+  toolInput?: Record<string, unknown> | null;
+  toolOutput?: string | null;
+}
+
+export interface ITokenUsageBarProps {
+  usage: ITokenUsage;
 }

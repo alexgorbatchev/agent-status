@@ -1,0 +1,114 @@
+import React from "react";
+import type { ILogFrameItemProps } from "./types";
+import { Brain, Wrench, AlertTriangle, User, Play, CheckCircle2 } from "lucide-react";
+import Markdown from "react-markdown";
+import { ToolExecutionBlock } from "./ToolExecutionBlock";
+import { TokenUsageBar } from "./TokenUsageBar";
+
+export function LogFrameItem({ frame }: ILogFrameItemProps): React.JSX.Element {
+  const isSubagent = Boolean(frame.subagentId);
+  const isUser = frame.data.role === "user" || frame.eventType === "turn_start";
+
+  const renderIcon = (): React.JSX.Element | null => {
+    if (isUser) {
+      return (
+        <span className="w-3.5 h-3.5 text-blue-400 flex items-center justify-center">
+          <User size={14} />
+        </span>
+      );
+    }
+    switch (frame.eventType) {
+      case "thinking":
+        return (
+          <span className="w-3.5 h-3.5 text-blue-400 flex items-center justify-center">
+            <Brain size={14} />
+          </span>
+        );
+      case "tool_call":
+        return (
+          <span className="w-3.5 h-3.5 text-amber-400 flex items-center justify-center">
+            <Wrench size={14} />
+          </span>
+        );
+      case "error":
+        return (
+          <span className="w-3.5 h-3.5 text-red-400 flex items-center justify-center">
+            <AlertTriangle size={14} />
+          </span>
+        );
+      case "run_started":
+        return (
+          <span className="w-3.5 h-3.5 text-emerald-400 flex items-center justify-center">
+            <Play size={14} />
+          </span>
+        );
+      case "turn_end":
+        return (
+          <span className="w-3.5 h-3.5 text-slate-400 flex items-center justify-center">
+            <CheckCircle2 size={14} />
+          </span>
+        );
+      default:
+        return null;
+    }
+  };
+
+  const containerClasses = isUser
+    ? "bg-blue-950/20 border-blue-800/40"
+    : isSubagent
+      ? "bg-purple-950/20 border-purple-900/40 ml-4"
+      : "bg-slate-900/80 border-slate-800";
+
+  return (
+    <div data-testid="LogFrameItem" className={`p-3 rounded-lg border transition-all ${containerClasses}`}>
+      <div className="flex items-center justify-between gap-2 mb-1 text-[11px] text-slate-400 font-mono">
+        <div className="flex items-center gap-1.5">
+          {renderIcon()}
+          {isSubagent && (
+            <span
+              data-testid="LogFrameItem--subagent"
+              className="px-1.5 py-0.5 rounded bg-purple-900/50 text-purple-300 text-[10px]"
+            >
+              Subagent: {frame.subagentId}
+            </span>
+          )}
+          <span data-testid="LogFrameItem--type" className="font-semibold text-slate-300 uppercase">
+            {isUser ? "USER PROMPT" : frame.eventType}
+          </span>
+        </div>
+        <span data-testid="LogFrameItem--timestamp" className="text-slate-500">
+          {new Date(frame.timestamp).toLocaleTimeString()}
+        </span>
+      </div>
+
+      {frame.data.content && (
+        <div
+          data-testid="LogFrameItem--content"
+          className="text-slate-300 prose prose-invert max-w-none text-xs leading-relaxed break-words space-y-1"
+        >
+          <Markdown>{frame.data.content}</Markdown>
+        </div>
+      )}
+
+      {frame.data.question && (
+        <div
+          data-testid="LogFrameItem--question"
+          className="mt-1 p-2 rounded bg-amber-950/30 border border-amber-800/40 text-amber-200"
+        >
+          <span className="font-semibold text-[11px] block mb-1">Question:</span>
+          <Markdown>{frame.data.question}</Markdown>
+        </div>
+      )}
+
+      {frame.data.toolName && (
+        <ToolExecutionBlock
+          toolName={frame.data.toolName}
+          toolInput={frame.data.toolInput}
+          toolOutput={frame.data.toolOutput}
+        />
+      )}
+
+      {frame.data.usage && <TokenUsageBar usage={frame.data.usage} />}
+    </div>
+  );
+}
