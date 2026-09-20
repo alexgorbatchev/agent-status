@@ -26,6 +26,10 @@ test:
     bun run check
     bun test
 
+# Run Playwright E2E test suite
+test-e2e:
+    bun run test:e2e
+
 # Clean artifacts
 clean:
     rm -rf dist/

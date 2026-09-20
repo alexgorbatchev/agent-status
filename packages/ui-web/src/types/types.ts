@@ -144,6 +144,10 @@ export interface IEnvironmentGroupItem {
   agents: IAgentState[];
 }
 
+export interface IWindowWithAgentStatus {
+  __AGENT_STATUS_API_URL__?: string;
+}
+
 export type ObserverMessage =
   | { type: "hello"; envId: string; environment: IEnvironmentInfo; since: number; dropped: number }
   | { type: "frames"; frames: ITelemetryFrame[] };

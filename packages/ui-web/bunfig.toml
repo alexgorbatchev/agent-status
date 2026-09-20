@@ -1,2 +1,8 @@
 [serve.static]
 plugins = ["bun-plugin-tailwind"]
+
+[test]
+preload = []
+# Only match unit tests under src/ and ignore Playwright e2e/ spec files
+root = "./src"
+testMatch = ["**/*.test.ts", "**/*.test.tsx"]

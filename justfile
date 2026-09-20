@@ -41,6 +41,10 @@ test-all:
     cd packages/agent-server && just test
     cd packages/ui-web && just test
 
+# Run Playwright E2E test suite
+test-e2e:
+    cd packages/ui-web && just test-e2e
+
 # Run tests with short output / test summary
 test:
     @just test-all
