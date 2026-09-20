@@ -224,10 +224,12 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		case "turn_end":
 			// Summarize on turn_end before clearing active tool fields
 			c.updateSummarization(agent, true)
-			agent.Activity.Activity = types.ActivityIdle
-			agent.Activity.ActiveTool = nil
-			agent.Activity.ActiveTarget = nil
-			agent.Activity.Question = nil
+			if frame.Data.StopReason == nil || *frame.Data.StopReason != "tool_use" {
+				agent.Activity.Activity = types.ActivityIdle
+				agent.Activity.ActiveTool = nil
+				agent.Activity.ActiveTarget = nil
+				agent.Activity.Question = nil
+			}
 		}
 	} else {
 		// Subagent event: increment subagent count

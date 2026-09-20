@@ -498,7 +498,7 @@ func FallbackSummary(input SummaryInput) SummaryResult {
 				action = "Writing file"
 			}
 
-		case "Read":
+		case "Read", "readFile", "read_file":
 			p := types.PhaseInvestigating
 			phase = &p
 			if target != "" {
@@ -527,7 +527,7 @@ func FallbackSummary(input SummaryInput) SummaryResult {
 			phase = &p
 			action = "Waiting for user input"
 
-		case "WebSearch", "WebFetch", "ast-grep", "codegraph", "grep", "find":
+		case "WebSearch", "WebFetch", "ast-grep", "codegraph", "grep", "Grep", "find":
 			p := types.PhaseInvestigating
 			phase = &p
 			if target != "" {
