@@ -63,6 +63,17 @@ export function useEventStream(apiBaseUrl?: string, token: string = DEFAULT_DEV_
     let es: EventSource | null = null;
     let retryTimeout: Timer | null = null;
 
+    const handleMockEvent = (e: Event) => {
+      const customEvent = e as CustomEvent<ServerEvent>;
+      if (customEvent.detail) {
+        handleServerEvent(customEvent.detail);
+      }
+    };
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("mock-sse-event", handleMockEvent);
+    }
+
     const connect = () => {
       try {
         const url = `${resolvedBaseUrl}/api/v1/events?token=${encodeURIComponent(token)}`;
@@ -82,20 +93,6 @@ export function useEventStream(apiBaseUrl?: string, token: string = DEFAULT_DEV_
           }
         };
 
-        // Allow test environment to dispatch mock events
-        if (typeof window !== "undefined") {
-          const handleMockEvent = (e: Event) => {
-            const customEvent = e as CustomEvent<ServerEvent>;
-            if (customEvent.detail) {
-              handleServerEvent(customEvent.detail);
-            }
-          };
-          window.addEventListener("mock-sse-event", handleMockEvent);
-          return () => {
-            window.removeEventListener("mock-sse-event", handleMockEvent);
-          };
-        }
-
         es.onerror = () => {
           setIsConnected(false);
           setError("Disconnected from agent-server stream. Reconnecting...");
@@ -114,6 +111,9 @@ export function useEventStream(apiBaseUrl?: string, token: string = DEFAULT_DEV_
     connect();
 
     return () => {
+      if (typeof window !== "undefined") {
+        window.removeEventListener("mock-sse-event", handleMockEvent);
+      }
       if (es) es.close();
       if (retryTimeout) clearTimeout(retryTimeout);
     };

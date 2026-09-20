@@ -1,8 +1,4 @@
-<<<<<<< HEAD
 import type { IAgentState, IEnvironmentInfo, ITelemetryFrame } from "../types";
-=======
-import type { IAgentState, IEnvironmentInfo } from "../types";
->>>>>>> issue-21
 
 export const fixture_environmentInfo: IEnvironmentInfo = {
   id: "env-1",
@@ -14,7 +10,6 @@ export const fixture_environmentInfo: IEnvironmentInfo = {
   lastHeartbeatAt: 1789850000000,
 };
 
-<<<<<<< HEAD
 export const fixture_staleEnvironmentInfo: IEnvironmentInfo = {
   id: "env-2",
   label: "cloud-builder",
@@ -25,8 +20,6 @@ export const fixture_staleEnvironmentInfo: IEnvironmentInfo = {
   lastHeartbeatAt: 1789849940000,
 };
 
-=======
->>>>>>> issue-21
 export const fixture_agentStateRunning: IAgentState = {
   id: "env-1:claude-code:session-1",
   sessionId: "session-1",
@@ -191,7 +184,6 @@ export const fixture_agentStateError: IAgentState = {
     updatedAt: 1789850000000,
   },
 };
-<<<<<<< HEAD
 
 export const fixture_agentStateExited: IAgentState = {
   id: "env-1:pi:session-4",
@@ -242,6 +234,74 @@ export const fixture_agentStateExited: IAgentState = {
   },
 };
 
+export const fixture_minimalAgentState: IAgentState = {
+  id: "env-1:pi:session-5",
+  sessionId: "session-5",
+  harness: "pi",
+  environment: fixture_environmentInfo,
+  project: {
+    id: "github.com/alexgorbatchev/agent-status",
+    name: "agent-status",
+    canonicalRoot: "/Users/alex/dev/agent-status",
+  },
+  workspace: {
+    isWorktree: false,
+    branch: "",
+    isDetached: false,
+    relPath: null,
+    cwd: "/Users/alex/dev/agent-status",
+  },
+  activity: {
+    lifecycle: "RUNNING",
+    activity: "IDLE",
+    title: "",
+    action: "",
+    actionStale: false,
+    phase: null,
+    activeTool: null,
+    activeTarget: null,
+    question: null,
+    lastThinkingExcerpt: null,
+    lastError: null,
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      reasoning: 0,
+      total: 0,
+    },
+    cost: null,
+    subagentCount: 0,
+    currentRun: null,
+    firstStartedAt: 1789850000000,
+    updatedAt: 1789850000000,
+  },
+};
+
+export function factory_agentState(overrides?: Partial<IAgentState>): IAgentState {
+  return {
+    ...fixture_agentStateRunning,
+    ...overrides,
+    activity: {
+      ...fixture_agentStateRunning.activity,
+      ...overrides?.activity,
+    },
+    workspace: {
+      ...fixture_agentStateRunning.workspace,
+      ...overrides?.workspace,
+    },
+    environment: {
+      ...fixture_agentStateRunning.environment,
+      ...overrides?.environment,
+    },
+    project: {
+      ...fixture_agentStateRunning.project,
+      ...overrides?.project,
+    },
+  };
+}
+
 export const fixture_telemetryFrame: ITelemetryFrame = {
   version: "1.0",
   seq: 1,
@@ -285,5 +345,3 @@ export const fixture_telemetryFrame: ITelemetryFrame = {
     rawHarnessCost: null,
   },
 };
-=======
->>>>>>> issue-21
