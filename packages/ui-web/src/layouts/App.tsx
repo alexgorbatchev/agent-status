@@ -8,7 +8,7 @@ import { EnvironmentGroup } from "../components/EnvironmentGroup";
 import { LogDrawer } from "../components/LogDrawer";
 import { Layers, Server } from "lucide-react";
 
-export function App() {
+export function App(): React.JSX.Element {
   const { agents, environments, isConnected, error } = useEventStream();
   const [groupBy, setGroupBy] = useState<GroupByOption>("project");
   const [selectedAgent, setSelectedAgent] = useState<IAgentState | null>(null);
@@ -71,6 +71,8 @@ export function App() {
         >
           <div className="flex items-center gap-2">
             <button
+              type="button"
+              aria-label="Group by project"
               data-testid="App--group-by-project"
               onClick={() => setGroupBy("project")}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
@@ -86,6 +88,8 @@ export function App() {
             </button>
 
             <button
+              type="button"
+              aria-label="Group by environment"
               data-testid="App--group-by-environment"
               onClick={() => setGroupBy("environment")}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${

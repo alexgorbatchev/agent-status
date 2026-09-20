@@ -5,7 +5,12 @@ import { StatusBadge } from "./StatusBadge";
 import { X, Brain, Wrench, AlertTriangle, User, Play, CheckCircle2 } from "lucide-react";
 import Markdown from "react-markdown";
 
-export function LogDrawer({ agent, apiBaseUrl, token = "dev-secret-token", onClose }: ILogDrawerProps) {
+export function LogDrawer({
+  agent,
+  apiBaseUrl,
+  token = "dev-secret-token",
+  onClose,
+}: ILogDrawerProps): React.JSX.Element | null {
   const resolvedBaseUrl =
     apiBaseUrl ||
     (typeof window !== "undefined" && (window as unknown as IWindowWithAgentStatus).__AGENT_STATUS_API_URL__) ||
@@ -73,6 +78,8 @@ export function LogDrawer({ agent, apiBaseUrl, token = "dev-secret-token", onClo
         </div>
 
         <button
+          type="button"
+          aria-label="Close log drawer"
           data-testid="LogDrawer--close-button"
           onClick={onClose}
           className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors"

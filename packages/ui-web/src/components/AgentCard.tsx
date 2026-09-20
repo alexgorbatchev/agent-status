@@ -3,17 +3,28 @@ import type { IAgentCardProps } from "./types";
 import { StatusBadge } from "./StatusBadge";
 import { GitBranch, FolderGit2, Bot, Layers, DollarSign, HelpCircle, AlertTriangle } from "lucide-react";
 
-export function AgentCard({ agent, onOpenDrawer }: IAgentCardProps) {
+export function AgentCard({ agent, onOpenDrawer }: IAgentCardProps): React.JSX.Element {
   const { activity, environment, workspace, harness } = agent;
 
   const formattedCost = activity.cost ? `$${activity.cost.total.toFixed(4)}` : "—";
   const title = activity.title || "Untitled Agent Session";
   const action = activity.action || (activity.activeTool ? `Executing ${activity.activeTool}` : "Idle");
 
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onOpenDrawer?.(agent);
+    }
+  };
+
   return (
     <div
       data-testid="AgentCard"
+      role="button"
+      tabIndex={0}
+      aria-label={`View details for ${title}`}
       onClick={() => onOpenDrawer?.(agent)}
+      onKeyDown={handleKeyDown}
       className="group relative flex flex-col justify-between p-4 rounded-xl bg-slate-900/80 border border-slate-800 hover:border-slate-700 transition-all cursor-pointer shadow-lg hover:shadow-slate-950/50"
     >
       <div data-testid="AgentCard--body">

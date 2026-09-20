@@ -2,7 +2,7 @@ import React from "react";
 import type { IAttentionBannerProps } from "./types";
 import { AlertCircle, HelpCircle, AlertTriangle, ArrowRight } from "lucide-react";
 
-export function AttentionBanner({ agents, onSelectAgent }: IAttentionBannerProps) {
+export function AttentionBanner({ agents, onSelectAgent }: IAttentionBannerProps): React.JSX.Element | null {
   // Tier 1: ACT NOW (Running agents with WAITING_QUESTION or ERROR)
   const actNowAgents = agents.filter(
     (a) =>
@@ -30,11 +30,24 @@ export function AttentionBanner({ agents, onSelectAgent }: IAttentionBannerProps
       <div data-testid="AttentionBanner--grid" className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {actNowAgents.map((agent) => {
           const isQuestion = agent.activity.activity === "WAITING_QUESTION";
+          const title = agent.activity.title || "Untitled Agent";
+
+          const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              onSelectAgent(agent);
+            }
+          };
+
           return (
             <div
               key={agent.id}
               data-testid="AttentionBanner--agent-card"
+              role="button"
+              tabIndex={0}
+              aria-label={`View agent needing attention: ${title}`}
               onClick={() => onSelectAgent(agent)}
+              onKeyDown={handleKeyDown}
               className="flex items-start justify-between gap-3 p-3 rounded-lg bg-slate-900/90 border border-amber-900/60 hover:border-amber-600 transition-all cursor-pointer group"
             >
               <div className="flex items-start gap-2.5">
