@@ -236,8 +236,187 @@ func TestParseClaudeCodeLine(t *testing.T) {
 		if u.Input != 100 || u.Output != 50 || u.CacheRead != 500 || u.CacheWrite != 50 || u.Reasoning != 20 {
 			t.Errorf("token usage breakdown mismatch: %+v", u)
 		}
-		if u.Total != 720 {
-			t.Errorf("u.Total = %d, want 720", u.Total)
+		if u.Total != 700 {
+			t.Errorf("u.Total = %d, want 700 (reasoning tokens must not be double counted)", u.Total)
+		}
+	})
+
+	t.Run("assistant text block conversational response", func(t *testing.T) {
+		line := `{
+			"type": "assistant",
+			"uuid": "a-text",
+			"timestamp": "2026-09-19T10:00:02.000Z",
+			"cwd": "/workspace",
+			"gitBranch": "fix/issue-5",
+			"message": {
+				"role": "assistant",
+				"model": "claude-3-7-sonnet-20250219",
+				"stop_reason": "end_turn",
+				"content": [
+					{"type": "text", "text": "I have completed the task and updated all unit tests."}
+				],
+				"usage": {
+					"input_tokens": 150,
+					"output_tokens": 30,
+					"cache_read_input_tokens": 0,
+					"cache_creation_input_tokens": 0
+				}
+			}
+		}`
+		evs, err := ParseClaudeCodeLine([]byte(line))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(evs) != 1 {
+			t.Fatalf("expected 1 event (turn_end), got %d: %+v", len(evs), evs)
+		}
+		if evs[0].EventType != "turn_end" {
+			t.Errorf("eventType = %q, want 'turn_end'", evs[0].EventType)
+		}
+		if evs[0].Data.Content == nil || *evs[0].Data.Content != "I have completed the task and updated all unit tests." {
+			t.Errorf("expected turn_end content to contain assistant text, got: %v", evs[0].Data.Content)
+		}
+		if evs[0].Data.Usage == nil || evs[0].Data.Usage.Total != 180 {
+			t.Errorf("expected usage total 180, got: %+v", evs[0].Data.Usage)
+		}
+	})
+
+	t.Run("assistant thinking and multiple text blocks combined", func(t *testing.T) {
+		line := `{
+			"type": "assistant",
+			"uuid": "a-multi",
+			"timestamp": "2026-09-19T10:00:03.000Z",
+			"message": {
+				"role": "assistant",
+				"model": "claude-3-7-sonnet-20250219",
+				"stop_reason": "end_turn",
+				"content": [
+					{"type": "thinking", "thinking": "Let's summarize the changes."},
+					{"type": "text", "text": "First part of answer."},
+					{"type": "text", "text": "Second part of answer."}
+				],
+				"usage": {
+					"input_tokens": 200,
+					"output_tokens": 80,
+					"cache_read_input_tokens": 100,
+					"cache_creation_input_tokens": 50,
+					"thinking_tokens": 40
+				}
+			}
+		}`
+		evs, err := ParseClaudeCodeLine([]byte(line))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(evs) != 2 {
+			t.Fatalf("expected 2 events (thinking, turn_end), got %d: %+v", len(evs), evs)
+		}
+		if evs[0].EventType != "thinking" || *evs[0].Data.Content != "Let's summarize the changes." {
+			t.Errorf("thinking event mismatch: %+v", evs[0])
+		}
+		if evs[1].EventType != "turn_end" {
+			t.Errorf("turn_end event mismatch: %+v", evs[1])
+		}
+		expectedContent := "First part of answer.\nSecond part of answer."
+		if evs[1].Data.Content == nil || *evs[1].Data.Content != expectedContent {
+			t.Errorf("expected combined text %q, got %v", expectedContent, evs[1].Data.Content)
+		}
+		if evs[1].Data.Usage.Reasoning != 40 {
+			t.Errorf("expected reasoning tokens 40 from thinking_tokens, got %d", evs[1].Data.Usage.Reasoning)
+		}
+		// 200 + 80 + 100 + 50 = 430
+		if evs[1].Data.Usage.Total != 430 {
+			t.Errorf("expected total 430, got %d", evs[1].Data.Usage.Total)
+		}
+	})
+
+	t.Run("assistant top-level error string", func(t *testing.T) {
+		line := `{
+			"type": "assistant",
+			"uuid": "a-err1",
+			"timestamp": "2026-09-19T10:00:04.000Z",
+			"error": "rate_limit_exceeded"
+		}`
+		evs, err := ParseClaudeCodeLine([]byte(line))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(evs) != 1 {
+			t.Fatalf("expected 1 error event, got %d: %+v", len(evs), evs)
+		}
+		if evs[0].EventType != "error" {
+			t.Errorf("eventType = %q, want 'error'", evs[0].EventType)
+		}
+		if evs[0].Data.Content == nil || *evs[0].Data.Content != "rate_limit_exceeded" {
+			t.Errorf("error content = %v, want 'rate_limit_exceeded'", evs[0].Data.Content)
+		}
+		if evs[0].Data.IsError == nil || !*evs[0].Data.IsError {
+			t.Errorf("expected isError = true")
+		}
+	})
+
+	t.Run("assistant apiErrorStatus and isApiErrorMessage", func(t *testing.T) {
+		line := `{
+			"type": "assistant",
+			"uuid": "a-err2",
+			"timestamp": "2026-09-19T10:00:05.000Z",
+			"isApiErrorMessage": true,
+			"apiErrorStatus": 529,
+			"message": {
+				"role": "assistant",
+				"model": "claude-3-7-sonnet-20250219",
+				"content": [
+					{"type": "text", "text": "Anthropic API overloaded. Please retry later."}
+				]
+			}
+		}`
+		evs, err := ParseClaudeCodeLine([]byte(line))
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Expect turn_end and error event
+		hasErrorEvent := false
+		for _, ev := range evs {
+			if ev.EventType == "error" {
+				hasErrorEvent = true
+				if ev.Data.Content == nil || *ev.Data.Content != "Anthropic API overloaded. Please retry later." {
+					t.Errorf("error content = %v, want 'Anthropic API overloaded. Please retry later.'", ev.Data.Content)
+				}
+				if ev.Data.Model == nil || *ev.Data.Model != "claude-3-7-sonnet-20250219" {
+					t.Errorf("error model = %v, want claude-3-7-sonnet-20250219", ev.Data.Model)
+				}
+			}
+		}
+		if !hasErrorEvent {
+			t.Errorf("expected error event to be emitted for api error message, got: %+v", evs)
+		}
+	})
+
+	t.Run("assistant message.error without content", func(t *testing.T) {
+		line := `{
+			"type": "assistant",
+			"uuid": "a-err3",
+			"timestamp": "2026-09-19T10:00:06.000Z",
+			"message": {
+				"role": "assistant",
+				"error": "connection_reset_by_peer"
+			}
+		}`
+		evs, err := ParseClaudeCodeLine([]byte(line))
+		if err != nil {
+			t.Fatal(err)
+		}
+		hasErrorEvent := false
+		for _, ev := range evs {
+			if ev.EventType == "error" {
+				hasErrorEvent = true
+				if ev.Data.Content == nil || *ev.Data.Content != "connection_reset_by_peer" {
+					t.Errorf("error content = %v, want 'connection_reset_by_peer'", ev.Data.Content)
+				}
+			}
+		}
+		if !hasErrorEvent {
+			t.Errorf("expected error event for message.error, got: %+v", evs)
 		}
 	})
 
