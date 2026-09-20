@@ -27,13 +27,40 @@ function getLogLevel(): string {
   return "info";
 }
 
-function getRunningPIDs(): number[] {
+async function getRunningPIDs(): Promise<number[]> {
   if (!existsSync(pidFile)) return [];
   try {
-    const data = JSON.parse(Bun.file(pidFile).text() as unknown as string);
-    return Array.isArray(data) ? data : [];
+    const data = await Bun.file(pidFile).json();
+    return Array.isArray(data) ? (data as number[]) : [];
   } catch {
     return [];
+  }
+}
+
+async function pipeOutput(stream: ReadableStream<Uint8Array> | null, prefix: string) {
+  if (!stream) return;
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (line.length > 0) {
+          console.log(`${prefix} ${line}`);
+        }
+      }
+    }
+    if (buffer.length > 0) {
+      console.log(`${prefix} ${buffer}`);
+    }
+  } catch {
+    // stream closed
   }
 }
 
@@ -114,11 +141,13 @@ async function startStack() {
       XDG_DATA_HOME: dbDir,
       XDG_RUNTIME_DIR: "/tmp",
     },
-    stdout: "inherit",
-    stderr: "inherit",
+    stdout: "pipe",
+    stderr: "pipe",
   });
   pids.push(ingester.pid);
   procs.push(ingester);
+  pipeOutput(ingester.stdout, "\x1b[36m[ingester]\x1b[0m");
+  pipeOutput(ingester.stderr, "\x1b[36m[ingester]\x1b[0m");
 
   // Wait 500ms for ingester to bind socket
   await Bun.sleep(500);
@@ -135,11 +164,13 @@ async function startStack() {
       XDG_DATA_HOME: dbDir,
       XDG_RUNTIME_DIR: "/tmp",
     },
-    stdout: "inherit",
-    stderr: "inherit",
+    stdout: "pipe",
+    stderr: "pipe",
   });
   pids.push(server.pid);
   procs.push(server);
+  pipeOutput(server.stdout, "\x1b[35m[server]\x1b[0m");
+  pipeOutput(server.stderr, "\x1b[35m[server]\x1b[0m");
 
   await Bun.sleep(500);
 
@@ -152,11 +183,13 @@ async function startStack() {
       AGENT_STATUS_TOKEN: "dev-secret-token",
       XDG_CACHE_HOME: resolve(runDir, "cache"),
     },
-    stdout: "inherit",
-    stderr: "inherit",
+    stdout: "pipe",
+    stderr: "pipe",
   });
   pids.push(observer.pid);
   procs.push(observer);
+  pipeOutput(observer.stdout, "\x1b[33m[observer]\x1b[0m");
+  pipeOutput(observer.stderr, "\x1b[33m[observer]\x1b[0m");
 
   // 4. UI Web
   console.log("   [4/4] Starting ui-web (http://localhost:3000)...");
@@ -167,11 +200,13 @@ async function startStack() {
       ...process.env,
       PORT: "3000",
     },
-    stdout: "inherit",
-    stderr: "inherit",
+    stdout: "pipe",
+    stderr: "pipe",
   });
   pids.push(ui.pid);
   procs.push(ui);
+  pipeOutput(ui.stdout, "\x1b[32m[ui]\x1b[0m");
+  pipeOutput(ui.stderr, "\x1b[32m[ui]\x1b[0m");
 
   await Bun.write(pidFile, JSON.stringify(pids, null, 2));
 
@@ -193,7 +228,7 @@ async function startStack() {
 if (action === "stop") {
   await stopStack();
 } else if (action === "status") {
-  const pids = getRunningPIDs();
+  const pids = await getRunningPIDs();
   console.log(`Running PIDs: ${pids.length > 0 ? pids.join(", ") : "none"}`);
 } else {
   await startStack();
