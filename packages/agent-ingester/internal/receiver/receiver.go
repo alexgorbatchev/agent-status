@@ -4,16 +4,15 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
-	"log/slog"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/classifier"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/notify"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/store"
-	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/coder/websocket"
 )
 
@@ -22,7 +21,6 @@ type Receiver struct {
 	classifier  *classifier.Classifier
 	publisher   *notify.Publisher
 	bearerToken string
-	mu          sync.Mutex
 }
 
 func New(s *store.Store, c *classifier.Classifier, p *notify.Publisher, token string) *Receiver {
@@ -55,16 +53,17 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		InsecureSkipVerify: true,
 	})
 	if err != nil {
-		slog.Error("websocket accept error", "err", err)
+		logging.Error("websocket accept error", "err", err)
 		return
 	}
-	slog.Debug("observer connected", "remoteAddr", req.RemoteAddr)
+	logging.Debug("observer connected", "remoteAddr", req.RemoteAddr)
 	defer func() {
-		slog.Debug("observer disconnected", "remoteAddr", req.RemoteAddr)
+		logging.Debug("observer disconnected", "remoteAddr", req.RemoteAddr)
 		_ = conn.Close(websocket.StatusInternalError, "closing connection")
 	}()
 
 	ctx := req.Context()
+	var connEnvID string
 	for {
 		typ, data, err := conn.Read(ctx)
 		if err != nil {
@@ -79,18 +78,25 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		var msg types.IObserverMessage
 		if err := json.Unmarshal(data, &msg); err != nil {
-			slog.Warn("malformed message from observer", "err", err)
+			logging.Warn("malformed message from observer", "err", err)
 			r.sendError(ctx, conn, "malformed", "invalid json payload")
 			continue
 		}
 
 		switch msg.Type {
 		case "hello":
-			slog.Debug("received hello message", "envId", msg.EnvID, "dropped", msg.Dropped, "since", msg.Since)
+			connEnvID = msg.EnvID
+			if connEnvID == "" && msg.Environment != nil {
+				connEnvID = msg.Environment.ID
+			}
+			logging.Info("received hello message", "envId", connEnvID, "dropped", msg.Dropped, "since", msg.Since)
+			if connEnvID != "" && msg.Since == 0 {
+				_ = r.store.SaveCursor(connEnvID, 0)
+			}
 			if msg.Environment != nil {
 				_ = r.store.UpsertEnvironment(*msg.Environment)
 				if msg.Dropped > 0 {
-					_ = r.store.IncrementDroppedFrames(msg.EnvID, msg.Dropped)
+					_ = r.store.IncrementDroppedFrames(connEnvID, msg.Dropped)
 				}
 				if r.publisher != nil {
 					r.publisher.Publish(types.IServerEvent{
@@ -102,38 +108,50 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 
 		case "frames":
-			slog.Debug("received frames batch", "envId", msg.EnvID, "count", len(msg.Frames))
+			envID := msg.EnvID
+			if envID == "" && len(msg.Frames) > 0 {
+				envID = msg.Frames[0].EnvID
+			}
+			if envID == "" {
+				envID = connEnvID
+			}
+			logging.Info("received frames batch", "envId", envID, "count", len(msg.Frames))
 			var highestSeq int64 = 0
-			var lastEnvID string
+			lastEnvID := envID
 
 			for _, frame := range msg.Frames {
 				if frame.Version != "1.0" {
-					slog.Warn("unsupported frame version", "version", frame.Version, "envId", frame.EnvID)
+					logging.Warn("unsupported frame version", "version", frame.Version, "envId", frame.EnvID)
 					r.sendError(ctx, conn, "unsupported_version", "frame version must be 1.0")
 					continue
 				}
 
-				lastEnvID = frame.EnvID
+				if frame.EnvID != "" {
+					lastEnvID = frame.EnvID
+				} else {
+					frame.EnvID = lastEnvID
+				}
+				if frame.Seq > highestSeq {
+					highestSeq = frame.Seq
+				}
+
 				lastSeq, err := r.store.GetLastSeq(frame.EnvID)
 				if err == nil && frame.Seq <= lastSeq {
 					// Deduplicate frame
-					slog.Debug("deduplicating already processed frame", "envId", frame.EnvID, "seq", frame.Seq, "lastSeq", lastSeq)
+					logging.Debug("deduplicating already processed frame", "envId", frame.EnvID, "seq", frame.Seq, "lastSeq", lastSeq)
 					continue
 				}
 
-				slog.Debug("processing frame", "envId", frame.EnvID, "agentId", frame.AgentID, "seq", frame.Seq, "eventType", frame.EventType)
+				logging.Info("ingesting session frame", "sessionId", frame.SessionID, "agentId", frame.AgentID, "harness", frame.Harness, "envId", frame.EnvID, "seq", frame.Seq, "eventType", frame.EventType)
 
 				// Process frame through deterministic classifier
 				agent, err := r.classifier.ProcessFrame(frame)
 				if err != nil {
-					slog.Error("classifier error", "err", err, "agentId", frame.AgentID)
+					logging.Error("classifier error", "err", err, "agentId", frame.AgentID)
 					continue
 				}
 
 				_ = r.store.SaveCursor(frame.EnvID, frame.Seq)
-				if frame.Seq > highestSeq {
-					highestSeq = frame.Seq
-				}
 
 				// Broadcast updates to server / UI
 				if r.publisher != nil && agent != nil {
@@ -153,7 +171,7 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 
 			if highestSeq > 0 && lastEnvID != "" {
-				slog.Debug("sending ack", "envId", lastEnvID, "upTo", highestSeq)
+				logging.Debug("sending ack", "envId", lastEnvID, "upTo", highestSeq)
 				r.sendAck(ctx, conn, highestSeq)
 			}
 		}
