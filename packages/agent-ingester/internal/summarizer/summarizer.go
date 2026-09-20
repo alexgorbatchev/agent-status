@@ -33,15 +33,16 @@ type ToolExecution struct {
 }
 
 type SummaryInput struct {
-	AgentID             string
-	LastPrompt          string
-	RecentTools         []ToolExecution
-	LastThinkingExcerpt string
-	Activity            types.ActivityState
-	ActiveTool          *string
-	ActiveTarget        *string
-	LastError           *string
-	Question            *string
+	AgentID               string
+	LastPrompt            string
+	LastAssistantResponse string
+	RecentTools           []ToolExecution
+	LastThinkingExcerpt   string
+	Activity              types.ActivityState
+	ActiveTool            *string
+	ActiveTarget          *string
+	LastError             *string
+	Question              *string
 }
 
 type SummaryResult struct {
@@ -336,6 +337,16 @@ func buildUserPrompt(input SummaryInput) string {
 		sb.WriteString("\n")
 	}
 
+	if input.LastAssistantResponse != "" {
+		r := input.LastAssistantResponse
+		if len(r) > MaxPromptLength {
+			r = r[:MaxPromptLength] + "..."
+		}
+		sb.WriteString("Assistant Response: ")
+		sb.WriteString(r)
+		sb.WriteString("\n")
+	}
+
 	sb.WriteString("Current Activity State: ")
 	sb.WriteString(string(input.Activity))
 	sb.WriteString("\n")
@@ -558,10 +569,16 @@ func FallbackSummary(input SummaryInput) SummaryResult {
 			action = "Encountered error"
 
 		case types.ActivityIdle:
-			action = "Idle"
+			if input.LastAssistantResponse != "" && len(input.RecentTools) == 0 {
+				action = "Responded to user"
+			} else {
+				action = "Idle"
+			}
 
 		default:
-			if input.LastThinkingExcerpt != "" {
+			if input.LastAssistantResponse != "" && len(input.RecentTools) == 0 {
+				action = "Responded to user"
+			} else if input.LastThinkingExcerpt != "" {
 				p := types.PhasePlanning
 				phase = &p
 				action = "Thinking"

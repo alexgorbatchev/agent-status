@@ -353,6 +353,24 @@ func TestDeterministicFallbackSummary(t *testing.T) {
 			wantPhase:  types.PhasePlanning, // nil phase in fallback gets no phase check or Idle
 		},
 		{
+			name: "direct assistant response without tools",
+			input: SummaryInput{
+				Activity:              types.ActivityIdle,
+				LastAssistantResponse: "I have explained the architecture.",
+			},
+			wantAction: "Responded to user",
+			wantPhase:  types.PhasePlanning,
+		},
+		{
+			name: "direct assistant response on busy activity without tools",
+			input: SummaryInput{
+				Activity:              types.ActivityBusy,
+				LastAssistantResponse: "The requested changes are summarized below.",
+			},
+			wantAction: "Responded to user",
+			wantPhase:  types.PhasePlanning,
+		},
+		{
 			name: "thinking activity",
 			input: SummaryInput{
 				Activity:            types.ActivityBusy,
@@ -388,6 +406,7 @@ func TestBuildUserPrompt_TruncationAndDetails(t *testing.T) {
 	longPrompt := strings.Repeat("A", 1500)
 	longThinking := strings.Repeat("B", 1500)
 	longError := strings.Repeat("C", 500)
+	longResp := strings.Repeat("D", 1500)
 	q := "Would you like to deploy now?"
 
 	recentTools := []ToolExecution{
@@ -398,20 +417,24 @@ func TestBuildUserPrompt_TruncationAndDetails(t *testing.T) {
 	}
 
 	input := SummaryInput{
-		AgentID:             "agent-trunc",
-		LastPrompt:          longPrompt,
-		RecentTools:         recentTools,
-		LastThinkingExcerpt: longThinking,
-		Activity:            types.ActivityBusy,
-		ActiveTool:          ptrString("Edit"),
-		ActiveTarget:        ptrString("main.go"),
-		LastError:           &longError,
-		Question:            &q,
+		AgentID:               "agent-trunc",
+		LastPrompt:            longPrompt,
+		LastAssistantResponse: longResp,
+		RecentTools:           recentTools,
+		LastThinkingExcerpt:   longThinking,
+		Activity:              types.ActivityBusy,
+		ActiveTool:            ptrString("Edit"),
+		ActiveTarget:          ptrString("main.go"),
+		LastError:             &longError,
+		Question:              &q,
 	}
 
 	prompt := buildUserPrompt(input)
 	if !strings.Contains(prompt, "User Prompt: ") || !strings.Contains(prompt, "...") {
 		t.Errorf("expected truncated prompt")
+	}
+	if !strings.Contains(prompt, "Assistant Response: ") {
+		t.Errorf("expected assistant response in prompt")
 	}
 	if !strings.Contains(prompt, "Active Tool: Edit (Target: main.go)") {
 		t.Errorf("expected active tool with target in prompt, got %s", prompt)
