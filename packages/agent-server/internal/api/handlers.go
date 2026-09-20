@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -16,9 +15,10 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/rs/cors"
 
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-server/internal/store"
 	"github.com/alexgorbatchev/agent-status/packages/agent-server/internal/stream"
-	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 )
 
 type StoreInterface interface {
@@ -35,20 +35,20 @@ type ServerConfig struct {
 	Hub         *stream.Hub
 	AuthToken   string
 	CORSOrigins []string
-	Logger      *slog.Logger
+	Logger      *logging.Logger
 }
 
 type Server struct {
 	cfg    ServerConfig
 	store  StoreInterface
 	hub    *stream.Hub
-	logger *slog.Logger
+	logger *logging.Logger
 	router chi.Router
 }
 
 func NewServer(cfg ServerConfig) *Server {
 	if cfg.Logger == nil {
-		cfg.Logger = slog.Default()
+		cfg.Logger = logging.With()
 	}
 	if len(cfg.CORSOrigins) == 0 {
 		cfg.CORSOrigins = []string{"http://localhost:3000"}

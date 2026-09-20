@@ -56,7 +56,7 @@ func run(ctx context.Context, cfg config.Config) error {
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	logger := logging.Setup(cfg.LogLevel)
+	logger := logging.Setup("server", cfg.LogLevel)
 
 	logger.InfoContext(ctx, "opening database (read-only)", "path", cfg.DBPath)
 	sqliteStore, err := store.OpenReadOnly(cfg.DBPath)

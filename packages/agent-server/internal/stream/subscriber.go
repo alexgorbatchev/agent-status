@@ -7,14 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
 	"time"
 
-	"github.com/alexgorbatchev/agent-status/packages/agent-server/internal/store"
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
+	"github.com/alexgorbatchev/agent-status/packages/agent-server/internal/store"
 )
 
 type StoreReader interface {
@@ -25,14 +25,14 @@ type StoreReader interface {
 type SubscriberConfig struct {
 	SocketPath    string
 	ReconnectWait time.Duration
-	Logger        *slog.Logger
+	Logger        *logging.Logger
 }
 
 type Subscriber struct {
 	cfg    SubscriberConfig
 	store  StoreReader
 	hub    *Hub
-	logger *slog.Logger
+	logger *logging.Logger
 }
 
 func DefaultSocketPath() string {
@@ -52,7 +52,7 @@ func NewSubscriber(cfg SubscriberConfig, store StoreReader, hub *Hub) *Subscribe
 	}
 	logger := cfg.Logger
 	if logger == nil {
-		logger = slog.Default()
+		logger = logging.With()
 	}
 	return &Subscriber{
 		cfg:    cfg,
