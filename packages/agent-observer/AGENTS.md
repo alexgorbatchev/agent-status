@@ -11,6 +11,7 @@ Local observer daemon (`air-observer`) that scans harness sessions, tails transc
 ## Local conventions
 - Scanner routines live in `internal/scanner/` and git workspace resolution in `internal/git/`.
 - File tailing persists byte offsets in `$XDG_CACHE_HOME/ai-registry/tailer-cursors.json` via `internal/tailer/cursor.go`.
+- Structured logging uses `packages/agent-common/logging` with snake_case actions and dual-mode (`AGENT=1`) output.
 
 ## Local gotchas
 - Claude Code session compactions rewrite transcript files atomically; tailer detects inode change or file truncation and resets cursor accordingly (`internal/tailer/tailer.go`).
