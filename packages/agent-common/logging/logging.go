@@ -104,7 +104,6 @@ func (h *humanHandler) WithGroup(name string) slog.Handler {
 }
 
 func (h *humanHandler) Handle(_ context.Context, r slog.Record) error {
-	var serviceName string
 	allAttrs := make([]slog.Attr, 0, len(h.attrs)+r.NumAttrs())
 
 	addAttr := func(a slog.Attr) {
@@ -112,8 +111,8 @@ func (h *humanHandler) Handle(_ context.Context, r slog.Record) error {
 		if len(h.groups) > 0 {
 			a.Key = strings.Join(h.groups, ".") + "." + a.Key
 		}
+		// In human mode, hide redundant service=... attribute since dev-stack / runner provides service prefix
 		if a.Key == "service" {
-			serviceName = a.Value.String()
 			return
 		}
 		allAttrs = append(allAttrs, a)
@@ -158,12 +157,6 @@ func (h *humanHandler) Handle(_ context.Context, r slog.Record) error {
 		buf.WriteString("[ERROR]")
 	default:
 		_, _ = fmt.Fprintf(&buf, "[%s]", r.Level.String())
-	}
-
-	if serviceName != "" {
-		buf.WriteString(" [")
-		buf.WriteString(serviceName)
-		buf.WriteString("]")
 	}
 
 	if r.Message != "" {
