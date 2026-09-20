@@ -1,11 +1,12 @@
 import React, { useState, useMemo } from "react";
 import { useEventStream } from "../hooks/useEventStream";
-import type { IAgentState, GroupByOption, IProjectGroupItem, IEnvironmentGroupItem } from "../types";
+import type { IAgentState, GroupByOption } from "../types";
 import { Header } from "../components/Header";
 import { AttentionBanner } from "../components/AttentionBanner";
 import { ProjectGroup } from "../components/ProjectGroup";
 import { EnvironmentGroup } from "../components/EnvironmentGroup";
 import { LogDrawer } from "../components/LogDrawer";
+import { groupAgentsByProject, groupAgentsByEnvironment } from "../utils/groupingUtils";
 import { Layers, Server } from "lucide-react";
 
 export function App() {
@@ -13,39 +14,8 @@ export function App() {
   const [groupBy, setGroupBy] = useState<GroupByOption>("project");
   const [selectedAgent, setSelectedAgent] = useState<IAgentState | null>(null);
 
-  // Group by project
-  const projectGroups: IProjectGroupItem[] = useMemo(() => {
-    const groups: Record<string, IProjectGroupItem> = {};
-    for (const agent of agents) {
-      const pid = agent.project.id || "unknown";
-      if (!groups[pid]) {
-        groups[pid] = {
-          id: pid,
-          name: agent.project.name || pid,
-          agents: [],
-        };
-      }
-      groups[pid].agents.push(agent);
-    }
-    return Object.values(groups);
-  }, [agents]);
-
-  // Group by environment
-  const environmentGroups: IEnvironmentGroupItem[] = useMemo(() => {
-    const map = new Map<string, IAgentState[]>();
-    for (const agent of agents) {
-      const eid = agent.environment.id;
-      if (!map.has(eid)) {
-        map.set(eid, []);
-      }
-      map.get(eid)!.push(agent);
-    }
-
-    return environments.map((env) => ({
-      environment: env,
-      agents: map.get(env.id) || [],
-    }));
-  }, [agents, environments]);
+  const projectGroups = useMemo(() => groupAgentsByProject(agents), [agents]);
+  const environmentGroups = useMemo(() => groupAgentsByEnvironment(agents, environments), [agents, environments]);
 
   return (
     <div data-testid="App" className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">

@@ -1,15 +1,13 @@
 import React, { useState, useEffect } from "react";
 import type { ILogDrawerProps } from "./types";
-import type { ITelemetryFrame, IWindowWithAgentStatus } from "../types";
+import type { ITelemetryFrame } from "../types";
 import { StatusBadge } from "./StatusBadge";
+import { DEFAULT_DEV_TOKEN, resolveApiBaseUrl } from "../utils/config";
 import { X, Brain, Wrench, AlertTriangle, User, Play, CheckCircle2 } from "lucide-react";
 import Markdown from "react-markdown";
 
-export function LogDrawer({ agent, apiBaseUrl, token = "dev-secret-token", onClose }: ILogDrawerProps) {
-  const resolvedBaseUrl =
-    apiBaseUrl ||
-    (typeof window !== "undefined" && (window as unknown as IWindowWithAgentStatus).__AGENT_STATUS_API_URL__) ||
-    "http://localhost:4502";
+export function LogDrawer({ agent, apiBaseUrl, token = DEFAULT_DEV_TOKEN, onClose }: ILogDrawerProps) {
+  const resolvedBaseUrl = resolveApiBaseUrl(apiBaseUrl);
   const [logs, setLogs] = useState<ITelemetryFrame[]>([]);
 
   useEffect(() => {

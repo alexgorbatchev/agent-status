@@ -1,11 +1,12 @@
 import React from "react";
 import type { IProjectGroupProps } from "./types";
 import { AgentCard } from "./AgentCard";
+import { calculateTotalSpend, filterActiveAgents, formatCurrency } from "../utils/agentUtils";
 import { FolderGit2, DollarSign } from "lucide-react";
 
 export function ProjectGroup({ projectName, projectId, agents, onSelectAgent }: IProjectGroupProps) {
-  const projectSpend = agents.reduce((acc, a) => acc + (a.activity.cost?.total || 0), 0);
-  const activeCount = agents.filter((a) => a.activity.lifecycle === "RUNNING").length;
+  const projectSpend = calculateTotalSpend(agents);
+  const activeCount = filterActiveAgents(agents).length;
 
   return (
     <div data-testid="ProjectGroup" className="mb-8">
@@ -33,7 +34,7 @@ export function ProjectGroup({ projectName, projectId, agents, onSelectAgent }: 
           <span className="w-3.5 h-3.5 flex items-center justify-center">
             <DollarSign size={14} />
           </span>
-          <span>${projectSpend.toFixed(3)}</span>
+          <span>{formatCurrency(projectSpend, 3)}</span>
         </div>
       </div>
 

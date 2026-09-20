@@ -1,15 +1,11 @@
 import React from "react";
 import type { IAttentionBannerProps } from "./types";
+import { isAgentRequiringAttention } from "../utils/agentUtils";
 import { AlertCircle, HelpCircle, AlertTriangle, ArrowRight } from "lucide-react";
 
 export function AttentionBanner({ agents, onSelectAgent }: IAttentionBannerProps) {
   // Tier 1: ACT NOW (Running agents with WAITING_QUESTION or ERROR)
-  const actNowAgents = agents.filter(
-    (a) =>
-      a.activity.lifecycle === "RUNNING" &&
-      !a.environment.isStale &&
-      (a.activity.activity === "WAITING_QUESTION" || a.activity.activity === "ERROR"),
-  );
+  const actNowAgents = agents.filter(isAgentRequiringAttention);
 
   if (actNowAgents.length === 0) return null;
 

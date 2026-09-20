@@ -1,11 +1,12 @@
 import React from "react";
 import type { IEnvironmentGroupProps } from "./types";
 import { AgentCard } from "./AgentCard";
+import { calculateTotalSpend, filterActiveAgents, formatCurrency } from "../utils/agentUtils";
 import { Server, DollarSign } from "lucide-react";
 
 export function EnvironmentGroup({ environment, agents, onSelectAgent }: IEnvironmentGroupProps) {
-  const envSpend = agents.reduce((acc, a) => acc + (a.activity.cost?.total || 0), 0);
-  const activeCount = agents.filter((a) => a.activity.lifecycle === "RUNNING").length;
+  const envSpend = calculateTotalSpend(agents);
+  const activeCount = filterActiveAgents(agents).length;
 
   return (
     <div data-testid="EnvironmentGroup" className="mb-8">
@@ -47,7 +48,7 @@ export function EnvironmentGroup({ environment, agents, onSelectAgent }: IEnviro
           <span className="w-3.5 h-3.5 flex items-center justify-center">
             <DollarSign size={14} />
           </span>
-          <span>${envSpend.toFixed(3)}</span>
+          <span>{formatCurrency(envSpend, 3)}</span>
         </div>
       </div>
 
