@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 )
 
 func TestObserverCommandHelp(t *testing.T) {
@@ -29,6 +31,8 @@ func TestObserverCommandHelp(t *testing.T) {
 		"--claude-sessions-dir",
 		"--claude-projects-dir",
 		"--pi-sessions-dir",
+		"--codex-sessions-dir",
+		"--opencode-db-path",
 		"--log-level",
 	}
 
@@ -85,6 +89,8 @@ func TestObserverCommandFlagParsing(t *testing.T) {
 		"--claude-sessions-dir", "/tmp/claude/sessions",
 		"--claude-projects-dir", "/tmp/claude/projects",
 		"--pi-sessions-dir", "/tmp/pi/sessions",
+		"--codex-sessions-dir", "/tmp/codex/sessions",
+		"--opencode-db-path", "/tmp/opencode.db",
 		"--log-level", "debug",
 	}
 
@@ -116,6 +122,12 @@ func TestObserverCommandFlagParsing(t *testing.T) {
 	if opts.piSessionsDir != "/tmp/pi/sessions" {
 		t.Errorf("piSessionsDir = %q, want /tmp/pi/sessions", opts.piSessionsDir)
 	}
+	if opts.codexSessionsDir != "/tmp/codex/sessions" {
+		t.Errorf("codexSessionsDir = %q, want /tmp/codex/sessions", opts.codexSessionsDir)
+	}
+	if opts.opencodeDBPath != "/tmp/opencode.db" {
+		t.Errorf("opencodeDBPath = %q, want /tmp/opencode.db", opts.opencodeDBPath)
+	}
 	if opts.logLevel != "debug" {
 		t.Errorf("logLevel = %q, want debug", opts.logLevel)
 	}
@@ -132,5 +144,68 @@ func TestObserverCommandEnvFallbacks(t *testing.T) {
 	}
 	if opts.token != "env-token-xyz" {
 		t.Errorf("token from env = %q, want env-token-xyz", opts.token)
+	}
+}
+
+func TestParserDispatchForHarnessTypes(t *testing.T) {
+	tests := []struct {
+		name        string
+		harness     types.HarnessType
+		line        []byte
+		cwd         string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:    "claude-code valid line",
+			harness: types.HarnessClaudeCode,
+			line:    []byte(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}`),
+			wantErr: false,
+		},
+		{
+			name:    "pi valid line",
+			harness: types.HarnessPi,
+			line:    []byte(`{"type":"session","id":"pi-sess-1","cwd":"/path"}`),
+			cwd:     "/path",
+			wantErr: false,
+		},
+		{
+			name:    "codex valid line",
+			harness: types.HarnessCodex,
+			line:    []byte(`{"type":"session_meta","payload":{"id":"codex-1","cwd":"/path"}}`),
+			wantErr: false,
+		},
+		{
+			name:        "opencode in line tailer returns error",
+			harness:     types.HarnessOpencode,
+			line:        []byte(`{}`),
+			wantErr:     true,
+			errContains: "unsupported harness type",
+		},
+		{
+			name:        "unknown harness returns error",
+			harness:     types.HarnessType("unknown"),
+			line:        []byte(`{}`),
+			wantErr:     true,
+			errContains: "unsupported harness type",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			events, pErr := parseLineForHarness(tt.harness, tt.line, tt.cwd)
+
+			if (pErr != nil) != tt.wantErr {
+				t.Fatalf("parseLineForHarness(%v) error = %v, wantErr %v", tt.harness, pErr, tt.wantErr)
+			}
+			if tt.wantErr && tt.errContains != "" {
+				if pErr == nil || !strings.Contains(pErr.Error(), tt.errContains) {
+					t.Errorf("error %v does not contain %q", pErr, tt.errContains)
+				}
+			}
+			if !tt.wantErr && pErr == nil && len(events) == 0 {
+				t.Errorf("expected at least 1 parsed event for valid line")
+			}
+		})
 	}
 }

@@ -93,12 +93,31 @@ func TestLocateTranscript(t *testing.T) {
 		t.Errorf("locateTranscript nonexistent = %q, want empty string", notFound)
 	}
 
-	// 4. Test with XDG_DATA_HOME unset and empty CWD
-	t.Setenv("XDG_DATA_HOME", "")
-	res := locateTranscript("nonexistent-id", "")
-	if res != "" {
-		t.Errorf("locateTranscript(\"nonexistent-id\", \"\") = %q, want empty string", res)
-	}
+	t.Run("with CLAUDE_PROJECTS_DIR set", func(t *testing.T) {
+		customProjDir := filepath.Join(tmpDir, "custom_projects")
+		_ = os.MkdirAll(filepath.Join(customProjDir, "my-proj"), 0755)
+		customTransPath := filepath.Join(customProjDir, "my-proj", "custom-sess.jsonl")
+		_ = os.WriteFile(customTransPath, []byte("{}\n"), 0600)
+		t.Setenv("CLAUDE_PROJECTS_DIR", customProjDir)
+
+		expectedPath, err := filepath.EvalSymlinks(customTransPath)
+		if err != nil {
+			expectedPath = customTransPath
+		}
+
+		found := locateTranscript("custom-sess", "")
+		if found != expectedPath && found != customTransPath {
+			t.Errorf("locateTranscript with CLAUDE_PROJECTS_DIR = %q, want %q", found, expectedPath)
+		}
+	})
+
+	t.Run("with CLAUDE_SESSIONS_DIR set", func(t *testing.T) {
+		t.Setenv("CLAUDE_SESSIONS_DIR", "/custom/claude/sessions")
+		dirs := DefaultClaudeSessionDirs()
+		if len(dirs) == 0 || dirs[0] != "/custom/claude/sessions" {
+			t.Errorf("expected /custom/claude/sessions first in dirs, got %v", dirs)
+		}
+	})
 }
 
 func TestClaudeCodeScannerEdgeCases(t *testing.T) {

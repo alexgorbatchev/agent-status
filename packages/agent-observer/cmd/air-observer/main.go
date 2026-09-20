@@ -32,6 +32,8 @@ type observerOptions struct {
 	claudeSessionsDir string
 	claudeProjectsDir string
 	piSessionsDir     string
+	codexSessionsDir  string
+	opencodeDBPath    string
 	logLevel          string
 }
 
@@ -69,10 +71,11 @@ func newRootCmd() (*cobra.Command, *observerOptions) {
 	flags.StringVar(&opts.claudeSessionsDir, "claude-sessions-dir", "", "Custom directory for Claude Code sessions")
 	flags.StringVar(&opts.claudeProjectsDir, "claude-projects-dir", "", "Custom directory for Claude Code projects/transcripts")
 	flags.StringVar(&opts.piSessionsDir, "pi-sessions-dir", "", "Custom directory for Pi sessions")
+	flags.StringVar(&opts.codexSessionsDir, "codex-sessions-dir", "", "Custom directory for Codex sessions")
+	flags.StringVar(&opts.opencodeDBPath, "opencode-db-path", "", "Custom path for OpenCode database")
 	flags.StringVar(&opts.logLevel, "log-level", opts.logLevel, "Log level (debug, info, warn, error)")
 
 	cobrahelptree.Setup(rootCmd)
-
 	return rootCmd, opts
 }
 
@@ -82,6 +85,19 @@ func main() {
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+}
+
+func parseLineForHarness(harness types.HarnessType, line []byte, cwd string) ([]parser.ParsedEvent, error) {
+	switch harness {
+	case types.HarnessClaudeCode:
+		return parser.ParseClaudeCodeLine(line)
+	case types.HarnessPi:
+		return parser.ParsePiLine(line, cwd)
+	case types.HarnessCodex:
+		return parser.ParseCodexLine(line)
+	default:
+		return nil, fmt.Errorf("unsupported harness type: %q", harness)
 	}
 }
 
@@ -99,6 +115,12 @@ func runObserver(opts observerOptions) error {
 	}
 	if opts.piSessionsDir != "" {
 		_ = os.Setenv("PI_SESSIONS_DIR", opts.piSessionsDir)
+	}
+	if opts.codexSessionsDir != "" {
+		_ = os.Setenv("CODEX_SESSIONS_DIR", opts.codexSessionsDir)
+	}
+	if opts.opencodeDBPath != "" {
+		_ = os.Setenv("OPENCODE_DB_PATH", opts.opencodeDBPath)
 	}
 
 	env, err := config.ResolveEnvironment(opts.envFlag)
@@ -141,6 +163,20 @@ func runObserver(opts observerOptions) error {
 		piDir = custom
 	}
 	piScanner := scanner.NewPiScanner(piDir, nil)
+	var codexDir string
+	if opts.codexSessionsDir != "" {
+		codexDir = opts.codexSessionsDir
+	} else if custom := os.Getenv("CODEX_SESSIONS_DIR"); custom != "" {
+		codexDir = custom
+	}
+	codexScanner := scanner.NewCodexScanner(codexDir, nil)
+	var opencodePath string
+	if opts.opencodeDBPath != "" {
+		opencodePath = opts.opencodeDBPath
+	} else if custom := os.Getenv("OPENCODE_DB_PATH"); custom != "" {
+		opencodePath = custom
+	}
+	opencodeScanner := scanner.NewOpencodeScanner(opencodePath, nil)
 
 	type activeTail struct {
 		tailer *tailer.Tailer
@@ -151,6 +187,8 @@ func runObserver(opts observerOptions) error {
 	activeTails := make(map[string]*activeTail)
 	activeClaudeSessions := make(map[string]bool)
 	activePiSessions := make(map[string]scanner.PiSessionDescriptor)
+	activeCodexSessions := make(map[string]scanner.CodexSessionDescriptor)
+	activeOpencodeSessions := make(map[string]scanner.OpencodeSessionDescriptor)
 
 	attachTailer := func(
 		path string,
@@ -169,14 +207,7 @@ func runObserver(opts observerOptions) error {
 
 		tailCtx, tailCancel := context.WithCancel(ctx)
 		t, err := tailer.NewTailer(path, cursorStore, func(line []byte) error {
-			var events []parser.ParsedEvent
-			var pErr error
-
-			if harness == types.HarnessClaudeCode {
-				events, pErr = parser.ParseClaudeCodeLine(line)
-			} else {
-				events, pErr = parser.ParsePiLine(line, cwd)
-			}
+			events, pErr := parseLineForHarness(harness, line, cwd)
 			if pErr != nil {
 				return pErr
 			}
@@ -372,6 +403,163 @@ func runObserver(opts observerOptions) error {
 			}
 		}
 		activePiSessions = newPiMap
+		mu.Unlock()
+
+		// 3. Scan Codex
+		codexSessions, err := codexScanner.Scan(ctx)
+		newCodexMap := make(map[string]scanner.CodexSessionDescriptor)
+		if err == nil {
+			for _, s := range codexSessions {
+				newCodexMap[s.SessionID] = s
+
+				mu.Lock()
+				isNew := !activeCodexSessions[s.SessionID].IsActive
+				if s.IsActive && isNew {
+					activeCodexSessions[s.SessionID] = s
+				}
+				mu.Unlock()
+
+				if s.IsActive && isNew {
+					proj, ws, _ := gitResolver.Resolve(ctx, s.CWD, "")
+					agentID := fmt.Sprintf("%s:%s:%s", env.ID, types.HarnessCodex, s.SessionID)
+					now := time.Now().UnixMilli()
+					if s.StartedAt > 0 {
+						now = s.StartedAt
+					}
+					var subID *string
+					if s.IsSubagent && s.ParentThreadID != "" {
+						subID = &s.SessionID
+					}
+					ship.Enqueue(types.ITelemetryFrame{
+						Version:        "1.0",
+						EnvID:          env.ID,
+						Environment:    *env,
+						AgentID:        agentID,
+						SessionID:      s.SessionID,
+						SubagentID:     subID,
+						PID:            s.PID,
+						Harness:        types.HarnessCodex,
+						HarnessVersion: s.HarnessVersion,
+						Project:        proj,
+						Workspace:      ws,
+						Timestamp:      now,
+						EventType:      "run_started",
+						Data:           types.TelemetryFrameData{},
+					})
+				}
+				if s.TranscriptPath != "" {
+					var subID *string
+					if s.IsSubagent && s.ParentThreadID != "" {
+						subID = &s.SessionID
+					}
+					attachTailer(s.TranscriptPath, types.HarnessCodex, s.HarnessVersion, s.SessionID, s.CWD, s.PID, subID)
+				}
+			}
+		}
+
+		// Detect exited Codex sessions
+		mu.Lock()
+		for sessID, oldDesc := range activeCodexSessions {
+			newDesc, exists := newCodexMap[sessID]
+			if oldDesc.IsActive && (!exists || !newDesc.IsActive) {
+				agentID := fmt.Sprintf("%s:%s:%s", env.ID, types.HarnessCodex, sessID)
+				proj, ws, _ := gitResolver.Resolve(ctx, oldDesc.CWD, "")
+				ship.Enqueue(types.ITelemetryFrame{
+					Version:        "1.0",
+					EnvID:          env.ID,
+					Environment:    *env,
+					AgentID:        agentID,
+					SessionID:      sessID,
+					PID:            oldDesc.PID,
+					Harness:        types.HarnessCodex,
+					HarnessVersion: oldDesc.HarnessVersion,
+					Project:        proj,
+					Workspace:      ws,
+					Timestamp:      time.Now().UnixMilli(),
+					EventType:      "run_exited",
+					Data:           types.TelemetryFrameData{},
+				})
+			}
+		}
+		activeCodexSessions = newCodexMap
+		mu.Unlock()
+
+		// 4. Scan OpenCode
+		opencodeSessions, err := opencodeScanner.Scan(ctx)
+		newOpencodeMap := make(map[string]scanner.OpencodeSessionDescriptor)
+		if err == nil {
+			for _, s := range opencodeSessions {
+				newOpencodeMap[s.SessionID] = s
+
+				mu.Lock()
+				isNew := !activeOpencodeSessions[s.SessionID].IsActive
+				if s.IsActive && isNew {
+					activeOpencodeSessions[s.SessionID] = s
+				}
+				mu.Unlock()
+
+				if s.IsActive && isNew {
+					proj, ws, _ := gitResolver.Resolve(ctx, s.CWD, "")
+					agentID := fmt.Sprintf("%s:%s:%s", env.ID, types.HarnessOpencode, s.SessionID)
+					now := time.Now().UnixMilli()
+					if s.StartedAt > 0 {
+						now = s.StartedAt
+					}
+					var subID *string
+					if s.IsSubagent && s.ParentID != "" {
+						subID = &s.SessionID
+					}
+					var titlePtr *string
+					if s.Title != "" {
+						titlePtr = &s.Title
+					}
+					ship.Enqueue(types.ITelemetryFrame{
+						Version:        "1.0",
+						EnvID:          env.ID,
+						Environment:    *env,
+						AgentID:        agentID,
+						SessionID:      s.SessionID,
+						SubagentID:     subID,
+						PID:            s.PID,
+						Harness:        types.HarnessOpencode,
+						HarnessVersion: s.HarnessVersion,
+						Project:        proj,
+						Workspace:      ws,
+						Timestamp:      now,
+						EventType:      "run_started",
+						Data: types.TelemetryFrameData{
+							Title: titlePtr,
+						},
+					})
+				}
+			}
+		}
+
+		// Detect exited OpenCode sessions
+		mu.Lock()
+		for sessID, oldDesc := range activeOpencodeSessions {
+			newDesc, exists := newOpencodeMap[sessID]
+			if oldDesc.IsActive && (!exists || !newDesc.IsActive) {
+				agentID := fmt.Sprintf("%s:%s:%s", env.ID, types.HarnessOpencode, sessID)
+				proj, ws, _ := gitResolver.Resolve(ctx, oldDesc.CWD, "")
+				ship.Enqueue(types.ITelemetryFrame{
+					Version:        "1.0",
+					EnvID:          env.ID,
+					Environment:    *env,
+					AgentID:        agentID,
+					SessionID:      sessID,
+					PID:            oldDesc.PID,
+					Harness:        types.HarnessOpencode,
+					HarnessVersion: oldDesc.HarnessVersion,
+					Project:        proj,
+					Workspace:      ws,
+					Timestamp:      time.Now().UnixMilli(),
+					EventType:      "run_exited",
+					Data:           types.TelemetryFrameData{},
+				})
+			}
+		}
+		activeOpencodeSessions = newOpencodeMap
 		mu.Unlock()
 	}
 
