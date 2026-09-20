@@ -558,3 +558,57 @@ func TestOpencodeDB_ToolResultErrorStatus(t *testing.T) {
 		t.Errorf("expected isError = true for failed tool execution, got %v", foundResult.Data.IsError)
 	}
 }
+
+func TestOpencodeDB_ParseDataErrors(t *testing.T) {
+	if _, err := ParseOpencodeMessageData("{invalid"); err == nil {
+		t.Error("expected error for invalid message data")
+	}
+	if _, err := ParseOpencodePartData("{invalid"); err == nil {
+		t.Error("expected error for invalid part data")
+	}
+	m, err := ParseOpencodeModel("plain-model-name")
+	if err != nil || m != "plain-model-name" {
+		t.Errorf("expected plain string model, got %q, err %v", m, err)
+	}
+	if m, err := ParseOpencodeModel(""); err != nil || m != "unknown" {
+		t.Errorf("expected 'unknown' model for empty string, got %q, err %v", m, err)
+	}
+}
+
+func TestOpencodeDB_OpenAndGetPartsByMessage(t *testing.T) {
+	odb, err := OpenOpencodeDB(":memory:")
+	if err != nil {
+		t.Fatalf("OpenOpencodeDB(:memory:) failed: %v", err)
+	}
+	defer func() { _ = odb.Close() }()
+
+	_, err = odb.DB().Exec(`
+		CREATE TABLE IF NOT EXISTS part (
+			id TEXT PRIMARY KEY,
+			message_id TEXT NOT NULL,
+			session_id TEXT NOT NULL,
+			time_created INTEGER NOT NULL,
+			data TEXT NOT NULL
+		);
+	`)
+	if err != nil {
+		t.Fatalf("creating part table: %v", err)
+	}
+
+	_, err = odb.DB().Exec(`
+		INSERT INTO part (id, message_id, session_id, time_created, data)
+		VALUES ('part_1', 'msg_100', 'ses_1', 1700000000000, '{"type":"text","text":"hello world"}');
+	`)
+	if err != nil {
+		t.Fatalf("inserting part: %v", err)
+	}
+
+	parts, err := odb.GetPartsByMessage(context.Background(), "msg_100")
+	if err != nil {
+		t.Fatalf("GetPartsByMessage failed: %v", err)
+	}
+	if len(parts) != 1 || parts[0].Data.Text != "hello world" {
+		t.Errorf("unexpected parts: %+v", parts)
+	}
+}
+

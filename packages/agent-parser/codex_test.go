@@ -46,6 +46,26 @@ func TestParseCodexRolloutPath(t *testing.T) {
 			wantErr:    false,
 		},
 		{
+			name:       "codex partitioned fallback rollout filename",
+			path:       "/Users/dev/.codex/sessions/2026/06/12/rollout-customtimestamp-01900e70-659f-728b-b8dc-4c4f9bcde27a.jsonl",
+			wantYear:   "2026",
+			wantMonth:  "06",
+			wantDay:    "12",
+			wantTS:     "customtimestamp",
+			wantSessID: "01900e70-659f-728b-b8dc-4c4f9bcde27a",
+			wantErr:    false,
+		},
+		{
+			name:       "codex flat fallback rollout filename",
+			path:       "/Users/dev/rollout-customtimestamp-01900e70-659f-728b-b8dc-4c4f9bcde27a.jsonl",
+			wantYear:   "",
+			wantMonth:  "",
+			wantDay:    "",
+			wantTS:     "customtimestamp",
+			wantSessID: "01900e70-659f-728b-b8dc-4c4f9bcde27a",
+			wantErr:    false,
+		},
+		{
 			name:    "empty path",
 			path:    "",
 			wantErr: true,
@@ -119,6 +139,13 @@ func TestCleanCodexPromptAndTitle(t *testing.T) {
 			input:       "<environment_context>\nCWD: /repo\n</environment_context>\n\nRefactor the auth handler in auth.go",
 			wantClean:   "Refactor the auth handler in auth.go",
 			wantTitle:   "Refactor the auth handler in auth.go",
+			wantHasTile: true,
+		},
+		{
+			name:        "user prompt exceeding 100 characters is truncated",
+			input:       "This is an extremely long user task prompt that goes on and on beyond one hundred characters in total length to verify truncation",
+			wantClean:   "This is an extremely long user task prompt that goes on and on beyond one hundred characters in total length to verify truncation",
+			wantTitle:   "This is an extremely long user task prompt that goes on and on beyond one hundred characters in tota",
 			wantHasTile: true,
 		},
 		{
@@ -592,6 +619,58 @@ func TestParseCodexLine(t *testing.T) {
 		}
 		if evs2[0].EventType != "tool_result" || *evs2[0].Data.ToolCallID != "ts_001" {
 			t.Errorf("unexpected tool_search_output event: %+v", evs2[0])
+		}
+	})
+
+	t.Run("session_meta subagent with only nickname", func(t *testing.T) {
+		line := []byte(`{"type":"session_meta","timestamp":"2026-06-12T16:08:36.000Z","payload":{"id":"sub-1","agent_nickname":"Scout"}}`)
+		evs, err := ParseCodexLine(line)
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("unexpected result: %v", err)
+		}
+		if *evs[0].Data.Title != "Codex Subagent: Scout" {
+			t.Errorf("got %q, want 'Codex Subagent: Scout'", *evs[0].Data.Title)
+		}
+	})
+
+	t.Run("session_meta subagent with only parentThreadID", func(t *testing.T) {
+		line := []byte(`{"type":"session_meta","timestamp":"2026-06-12T16:08:36.000Z","payload":{"id":"sub-2","parent_thread_id":"root-1"}}`)
+		evs, err := ParseCodexLine(line)
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("unexpected result: %v", err)
+		}
+		if *evs[0].Data.Title != "Codex Subagent sub-2" {
+			t.Errorf("got %q, want 'Codex Subagent sub-2'", *evs[0].Data.Title)
+		}
+	})
+
+	t.Run("session_meta with string subagent source", func(t *testing.T) {
+		line := []byte(`{"type":"session_meta","timestamp":"2026-06-12T16:08:36.000Z","payload":{"id":"sub-3","source":{"subagent":"worker"}}}`)
+		evs, err := ParseCodexLine(line)
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("unexpected result: %v", err)
+		}
+		if *evs[0].Data.Title != "Codex Subagent: (worker)" {
+			t.Errorf("got %q, want 'Codex Subagent: (worker)'", *evs[0].Data.Title)
+		}
+	})
+
+	t.Run("invalid json payloads in codex line", func(t *testing.T) {
+		_, err := ParseCodexLine([]byte(`{"type":"session_meta","payload":"invalid"}`))
+		if err == nil {
+			t.Error("expected error for invalid session_meta payload")
+		}
+		_, err = ParseCodexLine([]byte(`{"type":"turn_context","payload":"invalid"}`))
+		if err == nil {
+			t.Error("expected error for invalid turn_context payload")
+		}
+		_, err = ParseCodexLine([]byte(`{"type":"event_msg","payload":"invalid"}`))
+		if err == nil {
+			t.Error("expected error for invalid event_msg payload")
+		}
+		_, err = ParseCodexLine([]byte(`{"type":"response_item","payload":"invalid"}`))
+		if err == nil {
+			t.Error("expected error for invalid response_item payload")
 		}
 	})
 }

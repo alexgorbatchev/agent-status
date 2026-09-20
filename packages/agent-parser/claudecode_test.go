@@ -76,6 +76,39 @@ func TestExtractContentString(t *testing.T) {
 	}
 }
 
+func TestParseClaudeContentBlocks(t *testing.T) {
+	t.Run("nil", func(t *testing.T) {
+		blocks := parseClaudeContentBlocks(nil)
+		if blocks != nil {
+			t.Errorf("expected nil blocks, got %v", blocks)
+		}
+	})
+
+	t.Run("single string", func(t *testing.T) {
+		blocks := parseClaudeContentBlocks("test text")
+		if len(blocks) != 1 || blocks[0].Text != "test text" || blocks[0].Type != "text" {
+			t.Errorf("unexpected blocks: %+v", blocks)
+		}
+	})
+
+	t.Run("single map without type", func(t *testing.T) {
+		blocks := parseClaudeContentBlocks(map[string]interface{}{"text": "map text"})
+		if len(blocks) != 1 || blocks[0].Type != "text" || blocks[0].Text != "map text" {
+			t.Errorf("unexpected blocks: %+v", blocks)
+		}
+	})
+
+	t.Run("slice of maps", func(t *testing.T) {
+		blocks := parseClaudeContentBlocks([]interface{}{
+			map[string]interface{}{"text": "block 1"},
+			map[string]interface{}{"type": "thinking", "thinking": "deep thoughts"},
+		})
+		if len(blocks) != 2 || blocks[0].Text != "block 1" || blocks[1].Thinking != "deep thoughts" {
+			t.Errorf("unexpected blocks: %+v", blocks)
+		}
+	})
+}
+
 func TestParseClaudeCodeLine(t *testing.T) {
 	t.Run("empty line", func(t *testing.T) {
 		evs, err := ParseClaudeCodeLine([]byte(""))
@@ -439,6 +472,13 @@ func TestParseClaudeCodeLine(t *testing.T) {
 		}
 		if evs[0].EventType != "question_prompt" || *evs[0].Data.Question != "Confirm delete?" {
 			t.Errorf("question_prompt event mismatch: %+v", evs[0])
+		}
+	})
+
+	t.Run("invalid json", func(t *testing.T) {
+		_, err := ParseClaudeCodeLine([]byte("{invalid"))
+		if err == nil {
+			t.Error("expected error for invalid json")
 		}
 	})
 }

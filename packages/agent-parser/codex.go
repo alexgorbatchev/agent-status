@@ -298,6 +298,8 @@ func ParseCodexLine(line []byte) ([]ParsedEvent, error) {
 				title = fmt.Sprintf("Codex Subagent: %s (%s)", nickname, role)
 			} else if nickname != "" {
 				title = fmt.Sprintf("Codex Subagent: %s", nickname)
+			} else if role != "" {
+				title = fmt.Sprintf("Codex Subagent: (%s)", role)
 			} else if parentThreadID != "" {
 				title = fmt.Sprintf("Codex Subagent %s", meta.ID)
 			} else {
