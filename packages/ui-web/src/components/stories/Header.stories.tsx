@@ -23,6 +23,8 @@ export const ConnectedFleet: Story = {
     const header = canvas.getByTestId("Header");
     await expect(header).toBeInTheDocument();
     await expect(canvas.getByTestId("Header--title")).toHaveTextContent("Agent Status");
+    const liveIndicator = canvasElement.querySelector(".bg-emerald-400");
+    await expect(liveIndicator).toBeInTheDocument();
   },
 };
 
@@ -36,5 +38,9 @@ export const Disconnected: Story = {
     const canvas = within(canvasElement);
     const header = canvas.getByTestId("Header");
     await expect(header).toBeInTheDocument();
+    const title = canvas.getByTestId("Header--title");
+    await expect(title).toBeInTheDocument();
+    const disconnectedIndicator = canvasElement.querySelector(".bg-red-400");
+    await expect(disconnectedIndicator).toBeInTheDocument();
   },
 };

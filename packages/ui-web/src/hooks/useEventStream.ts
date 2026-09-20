@@ -65,6 +65,24 @@ export function useEventStream(apiBaseUrl?: string, token: string = "dev-secret-
     let es: EventSource | null = null;
     let retryTimeout: Timer | null = null;
 
+    const handleMockEvent = (e: Event) => {
+      const customEvent = e as CustomEvent<ServerEvent>;
+      if (customEvent.detail) {
+        handleServerEvent(customEvent.detail);
+      }
+    };
+
+    const handleMockError = () => {
+      if (es?.onerror) {
+        es.onerror(new Event("error"));
+      }
+    };
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("mock-sse-event", handleMockEvent);
+      window.addEventListener("mock-sse-error", handleMockError);
+    }
+
     const connect = () => {
       try {
         const url = `${resolvedBaseUrl}/api/v1/events?token=${encodeURIComponent(token)}`;
@@ -83,20 +101,6 @@ export function useEventStream(apiBaseUrl?: string, token: string = "dev-secret-
             console.error("Failed to parse SSE event:", error);
           }
         };
-
-        // Allow test environment to dispatch mock events
-        if (typeof window !== "undefined") {
-          const handleMockEvent = (e: Event) => {
-            const customEvent = e as CustomEvent<ServerEvent>;
-            if (customEvent.detail) {
-              handleServerEvent(customEvent.detail);
-            }
-          };
-          window.addEventListener("mock-sse-event", handleMockEvent);
-          return () => {
-            window.removeEventListener("mock-sse-event", handleMockEvent);
-          };
-        }
 
         es.onerror = () => {
           setIsConnected(false);
@@ -118,6 +122,10 @@ export function useEventStream(apiBaseUrl?: string, token: string = "dev-secret-
     return () => {
       if (es) es.close();
       if (retryTimeout) clearTimeout(retryTimeout);
+      if (typeof window !== "undefined") {
+        window.removeEventListener("mock-sse-event", handleMockEvent);
+        window.removeEventListener("mock-sse-error", handleMockError);
+      }
     };
   }, [resolvedBaseUrl, token, handleServerEvent]);
 

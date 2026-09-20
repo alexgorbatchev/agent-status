@@ -50,10 +50,62 @@ export const RunningError: Story = {
   },
 };
 
+export const RunningIdle: Story = {
+  args: {
+    lifecycle: "RUNNING",
+    activity: "IDLE",
+  },
+  async play({ canvasElement }) {
+    const canvas = within(canvasElement);
+    const badge = canvas.getByTestId("StatusBadge");
+    await expect(badge).toBeInTheDocument();
+    await expect(canvas.getByText("Idle")).toBeInTheDocument();
+  },
+};
+
 export const ExitedFinished: Story = {
   args: {
     lifecycle: "EXITED",
     activity: "IDLE",
+  },
+  async play({ canvasElement }) {
+    const canvas = within(canvasElement);
+    const badge = canvas.getByTestId("StatusBadge");
+    await expect(badge).toBeInTheDocument();
+    await expect(canvas.getByText("Finished")).toBeInTheDocument();
+  },
+};
+
+export const ExitedError: Story = {
+  args: {
+    lifecycle: "EXITED",
+    activity: "ERROR",
+  },
+  async play({ canvasElement }) {
+    const canvas = within(canvasElement);
+    const badge = canvas.getByTestId("StatusBadge");
+    await expect(badge).toBeInTheDocument();
+    await expect(canvas.getByText("Died on error")).toBeInTheDocument();
+  },
+};
+
+export const ExitedWaitingQuestion: Story = {
+  args: {
+    lifecycle: "EXITED",
+    activity: "WAITING_QUESTION",
+  },
+  async play({ canvasElement }) {
+    const canvas = within(canvasElement);
+    const badge = canvas.getByTestId("StatusBadge");
+    await expect(badge).toBeInTheDocument();
+    await expect(canvas.getByText("Abandoned prompt")).toBeInTheDocument();
+  },
+};
+
+export const ExitedBusy: Story = {
+  args: {
+    lifecycle: "EXITED",
+    activity: "BUSY",
   },
   async play({ canvasElement }) {
     const canvas = within(canvasElement);

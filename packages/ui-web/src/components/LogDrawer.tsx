@@ -90,7 +90,7 @@ export function LogDrawer({ agent, apiBaseUrl, token = "dev-secret-token", onClo
         ) : (
           logs.map((log, idx) => {
             const isSubagent = Boolean(log.subagentId);
-            const isUser = log.data.role === "user" || log.eventType === "turn_start";
+            const isUser = log.data?.role === "user" || log.eventType === "turn_start";
             return (
               <div
                 key={idx}
