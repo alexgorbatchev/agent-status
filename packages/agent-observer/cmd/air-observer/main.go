@@ -83,7 +83,7 @@ func runObserver(opts observerOptions) error {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	logging.Setup(opts.logLevel)
+	logging.Setup("observer", opts.logLevel)
 
 	if opts.claudeProjectsDir != "" {
 		_ = os.Setenv("CLAUDE_PROJECTS_DIR", opts.claudeProjectsDir)

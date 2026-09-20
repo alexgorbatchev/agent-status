@@ -124,12 +124,14 @@ func (s *Subscriber) Run(ctx context.Context) {
 }
 
 func (s *Subscriber) readLoop(ctx context.Context, conn net.Conn) {
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close()
+	}()
 
 	// Close conn if context canceled
 	go func() {
 		<-ctx.Done()
-		conn.Close()
+		_ = conn.Close()
 	}()
 
 	scanner := bufio.NewScanner(conn)

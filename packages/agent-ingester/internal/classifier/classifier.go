@@ -7,10 +7,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/pricing"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/store"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/summarizer"
-	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 )
 
 type agentContext struct {
@@ -48,6 +49,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 	}
 
 	if agent == nil {
+		logging.Info("session discovered", "sessionId", frame.SessionID, "agentId", frame.AgentID, "harness", frame.Harness, "envId", frame.EnvID, "project", frame.Project.Name)
 		// Initialize new agent state
 		agent = &types.IAgentState{
 			ID:          frame.AgentID,

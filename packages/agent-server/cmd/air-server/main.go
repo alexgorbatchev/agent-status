@@ -63,7 +63,9 @@ func run(ctx context.Context, cfg config.Config) error {
 	if err != nil {
 		return fmt.Errorf("opening store: %w", err)
 	}
-	defer sqliteStore.Close()
+	defer func() {
+		_ = sqliteStore.Close()
+	}()
 
 	hub := stream.NewHub()
 	defer hub.Close()

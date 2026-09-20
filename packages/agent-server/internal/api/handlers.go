@@ -300,7 +300,9 @@ func (s *Server) handleEventsWS(w http.ResponseWriter, r *http.Request) {
 		s.logger.WarnContext(r.Context(), "websocket accept failed", "err", err)
 		return
 	}
-	defer conn.CloseNow()
+	defer func() {
+		_ = conn.CloseNow()
+	}()
 
 	ctx := conn.CloseRead(r.Context())
 

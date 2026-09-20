@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -31,15 +30,17 @@ func main() {
 		Use:   "air-ingester",
 		Short: "Agent Status Central Telemetry Ingestion Daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			logging.Setup(cfg.LogLevel)
+			logging.Setup("ingester", cfg.LogLevel)
 
-			slog.Info("starting air-ingester", "addr", cfg.Addr, "db", cfg.DBPath, "notifySock", cfg.NotifySock, "noSummarize", cfg.NoSummarize)
+			logging.Info("starting air-ingester", "addr", cfg.Addr, "db", cfg.DBPath, "notifySock", cfg.NotifySock, "noSummarize", cfg.NoSummarize)
 
 			st, err := store.Open(cfg.DBPath)
 			if err != nil {
 				return fmt.Errorf("opening store: %w", err)
 			}
-			defer st.Close()
+			defer func() {
+				_ = st.Close()
+			}()
 
 			priceEngine, err := pricing.NewPricingEngine()
 			if err != nil {
@@ -62,7 +63,9 @@ func main() {
 			if err != nil {
 				return fmt.Errorf("initializing notify publisher: %w", err)
 			}
-			defer pub.Close()
+			defer func() {
+				_ = pub.Close()
+			}()
 
 			cls := classifier.New(st, priceEngine, sumEngine)
 			rcv := receiver.New(st, cls, pub, cfg.BearerToken)
@@ -103,12 +106,12 @@ func main() {
 
 			go func() {
 				if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-					slog.Error("ingestion server error", "err", err)
+					logging.Error("ingestion server error", "err", err)
 				}
 			}()
 
 			<-ctx.Done()
-			slog.Info("shutting down air-ingester")
+			logging.Info("shutting down air-ingester")
 
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
