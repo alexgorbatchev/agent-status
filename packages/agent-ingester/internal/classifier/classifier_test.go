@@ -22,7 +22,7 @@ func newTestClassifier(t *testing.T, sum *summarizer.Summarizer) (*Classifier, *
 	if err != nil {
 		t.Fatalf("store.Open(:memory:) failed: %v", err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() { _ = s.Close() })
 
 	p, err := pricing.NewPricingEngine()
 	if err != nil {
@@ -692,7 +692,7 @@ func TestClassifier_DatabaseErrorHandling(t *testing.T) {
 	c, s := newTestClassifier(t, sum)
 
 	// Close store to trigger database error in ProcessFrame
-	s.Close()
+	_ = s.Close()
 
 	frame := types.ITelemetryFrame{
 		Version:   "1.0",
@@ -753,8 +753,7 @@ func TestClassifier_UsageAccumulation_ReasoningTokens(t *testing.T) {
 	}
 
 	// 1. Initial frame to start session
-	agent, err := c.ProcessFrame(baseFrame)
-	if err != nil {
+	if _, err := c.ProcessFrame(baseFrame); err != nil {
 		t.Fatalf("ProcessFrame(run_started) failed: %v", err)
 	}
 
@@ -776,7 +775,7 @@ func TestClassifier_UsageAccumulation_ReasoningTokens(t *testing.T) {
 		},
 	}
 
-	agent, err = c.ProcessFrame(fTurn1)
+	agent, err := c.ProcessFrame(fTurn1)
 	if err != nil {
 		t.Fatalf("ProcessFrame(turn 1) failed: %v", err)
 	}

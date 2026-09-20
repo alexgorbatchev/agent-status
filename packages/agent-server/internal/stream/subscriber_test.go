@@ -129,7 +129,7 @@ func TestSubscriber_SocketStreamAndReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating temp dir in /tmp: %v", err)
 	}
-	t.Cleanup(func() { os.RemoveAll(tmpDir) })
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
 	sockPath := filepath.Join(tmpDir, "n.sock")
 
 	hub := NewHub()
@@ -293,14 +293,16 @@ func TestSubscriber_ResyncFailureOnConnect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating temp dir: %v", err)
 	}
-	t.Cleanup(func() { os.RemoveAll(tmpDir) })
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
 	sockPath := filepath.Join(tmpDir, "n.sock")
 
 	listener, err := net.Listen("unix", sockPath)
 	if err != nil {
 		t.Fatalf("failed to create test unix socket: %v", err)
 	}
-	defer listener.Close()
+	defer func() {
+		_ = listener.Close()
+	}()
 
 	hub := NewHub()
 	defer hub.Close()
@@ -323,20 +325,21 @@ func TestSubscriber_ResyncFailureOnConnect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to accept conn: %v", err)
 	}
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close()
+	}()
 
 	time.Sleep(50 * time.Millisecond)
 }
 
 func TestDefaultSocketPath(t *testing.T) {
-	os.Unsetenv("XDG_RUNTIME_DIR")
+	t.Setenv("XDG_RUNTIME_DIR", "")
 	path := DefaultSocketPath()
 	if path != "/tmp/agent-status/notify.sock" {
 		t.Errorf("DefaultSocketPath() = %q, want /tmp/agent-status/notify.sock", path)
 	}
 
-	os.Setenv("XDG_RUNTIME_DIR", "/custom/runtime")
-	defer os.Unsetenv("XDG_RUNTIME_DIR")
+	t.Setenv("XDG_RUNTIME_DIR", "/custom/runtime")
 	path = DefaultSocketPath()
 	if path != "/custom/runtime/agent-status/notify.sock" {
 		t.Errorf("DefaultSocketPath() with XDG_RUNTIME_DIR = %q, want /custom/runtime/agent-status/notify.sock", path)

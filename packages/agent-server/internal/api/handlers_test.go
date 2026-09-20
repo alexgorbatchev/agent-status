@@ -784,7 +784,9 @@ func TestEventsWS(t *testing.T) {
 		if err != nil {
 			t.Fatalf("websocket dial failed: %v", err)
 		}
-		defer conn.CloseNow()
+		defer func() {
+			_ = conn.CloseNow()
+		}()
 
 		// 1. First message should be the initial snapshot
 		_, msgBytes, err := conn.Read(ctx)
@@ -839,7 +841,7 @@ func TestEventsWS(t *testing.T) {
 		if err == nil {
 			// If connect was accepted, reading should fail immediately due to early exit
 			_, _, _ = conn.Read(ctx)
-			conn.CloseNow()
+			_ = conn.CloseNow()
 		}
 	})
 
@@ -860,7 +862,7 @@ func TestEventsWS(t *testing.T) {
 		conn, _, err := websocket.Dial(ctx, wsURL, nil)
 		if err == nil {
 			_, _, _ = conn.Read(ctx)
-			conn.CloseNow()
+			_ = conn.CloseNow()
 		}
 	})
 
@@ -883,7 +885,9 @@ func TestEventsWS(t *testing.T) {
 		if err != nil {
 			t.Fatalf("dial failed: %v", err)
 		}
-		defer conn.CloseNow()
+		defer func() {
+			_ = conn.CloseNow()
+		}()
 
 		// Read snapshot
 		_, _, _ = conn.Read(ctx)

@@ -35,7 +35,9 @@ func TestNewPublisher_DefaultPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPublisher(\"\") failed: %v", err)
 	}
-	defer pub.Close()
+	defer func() {
+		_ = pub.Close()
+	}()
 
 	expectedSock := filepath.Join(tempDir, "agent-status", "notify.sock")
 	if pub.sockPath != expectedSock {
@@ -61,7 +63,9 @@ func TestNewPublisher_FallbackTmp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPublisher(custom) failed: %v", err)
 	}
-	defer pub.Close()
+	defer func() {
+		_ = pub.Close()
+	}()
 
 	if pub.sockPath != sockPath {
 		t.Errorf("got sockPath %q, want %q", pub.sockPath, sockPath)
@@ -76,19 +80,25 @@ func TestPublisher_BroadcastToClients(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPublisher() failed: %v", err)
 	}
-	defer pub.Close()
+	defer func() {
+		_ = pub.Close()
+	}()
 
 	conn1, err := net.Dial("unix", sockPath)
 	if err != nil {
 		t.Fatalf("net.Dial 1 failed: %v", err)
 	}
-	defer conn1.Close()
+	defer func() {
+		_ = conn1.Close()
+	}()
 
 	conn2, err := net.Dial("unix", sockPath)
 	if err != nil {
 		t.Fatalf("net.Dial 2 failed: %v", err)
 	}
-	defer conn2.Close()
+	defer func() {
+		_ = conn2.Close()
+	}()
 
 	for i := 0; i < 50; i++ {
 		pub.mu.Lock()
@@ -144,13 +154,17 @@ func TestPublisher_ClientSaturationAndDrop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPublisher() failed: %v", err)
 	}
-	defer pub.Close()
+	defer func() {
+		_ = pub.Close()
+	}()
 
 	conn, err := net.Dial("unix", sockPath)
 	if err != nil {
 		t.Fatalf("net.Dial failed: %v", err)
 	}
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close()
+	}()
 
 	for i := 0; i < 50; i++ {
 		pub.mu.Lock()
@@ -213,7 +227,9 @@ func TestPublisher_CloseCleanup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("net.Dial failed: %v", err)
 	}
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close()
+	}()
 
 	for i := 0; i < 50; i++ {
 		pub.mu.Lock()
@@ -239,8 +255,10 @@ func TestNewPublisher_InvalidDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTemp failed: %v", err)
 	}
-	defer os.Remove(tempFile.Name())
-	tempFile.Close()
+	defer func() {
+		_ = os.Remove(tempFile.Name())
+	}()
+	_ = tempFile.Close()
 
 	invalidSock := filepath.Join(tempFile.Name(), "subdir", "notify.sock")
 	_, err = NewPublisher(invalidSock)

@@ -359,9 +359,9 @@ func buildUserPrompt(input SummaryInput) string {
 		}
 		for _, t := range input.RecentTools[start:] {
 			if t.Target != "" {
-				sb.WriteString(fmt.Sprintf("- %s on %s\n", t.ToolName, t.Target))
+				fmt.Fprintf(&sb, "- %s on %s\n", t.ToolName, t.Target)
 			} else {
-				sb.WriteString(fmt.Sprintf("- %s\n", t.ToolName))
+				fmt.Fprintf(&sb, "- %s\n", t.ToolName)
 			}
 		}
 	}

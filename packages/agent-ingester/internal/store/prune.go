@@ -9,7 +9,9 @@ func (s *Store) PruneOldEventsAndExitedAgents(retentionCutoffMs int64, exitedRet
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() {
+		_ = tx.Rollback()
+	}()
 
 	// 1. Delete events older than retention cutoff (e.g. 48 hours)
 	_, err = tx.Exec("DELETE FROM telemetry_events WHERE timestamp < ?", retentionCutoffMs)

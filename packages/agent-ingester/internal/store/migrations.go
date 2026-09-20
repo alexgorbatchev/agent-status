@@ -99,7 +99,9 @@ func Migrate(db *sql.DB) error {
 		if err != nil {
 			return fmt.Errorf("beginning migration transaction: %w", err)
 		}
-		defer tx.Rollback()
+		defer func() {
+			_ = tx.Rollback()
+		}()
 
 		if _, err := tx.Exec(schemaV1); err != nil {
 			return fmt.Errorf("executing migration v1: %w", err)

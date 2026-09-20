@@ -83,7 +83,7 @@ func setupTestDB(t *testing.T) *Store {
 	if err != nil {
 		t.Fatalf("opening in-memory sqlite: %v", err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { _ = db.Close() })
 
 	if _, err := db.Exec(schemaSQL); err != nil {
 		t.Fatalf("applying schema: %v", err)

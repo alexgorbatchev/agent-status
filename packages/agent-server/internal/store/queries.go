@@ -61,7 +61,9 @@ func (s *Store) GetEnvironments(ctx context.Context) ([]types.IEnvironmentInfo, 
 	if err != nil {
 		return nil, fmt.Errorf("querying environments: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	nowMs := time.Now().UnixMilli()
 	envs := make([]types.IEnvironmentInfo, 0)
@@ -318,12 +320,11 @@ func (s *Store) GetAgents(ctx context.Context, filter AgentFilter) ([]types.IAge
 		whereClauses = append(whereClauses, "a.activity = ?")
 		args = append(args, string(filter.Activity))
 	}
-	if filter.Lifecycle != "" {
-		if filter.Lifecycle == types.LifecycleRunning {
-			whereClauses = append(whereClauses, "a.current_run_id IS NOT NULL")
-		} else if filter.Lifecycle == types.LifecycleExited {
-			whereClauses = append(whereClauses, "a.current_run_id IS NULL")
-		}
+	switch filter.Lifecycle {
+	case types.LifecycleRunning:
+		whereClauses = append(whereClauses, "a.current_run_id IS NOT NULL")
+	case types.LifecycleExited:
+		whereClauses = append(whereClauses, "a.current_run_id IS NULL")
 	}
 
 	query := selectAgentBaseQuery
@@ -336,7 +337,9 @@ func (s *Store) GetAgents(ctx context.Context, filter AgentFilter) ([]types.IAge
 	if err != nil {
 		return nil, fmt.Errorf("querying agents: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	nowMs := time.Now().UnixMilli()
 	agents := make([]types.IAgentState, 0)
@@ -453,7 +456,9 @@ func (s *Store) GetAgentLogs(ctx context.Context, agentID string, limit int, bef
 	if err != nil {
 		return nil, fmt.Errorf("querying telemetry events for agent %q: %w", agentID, err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	nowMs := time.Now().UnixMilli()
 	frames := make([]types.ITelemetryFrame, 0)

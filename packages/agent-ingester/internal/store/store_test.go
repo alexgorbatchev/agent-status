@@ -15,7 +15,9 @@ func TestOpen_Memory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open(:memory:) failed: %v", err)
 	}
-	defer st.Close()
+	defer func() {
+		_ = st.Close()
+	}()
 
 	if st.DB() == nil {
 		t.Errorf("expected DB() to be non-nil")
@@ -38,7 +40,9 @@ func TestOpen_DiskPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open(diskPath) failed: %v", err)
 	}
-	defer st.Close()
+	defer func() {
+		_ = st.Close()
+	}()
 
 	if _, err := os.Stat(dbPath); err != nil {
 		t.Errorf("db file not found: %v", err)
@@ -54,8 +58,10 @@ func TestOpen_InvalidPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTemp failed: %v", err)
 	}
-	defer os.Remove(tempFile.Name())
-	tempFile.Close()
+	defer func() {
+		_ = os.Remove(tempFile.Name())
+	}()
+	_ = tempFile.Close()
 
 	invalidPath := filepath.Join(tempFile.Name(), "subdir", "test.db")
 	_, err = Open(invalidPath)
@@ -77,13 +83,15 @@ func TestMigrate_ErrorCases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		_ = db.Close()
+	}()
 
 	if err := Migrate(db); err != nil {
 		t.Fatalf("Migrate() failed: %v", err)
 	}
 
-	db.Close()
+	_ = db.Close()
 	if err := Migrate(db); err == nil {
 		t.Errorf("expected error on closed db, got nil")
 	}
@@ -94,7 +102,9 @@ func TestCursors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer st.Close()
+	defer func() {
+		_ = st.Close()
+	}()
 
 	envID := "env-cursor-test"
 
@@ -148,7 +158,9 @@ func TestEnvironments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer st.Close()
+	defer func() {
+		_ = st.Close()
+	}()
 
 	emptyEnvs, err := st.GetAllEnvironments()
 	if err != nil {
@@ -243,7 +255,9 @@ func TestAgentStateAndRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer st.Close()
+	defer func() {
+		_ = st.Close()
+	}()
 
 	agentNil, err := st.GetAgent("non-existent")
 	if err != nil {
@@ -459,7 +473,9 @@ func TestAgentState_NilFieldsAndExitedRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer st.Close()
+	defer func() {
+		_ = st.Close()
+	}()
 
 	now := time.Now().UnixMilli()
 	ended := now - 1000
@@ -592,7 +608,9 @@ func TestPruneOldEventsAndExitedAgents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer st.Close()
+	defer func() {
+		_ = st.Close()
+	}()
 
 	now := time.Now().UnixMilli()
 	oldTime := now - (50 * 3600 * 1000) // 50 hours ago

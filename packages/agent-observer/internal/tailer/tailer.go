@@ -14,8 +14,6 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-const maxScanTokenSize = 16 * 1024 * 1024 // 16MB buffer
-
 var tailerPollInterval = 1 * time.Second
 
 type LineHandler func(line []byte) error
@@ -67,9 +65,7 @@ func (t *Tailer) Start(ctx context.Context) error {
 	}
 
 	// Initial read
-	if err := t.readAvailable(); err != nil {
-		// Log or return error if severe, but continue watching
-	}
+	_ = t.readAvailable()
 
 	ticker := time.NewTicker(tailerPollInterval)
 	defer ticker.Stop()
@@ -90,12 +86,9 @@ func (t *Tailer) Start(ctx context.Context) error {
 					_ = t.readAvailable()
 				}
 			}
-		case err, ok := <-t.watcher.Errors:
+		case _, ok := <-t.watcher.Errors:
 			if !ok {
 				return nil
-			}
-			if err != nil {
-				// Continue on watcher errors
 			}
 		case <-ticker.C:
 			_ = t.readAvailable()
@@ -106,8 +99,13 @@ func (t *Tailer) Start(ctx context.Context) error {
 func (t *Tailer) Stop() {
 	t.once.Do(func() {
 		close(t.stopCh)
-		_ = t.watcher.Close()
 	})
+}
+
+func (t *Tailer) CurrentOffset() int64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.offset
 }
 
 func (t *Tailer) readAvailable() error {
@@ -118,7 +116,9 @@ func (t *Tailer) readAvailable() error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 
 	fi, err := f.Stat()
 	if err != nil {
@@ -152,17 +152,21 @@ func (t *Tailer) readAvailable() error {
 	}
 
 	reader := bufio.NewReaderSize(f, 64*1024)
-	currOffset := offset
+	bytesReadTotal := offset
 
 	for {
 		line, err := reader.ReadBytes('\n')
 		if len(line) > 0 {
-			currOffset += int64(len(line))
-			cleanLine := bytes.TrimRight(line, "\r\n")
-			if len(cleanLine) > 0 && t.onLine != nil {
-				if err := t.onLine(cleanLine); err != nil {
-					// handler error
+			// Only process complete lines (ending with '\n')
+			if line[len(line)-1] == '\n' {
+				bytesReadTotal += int64(len(line))
+				cleanLine := bytes.TrimRight(line, "\r\n")
+				if len(cleanLine) > 0 && t.onLine != nil {
+					_ = t.onLine(cleanLine)
 				}
+			} else {
+				// Partial line, stop reading for now, wait for newline
+				break
 			}
 		}
 
@@ -174,19 +178,17 @@ func (t *Tailer) readAvailable() error {
 		}
 	}
 
-	t.offset = currOffset
-	cursor := &Cursor{
-		Key:        key,
+	t.offset = bytesReadTotal
+	t.store.Set(&Cursor{
+		Key:        t.key,
 		Path:       t.filePath,
-		Offset:     currOffset,
+		Offset:     bytesReadTotal,
 		Size:       fi.Size(),
 		Inode:      ino,
 		Device:     dev,
 		PrefixHash: prefixHash,
 		UpdatedAt:  time.Now().UnixMilli(),
-	}
-	t.store.Set(cursor)
-	_ = t.store.Save()
+	})
 
 	return nil
 }

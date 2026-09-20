@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"sync"
 	"time"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
@@ -16,7 +15,6 @@ import (
 
 type Store struct {
 	db *sql.DB
-	mu sync.RWMutex
 }
 
 func Open(dbPath string) (*Store, error) {
@@ -47,7 +45,7 @@ func Open(dbPath string) (*Store, error) {
 	db.SetMaxIdleConns(maxConns)
 
 	if err := Migrate(db); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("migrating database: %w", err)
 	}
 
@@ -125,7 +123,9 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() {
+		_ = tx.Rollback()
+	}()
 
 	// Ensure environment exists
 	_, err = tx.Exec(`
@@ -373,7 +373,9 @@ func (s *Store) GetAllActiveAgents() ([]types.IAgentState, error) {
 	if err != nil {
 		return nil, fmt.Errorf("querying agents: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	var ids []string
 	for rows.Next() {
@@ -406,7 +408,9 @@ func (s *Store) GetAllEnvironments() ([]types.IEnvironmentInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("querying environments: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		_ = rows.Close()
+	}()
 
 	now := time.Now().UnixMilli()
 	var envs []types.IEnvironmentInfo
@@ -428,7 +432,9 @@ func (s *Store) EndCurrentRun(agentID string, endedAt int64) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() {
+		_ = tx.Rollback()
+	}()
 
 	var currentRunID sql.NullString
 	err = tx.QueryRow("SELECT current_run_id FROM agents WHERE id = ?", agentID).Scan(&currentRunID)
