@@ -1,14 +1,11 @@
 import React from "react";
 import type { IHeaderProps } from "./types";
 import { Bot, AlertCircle, DollarSign, Activity, Server } from "lucide-react";
+import { isAgentRequiringAttention } from "../utils/agentUtils";
 
 export function Header({ agents, environments, isConnected }: IHeaderProps) {
   const activeAgents = agents.filter((a) => a.activity.lifecycle === "RUNNING");
-  const attentionAgents = agents.filter(
-    (a) =>
-      a.activity.lifecycle === "RUNNING" &&
-      (a.activity.activity === "WAITING_QUESTION" || a.activity.activity === "ERROR"),
-  );
+  const attentionAgents = agents.filter(isAgentRequiringAttention);
 
   const totalSpend = agents.reduce((acc, a) => acc + (a.activity.cost?.total || 0), 0);
   const liveEnvs = environments.filter((e) => !e.isStale).length;
