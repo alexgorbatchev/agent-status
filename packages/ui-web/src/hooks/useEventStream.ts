@@ -70,8 +70,15 @@ export function useEventStream(apiBaseUrl?: string, token: string = DEFAULT_DEV_
       }
     };
 
+    const handleMockError = () => {
+      if (es?.onerror) {
+        es.onerror(new Event("error"));
+      }
+    };
+
     if (typeof window !== "undefined") {
       window.addEventListener("mock-sse-event", handleMockEvent);
+      window.addEventListener("mock-sse-error", handleMockError);
     }
 
     const connect = () => {
@@ -113,6 +120,7 @@ export function useEventStream(apiBaseUrl?: string, token: string = DEFAULT_DEV_
     return () => {
       if (typeof window !== "undefined") {
         window.removeEventListener("mock-sse-event", handleMockEvent);
+        window.removeEventListener("mock-sse-error", handleMockError);
       }
       if (es) es.close();
       if (retryTimeout) clearTimeout(retryTimeout);

@@ -56,4 +56,78 @@ test.describe("Live Stream & Fleet Hydration", () => {
     await expect(page.getByTestId("Header--active-agents")).toContainText("Active:3");
     await expect(page.getByTestId("Header--attention-agents")).toContainText("Needs Attention:2");
   });
+
+  test("handles agent_removed SSE event by removing agent cards and updating fleet counts", async ({ page }) => {
+    const sseServer = await setupMockSSERoute(page, [
+      {
+        type: "snapshot",
+        at: Date.now(),
+        agents: [fixture_agentStateRunning, fixture_agentStateExited],
+        environments: [fixture_environmentInfo],
+      },
+    ]);
+
+    await page.goto("/");
+
+    // Both agents are initially visible
+    await expect(page.getByText("Build agent-status dashboard")).toBeVisible();
+    await expect(page.getByText("Refactor telemetry pipeline")).toBeVisible();
+    await expect(page.getByTestId("App--agent-count")).toContainText("2 Total Agents");
+
+    // Dispatch agent_removed for the exited agent
+    await sseServer.sendEvent({
+      type: "agent_removed",
+      at: Date.now(),
+      agentId: fixture_agentStateExited.id,
+    });
+
+    // Exited agent card should disappear, running agent remains
+    await expect(page.getByText("Refactor telemetry pipeline")).not.toBeVisible();
+    await expect(page.getByText("Build agent-status dashboard")).toBeVisible();
+    await expect(page.getByTestId("App--agent-count")).toContainText("1 Total Agent");
+
+    // Dispatch agent_removed for the remaining running agent
+    await sseServer.sendEvent({
+      type: "agent_removed",
+      at: Date.now(),
+      agentId: fixture_agentStateRunning.id,
+    });
+
+    // Both cards should now be gone, showing empty state
+    await expect(page.getByText("Build agent-status dashboard")).not.toBeVisible();
+    await expect(page.getByTestId("App--empty-state")).toBeVisible();
+    await expect(page.getByTestId("App--agent-count")).toContainText("0 Total Agents");
+  });
+
+  test("displays disconnect indicator and error banner on stream drop and recovers on reconnect", async ({ page }) => {
+    const sseServer = await setupMockSSERoute(page, [
+      {
+        type: "snapshot",
+        at: Date.now(),
+        agents: [fixture_agentStateRunning],
+        environments: [fixture_environmentInfo],
+      },
+    ]);
+
+    await page.goto("/");
+
+    // 1. Initially connected: green indicator, no error banner
+    await expect(page.getByTestId("Header--active-agents")).toContainText("Active:1");
+    await expect(page.getByTestId("App--error")).not.toBeVisible();
+    await expect(page.locator("header h1 span.bg-emerald-400")).toBeVisible();
+
+    // 2. Simulate stream drop / server failure
+    await sseServer.simulateError();
+
+    // Verify error banner and red pulsing disconnect indicator appear
+    await expect(page.getByTestId("App--error")).toBeVisible();
+    await expect(page.getByTestId("App--error")).toContainText(
+      "Disconnected from agent-server stream. Reconnecting...",
+    );
+    await expect(page.locator("header h1 span.bg-red-400")).toBeVisible();
+
+    // 3. After retry interval (3s in useEventStream), automatic reconnect clears error and restores green indicator
+    await expect(page.getByTestId("App--error")).not.toBeVisible({ timeout: 10_000 });
+    await expect(page.locator("header h1 span.bg-emerald-400")).toBeVisible();
+  });
 });
