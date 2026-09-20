@@ -1,5 +1,6 @@
 import React from "react";
 import type { IHeaderProps } from "./types";
+import { IconWrapper } from "./IconWrapper";
 import {
   calculateTotalSpend,
   filterActiveAgents,
@@ -8,7 +9,7 @@ import {
 } from "../utils/agentUtils";
 import { Bot, AlertCircle, DollarSign, Activity, Server } from "lucide-react";
 
-export function Header({ agents, environments, isConnected }: IHeaderProps) {
+export function Header({ agents, environments, isConnected }: IHeaderProps): React.JSX.Element {
   const activeAgents = filterActiveAgents(agents);
   const attentionAgents = agents.filter(isAgentRequiringAttention);
 
@@ -39,9 +40,9 @@ export function Header({ agents, environments, isConnected }: IHeaderProps) {
           data-testid="Header--active-agents"
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800"
         >
-          <span className="w-4 h-4 text-blue-400 flex items-center justify-center">
+          <IconWrapper size="md" tone="primary">
             <Activity size={16} />
-          </span>
+          </IconWrapper>
           <span className="text-slate-400">Active:</span>
           <span className="font-semibold text-slate-200">{activeAgents.length}</span>
         </div>
@@ -52,9 +53,9 @@ export function Header({ agents, environments, isConnected }: IHeaderProps) {
             data-testid="Header--attention-agents"
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-950/40 border border-amber-800/60 text-amber-300 animate-pulse"
           >
-            <span className="w-4 h-4 text-amber-400 flex items-center justify-center">
+            <IconWrapper size="md" tone="warning">
               <AlertCircle size={16} />
-            </span>
+            </IconWrapper>
             <span>Needs Attention:</span>
             <span className="font-bold">{attentionAgents.length}</span>
           </div>
@@ -65,9 +66,9 @@ export function Header({ agents, environments, isConnected }: IHeaderProps) {
           data-testid="Header--environments"
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800"
         >
-          <span className="w-4 h-4 text-slate-400 flex items-center justify-center">
+          <IconWrapper size="md" tone="muted">
             <Server size={16} />
-          </span>
+          </IconWrapper>
           <span className="text-slate-400">Environments:</span>
           <span className="font-semibold text-slate-200">
             {liveEnvs}/{environments.length}
@@ -79,9 +80,9 @@ export function Header({ agents, environments, isConnected }: IHeaderProps) {
           data-testid="Header--total-spend"
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 font-mono text-emerald-400"
         >
-          <span className="w-4 h-4 text-emerald-400 flex items-center justify-center">
+          <IconWrapper size="md" tone="success">
             <DollarSign size={16} />
-          </span>
+          </IconWrapper>
           <span className="font-semibold">{formatCurrency(totalSpend)}</span>
         </div>
       </div>
