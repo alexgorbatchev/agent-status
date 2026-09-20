@@ -1,0 +1,15 @@
+# Justfile for agent-common
+
+# Default recipe: list available tasks
+default:
+    @just --list
+
+# Run all unit tests with race detector
+test:
+    go test -race ./...
+
+# Check module hygiene and run vet + linter
+lint:
+    go mod tidy -diff
+    go vet ./...
+    golangci-lint run

@@ -6,7 +6,8 @@ default:
 test:
     go test -race ./...
 
-# Check module hygiene and run vet
+# Check module hygiene and run vet + linter
 lint:
     go mod tidy -diff
     go vet ./...
+    golangci-lint run

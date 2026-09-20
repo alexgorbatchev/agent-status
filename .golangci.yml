@@ -1,0 +1,31 @@
+version: "2"
+
+run:
+  relative-path-mode: gitroot
+
+linters:
+  enable:
+    - depguard
+    - forbidigo
+
+  settings:
+    depguard:
+      rules:
+        slog:
+          list-mode: lax
+          files:
+            - "!packages/agent-common/logging/**"
+          deny:
+            - pkg: "log/slog"
+              desc: "use agent-common/logging for logging"
+    forbidigo:
+      forbid:
+        - pattern: ^slog\..*$
+          msg: "use agent-common/logging for logging"
+
+  exclusions:
+    rules:
+      - path: packages/agent-common/logging/
+        linters:
+          - depguard
+          - forbidigo

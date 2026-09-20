@@ -35,6 +35,7 @@ build-all:
 
 # Run all test suites across Go and Bun
 test-all:
+    cd packages/agent-common && just test
     cd packages/agent-parser && just test
     cd packages/agent-observer && just test
     cd packages/agent-ingester && just test
@@ -51,6 +52,7 @@ test:
 
 # Lint all packages (Go vet + golangci-lint, Bun typecheck + linter)
 lint-all:
+    cd packages/agent-common && just lint
     cd packages/agent-parser && just lint
     cd packages/agent-observer && just lint
     cd packages/agent-ingester && just lint

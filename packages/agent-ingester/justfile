@@ -26,6 +26,7 @@ test:
 lint:
     go mod tidy -diff
     go vet ./...
+    golangci-lint run
 
 # Clean build artifacts
 clean:
