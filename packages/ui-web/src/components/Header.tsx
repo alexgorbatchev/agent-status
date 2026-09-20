@@ -1,16 +1,18 @@
 import React from "react";
 import type { IHeaderProps } from "./types";
+import {
+  calculateTotalSpend,
+  filterActiveAgents,
+  formatCurrency,
+  isAgentRequiringAttention,
+} from "../utils/agentUtils";
 import { Bot, AlertCircle, DollarSign, Activity, Server } from "lucide-react";
 
 export function Header({ agents, environments, isConnected }: IHeaderProps) {
-  const activeAgents = agents.filter((a) => a.activity.lifecycle === "RUNNING");
-  const attentionAgents = agents.filter(
-    (a) =>
-      a.activity.lifecycle === "RUNNING" &&
-      (a.activity.activity === "WAITING_QUESTION" || a.activity.activity === "ERROR"),
-  );
+  const activeAgents = filterActiveAgents(agents);
+  const attentionAgents = agents.filter(isAgentRequiringAttention);
 
-  const totalSpend = agents.reduce((acc, a) => acc + (a.activity.cost?.total || 0), 0);
+  const totalSpend = calculateTotalSpend(agents);
   const liveEnvs = environments.filter((e) => !e.isStale).length;
 
   return (
@@ -80,7 +82,7 @@ export function Header({ agents, environments, isConnected }: IHeaderProps) {
           <span className="w-4 h-4 text-emerald-400 flex items-center justify-center">
             <DollarSign size={16} />
           </span>
-          <span className="font-semibold">${totalSpend.toFixed(2)}</span>
+          <span className="font-semibold">{formatCurrency(totalSpend)}</span>
         </div>
       </div>
     </header>

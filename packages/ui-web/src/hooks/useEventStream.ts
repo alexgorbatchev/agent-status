@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
-import type { IAgentState, IEnvironmentInfo, IWindowWithAgentStatus, ServerEvent } from "../types";
+import type { IAgentState, IEnvironmentInfo, ServerEvent } from "../types";
+import { DEFAULT_DEV_TOKEN, resolveApiBaseUrl } from "../utils/config";
 
 export interface IEventStreamState {
   agents: IAgentState[];
@@ -8,11 +9,8 @@ export interface IEventStreamState {
   error: string | null;
 }
 
-export function useEventStream(apiBaseUrl?: string, token: string = "dev-secret-token"): IEventStreamState {
-  const resolvedBaseUrl =
-    apiBaseUrl ||
-    (typeof window !== "undefined" && (window as unknown as IWindowWithAgentStatus).__AGENT_STATUS_API_URL__) ||
-    "http://localhost:4502";
+export function useEventStream(apiBaseUrl?: string, token: string = DEFAULT_DEV_TOKEN): IEventStreamState {
+  const resolvedBaseUrl = resolveApiBaseUrl(apiBaseUrl);
   const [agents, setAgents] = useState<IAgentState[]>([]);
   const [environments, setEnvironments] = useState<IEnvironmentInfo[]>([]);
   const [isConnected, setIsConnected] = useState(false);
