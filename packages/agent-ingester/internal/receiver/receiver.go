@@ -125,7 +125,7 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			if connEnvID != "" && envName != "" {
 				r.setEnvName(connEnvID, envName)
 			}
-			logging.Info("hello_received", "env", envName, "envId", connEnvID, "dropped", msg.Dropped, "since", msg.Since)
+			logging.Debug("hello_received", "env", envName, "envId", connEnvID, "dropped", msg.Dropped, "since", msg.Since)
 			if connEnvID != "" && msg.Since == 0 {
 				_ = r.store.SaveCursor(connEnvID, 0)
 			}

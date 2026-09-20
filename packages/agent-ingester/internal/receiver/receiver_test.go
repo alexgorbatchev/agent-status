@@ -649,3 +649,26 @@ func TestReceiverObserverRestartResetsCursor(t *testing.T) {
 		t.Errorf("GetLastSeq(env1) = %d (err %v), want 1", lastSeq2, err)
 	}
 }
+
+func TestReceiverEnvNameTracking(t *testing.T) {
+	rcv, _, _ := newTestReceiver(t)
+
+	if got := rcv.getEnvName("unknown"); got != "" {
+		t.Errorf("expected empty string for unknown env, got %q", got)
+	}
+
+	rcv.setEnvName("env-123", "work-macbook")
+	if got := rcv.getEnvName("env-123"); got != "work-macbook" {
+		t.Errorf("expected %q, got %q", "work-macbook", got)
+	}
+
+	// Empty checks
+	rcv.setEnvName("", "something")
+	rcv.setEnvName("env-456", "")
+	if got := rcv.getEnvName(""); got != "" {
+		t.Errorf("expected empty string for empty envID, got %q", got)
+	}
+	if got := rcv.getEnvName("env-456"); got != "" {
+		t.Errorf("expected empty string for empty name, got %q", got)
+	}
+}
