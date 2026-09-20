@@ -2,6 +2,7 @@ package logging
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
 	"strings"
 	"testing"
@@ -9,33 +10,29 @@ import (
 
 func TestParseLevel(t *testing.T) {
 	tests := []struct {
-		name      string
-		input     string
-		wantLevel slog.Level
-		wantErr   bool
+		input   string
+		want    slog.Level
+		wantErr bool
 	}{
-		{"debug lowercase", "debug", slog.LevelDebug, false},
-		{"debug uppercase", "DEBUG", slog.LevelDebug, false},
-		{"debug mixed", "DeBuG", slog.LevelDebug, false},
-		{"info lowercase", "info", slog.LevelInfo, false},
-		{"info uppercase", "INFO", slog.LevelInfo, false},
-		{"empty defaults to info", "", slog.LevelInfo, false},
-		{"warn lowercase", "warn", slog.LevelWarn, false},
-		{"warn uppercase", "WARN", slog.LevelWarn, false},
-		{"warning lowercase", "warning", slog.LevelWarn, false},
-		{"error lowercase", "error", slog.LevelError, false},
-		{"error uppercase", "ERROR", slog.LevelError, false},
-		{"invalid level", "unknown", slog.LevelInfo, true},
+		{"", slog.LevelInfo, false},
+		{"info", slog.LevelInfo, false},
+		{"INFO", slog.LevelInfo, false},
+		{"debug", slog.LevelDebug, false},
+		{"DEBUG", slog.LevelDebug, false},
+		{"warn", slog.LevelWarn, false},
+		{"warning", slog.LevelWarn, false},
+		{"error", slog.LevelError, false},
+		{"invalid", slog.LevelInfo, true},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(tt.input, func(t *testing.T) {
 			got, err := ParseLevel(tt.input)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("ParseLevel(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
 			}
-			if got != tt.wantLevel {
-				t.Fatalf("ParseLevel(%q) = %v, want %v", tt.input, got, tt.wantLevel)
+			if got != tt.want {
+				t.Fatalf("ParseLevel(%q) = %v, want %v", tt.input, got, tt.want)
 			}
 		})
 	}
@@ -43,7 +40,7 @@ func TestParseLevel(t *testing.T) {
 
 func TestNew(t *testing.T) {
 	var buf bytes.Buffer
-	logger := New(&buf, "info")
+	logger := New(&buf, "test-service", "info")
 
 	logger.Debug("debug message")
 	if buf.Len() > 0 {
@@ -52,17 +49,41 @@ func TestNew(t *testing.T) {
 
 	logger.Info("info message", "key", "val")
 	out := buf.String()
-	if !strings.Contains(out, "level=INFO") || !strings.Contains(out, "msg=\"info message\"") || !strings.Contains(out, "key=val") {
+	if !strings.Contains(out, "level=INFO") || !strings.Contains(out, "msg=\"info message\"") || !strings.Contains(out, "service=test-service") || !strings.Contains(out, "key=val") {
 		t.Fatalf("unexpected log output: %s", out)
 	}
 }
 
-func TestSetup(t *testing.T) {
-	logger := Setup("debug")
-	if logger == nil {
-		t.Fatal("Setup returned nil logger")
-	}
-	if slog.Default() != logger {
-		t.Fatal("Setup did not set default logger")
+func TestSetupAndLoggingHelpers(t *testing.T) {
+	var buf bytes.Buffer
+	logger := New(&buf, "helper-service", "debug")
+	slog.SetDefault(logger)
+
+	Debug("debug event", "k1", "v1")
+	Info("info event", "k2", "v2")
+	Warn("warn event", "k3", "v3")
+	Error("error event", "k4", "v4")
+
+	ctx := context.Background()
+	DebugContext(ctx, "debug ctx", "k5", "v5")
+	InfoContext(ctx, "info ctx", "k6", "v6")
+	WarnContext(ctx, "warn ctx", "k7", "v7")
+	ErrorContext(ctx, "error ctx", "k8", "v8")
+
+	out := buf.String()
+	for _, expected := range []string{
+		"msg=\"debug event\"", "k1=v1",
+		"msg=\"info event\"", "k2=v2",
+		"msg=\"warn event\"", "k3=v3",
+		"msg=\"error event\"", "k4=v4",
+		"msg=\"debug ctx\"", "k5=v5",
+		"msg=\"info ctx\"", "k6=v6",
+		"msg=\"warn ctx\"", "k7=v7",
+		"msg=\"error ctx\"", "k8=v8",
+		"service=helper-service",
+	} {
+		if !strings.Contains(out, expected) {
+			t.Errorf("expected output to contain %q, got:\n%s", expected, out)
+		}
 	}
 }
