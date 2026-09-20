@@ -13,4 +13,9 @@ const server = Bun.serve({
   },
 });
 
-console.log(`🚀 Agent Status UI server running at http://localhost:${server.port}`);
+const isAgent = process.env.AGENT === "1" || process.env.AGENT === "true" || process.env.AGENT === "yes";
+if (isAgent) {
+  console.log(`[ui] INFO: running on port ${server.port}`);
+} else {
+  console.log(`[INFO] Agent Status UI server running at http://localhost:${server.port}`);
+}
