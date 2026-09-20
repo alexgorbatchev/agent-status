@@ -34,6 +34,17 @@ export interface IEnvironmentGroupProps {
   onSelectAgent: (agent: IAgentState) => void;
 }
 
+export interface IAgentGroupSectionProps {
+  testId?: string;
+  icon: React.ReactNode;
+  iconColorClass?: string;
+  title: string;
+  subtitle: string;
+  badges?: React.ReactNode;
+  agents: IAgentState[];
+  onSelectAgent: (agent: IAgentState) => void;
+}
+
 export interface ILogDrawerProps {
   agent: IAgentState | null;
   apiBaseUrl?: string;
