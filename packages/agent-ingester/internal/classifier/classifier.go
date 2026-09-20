@@ -15,8 +15,9 @@ import (
 )
 
 type agentContext struct {
-	lastPrompt  string
-	recentTools []summarizer.ToolExecution
+	lastPrompt            string
+	lastAssistantResponse string
+	recentTools           []summarizer.ToolExecution
 }
 
 type Classifier struct {
@@ -122,7 +123,12 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		c.agentCtx[agent.ID] = actx
 	}
 	if frame.Data.LastPrompt != nil && strings.TrimSpace(*frame.Data.LastPrompt) != "" {
-		actx.lastPrompt = strings.TrimSpace(*frame.Data.LastPrompt)
+		newPrompt := strings.TrimSpace(*frame.Data.LastPrompt)
+		if newPrompt != actx.lastPrompt {
+			actx.lastPrompt = newPrompt
+			actx.lastAssistantResponse = ""
+			actx.recentTools = nil
+		}
 	}
 	c.mu.Unlock()
 
@@ -220,6 +226,12 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 
 		case "turn_start":
 			agent.Activity.Activity = types.ActivityBusy
+			agent.Activity.ActiveTool = nil
+			agent.Activity.ActiveTarget = nil
+			c.mu.Lock()
+			actx.lastAssistantResponse = ""
+			actx.recentTools = nil
+			c.mu.Unlock()
 
 		case "thinking":
 			agent.Activity.Activity = types.ActivityBusy
@@ -228,6 +240,11 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			}
 
 		case "turn_end":
+			if frame.Data.Content != nil && strings.TrimSpace(*frame.Data.Content) != "" {
+				c.mu.Lock()
+				actx.lastAssistantResponse = strings.TrimSpace(*frame.Data.Content)
+				c.mu.Unlock()
+			}
 			// Summarize on turn_end before clearing active tool fields
 			c.updateSummarization(agent, true)
 			if frame.Data.StopReason == nil || *frame.Data.StopReason != "tool_use" {
@@ -258,9 +275,11 @@ func (c *Classifier) updateSummarization(agent *types.IAgentState, forceTrigger 
 	c.mu.Lock()
 	actx := c.agentCtx[agent.ID]
 	var lastPrompt string
+	var lastAssistantResponse string
 	var recentTools []summarizer.ToolExecution
 	if actx != nil {
 		lastPrompt = actx.lastPrompt
+		lastAssistantResponse = actx.lastAssistantResponse
 		recentTools = make([]summarizer.ToolExecution, len(actx.recentTools))
 		copy(recentTools, actx.recentTools)
 	}
@@ -272,15 +291,16 @@ func (c *Classifier) updateSummarization(agent *types.IAgentState, forceTrigger 
 	}
 
 	input := summarizer.SummaryInput{
-		AgentID:             agent.ID,
-		LastPrompt:          lastPrompt,
-		RecentTools:         recentTools,
-		LastThinkingExcerpt: thinking,
-		Activity:            agent.Activity.Activity,
-		ActiveTool:          agent.Activity.ActiveTool,
-		ActiveTarget:        agent.Activity.ActiveTarget,
-		LastError:           agent.Activity.LastError,
-		Question:            agent.Activity.Question,
+		AgentID:               agent.ID,
+		LastPrompt:            lastPrompt,
+		LastAssistantResponse: lastAssistantResponse,
+		RecentTools:           recentTools,
+		LastThinkingExcerpt:   thinking,
+		Activity:              agent.Activity.Activity,
+		ActiveTool:            agent.Activity.ActiveTool,
+		ActiveTarget:          agent.Activity.ActiveTarget,
+		LastError:             agent.Activity.LastError,
+		Question:              agent.Activity.Question,
 	}
 
 	if c.summarizer.IsNoSummarize() {

@@ -842,3 +842,294 @@ func TestClassifier_UsageAccumulation_ReasoningTokens(t *testing.T) {
 		t.Errorf("got Total %d, want 5400 (reasoning tokens double-counted on fallback)", agent.Activity.Usage.Total)
 	}
 }
+
+func TestClassifier_ConversationalAssistantResponses(t *testing.T) {
+	t.Run("conversational non-tool turn with fallback summarizer", func(t *testing.T) {
+		sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+		if err != nil {
+			t.Fatalf("summarizer.New() failed: %v", err)
+		}
+
+		c, _ := newTestClassifier(t, sum)
+
+		env := types.IEnvironmentInfo{
+			ID:              "env-chat",
+			Label:           "work-macbook",
+			Hostname:        "macbook",
+			Platform:        "darwin",
+			User:            "alex",
+			LastHeartbeatAt: time.Now().UnixMilli(),
+		}
+		ws := types.IWorkspaceInfo{
+			Branch: "main",
+			CWD:    "/workspace",
+		}
+		proj := types.IProjectInfo{
+			ID:            "github.com/org/repo",
+			Name:          "repo",
+			CanonicalRoot: "/workspace",
+		}
+
+		baseFrame := types.ITelemetryFrame{
+			Version:        "1.0",
+			Seq:            1,
+			EnvID:          "env-chat",
+			Environment:    env,
+			AgentID:        "env-chat:claude-code:session-chat",
+			SessionID:      "session-chat",
+			PID:            12345,
+			Harness:        types.HarnessClaudeCode,
+			HarnessVersion: "2.1.277",
+			Project:        proj,
+			Workspace:      ws,
+			Timestamp:      1000,
+			EventType:      "run_started",
+		}
+
+		// 1. Session start
+		if _, err := c.ProcessFrame(baseFrame); err != nil {
+			t.Fatalf("ProcessFrame(run_started) failed: %v", err)
+		}
+
+		// 2. Turn 1: user asks a conversational question
+		prompt := "How does the classifier process telemetry frames?"
+		fTurnStart := baseFrame
+		fTurnStart.Seq = 2
+		fTurnStart.EventType = "turn_start"
+		fTurnStart.Data = types.TelemetryFrameData{
+			LastPrompt: &prompt,
+		}
+		if _, err := c.ProcessFrame(fTurnStart); err != nil {
+			t.Fatalf("ProcessFrame(turn_start) failed: %v", err)
+		}
+
+		// 3. Turn 1: turn_end with assistant response text and no tools called
+		respContent := "The classifier processes frames into agent states and summarizes actions."
+		fTurnEnd := baseFrame
+		fTurnEnd.Seq = 3
+		fTurnEnd.EventType = "turn_end"
+		fTurnEnd.Data = types.TelemetryFrameData{
+			Content: &respContent,
+		}
+		agent, err := c.ProcessFrame(fTurnEnd)
+		if err != nil {
+			t.Fatalf("ProcessFrame(turn_end) failed: %v", err)
+		}
+
+		if agent.Activity.Activity != types.ActivityIdle {
+			t.Errorf("got activity %s, want %s", agent.Activity.Activity, types.ActivityIdle)
+		}
+		if agent.Activity.Action != "Responded to user" {
+			t.Errorf("got Action %q, want 'Responded to user'", agent.Activity.Action)
+		}
+	})
+
+	t.Run("conversational non-tool turn after tool turn clears stale tool history", func(t *testing.T) {
+		sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+		if err != nil {
+			t.Fatalf("summarizer.New() failed: %v", err)
+		}
+
+		c, _ := newTestClassifier(t, sum)
+
+		env := types.IEnvironmentInfo{
+			ID:              "env-multi",
+			Label:           "work-macbook",
+			Hostname:        "macbook",
+			Platform:        "darwin",
+			User:            "alex",
+			LastHeartbeatAt: time.Now().UnixMilli(),
+		}
+		ws := types.IWorkspaceInfo{
+			Branch: "main",
+			CWD:    "/workspace",
+		}
+		proj := types.IProjectInfo{
+			ID:            "github.com/org/repo",
+			Name:          "repo",
+			CanonicalRoot: "/workspace",
+		}
+
+		baseFrame := types.ITelemetryFrame{
+			Version:        "1.0",
+			Seq:            1,
+			EnvID:          "env-multi",
+			Environment:    env,
+			AgentID:        "env-multi:claude-code:session-multi",
+			SessionID:      "session-multi",
+			PID:            12345,
+			Harness:        types.HarnessClaudeCode,
+			HarnessVersion: "2.1.277",
+			Project:        proj,
+			Workspace:      ws,
+			Timestamp:      1000,
+			EventType:      "run_started",
+		}
+
+		// 1. Session start
+		if _, err := c.ProcessFrame(baseFrame); err != nil {
+			t.Fatalf("ProcessFrame(run_started) failed: %v", err)
+		}
+
+		// 2. Turn 1: Tool execution
+		prompt1 := "Edit main.go"
+		toolName := "Edit"
+		fTool := baseFrame
+		fTool.Seq = 2
+		fTool.EventType = "tool_call"
+		fTool.Data = types.TelemetryFrameData{
+			LastPrompt: &prompt1,
+			ToolName:   &toolName,
+			ToolInput: map[string]interface{}{
+				"file_path": "main.go",
+			},
+		}
+		agent, err := c.ProcessFrame(fTool)
+		if err != nil {
+			t.Fatalf("ProcessFrame(tool_call) failed: %v", err)
+		}
+		if agent.Activity.Action != "Editing main.go" {
+			t.Errorf("got Action %q, want 'Editing main.go'", agent.Activity.Action)
+		}
+
+		// End of Turn 1
+		stopReasonTool := "tool_use"
+		fToolEnd := baseFrame
+		fToolEnd.Seq = 3
+		fToolEnd.EventType = "turn_end"
+		fToolEnd.Data = types.TelemetryFrameData{
+			StopReason: &stopReasonTool,
+		}
+		if _, err := c.ProcessFrame(fToolEnd); err != nil {
+			t.Fatalf("ProcessFrame(turn_end) failed: %v", err)
+		}
+
+		// 3. Turn 2: User asks follow-up question
+		prompt2 := "Can you explain what you changed?"
+		fTurn2Start := baseFrame
+		fTurn2Start.Seq = 4
+		fTurn2Start.EventType = "turn_start"
+		fTurn2Start.Data = types.TelemetryFrameData{
+			LastPrompt: &prompt2,
+		}
+		if _, err := c.ProcessFrame(fTurn2Start); err != nil {
+			t.Fatalf("ProcessFrame(turn_start) failed: %v", err)
+		}
+
+		// 4. Turn 2: Assistant responds directly without tools
+		respContent := "I updated the error handling logic in main.go."
+		fTurn2End := baseFrame
+		fTurn2End.Seq = 5
+		fTurn2End.EventType = "turn_end"
+		fTurn2End.Data = types.TelemetryFrameData{
+			Content: &respContent,
+		}
+		agent, err = c.ProcessFrame(fTurn2End)
+		if err != nil {
+			t.Fatalf("ProcessFrame(turn_end) failed: %v", err)
+		}
+
+		if agent.Activity.Action != "Responded to user" {
+			t.Errorf("got Action %q, want 'Responded to user' (not stale tool action)", agent.Activity.Action)
+		}
+	})
+
+	t.Run("conversational non-tool turn with LLM summarizer", func(t *testing.T) {
+		mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			resp := map[string]interface{}{
+				"id":     "chatcmpl-sum-chat",
+				"object": "chat.completion",
+				"choices": []map[string]interface{}{
+					{
+						"index": 0,
+						"message": map[string]interface{}{
+							"role":    "assistant",
+							"content": `{"action":"Explaining classifier telemetry architecture","phase":"investigating","activeTarget":""}`,
+						},
+						"finish_reason": "stop",
+					},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+		}))
+		t.Cleanup(mockServer.Close)
+
+		p, err := openai.New(
+			anyllm.WithBaseURL(mockServer.URL+"/v1"),
+			anyllm.WithAPIKey("test-key"),
+		)
+		if err != nil {
+			t.Fatalf("openai.New() failed: %v", err)
+		}
+
+		sum, err := summarizer.New(summarizer.Config{
+			Providers: []summarizer.ProviderConfig{
+				{
+					Name:     "mock-openai",
+					Provider: p,
+					Model:    "gpt-4o-mini",
+				},
+			},
+			DebounceWindow: 10 * time.Millisecond,
+			Timeout:        2 * time.Second,
+		})
+		if err != nil {
+			t.Fatalf("summarizer.New() failed: %v", err)
+		}
+
+		c, _ := newTestClassifier(t, sum)
+
+		env := types.IEnvironmentInfo{
+			ID:              "env-llm-chat",
+			Label:           "devbox",
+			Hostname:        "devbox",
+			Platform:        "linux",
+			User:            "testuser",
+			LastHeartbeatAt: time.Now().UnixMilli(),
+		}
+		ws := types.IWorkspaceInfo{
+			Branch: "main",
+			CWD:    "/workspace",
+		}
+		proj := types.IProjectInfo{
+			ID:            "github.com/org/repo",
+			Name:          "repo",
+			CanonicalRoot: "/workspace",
+		}
+
+		prompt := "Describe the architecture of the system"
+		respText := "The system is composed of an observer, ingester, and web dashboard."
+		f := types.ITelemetryFrame{
+			Version:        "1.0",
+			Seq:            1,
+			EnvID:          "env-llm-chat",
+			Environment:    env,
+			AgentID:        "env-llm-chat:claude-code:session-llm-chat",
+			SessionID:      "session-llm-chat",
+			PID:            12345,
+			Harness:        types.HarnessClaudeCode,
+			HarnessVersion: "2.1.277",
+			Project:        proj,
+			Workspace:      ws,
+			Timestamp:      2000,
+			EventType:      "turn_end",
+			Data: types.TelemetryFrameData{
+				LastPrompt: &prompt,
+				Content:    &respText,
+			},
+		}
+
+		agent, err := c.ProcessFrame(f)
+		if err != nil {
+			t.Fatalf("ProcessFrame() failed: %v", err)
+		}
+
+		if agent.Activity.Action != "Explaining classifier telemetry architecture" {
+			t.Errorf("got Action %q, want 'Explaining classifier telemetry architecture'", agent.Activity.Action)
+		}
+		if agent.Activity.Phase == nil || *agent.Activity.Phase != types.PhaseInvestigating {
+			t.Errorf("got Phase %v, want investigating", agent.Activity.Phase)
+		}
+	})
+}
