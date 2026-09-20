@@ -109,9 +109,14 @@ func (s *Shipper) runConnectionLoop(ctx context.Context) {
 		default:
 		}
 
-		err := s.connectAndStream(ctx)
-		if err != nil {
-			logging.Debug("shipper_disconnected", "err", err)
+		logging.Info("ingester_connecting", "ingesterUrl", s.cfg.IngesterURL)
+		err := s.connectAndStream(ctx, expBackoff.Reset)
+		if err != nil && ctx.Err() == nil {
+			select {
+			case <-s.stopCh:
+			default:
+				logging.Warn("ingester_disconnected", "ingesterUrl", s.cfg.IngesterURL, "err", err)
+			}
 		}
 
 		nextInterval := expBackoff.NextBackOff()
@@ -129,7 +134,7 @@ func (s *Shipper) runConnectionLoop(ctx context.Context) {
 	}
 }
 
-func (s *Shipper) connectAndStream(ctx context.Context) error {
+func (s *Shipper) connectAndStream(ctx context.Context, onConnected func()) error {
 	connCtx, connCancel := context.WithCancel(ctx)
 	defer connCancel()
 
@@ -170,6 +175,9 @@ func (s *Shipper) connectAndStream(ctx context.Context) error {
 	}
 
 	logging.Info("ingester_connected", "ingesterUrl", s.cfg.IngesterURL)
+	if onConnected != nil {
+		onConnected()
+	}
 
 	// 2. Replay unacknowledged frames
 	s.mu.Lock()

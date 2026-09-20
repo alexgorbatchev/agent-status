@@ -442,7 +442,56 @@ func TestShipperLoggingOnConnect(t *testing.T) {
 	time.Sleep(150 * time.Millisecond)
 
 	out := buf.String()
+	if !strings.Contains(out, "ingester_connecting") {
+		t.Errorf("expected ingester_connecting log on shipper connect, got: %s", out)
+	}
 	if !strings.Contains(out, "ingester_connected") {
 		t.Errorf("expected ingester_connected log on shipper connect, got: %s", out)
+	}
+}
+
+func TestShipperLoggingOnDisconnect(t *testing.T) {
+	buf := &testSyncBuffer{}
+	logger := logging.NewWithMode(buf, "observer", "info", false)
+	logging.SetDefault(logger)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		// Immediately close connection with error to trigger disconnect on shipper
+		_ = conn.Close(websocket.StatusInternalError, "server closing")
+	}))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	cfg := Config{
+		IngesterURL: wsURL,
+		Environment: types.IEnvironmentInfo{ID: "env-log-disc", Label: "log-disc-test"},
+	}
+
+	origBackoff := initialBackoff
+	initialBackoff = 20 * time.Millisecond
+	defer func() { initialBackoff = origBackoff }()
+
+	s := NewShipper(cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := s.Start(ctx); err != nil {
+		t.Fatalf("s.Start error: %v", err)
+	}
+	defer s.Stop()
+
+	// Wait for connection and disconnect logs
+	time.Sleep(150 * time.Millisecond)
+
+	out := buf.String()
+	if !strings.Contains(out, "ingester_connecting") {
+		t.Errorf("expected ingester_connecting log, got: %s", out)
+	}
+	if !strings.Contains(out, "ingester_disconnected") {
+		t.Errorf("expected ingester_disconnected log on disconnect, got: %s", out)
 	}
 }
