@@ -21,6 +21,7 @@ type HarnessType string
 const (
 	HarnessClaudeCode HarnessType = "claude-code"
 	HarnessPi         HarnessType = "pi"
+	HarnessCodex      HarnessType = "codex"
 )
 
 type AgentPhase string
