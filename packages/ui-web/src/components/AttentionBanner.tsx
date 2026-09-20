@@ -1,5 +1,6 @@
 import React from "react";
 import type { IAttentionBannerProps } from "./types";
+import type { IAgentState } from "../types";
 import { IconWrapper } from "./IconWrapper";
 import { AlertCircle, HelpCircle, AlertTriangle, ArrowRight } from "lucide-react";
 import { isAgentRequiringAttention } from "../utils/agentUtils";
@@ -9,6 +10,13 @@ export function AttentionBanner({ agents, onSelectAgent }: IAttentionBannerProps
   const actNowAgents = agents.filter(isAgentRequiringAttention);
 
   if (actNowAgents.length === 0) return null;
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>, agent: IAgentState) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onSelectAgent(agent);
+    }
+  };
 
   return (
     <div
@@ -27,11 +35,16 @@ export function AttentionBanner({ agents, onSelectAgent }: IAttentionBannerProps
       <div data-testid="AttentionBanner--grid" className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {actNowAgents.map((agent) => {
           const isQuestion = agent.activity.activity === "WAITING_QUESTION";
+          const title = agent.activity.title || "Untitled Agent";
           return (
             <div
               key={agent.id}
+              role="button"
+              tabIndex={0}
+              aria-label={`View attention required details for ${title}`}
               data-testid="AttentionBanner--agent-card"
               onClick={() => onSelectAgent(agent)}
+              onKeyDown={(event) => handleKeyDown(event, agent)}
               className="flex items-start justify-between gap-3 p-3 rounded-lg bg-slate-900/90 border border-amber-900/60 hover:border-amber-600 transition-all cursor-pointer group"
             >
               <div className="flex items-start gap-2.5">
@@ -46,7 +59,7 @@ export function AttentionBanner({ agents, onSelectAgent }: IAttentionBannerProps
                 )}
                 <div>
                   <div className="flex items-center gap-2 text-xs font-semibold text-slate-200 group-hover:text-amber-300 transition-colors">
-                    <span>{agent.activity.title || "Untitled Agent"}</span>
+                    <span>{title}</span>
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">
                       {agent.environment.label}
                     </span>

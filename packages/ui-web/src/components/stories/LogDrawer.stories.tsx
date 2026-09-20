@@ -25,6 +25,8 @@ const Default: Story = {
 
     // Exercise clicking close button on drawer
     const closeBtn = canvas.getByTestId("LogDrawer--close-button");
+    await expect(closeBtn).toHaveAttribute("type", "button");
+    await expect(closeBtn).toHaveAttribute("aria-label", "Close log drawer");
     await userEvent.click(closeBtn);
     await expect(onClose).toHaveBeenCalledTimes(1);
   },

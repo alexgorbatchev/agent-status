@@ -22,6 +22,9 @@ const Default: Story = {
     const card = canvas.getByTestId("AgentCard");
     await expect(card).toBeInTheDocument();
     await expect(canvas.getByTestId("AgentCard--title")).toHaveTextContent("Build agent-status dashboard");
+    await expect(card).toHaveAttribute("role", "button");
+    await expect(card).toHaveAttribute("tabindex", "0");
+    await expect(card).toHaveAttribute("aria-label", "View details for Build agent-status dashboard");
 
     // Exercise user interaction: clicking the card triggers onOpenDrawer with agent state
     await userEvent.click(card);

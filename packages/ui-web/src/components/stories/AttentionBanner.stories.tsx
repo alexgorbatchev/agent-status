@@ -27,6 +27,12 @@ const Default: Story = {
 
     const cards = canvas.getAllByTestId("AttentionBanner--agent-card");
     await expect(cards).toHaveLength(2);
+    await expect(cards[0]).toHaveAttribute("role", "button");
+    await expect(cards[0]).toHaveAttribute("tabindex", "0");
+    await expect(cards[0]).toHaveAttribute(
+      "aria-label",
+      "View agent needing attention: Implement user authentication flow",
+    );
 
     // Exercise clicking first attention card
     await userEvent.click(cards[0]);
