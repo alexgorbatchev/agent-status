@@ -11,6 +11,12 @@ export function LogDrawer({ agent, apiBaseUrl, token = "dev-secret-token", onClo
     (typeof window !== "undefined" && (window as unknown as IWindowWithAgentStatus).__AGENT_STATUS_API_URL__) ||
     "http://localhost:4502";
   const [logs, setLogs] = useState<ITelemetryFrame[]>([]);
+  const [prevAgentId, setPrevAgentId] = useState(agent?.id);
+
+  if (agent?.id !== prevAgentId) {
+    setPrevAgentId(agent?.id);
+    setLogs([]);
+  }
 
   useEffect(() => {
     if (!agent) {
@@ -130,7 +136,7 @@ export function LogDrawer({ agent, apiBaseUrl, token = "dev-secret-token", onClo
                       </span>
                     ) : null}
                     {isSubagent && (
-                      <span className="px-1.5 py-0.2 rounded bg-purple-900/50 text-purple-300 text-[10px]">
+                      <span className="px-1.5 py-0.5 rounded bg-purple-900/50 text-purple-300 text-[10px]">
                         Subagent: {log.subagentId}
                       </span>
                     )}
