@@ -28,7 +28,25 @@ func newRootCmd(cfg *config.Config) *cobra.Command {
 		Use:   "air-ingester",
 		Short: "Agent Status Central Telemetry Ingestion Daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			logging.Setup("ingester", cfg.LogLevel)
+			var fileCfg *logging.FileConfig
+			if cfg.LogFile != "" || cfg.LogDir != "" {
+				fc := logging.LoadFileConfigFromEnv("ingester")
+				if cfg.LogFile != "" {
+					fc.Filename = cfg.LogFile
+				}
+				if cfg.LogDir != "" {
+					fc.Dir = cfg.LogDir
+				}
+				fileCfg = &fc
+			}
+			logging.SetupWithOptions(logging.SetupOptions{
+				Service:    "ingester",
+				Level:      cfg.LogLevel,
+				FileConfig: fileCfg,
+			})
+			defer func() {
+				_ = logging.Close()
+			}()
 
 			logging.Info("server_starting", "addr", cfg.Addr, "db", cfg.DBPath, "notifySock", cfg.NotifySock, "noSummarize", cfg.NoSummarize)
 
@@ -76,10 +94,9 @@ func newRootCmd(cfg *config.Config) *cobra.Command {
 			})
 
 			srv := &http.Server{
-				Addr:         cfg.Addr,
-				Handler:      mux,
-				ReadTimeout:  15 * time.Second,
-				WriteTimeout: 15 * time.Second,
+				Addr:              cfg.Addr,
+				Handler:           mux,
+				ReadHeaderTimeout: 10 * time.Second,
 			}
 
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -129,6 +146,8 @@ func newRootCmd(cfg *config.Config) *cobra.Command {
 	rootCmd.Flags().StringVar(&cfg.LiteLLMAPIKey, "litellm-key", cfg.LiteLLMAPIKey, "OpenAI-compatible / LiteLLM API key")
 	rootCmd.Flags().StringVar(&cfg.SummarizerModel, "summarizer-model", cfg.SummarizerModel, "Model to use for action summarization")
 	rootCmd.Flags().StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "Log level (debug, info, warn, error)")
+	rootCmd.Flags().StringVar(&cfg.LogDir, "log-dir", cfg.LogDir, "Directory for rotating log files on disk (default: $XDG_STATE_HOME/agent-status/logs)")
+	rootCmd.Flags().StringVar(&cfg.LogFile, "log-file", cfg.LogFile, "Custom path for rotating log file on disk")
 
 	cobrahelptree.Setup(rootCmd)
 

@@ -32,6 +32,8 @@ func TestIngesterCommandHelp(t *testing.T) {
 		"--litellm-key",
 		"--summarizer-model",
 		"--log-level",
+		"--log-dir",
+		"--log-file",
 	}
 
 	for _, s := range requiredHelpStrings {
@@ -80,6 +82,8 @@ func TestIngesterCommandFlagBinding(t *testing.T) {
 		"--litellm-key", "sk-litellm-xyz",
 		"--summarizer-model", "claude-3-5-haiku",
 		"--log-level", "debug",
+		"--log-dir", "/tmp/logs",
+		"--log-file", "/tmp/logs/ingester.log",
 	}
 
 	if err := cmd.ParseFlags(args); err != nil {
@@ -112,6 +116,12 @@ func TestIngesterCommandFlagBinding(t *testing.T) {
 	}
 	if cfg.LogLevel != "debug" {
 		t.Errorf("LogLevel = %q, want debug", cfg.LogLevel)
+	}
+	if cfg.LogDir != "/tmp/logs" {
+		t.Errorf("LogDir = %q, want /tmp/logs", cfg.LogDir)
+	}
+	if cfg.LogFile != "/tmp/logs/ingester.log" {
+		t.Errorf("LogFile = %q, want /tmp/logs/ingester.log", cfg.LogFile)
 	}
 }
 

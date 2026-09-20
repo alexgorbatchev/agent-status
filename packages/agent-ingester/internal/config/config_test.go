@@ -21,6 +21,8 @@ func TestLoad_Defaults(t *testing.T) {
 		"GEMINI_API_KEY",
 		"ANTHROPIC_API_KEY",
 		"AIR_SUMMARIZER_MODEL",
+		"AIR_LOG_DIR",
+		"AIR_LOG_FILE",
 	}
 	for _, k := range envKeys {
 		t.Setenv(k, "")
@@ -64,6 +66,8 @@ func TestLoad_EnvironmentOverrides(t *testing.T) {
 	t.Setenv("GEMINI_API_KEY", "gemini-key-456")
 	t.Setenv("ANTHROPIC_API_KEY", "anthropic-key-789")
 	t.Setenv("AIR_SUMMARIZER_MODEL", "custom-model-fast")
+	t.Setenv("AIR_LOG_DIR", "/custom/logs")
+	t.Setenv("AIR_LOG_FILE", "/custom/logs/ingester.log")
 
 	cfg := Load()
 	if cfg.Addr != "0.0.0.0:9999" {
@@ -95,6 +99,12 @@ func TestLoad_EnvironmentOverrides(t *testing.T) {
 	}
 	if cfg.SummarizerModel != "custom-model-fast" {
 		t.Errorf("got SummarizerModel %q, want custom-model-fast", cfg.SummarizerModel)
+	}
+	if cfg.LogDir != "/custom/logs" {
+		t.Errorf("got LogDir %q, want /custom/logs", cfg.LogDir)
+	}
+	if cfg.LogFile != "/custom/logs/ingester.log" {
+		t.Errorf("got LogFile %q, want /custom/logs/ingester.log", cfg.LogFile)
 	}
 }
 

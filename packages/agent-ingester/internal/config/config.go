@@ -17,6 +17,8 @@ type Config struct {
 	AnthropicAPIKey string
 	SummarizerModel string
 	LogLevel        string
+	LogDir          string
+	LogFile         string
 }
 
 func Load() *Config {
@@ -65,5 +67,7 @@ func Load() *Config {
 		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
 		SummarizerModel: os.Getenv("AIR_SUMMARIZER_MODEL"),
 		LogLevel:        "info",
+		LogDir:          os.Getenv("AIR_LOG_DIR"),
+		LogFile:         os.Getenv("AIR_LOG_FILE"),
 	}
 }
