@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -259,6 +260,7 @@ func TestNewAndSetupFunctions(t *testing.T) {
 	if setupLogger == nil {
 		t.Fatal("expected Setup to return non-nil logger")
 	}
+	SetDefault(setupLogger)
 
 	withLogger := With("extra", "val")
 	if withLogger == nil {
@@ -296,5 +298,314 @@ func TestSetupAndLoggingHelpers(t *testing.T) {
 		if !strings.Contains(out, expected) {
 			t.Errorf("expected output to contain %q, got:\n%s", expected, out)
 		}
+	}
+}
+
+func TestDefaultLogDir(t *testing.T) {
+	t.Run("AIR_LOG_DIR precedence", func(t *testing.T) {
+		t.Setenv("AIR_LOG_DIR", "/custom/air/logs")
+		t.Setenv("XDG_STATE_HOME", "/custom/state")
+		t.Setenv("XDG_DATA_HOME", "/custom/data")
+
+		if got := DefaultLogDir(); got != "/custom/air/logs" {
+			t.Errorf("DefaultLogDir() = %q, want %q", got, "/custom/air/logs")
+		}
+	})
+
+	t.Run("XDG_STATE_HOME precedence over XDG_DATA_HOME", func(t *testing.T) {
+		t.Setenv("AIR_LOG_DIR", "")
+		t.Setenv("XDG_STATE_HOME", "/custom/state")
+		t.Setenv("XDG_DATA_HOME", "/custom/data")
+
+		want := "/custom/state/agent-status/logs"
+		if got := DefaultLogDir(); got != want {
+			t.Errorf("DefaultLogDir() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("XDG_DATA_HOME fallback", func(t *testing.T) {
+		t.Setenv("AIR_LOG_DIR", "")
+		t.Setenv("XDG_STATE_HOME", "")
+		t.Setenv("XDG_DATA_HOME", "/custom/data")
+
+		want := "/custom/data/agent-status/logs"
+		if got := DefaultLogDir(); got != want {
+			t.Errorf("DefaultLogDir() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("User home default fallback", func(t *testing.T) {
+		t.Setenv("AIR_LOG_DIR", "")
+		t.Setenv("XDG_STATE_HOME", "")
+		t.Setenv("XDG_DATA_HOME", "")
+
+		got := DefaultLogDir()
+		if !strings.Contains(got, "agent-status/logs") {
+			t.Errorf("DefaultLogDir() = %q, expected path ending in agent-status/logs", got)
+		}
+	})
+}
+
+func TestLoadFileConfigFromEnv(t *testing.T) {
+	t.Run("defaults", func(t *testing.T) {
+		t.Setenv("AIR_LOG_TO_DISK", "")
+		t.Setenv("AIR_LOG_FILE", "")
+		t.Setenv("AIR_LOG_DIR", "")
+		t.Setenv("AIR_LOG_MAX_SIZE_MB", "")
+		t.Setenv("AIR_LOG_MAX_BACKUPS", "")
+		t.Setenv("AIR_LOG_MAX_AGE_DAYS", "")
+		t.Setenv("AIR_LOG_COMPRESS", "")
+
+		cfg := LoadFileConfigFromEnv("test-svc")
+		if cfg.Disabled {
+			t.Errorf("expected Disabled=false by default")
+		}
+		if cfg.MaxSizeMB != DefaultMaxSizeMB {
+			t.Errorf("MaxSizeMB = %d, want %d", cfg.MaxSizeMB, DefaultMaxSizeMB)
+		}
+		if cfg.MaxBackups != DefaultMaxBackups {
+			t.Errorf("MaxBackups = %d, want %d", cfg.MaxBackups, DefaultMaxBackups)
+		}
+		if cfg.MaxAgeDays != DefaultMaxAgeDays {
+			t.Errorf("MaxAgeDays = %d, want %d", cfg.MaxAgeDays, DefaultMaxAgeDays)
+		}
+		if !cfg.Compress {
+			t.Errorf("expected Compress=true by default")
+		}
+	})
+
+	t.Run("custom env overrides and disabled variations", func(t *testing.T) {
+		for _, val := range []string{"0", "false", "no", "off"} {
+			t.Setenv("AIR_LOG_TO_DISK", val)
+			cfg := LoadFileConfigFromEnv("test-svc")
+			if !cfg.Disabled {
+				t.Errorf("expected Disabled=true for AIR_LOG_TO_DISK=%q", val)
+			}
+		}
+
+		t.Setenv("AIR_LOG_TO_DISK", "1")
+		t.Setenv("AIR_LOG_FILE", "/custom/file.log")
+		t.Setenv("AIR_LOG_DIR", "/custom/dir")
+		t.Setenv("AIR_LOG_MAX_SIZE_MB", "50")
+		t.Setenv("AIR_LOG_MAX_BACKUPS", "10")
+		t.Setenv("AIR_LOG_MAX_AGE_DAYS", "30")
+		t.Setenv("AIR_LOG_COMPRESS", "false")
+
+		cfg := LoadFileConfigFromEnv("test-svc")
+		if cfg.Disabled {
+			t.Errorf("expected Disabled=false when AIR_LOG_TO_DISK=1")
+		}
+		if cfg.Filename != "/custom/file.log" {
+			t.Errorf("Filename = %q, want /custom/file.log", cfg.Filename)
+		}
+		if cfg.Dir != "/custom/dir" {
+			t.Errorf("Dir = %q, want /custom/dir", cfg.Dir)
+		}
+		if cfg.MaxSizeMB != 50 {
+			t.Errorf("MaxSizeMB = %d, want 50", cfg.MaxSizeMB)
+		}
+		if cfg.MaxBackups != 10 {
+			t.Errorf("MaxBackups = %d, want 10", cfg.MaxBackups)
+		}
+		if cfg.MaxAgeDays != 30 {
+			t.Errorf("MaxAgeDays = %d, want 30", cfg.MaxAgeDays)
+		}
+		if cfg.Compress {
+			t.Errorf("expected Compress=false when AIR_LOG_COMPRESS=false")
+		}
+
+		// Test invalid numbers keep defaults
+		t.Setenv("AIR_LOG_MAX_SIZE_MB", "invalid")
+		t.Setenv("AIR_LOG_MAX_BACKUPS", "-5")
+		t.Setenv("AIR_LOG_MAX_AGE_DAYS", "abc")
+		cfgInvalid := LoadFileConfigFromEnv("test-svc")
+		if cfgInvalid.MaxSizeMB != DefaultMaxSizeMB {
+			t.Errorf("MaxSizeMB = %d, want default %d", cfgInvalid.MaxSizeMB, DefaultMaxSizeMB)
+		}
+		if cfgInvalid.MaxBackups != DefaultMaxBackups {
+			t.Errorf("MaxBackups = %d, want default %d", cfgInvalid.MaxBackups, DefaultMaxBackups)
+		}
+		if cfgInvalid.MaxAgeDays != DefaultMaxAgeDays {
+			t.Errorf("MaxAgeDays = %d, want default %d", cfgInvalid.MaxAgeDays, DefaultMaxAgeDays)
+		}
+	})
+}
+
+func TestNewRotator(t *testing.T) {
+	t.Run("disabled returns nil", func(t *testing.T) {
+		rotator, err := NewRotator("test", FileConfig{Disabled: true})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if rotator != nil {
+			t.Fatalf("expected nil rotator when disabled, got %v", rotator)
+		}
+	})
+
+	t.Run("creates log file and writes cleanly with defaults", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		logFile := filepath.Join(tmpDir, "logs", "custom.log")
+
+		rotator, err := NewRotator("", FileConfig{
+			Filename:   logFile,
+			MaxSizeMB:  0, // tests default fallback
+			MaxBackups: 0, // tests default fallback
+			MaxAgeDays: 0, // tests default fallback
+			Compress:   false,
+		})
+		if err != nil {
+			t.Fatalf("unexpected error from NewRotator: %v", err)
+		}
+		if rotator == nil {
+			t.Fatal("expected non-nil rotator")
+		}
+		defer func() { _ = rotator.Close() }()
+
+		n, err := rotator.Write([]byte("test log entry\n"))
+		if err != nil {
+			t.Fatalf("writing to rotator: %v", err)
+		}
+		if n == 0 {
+			t.Errorf("expected >0 bytes written")
+		}
+
+		_ = rotator.Close()
+
+		data, err := os.ReadFile(logFile)
+		if err != nil {
+			t.Fatalf("reading written log file: %v", err)
+		}
+		if string(data) != "test log entry\n" {
+			t.Errorf("log file contents = %q, want 'test log entry\\n'", string(data))
+		}
+	})
+
+	t.Run("derives filename from Dir and empty service", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		rotator, err := NewRotator("", FileConfig{Dir: tmpDir})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer func() { _ = rotator.Close() }()
+
+		expectedPath := filepath.Join(tmpDir, "agent-status.log")
+		_, err = rotator.Write([]byte("msg\n"))
+		if err != nil {
+			t.Fatalf("write error: %v", err)
+		}
+		_ = rotator.Close()
+
+		if _, err := os.Stat(expectedPath); err != nil {
+			t.Errorf("expected file %q to exist, err: %v", expectedPath, err)
+		}
+	})
+
+	t.Run("mkdir failure returns error", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		blockerFile := filepath.Join(tmpDir, "blocker")
+		if err := os.WriteFile(blockerFile, []byte("file"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		invalidPath := filepath.Join(blockerFile, "sub", "app.log")
+		rotator, err := NewRotator("test", FileConfig{Filename: invalidPath})
+		if err == nil {
+			_ = rotator.Close()
+			t.Errorf("expected error when creating directory under file, got nil")
+		}
+	})
+}
+
+func TestSetupWithOptionsAndDiskLogging(t *testing.T) {
+	t.Run("writes to both stderr buffer and disk file", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		logFile := filepath.Join(tmpDir, "air-test.log")
+
+		var stderrBuf bytes.Buffer
+		isAgent := true
+
+		logger := SetupWithOptions(SetupOptions{
+			Service: "test-service",
+			Level:   "info",
+			Writer:  &stderrBuf,
+			FileConfig: &FileConfig{
+				Filename:   logFile,
+				MaxSizeMB:  5,
+				MaxBackups: 3,
+				MaxAgeDays: 7,
+				Compress:   false,
+			},
+			IsAgent: &isAgent,
+		})
+
+		if logger == nil {
+			t.Fatal("expected non-nil logger")
+		}
+
+		logger.Info("disk_log_event", "key1", "val1", "num", 42)
+
+		// Verify stderr output
+		if !strings.Contains(stderrBuf.String(), "action=disk_log_event") {
+			t.Errorf("expected action=disk_log_event in stderr, got: %s", stderrBuf.String())
+		}
+		if !strings.Contains(stderrBuf.String(), "key1=val1") || !strings.Contains(stderrBuf.String(), "num=42") {
+			t.Errorf("expected key1=val1 and num=42 in stderr, got: %s", stderrBuf.String())
+		}
+
+		// Close rotator to flush
+		if err := Close(); err != nil {
+			t.Fatalf("Close() error: %v", err)
+		}
+
+		// Verify disk file output
+		diskData, err := os.ReadFile(logFile)
+		if err != nil {
+			t.Fatalf("reading disk log file: %v", err)
+		}
+		diskContent := string(diskData)
+		if !strings.Contains(diskContent, "action=disk_log_event") {
+			t.Errorf("expected action=disk_log_event in disk log file, got: %s", diskContent)
+		}
+		if !strings.Contains(diskContent, "key1=val1") || !strings.Contains(diskContent, "num=42") {
+			t.Errorf("expected key1=val1 in disk log file, got: %s", diskContent)
+		}
+	})
+
+	t.Run("rotator error falls back gracefully to base writer", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		blockerFile := filepath.Join(tmpDir, "blocker")
+		if err := os.WriteFile(blockerFile, []byte("file"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		invalidPath := filepath.Join(blockerFile, "sub", "app.log")
+		var stderrBuf bytes.Buffer
+		isAgent := false
+
+		logger := SetupWithOptions(SetupOptions{
+			Service: "fallback-svc",
+			Level:   "info",
+			Writer:  &stderrBuf,
+			FileConfig: &FileConfig{
+				Filename: invalidPath,
+			},
+			IsAgent: &isAgent,
+		})
+
+		if logger == nil {
+			t.Fatal("expected non-nil logger on fallback")
+		}
+
+		logger.Info("fallback_event", "tag", "ok")
+		if !strings.Contains(stderrBuf.String(), "fallback_event") {
+			t.Errorf("expected log output in base writer on fallback, got: %s", stderrBuf.String())
+		}
+	})
+}
+
+func TestClose(t *testing.T) {
+	_ = Close()
+	if err := Close(); err != nil {
+		t.Errorf("Close() when nil = %v, want nil", err)
 	}
 }

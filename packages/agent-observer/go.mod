@@ -29,6 +29,7 @@ require (
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/term v0.45.0 // indirect
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 )
 
 replace (

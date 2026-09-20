@@ -8,7 +8,7 @@ Shared Go types and structured logging definitions for the agent-status pipeline
 
 ## Local conventions
 - Keep types in `types/types.go` synchronized with frontend models in `packages/ui-web/src/types/types.ts`.
-- Structured logging wraps `log/slog` via `logging/logging.go` and respects dual-mode output via `AGENT=1` (human mode formats clean tags and prefers human names over opaque IDs; agent mode produces token-conservative machine logfmt).
+- Structured logging wraps `log/slog` via `logging/logging.go` and respects dual-mode output via `AGENT=1` (human mode formats clean tags and prefers human names over opaque IDs; agent mode produces token-conservative machine logfmt), with disk rotation and retention limits via lumberjack.
 
 ## Local gotchas
 - Renaming struct tags in `types/types.go` breaks JSON contracts between `air-observer`, `air-ingester`, `air-server`, and `ui-web`.

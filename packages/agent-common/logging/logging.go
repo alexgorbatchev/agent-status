@@ -7,9 +7,12 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 // Type aliases and constants re-exported from log/slog for consumers.
@@ -244,11 +247,231 @@ func New(w io.Writer, service string, levelStr string) *slog.Logger {
 	return NewWithMode(w, service, levelStr, IsAgentMode())
 }
 
-// Setup initializes a logger writing to os.Stderr for the given service at the specified level and sets it as the default slog logger.
-func Setup(service string, levelStr string) *slog.Logger {
-	logger := New(os.Stderr, service, levelStr)
+// FileConfig defines options for rotating log files on disk.
+type FileConfig struct {
+	// Filename is the full path to the log file. If empty, Dir and Service are used to construct it.
+	Filename string
+	// Dir is the directory where log files are written if Filename is not provided.
+	Dir string
+	// MaxSizeMB is the maximum size in megabytes of the log file before it gets rotated. Defaults to 10 MB.
+	MaxSizeMB int
+	// MaxBackups is the maximum number of old log files to retain. Defaults to 5.
+	MaxBackups int
+	// MaxAgeDays is the maximum number of days to retain old log files based on timestamp. Defaults to 14 days.
+	MaxAgeDays int
+	// Compress determines if the rotated log files should be compressed using gzip. Defaults to true.
+	Compress bool
+	// Disabled disables writing logs to disk when true.
+	Disabled bool
+}
+
+const (
+	// DefaultMaxSizeMB is the default maximum size of a log file in megabytes before rotation.
+	DefaultMaxSizeMB = 10
+	// DefaultMaxBackups is the default maximum number of old log files to retain.
+	DefaultMaxBackups = 5
+	// DefaultMaxAgeDays is the default maximum number of days to retain old log files.
+	DefaultMaxAgeDays = 14
+)
+
+var (
+	rotatorMu      sync.Mutex
+	defaultRotator io.Closer
+)
+
+// DefaultLogDir returns the default directory for log files based on environment variables and XDG specifications.
+// Priority:
+// 1. AIR_LOG_DIR
+// 2. $XDG_STATE_HOME/agent-status/logs
+// 3. $XDG_DATA_HOME/agent-status/logs
+// 4. ~/.local/state/agent-status/logs
+func DefaultLogDir() string {
+	if dir := strings.TrimSpace(os.Getenv("AIR_LOG_DIR")); dir != "" {
+		return dir
+	}
+	if stateHome := strings.TrimSpace(os.Getenv("XDG_STATE_HOME")); stateHome != "" {
+		return filepath.Join(stateHome, "agent-status", "logs")
+	}
+	if dataHome := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); dataHome != "" {
+		return filepath.Join(dataHome, "agent-status", "logs")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return filepath.Join(os.TempDir(), "agent-status", "logs")
+	}
+	return filepath.Join(home, ".local", "state", "agent-status", "logs")
+}
+
+// LoadFileConfigFromEnv populates FileConfig from environment variables and defaults.
+func LoadFileConfigFromEnv(service string) FileConfig {
+	disabled := false
+	if val := strings.TrimSpace(os.Getenv("AIR_LOG_TO_DISK")); val != "" {
+		lower := strings.ToLower(val)
+		if lower == "0" || lower == "false" || lower == "no" || lower == "off" {
+			disabled = true
+		}
+	}
+
+	maxSize := DefaultMaxSizeMB
+	if s := os.Getenv("AIR_LOG_MAX_SIZE_MB"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			maxSize = n
+		}
+	}
+
+	maxBackups := DefaultMaxBackups
+	if s := os.Getenv("AIR_LOG_MAX_BACKUPS"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
+			maxBackups = n
+		}
+	}
+
+	maxAge := DefaultMaxAgeDays
+	if s := os.Getenv("AIR_LOG_MAX_AGE_DAYS"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
+			maxAge = n
+		}
+	}
+
+	compress := true
+	if s := os.Getenv("AIR_LOG_COMPRESS"); s != "" {
+		lower := strings.ToLower(s)
+		if lower == "0" || lower == "false" || lower == "no" || lower == "off" {
+			compress = false
+		}
+	}
+
+	filename := os.Getenv("AIR_LOG_FILE")
+	dir := os.Getenv("AIR_LOG_DIR")
+
+	return FileConfig{
+		Filename:   filename,
+		Dir:        dir,
+		MaxSizeMB:  maxSize,
+		MaxBackups: maxBackups,
+		MaxAgeDays: maxAge,
+		Compress:   compress,
+		Disabled:   disabled,
+	}
+}
+
+// NewRotator creates a rolling file writer with the given configuration using lumberjack.
+func NewRotator(service string, cfg FileConfig) (io.WriteCloser, error) {
+	if cfg.Disabled {
+		return nil, nil
+	}
+	filename := cfg.Filename
+	if filename == "" {
+		dir := cfg.Dir
+		if dir == "" {
+			dir = DefaultLogDir()
+		}
+		name := service
+		if name == "" {
+			name = "agent-status"
+		}
+		filename = filepath.Join(dir, name+".log")
+	}
+
+	maxSize := cfg.MaxSizeMB
+	if maxSize <= 0 {
+		maxSize = DefaultMaxSizeMB
+	}
+	maxBackups := cfg.MaxBackups
+	if maxBackups <= 0 {
+		maxBackups = DefaultMaxBackups
+	}
+	maxAge := cfg.MaxAgeDays
+	if maxAge <= 0 {
+		maxAge = DefaultMaxAgeDays
+	}
+
+	dir := filepath.Dir(filename)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return nil, fmt.Errorf("creating log directory %q: %w", dir, err)
+	}
+
+	return &lumberjack.Logger{
+		Filename:   filename,
+		MaxSize:    maxSize,
+		MaxBackups: maxBackups,
+		MaxAge:     maxAge,
+		Compress:   cfg.Compress,
+	}, nil
+}
+
+// SetupOptions holds optional parameters for configuring a service logger.
+type SetupOptions struct {
+	Service    string
+	Level      string
+	Writer     io.Writer
+	FileConfig *FileConfig
+	IsAgent    *bool
+}
+
+// SetupWithOptions configures and sets the default slog logger according to the given options.
+func SetupWithOptions(opts SetupOptions) *slog.Logger {
+	w := opts.Writer
+	if w == nil {
+		w = os.Stderr
+	}
+
+	var fileCfg FileConfig
+	if opts.FileConfig != nil {
+		fileCfg = *opts.FileConfig
+	} else {
+		fileCfg = LoadFileConfigFromEnv(opts.Service)
+	}
+
+	if !fileCfg.Disabled {
+		rotator, err := NewRotator(opts.Service, fileCfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[WARN] failed to initialize log rotator for %q: %v\n", opts.Service, err)
+		} else if rotator != nil {
+			rotatorMu.Lock()
+			if defaultRotator != nil {
+				_ = defaultRotator.Close()
+			}
+			defaultRotator = rotator
+			rotatorMu.Unlock()
+			w = io.MultiWriter(w, rotator)
+		}
+	}
+
+	isAgent := IsAgentMode()
+	if opts.IsAgent != nil {
+		isAgent = *opts.IsAgent
+	}
+
+	logger := NewWithMode(w, opts.Service, opts.Level, isAgent)
 	slog.SetDefault(logger)
 	return logger
+}
+
+// Close closes the active disk rotator if one was configured by Setup or SetupWithOptions.
+func Close() error {
+	rotatorMu.Lock()
+	defer rotatorMu.Unlock()
+	if defaultRotator != nil {
+		err := defaultRotator.Close()
+		defaultRotator = nil
+		return err
+	}
+	return nil
+}
+
+// Setup initializes a logger for the given service at the specified level and sets it as the default slog logger.
+// It writes to os.Stderr and also rotates to disk under the default log directory unless disabled via AIR_LOG_TO_DISK=0.
+func Setup(service string, levelStr string) *slog.Logger {
+	return SetupWithOptions(SetupOptions{
+		Service: service,
+		Level:   levelStr,
+	})
+}
+
+// SetDefault sets the default logger.
+func SetDefault(logger *Logger) {
+	slog.SetDefault(logger)
 }
 
 // Debug logs at LevelDebug using the default logger.
