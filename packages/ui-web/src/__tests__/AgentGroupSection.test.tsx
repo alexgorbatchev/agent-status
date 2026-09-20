@@ -32,7 +32,7 @@ describe("AgentGroupSection Component", () => {
     expect(html).toContain("Custom Project");
     expect(html).toContain("(custom-id)");
     expect(html).toContain('data-testid="AgentGroupSection--spend"');
-    expect(html).toContain("2 active");
+    expect(html).toContain("1 active");
     expect(html).toContain('data-testid="AgentGroupSection--grid"');
   });
 

@@ -1,5 +1,11 @@
 import { describe, it, expect } from "bun:test";
-import { calculateTotalSpend, formatCurrency, filterActiveAgents, isAgentRequiringAttention } from "../agentUtils";
+import {
+  calculateTotalSpend,
+  formatCurrency,
+  filterActiveAgents,
+  filterRunningAgents,
+  isAgentRequiringAttention,
+} from "../agentUtils";
 import { factory_createAgent, fixture_testEnvironment, fixture_testStaleEnvironment } from "./fixtures";
 import type { IAgentState } from "../../types";
 
@@ -53,12 +59,21 @@ describe("agentUtils", () => {
   });
 
   describe("filterActiveAgents", () => {
-    it("returns only agents with RUNNING lifecycle", () => {
-      const runningAgent = factory_createAgent({
-        id: "running-1",
+    it("returns only agents with RUNNING lifecycle and BUSY activity", () => {
+      const busyAgent = factory_createAgent({
+        id: "busy-1",
         activity: {
           ...factory_createAgent().activity,
           lifecycle: "RUNNING",
+          activity: "BUSY",
+        },
+      });
+      const idleAgent = factory_createAgent({
+        id: "idle-1",
+        activity: {
+          ...factory_createAgent().activity,
+          lifecycle: "RUNNING",
+          activity: "IDLE",
         },
       });
       const exitedAgent = factory_createAgent({
@@ -66,25 +81,68 @@ describe("agentUtils", () => {
         activity: {
           ...factory_createAgent().activity,
           lifecycle: "EXITED",
+          activity: "IDLE",
         },
       });
 
-      const active = filterActiveAgents([runningAgent, exitedAgent]);
+      const active = filterActiveAgents([busyAgent, idleAgent, exitedAgent]);
       expect(active.length).toBe(1);
-      expect(active[0]?.id).toBe("running-1");
+      expect(active[0]?.id).toBe("busy-1");
     });
 
-    it("returns empty array when no agents are running", () => {
+    it("returns empty array when no agents are busy", () => {
+      const idleAgent = factory_createAgent({
+        id: "idle-1",
+        activity: {
+          ...factory_createAgent().activity,
+          lifecycle: "RUNNING",
+          activity: "IDLE",
+        },
+      });
       const exitedAgent = factory_createAgent({
         id: "exited-1",
         activity: {
           ...factory_createAgent().activity,
           lifecycle: "EXITED",
+          activity: "IDLE",
         },
       });
 
-      const active = filterActiveAgents([exitedAgent]);
+      const active = filterActiveAgents([idleAgent, exitedAgent]);
       expect(active).toEqual([]);
+    });
+  });
+
+  describe("filterRunningAgents", () => {
+    it("returns all agents with RUNNING lifecycle regardless of activity", () => {
+      const busyAgent = factory_createAgent({
+        id: "busy-1",
+        activity: {
+          ...factory_createAgent().activity,
+          lifecycle: "RUNNING",
+          activity: "BUSY",
+        },
+      });
+      const idleAgent = factory_createAgent({
+        id: "idle-1",
+        activity: {
+          ...factory_createAgent().activity,
+          lifecycle: "RUNNING",
+          activity: "IDLE",
+        },
+      });
+      const exitedAgent = factory_createAgent({
+        id: "exited-1",
+        activity: {
+          ...factory_createAgent().activity,
+          lifecycle: "EXITED",
+          activity: "IDLE",
+        },
+      });
+
+      const running = filterRunningAgents([busyAgent, idleAgent, exitedAgent]);
+      expect(running.length).toBe(2);
+      expect(running.map((a) => a.id)).toEqual(["busy-1", "idle-1"]);
     });
   });
 

@@ -9,6 +9,10 @@ export function formatCurrency(amount: number, precision: number = 2): string {
 }
 
 export function filterActiveAgents(agents: IAgentState[]): IAgentState[] {
+  return agents.filter((a) => a.activity.lifecycle === "RUNNING" && a.activity.activity === "BUSY");
+}
+
+export function filterRunningAgents(agents: IAgentState[]): IAgentState[] {
   return agents.filter((a) => a.activity.lifecycle === "RUNNING");
 }
 
