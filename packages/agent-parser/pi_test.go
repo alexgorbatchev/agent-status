@@ -4,6 +4,64 @@ import (
 	"testing"
 )
 
+func TestExtractPiTitleFromPrompt(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		wantTitle   string
+		wantHasTile bool
+	}{
+		{
+			name:        "empty string",
+			input:       "",
+			wantTitle:   "",
+			wantHasTile: false,
+		},
+		{
+			name:        "whitespace only",
+			input:       "   \n\t  \n  ",
+			wantTitle:   "",
+			wantHasTile: false,
+		},
+		{
+			name:        "single line prompt",
+			input:       "Fix the bug in auth handler",
+			wantTitle:   "Fix the bug in auth handler",
+			wantHasTile: true,
+		},
+		{
+			name:        "multiline prompt takes first non-empty line",
+			input:       "\n\nImplement streaming telemetry pipeline\nWith 90% test coverage and full error handling.",
+			wantTitle:   "Implement streaming telemetry pipeline",
+			wantHasTile: true,
+		},
+		{
+			name:        "prompt with leading and trailing spaces on first line",
+			input:       "   Add dark mode toggle to navigation drawer   \nDetails follow...",
+			wantTitle:   "Add dark mode toggle to navigation drawer",
+			wantHasTile: true,
+		},
+		{
+			name:        "long prompt exceeding 100 characters is truncated to 100",
+			input:       "This is an extremely long user task prompt that goes on and on beyond one hundred characters in total length to verify that truncation works properly",
+			wantTitle:   "This is an extremely long user task prompt that goes on and on beyond one hundred characters in tota",
+			wantHasTile: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			title, hasTitle := ExtractPiTitleFromPrompt(tt.input)
+			if hasTitle != tt.wantHasTile {
+				t.Errorf("ExtractPiTitleFromPrompt() hasTitle = %v, want %v", hasTitle, tt.wantHasTile)
+			}
+			if title != tt.wantTitle {
+				t.Errorf("ExtractPiTitleFromPrompt() title = %q, want %q", title, tt.wantTitle)
+			}
+		})
+	}
+}
+
 func TestParsePiContentBlocks(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -118,6 +176,28 @@ func TestParsePiLine(t *testing.T) {
 		if err != nil || len(evs) != 1 || *evs[0].Data.LastPrompt != "Simple text prompt" {
 			t.Errorf("user string content mismatch: %+v", evs)
 		}
+		if evs[0].Data.Title == nil || *evs[0].Data.Title != "Simple text prompt" {
+			t.Errorf("user title mismatch: got %v, want 'Simple text prompt'", evs[0].Data.Title)
+		}
+	})
+
+	t.Run("user message with multiline content blocks", func(t *testing.T) {
+		line := []byte(`{
+			"type": "message",
+			"message": {
+				"role": "user",
+				"content": [
+					{"type": "text", "text": "Fix database deadlock\nDetails about lock order"}
+				]
+			}
+		}`)
+		evs, err := ParsePiLine(line, "/cwd")
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("ParsePiLine failed: %v", err)
+		}
+		if evs[0].Data.Title == nil || *evs[0].Data.Title != "Fix database deadlock" {
+			t.Errorf("user title mismatch: got %v, want 'Fix database deadlock'", evs[0].Data.Title)
+		}
 	})
 
 	t.Run("toolResult with isError false and true", func(t *testing.T) {
@@ -131,6 +211,57 @@ func TestParsePiLine(t *testing.T) {
 		evsTrue, err := ParsePiLine(lineTrue, "/cwd")
 		if err != nil || len(evsTrue) != 1 || *evsTrue[0].Data.IsError != true {
 			t.Errorf("toolResult true mismatch: %+v", evsTrue)
+		}
+	})
+
+	t.Run("assistant message with cost breakdown object", func(t *testing.T) {
+		line := []byte(`{
+			"type": "message",
+			"message": {
+				"role": "assistant",
+				"model": "claude-sonnet-4-5",
+				"content": [{"type": "text", "text": "Task finished"}],
+				"usage": {
+					"input": 100,
+					"output": 50,
+					"cost": {
+						"input": 0.001,
+						"output": 0.002,
+						"total": 0.003
+					}
+				},
+				"stopReason": "stop"
+			}
+		}`)
+		evs, err := ParsePiLine(line, "/cwd")
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("unexpected events: %v, %v", evs, err)
+		}
+		if evs[0].Data.Usage == nil || evs[0].Data.Usage.Input != 100 || evs[0].Data.Usage.Output != 50 {
+			t.Errorf("expected usage 100/50, got %v", evs[0].Data.Usage)
+		}
+	})
+
+	t.Run("assistant message with numeric cost", func(t *testing.T) {
+		line := []byte(`{
+			"type": "message",
+			"message": {
+				"role": "assistant",
+				"model": "claude-sonnet-4-5",
+				"usage": {
+					"input": 200,
+					"output": 100,
+					"cost": 0.015
+				},
+				"stopReason": "stop"
+			}
+		}`)
+		evs, err := ParsePiLine(line, "/cwd")
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("unexpected events: %v, %v", evs, err)
+		}
+		if evs[0].Data.Usage == nil || evs[0].Data.Usage.Input != 200 {
+			t.Errorf("expected usage input 200, got %v", evs[0].Data.Usage)
 		}
 	})
 
@@ -270,6 +401,20 @@ func TestParsePiLine(t *testing.T) {
 		}
 		if evs[0].Data.Content == nil || *evs[0].Data.Content != "Just a plain string response" {
 			t.Errorf("content mismatch: %v", evs[0].Data.Content)
+		}
+	})
+
+	t.Run("message with nil message payload or system role", func(t *testing.T) {
+		lineNil := []byte(`{"type":"message"}`)
+		evsNil, err := ParsePiLine(lineNil, "/cwd")
+		if err != nil || len(evsNil) != 0 {
+			t.Errorf("expected empty events for nil message payload, got %v, %v", evsNil, err)
+		}
+
+		lineSys := []byte(`{"type":"message","message":{"role":"system","content":"system prompt"}}`)
+		evsSys, err := ParsePiLine(lineSys, "/cwd")
+		if err != nil || len(evsSys) != 0 {
+			t.Errorf("expected empty events for system role, got %v, %v", evsSys, err)
 		}
 	})
 

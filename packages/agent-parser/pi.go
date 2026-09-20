@@ -102,6 +102,20 @@ type rawPiLine struct {
 	ThinkingLevel string        `json:"thinkingLevel,omitempty"`
 }
 
+// ExtractPiTitleFromPrompt extracts a session title / task description from user prompt text.
+func ExtractPiTitleFromPrompt(promptText string) (string, bool) {
+	trimmed := strings.TrimSpace(promptText)
+	if trimmed == "" {
+		return "", false
+	}
+	firstLine := strings.Split(trimmed, "\n")[0]
+	firstLine = strings.TrimSpace(firstLine)
+	if len(firstLine) > 100 {
+		firstLine = firstLine[:100]
+	}
+	return firstLine, firstLine != ""
+}
+
 func parsePiContentBlocks(content interface{}) []rawPiContentBlock {
 	if content == nil {
 		return nil
@@ -221,11 +235,18 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 				fullPrompt = extractContentString(msg.Content)
 			}
 
+			title, hasTitle := ExtractPiTitleFromPrompt(fullPrompt)
+			var titlePtr *string
+			if hasTitle {
+				titlePtr = stringPtr(title)
+			}
+
 			events = append(events, ParsedEvent{
 				EventType: "turn_start",
 				Timestamp: ts,
 				CWD:       cwd,
 				Data: types.TelemetryFrameData{
+					Title:      titlePtr,
 					Role:       stringPtr("user"),
 					Content:    stringPtr(fullPrompt),
 					LastPrompt: stringPtr(fullPrompt),
