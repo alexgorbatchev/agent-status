@@ -81,7 +81,11 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		agent.Activity.Usage.CacheRead += u.CacheRead
 		agent.Activity.Usage.CacheWrite += u.CacheWrite
 		agent.Activity.Usage.Reasoning += u.Reasoning
-		agent.Activity.Usage.Total += (u.Input + u.Output + u.CacheRead + u.CacheWrite + u.Reasoning)
+		if u.Total > 0 {
+			agent.Activity.Usage.Total += u.Total
+		} else {
+			agent.Activity.Usage.Total += (u.Input + u.Output + u.CacheRead + u.CacheWrite)
+		}
 
 		if frame.Data.Model != nil && c.pricing != nil {
 			cost, ok := c.pricing.CalculateCost(*frame.Data.Model, pricing.Usage{
