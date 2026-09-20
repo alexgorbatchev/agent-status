@@ -63,7 +63,7 @@ func run(ctx context.Context, cfg config.Config) error {
 
 	logger := logging.Setup("server", cfg.LogLevel)
 
-	logger.InfoContext(ctx, "opening database (read-only)", "path", cfg.DBPath)
+	logger.InfoContext(ctx, "db_opened", "path", cfg.DBPath)
 	sqliteStore, err := store.OpenReadOnly(cfg.DBPath)
 	if err != nil {
 		return fmt.Errorf("opening store: %w", err)
@@ -99,7 +99,7 @@ func run(ctx context.Context, cfg config.Config) error {
 
 	serverErr := make(chan error, 1)
 	go func() {
-		logger.InfoContext(ctx, "starting agent server", "addr", cfg.Addr)
+		logger.InfoContext(ctx, "server_starting", "addr", cfg.Addr)
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErr <- err
 		}
@@ -108,11 +108,11 @@ func run(ctx context.Context, cfg config.Config) error {
 
 	select {
 	case <-ctx.Done():
-		logger.Info("shutting down agent server...")
+		logger.Info("server_shutting_down")
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()
 		if err := httpServer.Shutdown(shutdownCtx); err != nil {
-			logger.Error("server shutdown error", "err", err)
+			logger.Error("server_shutdown_error", "err", err)
 		}
 		return nil
 	case err := <-serverErr:

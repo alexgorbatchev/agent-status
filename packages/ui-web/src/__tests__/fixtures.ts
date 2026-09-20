@@ -345,3 +345,48 @@ export const fixture_telemetryFrame: ITelemetryFrame = {
     rawHarnessCost: null,
   },
 };
+
+export const fixture_telemetryFrameSubagent: ITelemetryFrame = {
+  ...fixture_telemetryFrame,
+  seq: 2,
+  subagentId: "subagent-worker-1",
+  data: {
+    ...fixture_telemetryFrame.data,
+    content: "Running subagent task to analyze dependencies.",
+    toolName: "Bash",
+    toolCallId: "call_sub_1",
+    toolInput: { command: "npm ls" },
+    toolOutput: "agent-status@0.1.0",
+  },
+};
+
+export const fixture_telemetryFrameUserPrompt: ITelemetryFrame = {
+  ...fixture_telemetryFrame,
+  seq: 3,
+  eventType: "turn_start",
+  data: {
+    ...fixture_telemetryFrame.data,
+    role: "user",
+    content: "Please build the new telemetry component.",
+    toolName: null,
+    toolCallId: null,
+    toolInput: null,
+    toolOutput: null,
+  },
+};
+
+export const fixture_telemetryFrameToolResult: ITelemetryFrame = {
+  ...fixture_telemetryFrame,
+  seq: 4,
+  eventType: "tool_result",
+  data: {
+    ...fixture_telemetryFrame.data,
+    role: "user",
+    content: null,
+    toolName: null,
+    toolCallId: "call_123",
+    toolInput: null,
+    toolOutput:
+      "PASS packages/ui-web/src/App.test.tsx\nPASS packages/ui-web/src/LogDrawer.test.tsx\n\nTest Suites: 2 passed, 2 total",
+  },
+};

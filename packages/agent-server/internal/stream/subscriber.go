@@ -96,10 +96,10 @@ func (s *Subscriber) Run(ctx context.Context) {
 		default:
 		}
 
-		s.logger.InfoContext(ctx, "connecting to notify socket", "path", s.cfg.SocketPath)
+		s.logger.InfoContext(ctx, "notify_socket_connecting", "path", s.cfg.SocketPath)
 		conn, err := (&net.Dialer{}).DialContext(ctx, "unix", s.cfg.SocketPath)
 		if err != nil {
-			s.logger.DebugContext(ctx, "failed to connect to notify socket, retrying...", "err", err)
+			s.logger.DebugContext(ctx, "notify_socket_connect_failed", "err", err)
 			select {
 			case <-ctx.Done():
 				return
@@ -108,9 +108,9 @@ func (s *Subscriber) Run(ctx context.Context) {
 			}
 		}
 
-		s.logger.InfoContext(ctx, "connected to notify socket, resyncing snapshot")
+		s.logger.InfoContext(ctx, "notify_socket_connected")
 		if err := s.ResyncAndBroadcast(ctx); err != nil {
-			s.logger.ErrorContext(ctx, "failed to resync snapshot on connect", "err", err)
+			s.logger.ErrorContext(ctx, "notify_snapshot_resync_failed", "err", err)
 		}
 
 		s.readLoop(ctx, conn)
@@ -147,7 +147,7 @@ func (s *Subscriber) readLoop(ctx context.Context, conn net.Conn) {
 
 		var event types.IServerEvent
 		if err := json.Unmarshal(line, &event); err != nil {
-			s.logger.WarnContext(ctx, "malformed notify event json", "err", err, "line", string(line))
+			s.logger.WarnContext(ctx, "notify_event_malformed", "err", err, "line", string(line))
 			continue
 		}
 
@@ -155,6 +155,6 @@ func (s *Subscriber) readLoop(ctx context.Context, conn net.Conn) {
 	}
 
 	if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {
-		s.logger.WarnContext(ctx, "notify socket read error", "err", err)
+		s.logger.WarnContext(ctx, "notify_socket_read_error", "err", err)
 	}
 }

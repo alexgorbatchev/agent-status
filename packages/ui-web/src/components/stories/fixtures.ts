@@ -368,6 +368,51 @@ export const fixture_telemetryFrameUserPrompt: ITelemetryFrame = {
   },
 };
 
+export const fixture_telemetryFrameToolResult: ITelemetryFrame = {
+  version: "1.0",
+  seq: 7,
+  envId: "env-1",
+  environment: fixture_environmentInfo,
+  agentId: "env-1:claude-code:session-1",
+  sessionId: "session-1",
+  subagentId: null,
+  pid: 12345,
+  harness: "claude-code",
+  harnessVersion: "2.1.277",
+  project: {
+    id: "github.com/alexgorbatchev/agent-status",
+    name: "agent-status",
+    canonicalRoot: "/Users/alex/dev/agent-status",
+  },
+  workspace: {
+    isWorktree: false,
+    branch: "main",
+    isDetached: false,
+    relPath: null,
+    cwd: "/Users/alex/dev/agent-status",
+  },
+  timestamp: Date.now() - 4000,
+  eventType: "tool_result",
+  data: {
+    role: "user",
+    content: null,
+    title: "Build agent-status dashboard",
+    lastPrompt: "Run tests",
+    model: null,
+    toolName: null,
+    toolCallId: "call_123",
+    toolInput: null,
+    toolOutput:
+      "PASS packages/ui-web/src/App.test.tsx\nPASS packages/ui-web/src/LogDrawer.test.tsx\n\nTest Suites: 2 passed, 2 total",
+    isError: false,
+    exitCode: 0,
+    question: null,
+    stopReason: null,
+    usage: null,
+    rawHarnessCost: null,
+  },
+};
+
 export const fixture_telemetryFrameThinking: ITelemetryFrame = {
   version: "1.0",
   seq: 3,

@@ -1,7 +1,12 @@
 import type { Meta, StoryObj } from "@storybook/react";
 import { expect, within } from "@storybook/test";
 import { LogFrameItem } from "../LogFrameItem";
-import { fixture_telemetryFrame, fixture_telemetryFrameSubagent, fixture_telemetryFrameUserPrompt } from "./fixtures";
+import {
+  fixture_telemetryFrame,
+  fixture_telemetryFrameSubagent,
+  fixture_telemetryFrameUserPrompt,
+  fixture_telemetryFrameToolResult,
+} from "./fixtures";
 
 const meta: Meta<typeof LogFrameItem> = {
   component: LogFrameItem,
@@ -51,6 +56,22 @@ export const UserPrompt: Story = {
     await expect(canvas.getByTestId("LogFrameItem--type")).toHaveTextContent("USER PROMPT");
     await expect(canvas.getByTestId("LogFrameItem--content")).toHaveTextContent(
       "Please build the new telemetry component.",
+    );
+  },
+};
+
+export const ToolResult: Story = {
+  args: {
+    frame: fixture_telemetryFrameToolResult,
+  },
+  async play({ canvasElement }) {
+    const canvas = within(canvasElement);
+    const item = canvas.getByTestId("LogFrameItem");
+    await expect(item).toBeInTheDocument();
+    await expect(canvas.getByTestId("LogFrameItem--type")).toHaveTextContent("tool_result");
+    await expect(canvas.getByTestId("ToolExecutionBlock")).toBeInTheDocument();
+    await expect(canvas.getByTestId("ToolExecutionBlock--output")).toHaveTextContent(
+      "PASS packages/ui-web/src/App.test.tsx",
     );
   },
 };

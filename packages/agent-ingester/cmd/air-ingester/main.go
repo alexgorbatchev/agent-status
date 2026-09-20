@@ -30,7 +30,7 @@ func newRootCmd(cfg *config.Config) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			logging.Setup("ingester", cfg.LogLevel)
 
-			logging.Info("starting air-ingester", "addr", cfg.Addr, "db", cfg.DBPath, "notifySock", cfg.NotifySock, "noSummarize", cfg.NoSummarize)
+			logging.Info("server_starting", "addr", cfg.Addr, "db", cfg.DBPath, "notifySock", cfg.NotifySock, "noSummarize", cfg.NoSummarize)
 
 			st, err := store.Open(cfg.DBPath)
 			if err != nil {
@@ -104,12 +104,12 @@ func newRootCmd(cfg *config.Config) *cobra.Command {
 
 			go func() {
 				if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-					logging.Error("ingestion server error", "err", err)
+					logging.Error("server_listen_error", "err", err)
 				}
 			}()
 
 			<-ctx.Done()
-			logging.Info("shutting down air-ingester")
+			logging.Info("server_shutting_down")
 
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()

@@ -30,8 +30,8 @@ describe("TypeScript Shared Contracts", () => {
   });
 
   it("verifies HarnessType values", () => {
-    const harnesses: HarnessType[] = ["claude-code", "pi"];
-    expect(harnesses.length).toBe(2);
+    const harnesses: HarnessType[] = ["claude-code", "pi", "codex", "opencode"];
+    expect(harnesses.length).toBe(4);
   });
 
   it("verifies AgentPhase values", () => {

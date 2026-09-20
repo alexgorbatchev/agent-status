@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
@@ -21,6 +22,8 @@ type Receiver struct {
 	classifier  *classifier.Classifier
 	publisher   *notify.Publisher
 	bearerToken string
+	mu          sync.RWMutex
+	envNames    map[string]string
 }
 
 func New(s *store.Store, c *classifier.Classifier, p *notify.Publisher, token string) *Receiver {
@@ -29,7 +32,29 @@ func New(s *store.Store, c *classifier.Classifier, p *notify.Publisher, token st
 		classifier:  c,
 		publisher:   p,
 		bearerToken: token,
+		envNames:    make(map[string]string),
 	}
+}
+
+func (r *Receiver) setEnvName(envID, name string) {
+	if envID == "" || name == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.envNames == nil {
+		r.envNames = make(map[string]string)
+	}
+	r.envNames[envID] = name
+}
+
+func (r *Receiver) getEnvName(envID string) string {
+	if envID == "" {
+		return ""
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.envNames[envID]
 }
 
 func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -53,12 +78,12 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		InsecureSkipVerify: true,
 	})
 	if err != nil {
-		logging.Error("websocket accept error", "err", err)
+		logging.Error("ws_accept_error", "err", err)
 		return
 	}
-	logging.Debug("observer connected", "remoteAddr", req.RemoteAddr)
+	logging.Debug("observer_connected", "remoteAddr", req.RemoteAddr)
 	defer func() {
-		logging.Debug("observer disconnected", "remoteAddr", req.RemoteAddr)
+		logging.Debug("observer_disconnected", "remoteAddr", req.RemoteAddr)
 		_ = conn.Close(websocket.StatusInternalError, "closing connection")
 	}()
 
@@ -78,7 +103,7 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 		var msg types.IObserverMessage
 		if err := json.Unmarshal(data, &msg); err != nil {
-			logging.Warn("malformed message from observer", "err", err)
+			logging.Warn("observer_message_malformed", "err", err)
 			r.sendError(ctx, conn, "malformed", "invalid json payload")
 			continue
 		}
@@ -89,7 +114,18 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			if connEnvID == "" && msg.Environment != nil {
 				connEnvID = msg.Environment.ID
 			}
-			logging.Info("received hello message", "envId", connEnvID, "dropped", msg.Dropped, "since", msg.Since)
+			envName := connEnvID
+			if msg.Environment != nil {
+				if msg.Environment.Label != "" {
+					envName = msg.Environment.Label
+				} else if msg.Environment.Hostname != "" {
+					envName = msg.Environment.Hostname
+				}
+			}
+			if connEnvID != "" && envName != "" {
+				r.setEnvName(connEnvID, envName)
+			}
+			logging.Info("hello_received", "env", envName, "envId", connEnvID, "dropped", msg.Dropped, "since", msg.Since)
 			if connEnvID != "" && msg.Since == 0 {
 				_ = r.store.SaveCursor(connEnvID, 0)
 			}
@@ -115,13 +151,17 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			if envID == "" {
 				envID = connEnvID
 			}
-			logging.Info("received frames batch", "envId", envID, "count", len(msg.Frames))
+			envName := r.getEnvName(envID)
+			if envName == "" {
+				envName = envID
+			}
+			logging.Info("frames_batch_received", "env", envName, "envId", envID, "count", len(msg.Frames))
 			var highestSeq int64 = 0
 			lastEnvID := envID
 
 			for _, frame := range msg.Frames {
 				if frame.Version != "1.0" {
-					logging.Warn("unsupported frame version", "version", frame.Version, "envId", frame.EnvID)
+					logging.Warn("frame_version_unsupported", "version", frame.Version, "envId", frame.EnvID)
 					r.sendError(ctx, conn, "unsupported_version", "frame version must be 1.0")
 					continue
 				}
@@ -138,16 +178,36 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				lastSeq, err := r.store.GetLastSeq(frame.EnvID)
 				if err == nil && frame.Seq <= lastSeq {
 					// Deduplicate frame
-					logging.Debug("deduplicating already processed frame", "envId", frame.EnvID, "seq", frame.Seq, "lastSeq", lastSeq)
+					logging.Debug("frame_deduplicated", "envId", frame.EnvID, "seq", frame.Seq, "lastSeq", lastSeq)
 					continue
 				}
 
-				logging.Info("ingesting session frame", "sessionId", frame.SessionID, "agentId", frame.AgentID, "harness", frame.Harness, "envId", frame.EnvID, "seq", frame.Seq, "eventType", frame.EventType)
+				frameEnvName := frame.Environment.Label
+				if frameEnvName == "" {
+					frameEnvName = frame.Environment.Hostname
+				}
+				if frameEnvName == "" {
+					frameEnvName = r.getEnvName(frame.EnvID)
+				}
+				if frameEnvName != "" && frame.EnvID != "" {
+					r.setEnvName(frame.EnvID, frameEnvName)
+				}
+
+				logging.Info("frame_ingested",
+					"project", frame.Project.Name,
+					"env", frameEnvName,
+					"envId", frame.EnvID,
+					"harness", frame.Harness,
+					"sessionId", frame.SessionID,
+					"agentId", frame.AgentID,
+					"seq", frame.Seq,
+					"eventType", frame.EventType,
+				)
 
 				// Process frame through deterministic classifier
 				agent, err := r.classifier.ProcessFrame(frame)
 				if err != nil {
-					logging.Error("classifier error", "err", err, "agentId", frame.AgentID)
+					logging.Error("classifier_error", "err", err, "agentId", frame.AgentID)
 					continue
 				}
 
@@ -171,7 +231,7 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 
 			if highestSeq > 0 && lastEnvID != "" {
-				logging.Debug("sending ack", "envId", lastEnvID, "upTo", highestSeq)
+				logging.Debug("ack_sent", "envId", lastEnvID, "upTo", highestSeq)
 				r.sendAck(ctx, conn, highestSeq)
 			}
 		}

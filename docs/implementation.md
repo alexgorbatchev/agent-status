@@ -50,7 +50,7 @@ All development must be strictly grounded in:
 - [ ] Implement `packages/ui-web/src/types/index.ts` declaring exact TypeScript contracts from `docs/prd.md` §6:
   - `LifecycleState` (`"RUNNING" | "EXITED"`)
   - `ActivityState` (`"BUSY" | "WAITING_QUESTION" | "ERROR" | "IDLE"`)
-  - `HarnessType` (`"claude-code" | "pi"`)
+  - `HarnessType` (`"claude-code" | "pi" | "codex" | "opencode"`)
   - `AgentPhase`
   - `IEnvironmentInfo`, `IWorkspaceInfo`, `IProjectInfo`, `ITokenUsage`, `ICostInfo`, `IRunInfo`, `IAgentActivity`, `IAgentState`, `ITelemetryFrame`, `IServerEvent`.
 

@@ -468,6 +468,75 @@ func TestAgentStateAndRuns(t *testing.T) {
 	}
 }
 
+func TestAgentState_AllHarnessTypes(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer func() {
+		_ = st.Close()
+	}()
+
+	now := time.Now().UnixMilli()
+	env := types.IEnvironmentInfo{
+		ID:              "env-harness-test",
+		Label:           "test-env",
+		Hostname:        "localhost",
+		Platform:        "darwin",
+		User:            "alex",
+		LastHeartbeatAt: now,
+	}
+	if err := st.UpsertEnvironment(env); err != nil {
+		t.Fatalf("UpsertEnvironment failed: %v", err)
+	}
+
+	harnesses := []types.HarnessType{
+		types.HarnessClaudeCode,
+		types.HarnessPi,
+		types.HarnessCodex,
+		types.HarnessOpencode,
+	}
+
+	for _, h := range harnesses {
+		t.Run(string(h), func(t *testing.T) {
+			agent := types.IAgentState{
+				ID:        "env-harness-test:" + string(h) + ":sess-1",
+				SessionID: "sess-1",
+				Harness:   h,
+				Environment: env,
+				Project: types.IProjectInfo{
+					ID:            "github.com/alex/test",
+					Name:          "test",
+					CanonicalRoot: "/test",
+				},
+				Workspace: types.IWorkspaceInfo{
+					Branch: "main",
+					CWD:    "/test",
+				},
+				Activity: types.IAgentActivity{
+					Lifecycle:      types.LifecycleRunning,
+					Activity:       types.ActivityBusy,
+					Title:          "Testing " + string(h),
+					FirstStartedAt: now,
+					UpdatedAt:      now,
+				},
+			}
+
+			if err := st.SaveAgentState(agent); err != nil {
+				t.Fatalf("SaveAgentState(%s) failed: %v", h, err)
+			}
+
+			got, err := st.GetAgent(agent.ID)
+			if err != nil {
+				t.Fatalf("GetAgent(%s) failed: %v", h, err)
+			}
+			if got == nil || got.Harness != h {
+				t.Fatalf("GetAgent(%s) got harness %v, want %v", h, got, h)
+			}
+		})
+	}
+}
+
 func TestAgentState_NilFieldsAndExitedRun(t *testing.T) {
 	st, err := Open(":memory:")
 	if err != nil {

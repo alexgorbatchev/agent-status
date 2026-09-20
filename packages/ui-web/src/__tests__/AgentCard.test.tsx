@@ -96,4 +96,15 @@ describe("AgentCard Component", () => {
     const element = AgentCard({ agent: fixture_agentStateRunning });
     expect(() => element.props.onClick()).not.toThrow();
   });
+
+  it("applies reduced opacity 0.6 and hover:opacity-100 for finished (EXITED) agents", () => {
+    const html = renderToStaticMarkup(<AgentCard agent={fixture_agentStateExited} />);
+    expect(html).toContain("opacity-60");
+    expect(html).toContain("hover:opacity-100");
+  });
+
+  it("does not apply reduced opacity for active (RUNNING) agents", () => {
+    const html = renderToStaticMarkup(<AgentCard agent={fixture_agentStateRunning} />);
+    expect(html).not.toContain("opacity-60");
+  });
 });

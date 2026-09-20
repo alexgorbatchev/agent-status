@@ -7,7 +7,7 @@ import { TokenUsageBar } from "./TokenUsageBar";
 
 export function LogFrameItem({ frame }: ILogFrameItemProps): React.JSX.Element {
   const isSubagent = Boolean(frame.subagentId);
-  const isUser = frame.data.role === "user" || frame.eventType === "turn_start";
+  const isUser = (frame.data.role === "user" || frame.eventType === "turn_start") && frame.eventType !== "tool_result";
 
   const renderIcon = (): React.JSX.Element | null => {
     if (isUser) {
@@ -25,6 +25,7 @@ export function LogFrameItem({ frame }: ILogFrameItemProps): React.JSX.Element {
           </span>
         );
       case "tool_call":
+      case "tool_result":
         return (
           <span className="w-3.5 h-3.5 text-amber-400 flex items-center justify-center">
             <Wrench size={14} />
@@ -69,7 +70,7 @@ export function LogFrameItem({ frame }: ILogFrameItemProps): React.JSX.Element {
               data-testid="LogFrameItem--subagent"
               className="px-1.5 py-0.5 rounded bg-purple-900/50 text-purple-300 text-[10px]"
             >
-              Subagent: {frame.subagentId}
+              {`Subagent: ${frame.subagentId}`}
             </span>
           )}
           <span data-testid="LogFrameItem--type" className="font-semibold text-slate-300 uppercase">
@@ -100,7 +101,7 @@ export function LogFrameItem({ frame }: ILogFrameItemProps): React.JSX.Element {
         </div>
       )}
 
-      {frame.data.toolName && (
+      {(frame.data.toolName || frame.data.toolOutput || frame.data.toolInput) && (
         <ToolExecutionBlock
           toolName={frame.data.toolName}
           toolInput={frame.data.toolInput}

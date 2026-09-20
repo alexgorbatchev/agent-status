@@ -22,7 +22,7 @@ func (s *Store) PruneOldEventsAndExitedAgents(retentionCutoffMs int64, exitedRet
 	// 2. Delete EXITED agents untouched for >30 days
 	_, err = tx.Exec(`
 		DELETE FROM agents
-		WHERE activity = 'IDLE' AND current_run_id IS NULL AND updated_at < ?
+		WHERE current_run_id IS NULL AND updated_at < ?
 	`, exitedRetentionCutoffMs)
 	if err != nil {
 		return fmt.Errorf("deleting old exited agents: %w", err)

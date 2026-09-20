@@ -1,18 +1,20 @@
 import type { Meta, StoryObj } from "@storybook/react";
 import { fn, userEvent, expect, within } from "@storybook/test";
 import { AgentCard } from "../AgentCard";
-import { fixture_agentStateRunning } from "./fixtures";
+import { fixture_agentStateRunning, fixture_agentStateExited } from "./fixtures";
 
 const meta: Meta<typeof AgentCard> = {
   component: AgentCard,
   title: "@agent-status/ui-web/components/AgentCard",
 };
 
+export default meta;
+
 type Story = StoryObj<typeof AgentCard>;
 
 const onOpenDrawer = fn();
 
-const Default: Story = {
+export const Default: Story = {
   args: {
     agent: fixture_agentStateRunning,
     onOpenDrawer,
@@ -33,5 +35,16 @@ const Default: Story = {
   },
 };
 
-export default meta;
-export { Default as AgentCard };
+export const Exited: Story = {
+  args: {
+    agent: fixture_agentStateExited,
+    onOpenDrawer,
+  },
+  async play({ canvasElement }) {
+    const canvas = within(canvasElement);
+    const card = canvas.getByTestId("AgentCard");
+    await expect(card).toBeInTheDocument();
+    await expect(canvas.getByTestId("AgentCard--title")).toHaveTextContent("Refactor telemetry pipeline");
+    await expect(card).toHaveClass("opacity-60");
+  },
+};

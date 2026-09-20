@@ -22,19 +22,23 @@ export function groupAgentsByEnvironment(
   agents: IAgentState[],
   environments: IEnvironmentInfo[],
 ): IEnvironmentGroupItem[] {
-  const map = new Map<string, IAgentState[]>();
+  const envMap = new Map<string, IEnvironmentInfo>();
+  for (const env of environments) {
+    envMap.set(env.id, env);
+  }
   for (const agent of agents) {
-    const environmentId = agent.environment.id;
-    const existing = map.get(environmentId);
-    if (existing) {
-      existing.push(agent);
-    } else {
-      map.set(environmentId, [agent]);
+    if (!envMap.has(agent.environment.id)) {
+      envMap.set(agent.environment.id, agent.environment);
     }
   }
 
-  return environments.map((environment) => ({
-    environment,
-    agents: map.get(environment.id) || [],
-  }));
+  const result: IEnvironmentGroupItem[] = [];
+  for (const env of envMap.values()) {
+    const envAgents = agents.filter((a) => a.environment.id === env.id);
+    result.push({
+      environment: env,
+      agents: envAgents,
+    });
+  }
+  return result;
 }

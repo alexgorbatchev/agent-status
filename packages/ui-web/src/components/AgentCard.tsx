@@ -1,8 +1,17 @@
 import React from "react";
+import clsx from "clsx";
 import type { IAgentCardProps } from "./types";
+import type { HarnessType } from "../types";
 import { StatusBadge } from "./StatusBadge";
 import { IconWrapper } from "./IconWrapper";
 import { GitBranch, FolderGit2, Bot, Layers, DollarSign, HelpCircle, AlertTriangle } from "lucide-react";
+
+const HARNESS_LABELS: Record<HarnessType, string> = {
+  "claude-code": "Claude Code",
+  pi: "Pi",
+  codex: "Codex",
+  opencode: "OpenCode",
+};
 
 export function AgentCard({ agent, onOpenDrawer }: IAgentCardProps): React.JSX.Element {
   const { activity, environment, workspace, harness } = agent;
@@ -10,6 +19,7 @@ export function AgentCard({ agent, onOpenDrawer }: IAgentCardProps): React.JSX.E
   const formattedCost = activity.cost ? `$${activity.cost.total.toFixed(4)}` : "—";
   const title = activity.title || "Untitled Agent Session";
   const action = activity.action || (activity.activeTool ? `Executing ${activity.activeTool}` : "Idle");
+  const isFinished = activity.lifecycle === "EXITED";
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Enter" || event.key === " ") {
@@ -26,7 +36,10 @@ export function AgentCard({ agent, onOpenDrawer }: IAgentCardProps): React.JSX.E
       aria-label={`View details for ${title}`}
       onClick={() => onOpenDrawer?.(agent)}
       onKeyDown={handleKeyDown}
-      className="group relative flex flex-col justify-between p-4 rounded-xl bg-slate-900/80 border border-slate-800 hover:border-slate-700 transition-all cursor-pointer shadow-lg hover:shadow-slate-950/50"
+      className={clsx(
+        "group relative flex flex-col justify-between p-4 rounded-xl bg-slate-900/80 border border-slate-800 hover:border-slate-700 transition-all cursor-pointer shadow-lg hover:shadow-slate-950/50",
+        isFinished && "opacity-60 hover:opacity-100",
+      )}
     >
       <div data-testid="AgentCard--body">
         {/* Header Row: Harness / Env & Status */}
@@ -38,7 +51,7 @@ export function AgentCard({ agent, onOpenDrawer }: IAgentCardProps): React.JSX.E
               <IconWrapper size="sm">
                 <Bot size={14} />
               </IconWrapper>
-              {harness === "claude-code" ? "Claude Code" : "Pi"}
+              {HARNESS_LABELS[harness] || harness}
             </span>
           </div>
           <StatusBadge lifecycle={activity.lifecycle} activity={activity.activity} />

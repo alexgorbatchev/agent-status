@@ -111,7 +111,7 @@ func (s *Shipper) runConnectionLoop(ctx context.Context) {
 
 		err := s.connectAndStream(ctx)
 		if err != nil {
-			logging.Debug("shipper stream disconnected, retrying", "err", err)
+			logging.Debug("shipper_disconnected", "err", err)
 		}
 
 		nextInterval := expBackoff.NextBackOff()

@@ -122,7 +122,7 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 func (s *Server) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 	status, err := s.store.GetStatus(r.Context())
 	if err != nil {
-		s.logger.ErrorContext(r.Context(), "failed to get status", "err", err)
+		s.logger.ErrorContext(r.Context(), "status_fetch_failed", "err", err)
 		writeError(w, http.StatusInternalServerError, "failed to get status")
 		return
 	}
@@ -132,7 +132,7 @@ func (s *Server) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetProjects(w http.ResponseWriter, r *http.Request) {
 	projects, err := s.store.GetProjects(r.Context())
 	if err != nil {
-		s.logger.ErrorContext(r.Context(), "failed to get projects", "err", err)
+		s.logger.ErrorContext(r.Context(), "projects_fetch_failed", "err", err)
 		writeError(w, http.StatusInternalServerError, "failed to get projects")
 		return
 	}
@@ -142,7 +142,7 @@ func (s *Server) handleGetProjects(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetEnvironments(w http.ResponseWriter, r *http.Request) {
 	envs, err := s.store.GetEnvironments(r.Context())
 	if err != nil {
-		s.logger.ErrorContext(r.Context(), "failed to get environments", "err", err)
+		s.logger.ErrorContext(r.Context(), "environments_fetch_failed", "err", err)
 		writeError(w, http.StatusInternalServerError, "failed to get environments")
 		return
 	}
@@ -160,7 +160,7 @@ func (s *Server) handleGetAgents(w http.ResponseWriter, r *http.Request) {
 
 	agents, err := s.store.GetAgents(r.Context(), filter)
 	if err != nil {
-		s.logger.ErrorContext(r.Context(), "failed to get agents", "err", err)
+		s.logger.ErrorContext(r.Context(), "agents_fetch_failed", "err", err)
 		writeError(w, http.StatusInternalServerError, "failed to get agents")
 		return
 	}
@@ -184,7 +184,7 @@ func (s *Server) handleGetAgentByID(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "agent not found")
 			return
 		}
-		s.logger.ErrorContext(r.Context(), "failed to get agent by id", "id", id, "err", err)
+		s.logger.ErrorContext(r.Context(), "agent_fetch_failed", "id", id, "err", err)
 		writeError(w, http.StatusInternalServerError, "failed to get agent")
 		return
 	}
@@ -221,7 +221,7 @@ func (s *Server) handleGetAgentLogs(w http.ResponseWriter, r *http.Request) {
 
 	logs, err := s.store.GetAgentLogs(r.Context(), id, limit, beforeID, subagentID)
 	if err != nil {
-		s.logger.ErrorContext(r.Context(), "failed to get agent logs", "id", id, "err", err)
+		s.logger.ErrorContext(r.Context(), "agent_logs_fetch_failed", "id", id, "err", err)
 		writeError(w, http.StatusInternalServerError, "failed to get agent logs")
 		return
 	}
@@ -244,12 +244,12 @@ func (s *Server) handleEventsSSE(w http.ResponseWriter, r *http.Request) {
 	// 1. Synthesize and send initial snapshot from SQLite
 	envs, err := s.store.GetEnvironments(r.Context())
 	if err != nil {
-		s.logger.ErrorContext(r.Context(), "failed to load environments for sse snapshot", "err", err)
+		s.logger.ErrorContext(r.Context(), "sse_snapshot_environments_failed", "err", err)
 		return
 	}
 	agents, err := s.store.GetAgents(r.Context(), store.AgentFilter{})
 	if err != nil {
-		s.logger.ErrorContext(r.Context(), "failed to load agents for sse snapshot", "err", err)
+		s.logger.ErrorContext(r.Context(), "sse_snapshot_agents_failed", "err", err)
 		return
 	}
 
@@ -297,7 +297,7 @@ func (s *Server) handleEventsWS(w http.ResponseWriter, r *http.Request) {
 	}
 	conn, err := websocket.Accept(w, r, opts)
 	if err != nil {
-		s.logger.WarnContext(r.Context(), "websocket accept failed", "err", err)
+		s.logger.WarnContext(r.Context(), "ws_accept_failed", "err", err)
 		return
 	}
 	defer func() {
@@ -309,12 +309,12 @@ func (s *Server) handleEventsWS(w http.ResponseWriter, r *http.Request) {
 	// 1. Synthesize and send initial snapshot
 	envs, err := s.store.GetEnvironments(ctx)
 	if err != nil {
-		s.logger.ErrorContext(ctx, "failed to load environments for ws snapshot", "err", err)
+		s.logger.ErrorContext(ctx, "ws_snapshot_environments_failed", "err", err)
 		return
 	}
 	agents, err := s.store.GetAgents(ctx, store.AgentFilter{})
 	if err != nil {
-		s.logger.ErrorContext(ctx, "failed to load agents for ws snapshot", "err", err)
+		s.logger.ErrorContext(ctx, "ws_snapshot_agents_failed", "err", err)
 		return
 	}
 

@@ -50,7 +50,18 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 	}
 
 	if agent == nil {
-		logging.Info("session discovered", "sessionId", frame.SessionID, "agentId", frame.AgentID, "harness", frame.Harness, "envId", frame.EnvID, "project", frame.Project.Name)
+		envName := frame.Environment.Label
+		if envName == "" {
+			envName = frame.Environment.Hostname
+		}
+		logging.Info("session_discovered",
+			"project", frame.Project.Name,
+			"env", envName,
+			"envId", frame.EnvID,
+			"harness", frame.Harness,
+			"sessionId", frame.SessionID,
+			"agentId", frame.AgentID,
+		)
 		// Initialize new agent state
 		agent = &types.IAgentState{
 			ID:          frame.AgentID,

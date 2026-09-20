@@ -100,7 +100,7 @@ export function LogDrawer({
         {logs.length === 0 ? (
           <div className="text-center py-12 text-slate-500 font-mono">No telemetry log events recorded yet.</div>
         ) : (
-          logs.map((log, idx) => <LogFrameItem key={idx} frame={log} />)
+          logs.map((log, idx) => <LogFrameItem key={`${log.seq}-${log.timestamp}-${idx}`} frame={log} />)
         )}
       </div>
     </div>

@@ -11,6 +11,7 @@ Central telemetry ingestion daemon (`air-ingester`) that receives agent events, 
 ## Local conventions
 - SQLite migrations are defined sequentially in `internal/store/migrations.go`.
 - Real-time updates broadcast over Unix domain socket `$XDG_RUNTIME_DIR/agent-status/notify.sock` via `internal/notify/publisher.go`.
+- Telemetry and session logging resolves human environment and project names for clean human-facing logs while preserving machine IDs under `AGENT=1`.
 - Pricing calculations use static rates defined in `internal/pricing/pricing.go`.
 
 ## Local gotchas

@@ -11,6 +11,11 @@ if (!existsSync(runDir)) {
 const pidFile = resolve(runDir, "pids.json");
 const action = process.argv[2] || "start";
 
+function isAgentMode(): boolean {
+  const agent = process.env.AGENT?.trim().toLowerCase();
+  return agent === "1" || agent === "true" || agent === "yes";
+}
+
 function getLogLevel(): string {
   const args = process.argv.slice(2);
   if (args.includes("--debug") || args.includes("-d")) {
@@ -65,7 +70,11 @@ async function pipeOutput(stream: ReadableStream<Uint8Array> | null, prefix: str
 }
 
 async function stopStack() {
-  console.log("🛑 Stopping agent-status stack...");
+  if (isAgentMode()) {
+    console.log("[dev-stack] INFO: stopping agent-status stack");
+  } else {
+    console.log("[INFO] Stopping agent-status stack...");
+  }
   const text = existsSync(pidFile) ? await Bun.file(pidFile).text() : "[]";
   let pids: number[] = [];
   try {
@@ -77,7 +86,9 @@ async function stopStack() {
   for (const pid of pids) {
     try {
       process.kill(pid, "SIGTERM");
-      console.log(`   Killed PID ${pid}`);
+      if (!isAgentMode()) {
+        console.log(`   Killed PID ${pid}`);
+      }
     } catch {
       // already stopped
     }
@@ -92,7 +103,9 @@ async function stopStack() {
       for (const p of portPids) {
         if (p !== process.pid) {
           process.kill(p, "SIGKILL");
-          console.log(`   Cleaned up port ${port} (PID ${p})`);
+          if (!isAgentMode()) {
+            console.log(`   Cleaned up port ${port} (PID ${p})`);
+          }
         }
       }
     } catch {
@@ -103,21 +116,33 @@ async function stopStack() {
   if (existsSync(pidFile)) {
     unlinkSync(pidFile);
   }
-  console.log("✅ Stack stopped.");
+  if (isAgentMode()) {
+    console.log("[dev-stack] OK: stack stopped");
+  } else {
+    console.log("[OK] Stack stopped.");
+  }
 }
 
 async function startStack() {
   // Ensure previous stack is stopped
   await stopStack();
 
-  console.log("🚀 Starting agent-status stack (ingester, server, observer, ui)...");
+  if (isAgentMode()) {
+    console.log("[dev-stack] INFO: starting agent-status stack");
+  } else {
+    console.log("[INFO] Starting agent-status stack (ingester, server, observer, ui)...");
+  }
 
   // 1. Build Go binaries
   const ingesterBin = resolve(rootDir, "packages", "agent-ingester", "bin", "air-ingester");
   const serverBin = resolve(rootDir, "packages", "agent-server", "bin", "air-server");
   const observerBin = resolve(rootDir, "packages", "agent-observer", "bin", "air-observer");
 
-  console.log("📦 Building Go binaries...");
+  if (isAgentMode()) {
+    console.log("[dev-stack] INFO: building binaries");
+  } else {
+    console.log("[INFO] Building Go binaries...");
+  }
   const buildProc = Bun.spawn(["just", "build-all"], { cwd: rootDir, stdout: "inherit", stderr: "inherit" });
   await buildProc.exited;
 
@@ -129,8 +154,16 @@ async function startStack() {
   mkdirSync(dbDir, { recursive: true });
   const notifySock = "/tmp/agent-status/notify.sock";
 
+  const agent = isAgentMode();
+  const ingesterPrefix = agent ? "[ingester]" : "\x1b[36m[ingester]\x1b[0m";
+  const serverPrefix = agent ? "[server]" : "\x1b[35m[server]\x1b[0m";
+  const observerPrefix = agent ? "[observer]" : "\x1b[33m[observer]\x1b[0m";
+  const uiPrefix = agent ? "[ui]" : "\x1b[32m[ui]\x1b[0m";
+
   // 1. Ingester
-  console.log("   [1/4] Starting air-ingester (:4501)...");
+  if (!agent) {
+    console.log("   [1/4] Starting air-ingester (:4501)...");
+  }
   const ingester = Bun.spawn([ingesterBin, "--no-summarize", "--log-level", logLevel], {
     cwd: rootDir,
     env: {
@@ -146,14 +179,16 @@ async function startStack() {
   });
   pids.push(ingester.pid);
   procs.push(ingester);
-  pipeOutput(ingester.stdout, "\x1b[36m[ingester]\x1b[0m");
-  pipeOutput(ingester.stderr, "\x1b[36m[ingester]\x1b[0m");
+  pipeOutput(ingester.stdout, ingesterPrefix);
+  pipeOutput(ingester.stderr, ingesterPrefix);
 
   // Wait 500ms for ingester to bind socket
   await Bun.sleep(500);
 
   // 2. Server
-  console.log("   [2/4] Starting air-server (:4502)...");
+  if (!agent) {
+    console.log("   [2/4] Starting air-server (:4502)...");
+  }
   const server = Bun.spawn([serverBin, "--cors-origin", "http://localhost:3000", "--log-level", logLevel], {
     cwd: rootDir,
     env: {
@@ -169,13 +204,15 @@ async function startStack() {
   });
   pids.push(server.pid);
   procs.push(server);
-  pipeOutput(server.stdout, "\x1b[35m[server]\x1b[0m");
-  pipeOutput(server.stderr, "\x1b[35m[server]\x1b[0m");
+  pipeOutput(server.stdout, serverPrefix);
+  pipeOutput(server.stderr, serverPrefix);
 
   await Bun.sleep(500);
 
   // 3. Observer
-  console.log("   [3/4] Starting air-observer...");
+  if (!agent) {
+    console.log("   [3/4] Starting air-observer...");
+  }
   const observer = Bun.spawn([observerBin, "--token", "dev-secret-token", "--ingester-url", "ws://127.0.0.1:4501/ws/ingest", "--log-level", logLevel], {
     cwd: rootDir,
     env: {
@@ -188,11 +225,13 @@ async function startStack() {
   });
   pids.push(observer.pid);
   procs.push(observer);
-  pipeOutput(observer.stdout, "\x1b[33m[observer]\x1b[0m");
-  pipeOutput(observer.stderr, "\x1b[33m[observer]\x1b[0m");
+  pipeOutput(observer.stdout, observerPrefix);
+  pipeOutput(observer.stderr, observerPrefix);
 
   // 4. UI Web
-  console.log("   [4/4] Starting ui-web (http://localhost:3000)...");
+  if (!agent) {
+    console.log("   [4/4] Starting ui-web (http://localhost:3000)...");
+  }
   const uiWebDir = resolve(rootDir, "packages", "ui-web");
   const ui = Bun.spawn(["bun", "run", "src/server.ts"], {
     cwd: uiWebDir,
@@ -205,13 +244,17 @@ async function startStack() {
   });
   pids.push(ui.pid);
   procs.push(ui);
-  pipeOutput(ui.stdout, "\x1b[32m[ui]\x1b[0m");
-  pipeOutput(ui.stderr, "\x1b[32m[ui]\x1b[0m");
+  pipeOutput(ui.stdout, uiPrefix);
+  pipeOutput(ui.stderr, uiPrefix);
 
   await Bun.write(pidFile, JSON.stringify(pids, null, 2));
 
-  console.log("\n✨ agent-status is running at http://localhost:3000");
-  console.log("   Press Ctrl+C to stop or run: just stop\n");
+  if (agent) {
+    console.log("[dev-stack] INFO: agent-status running at http://localhost:3000");
+  } else {
+    console.log("\n[INFO] agent-status is running at http://localhost:3000");
+    console.log("       Press Ctrl+C to stop or run: just stop\n");
+  }
 
   const shutdown = async () => {
     await stopStack();

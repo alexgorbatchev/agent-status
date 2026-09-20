@@ -95,7 +95,7 @@ export interface ILogFrameItemProps {
 }
 
 export interface IToolExecutionBlockProps {
-  toolName: string;
+  toolName?: string | null;
   toolInput?: Record<string, unknown> | null;
   toolOutput?: string | null;
 }

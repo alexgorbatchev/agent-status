@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS agents (
     id                    TEXT PRIMARY KEY,
     session_id            TEXT NOT NULL,
     environment_id        TEXT NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
-    harness               TEXT NOT NULL CHECK (harness IN ('claude-code','pi')),
+    harness               TEXT NOT NULL CHECK (harness IN ('claude-code','pi','codex','opencode')),
     project_id            TEXT NOT NULL,
     project_name          TEXT NOT NULL,
     canonical_root        TEXT NOT NULL,

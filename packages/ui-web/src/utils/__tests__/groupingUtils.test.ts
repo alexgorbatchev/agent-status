@@ -84,5 +84,28 @@ describe("groupingUtils", () => {
       expect(groups[1]?.environment.id).toBe(fixture_testStaleEnvironment.id);
       expect(groups[1]?.agents.length).toBe(1);
     });
+
+    it("includes environments referenced by agents even if not present in initial environments array", () => {
+      const unseenEnv: IEnvironmentInfo = {
+        id: "env-unseen",
+        label: "unseen-box",
+        hostname: "unseen.internal",
+        platform: "linux",
+        user: "root",
+        isStale: false,
+        lastHeartbeatAt: Date.now(),
+      };
+      const agent = factory_createAgent({
+        id: "a-unseen",
+        environment: unseenEnv,
+      });
+
+      const groups = groupAgentsByEnvironment([agent], [fixture_testEnvironment]);
+      expect(groups.length).toBe(2);
+      expect(groups[0]?.environment.id).toBe(fixture_testEnvironment.id);
+      expect(groups[0]?.agents).toEqual([]);
+      expect(groups[1]?.environment.id).toBe("env-unseen");
+      expect(groups[1]?.agents.length).toBe(1);
+    });
   });
 });
