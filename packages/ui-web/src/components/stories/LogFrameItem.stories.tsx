@@ -36,7 +36,7 @@ export const SubagentToolCall: Story = {
     const canvas = within(canvasElement);
     const item = canvas.getByTestId("LogFrameItem");
     await expect(item).toBeInTheDocument();
-    await expect(canvas.getByTestId("LogFrameItem--subagent")).toHaveTextContent("Subagent: sub-worker-1");
+    await expect(canvas.getByTestId("LogFrameItem--subagent")).toHaveTextContent("Subagent: subagent-worker-1");
   },
 };
 

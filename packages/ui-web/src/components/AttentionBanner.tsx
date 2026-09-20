@@ -41,7 +41,7 @@ export function AttentionBanner({ agents, onSelectAgent }: IAttentionBannerProps
               key={agent.id}
               role="button"
               tabIndex={0}
-              aria-label={`View attention required details for ${title}`}
+              aria-label={`View agent needing attention: ${title}`}
               data-testid="AttentionBanner--agent-card"
               onClick={() => onSelectAgent(agent)}
               onKeyDown={(event) => handleKeyDown(event, agent)}

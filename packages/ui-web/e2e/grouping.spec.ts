@@ -29,7 +29,7 @@ test.describe("Grouping and View Switching", () => {
     // Default view: Group by Project
     const projectGroup = page.getByTestId("ProjectGroup");
     await expect(projectGroup).toBeVisible();
-    await expect(page.getByTestId("ProjectGroup--title")).toContainText("agent-status");
+    await expect(projectGroup).toContainText("agent-status");
 
     // Switch to Group by Environment
     await page.getByTestId("App--group-by-environment").click();

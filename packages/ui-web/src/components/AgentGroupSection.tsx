@@ -5,7 +5,7 @@ import { calculateTotalSpend, filterActiveAgents, formatCurrency } from "../util
 import { DollarSign } from "lucide-react";
 
 export function AgentGroupSection({
-  testId = "AgentGroupSection",
+  testId,
   icon,
   iconColorClass,
   title,
@@ -21,16 +21,18 @@ export function AgentGroupSection({
     ? `w-4 h-4 ${iconColorClass} flex items-center justify-center`
     : "w-4 h-4 flex items-center justify-center";
 
+  const prefix = testId || "AgentGroupSection";
+
   return (
-    <div data-testid={testId} className="mb-8">
+    <div data-testid="AgentGroupSection" className="mb-8">
       {/* Section Header */}
       <div
-        data-testid={`${testId}--header`}
+        data-testid={`${prefix}--header`}
         className="flex items-center justify-between gap-4 mb-3 pb-2 border-b border-slate-800/80"
       >
         <div className="flex items-center gap-2">
           <span className={iconContainerClass}>{icon}</span>
-          <h2 data-testid={`${testId}--title`} className="text-sm font-bold text-slate-100">
+          <h2 data-testid={`${prefix}--title`} className="text-sm font-bold text-slate-100">
             {title}
           </h2>
           <span className="text-xs text-slate-500 font-mono">{subtitle}</span>
@@ -42,7 +44,7 @@ export function AgentGroupSection({
           )}
         </div>
 
-        <div data-testid={`${testId}--spend`} className="flex items-center gap-1 text-xs font-mono text-emerald-400">
+        <div data-testid={`${prefix}--spend`} className="flex items-center gap-1 text-xs font-mono text-emerald-400">
           <span className="w-3.5 h-3.5 flex items-center justify-center">
             <DollarSign size={14} />
           </span>
@@ -51,7 +53,7 @@ export function AgentGroupSection({
       </div>
 
       {/* Agents Grid */}
-      <div data-testid={`${testId}--grid`} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div data-testid={`${prefix}--grid`} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {agents.map((agent) => (
           <AgentCard key={agent.id} agent={agent} onOpenDrawer={onSelectAgent} />
         ))}

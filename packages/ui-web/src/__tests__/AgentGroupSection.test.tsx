@@ -14,10 +14,9 @@ import {
 import { FolderGit2 } from "lucide-react";
 
 describe("AgentGroupSection Component", () => {
-  it("renders with custom testId and computes active count and spend", () => {
+  it("renders with title, subtitle, active count and spend", () => {
     const html = renderToString(
       <AgentGroupSection
-        testId="CustomGroup"
         icon={<FolderGit2 size={16} />}
         iconColorClass="text-blue-400"
         title="Custom Project"
@@ -27,17 +26,17 @@ describe("AgentGroupSection Component", () => {
       />,
     );
 
-    expect(html).toContain('data-testid="CustomGroup"');
-    expect(html).toContain('data-testid="CustomGroup--header"');
-    expect(html).toContain('data-testid="CustomGroup--title"');
+    expect(html).toContain('data-testid="AgentGroupSection"');
+    expect(html).toContain('data-testid="AgentGroupSection--header"');
+    expect(html).toContain('data-testid="AgentGroupSection--title"');
     expect(html).toContain("Custom Project");
     expect(html).toContain("(custom-id)");
-    expect(html).toContain('data-testid="CustomGroup--spend"');
+    expect(html).toContain('data-testid="AgentGroupSection--spend"');
     expect(html).toContain("2 active");
-    expect(html).toContain('data-testid="CustomGroup--grid"');
+    expect(html).toContain('data-testid="AgentGroupSection--grid"');
   });
 
-  it("renders with default testId when not explicitly provided", () => {
+  it("renders with default values and empty agents list", () => {
     const html = renderToString(
       <AgentGroupSection
         icon={<FolderGit2 size={16} />}
@@ -61,7 +60,6 @@ describe("AgentGroupSection Component", () => {
     const customBadge = <span data-testid="custom-badge">Special Tag</span>;
     const html = renderToString(
       <AgentGroupSection
-        testId="BadgeGroup"
         icon={<FolderGit2 size={16} />}
         title="Badge Project"
         subtitle="(badge-id)"
@@ -85,8 +83,8 @@ describe("AgentGroupSection Component", () => {
       />,
     );
 
-    expect(liveHtml).toContain('data-testid="EnvironmentGroup"');
-    expect(liveHtml).toContain('data-testid="EnvironmentGroup--title"');
+    expect(liveHtml).toContain('data-testid="AgentGroupSection"');
+    expect(liveHtml).toContain('data-testid="AgentGroupSection--title"');
     expect(liveHtml).toContain("work-macbook");
     expect(liveHtml).toContain("(alex@macbook.local)");
     expect(liveHtml).toContain("Live");
@@ -96,7 +94,7 @@ describe("AgentGroupSection Component", () => {
       <EnvironmentGroup environment={fixture_staleEnvironmentInfo} agents={[]} onSelectAgent={() => {}} />,
     );
 
-    expect(staleHtml).toContain('data-testid="EnvironmentGroup"');
+    expect(staleHtml).toContain('data-testid="AgentGroupSection"');
     expect(staleHtml).toContain("cloud-builder");
     expect(staleHtml).toContain("(ubuntu@builder.internal)");
     expect(staleHtml).toContain("Stale");
@@ -112,11 +110,11 @@ describe("AgentGroupSection Component", () => {
       />,
     );
 
-    expect(html).toContain('data-testid="ProjectGroup"');
-    expect(html).toContain('data-testid="ProjectGroup--title"');
+    expect(html).toContain('data-testid="AgentGroupSection"');
+    expect(html).toContain('data-testid="AgentGroupSection--title"');
     expect(html).toContain("agent-status");
     expect(html).toContain("(github.com/alexgorbatchev/agent-status)");
     expect(html).toContain("1 active");
-    expect(html).toContain('data-testid="ProjectGroup--grid"');
+    expect(html).toContain('data-testid="AgentGroupSection--grid"');
   });
 });

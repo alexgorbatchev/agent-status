@@ -324,6 +324,50 @@ export const fixture_telemetryFrameSubagent: ITelemetryFrame = {
   },
 };
 
+export const fixture_telemetryFrameUserPrompt: ITelemetryFrame = {
+  version: "1.0",
+  seq: 6,
+  envId: "env-1",
+  environment: fixture_environmentInfo,
+  agentId: "env-1:claude-code:session-1",
+  sessionId: "session-1",
+  subagentId: null,
+  pid: 12345,
+  harness: "claude-code",
+  harnessVersion: "2.1.277",
+  project: {
+    id: "github.com/alexgorbatchev/agent-status",
+    name: "agent-status",
+    canonicalRoot: "/Users/alex/dev/agent-status",
+  },
+  workspace: {
+    isWorktree: false,
+    branch: "main",
+    isDetached: false,
+    relPath: null,
+    cwd: "/Users/alex/dev/agent-status",
+  },
+  timestamp: Date.now() - 6000,
+  eventType: "turn_start",
+  data: {
+    role: "user",
+    content: "Please build the new telemetry component.",
+    title: "Build agent-status dashboard",
+    lastPrompt: "Please build the new telemetry component.",
+    model: null,
+    toolName: null,
+    toolCallId: null,
+    toolInput: null,
+    toolOutput: null,
+    isError: false,
+    exitCode: null,
+    question: null,
+    stopReason: null,
+    usage: null,
+    rawHarnessCost: null,
+  },
+};
+
 export const fixture_telemetryFrameThinking: ITelemetryFrame = {
   version: "1.0",
   seq: 3,
