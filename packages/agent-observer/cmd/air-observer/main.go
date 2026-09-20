@@ -35,7 +35,7 @@ type observerOptions struct {
 	logLevel          string
 }
 
-func main() {
+func newRootCmd() (*cobra.Command, *observerOptions) {
 	opts := &observerOptions{
 		ingesterURL:  "ws://127.0.0.1:4501/ws/ingest",
 		scanInterval: 2 * time.Second,
@@ -72,6 +72,12 @@ func main() {
 	flags.StringVar(&opts.logLevel, "log-level", opts.logLevel, "Log level (debug, info, warn, error)")
 
 	cobrahelptree.Setup(rootCmd)
+
+	return rootCmd, opts
+}
+
+func main() {
+	rootCmd, _ := newRootCmd()
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

@@ -23,9 +23,7 @@ import (
 
 var version = "dev"
 
-func main() {
-	cfg := config.Load()
-
+func newRootCmd(cfg *config.Config) *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:   "air-ingester",
 		Short: "Agent Status Central Telemetry Ingestion Daemon",
@@ -133,6 +131,13 @@ func main() {
 	rootCmd.Flags().StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "Log level (debug, info, warn, error)")
 
 	cobrahelptree.Setup(rootCmd)
+
+	return rootCmd
+}
+
+func main() {
+	cfg := config.Load()
+	rootCmd := newRootCmd(cfg)
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)

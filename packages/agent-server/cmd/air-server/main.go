@@ -22,14 +22,12 @@ import (
 
 var version = "dev"
 
-func main() {
-	cfg := config.DefaultConfig()
-
+func newRootCmd(cfg *config.Config) *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:   "air-server",
 		Short: "Agent Status central REST & streaming server",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(cmd.Context(), cfg)
+			return run(cmd.Context(), *cfg)
 		},
 	}
 
@@ -45,6 +43,13 @@ func main() {
 	flags.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "Log level (debug, info, warn, error)")
 
 	cobrahelptree.Setup(rootCmd)
+
+	return rootCmd
+}
+
+func main() {
+	cfg := config.DefaultConfig()
+	rootCmd := newRootCmd(&cfg)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
