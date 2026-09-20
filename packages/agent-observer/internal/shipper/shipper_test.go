@@ -28,7 +28,9 @@ func TestShipperSendAndAck(t *testing.T) {
 			t.Errorf("websocket.Accept error = %v", err)
 			return
 		}
-		defer conn.Close(websocket.StatusNormalClosure, "bye")
+		defer func() {
+			_ = conn.Close(websocket.StatusNormalClosure, "bye")
+		}()
 
 		for {
 			_, data, err := conn.Read(r.Context())
@@ -43,9 +45,10 @@ func TestShipperSendAndAck(t *testing.T) {
 			}
 
 			mu.Lock()
-			if msg.Type == "hello" {
+			switch msg.Type {
+			case "hello":
 				receivedHello = &msg
-			} else if msg.Type == "frames" {
+			case "frames":
 				receivedFrames = append(receivedFrames, msg.Frames...)
 				// Send ack for the last frame
 				if len(msg.Frames) > 0 {
@@ -173,7 +176,9 @@ func TestShipperHeartbeat(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close(websocket.StatusNormalClosure, "bye")
+		defer func() {
+			_ = conn.Close(websocket.StatusNormalClosure, "bye")
+		}()
 
 		for {
 			_, data, err := conn.Read(r.Context())
@@ -240,7 +245,9 @@ func TestShipperReconnectAndReplay(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close(websocket.StatusNormalClosure, "closed")
+		defer func() {
+			_ = conn.Close(websocket.StatusNormalClosure, "closed")
+		}()
 
 		if attempt == 1 {
 			// First connection: read hello, then abruptly close connection without acking

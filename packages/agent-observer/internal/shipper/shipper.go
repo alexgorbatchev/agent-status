@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/cenkalti/backoff/v4"
 	"github.com/coder/websocket"
@@ -110,7 +111,7 @@ func (s *Shipper) runConnectionLoop(ctx context.Context) {
 
 		err := s.connectAndStream(ctx)
 		if err != nil {
-			// Log reconnection retry
+			logging.Debug("shipper stream disconnected, retrying", "err", err)
 		}
 
 		nextInterval := expBackoff.NextBackOff()
@@ -129,6 +130,9 @@ func (s *Shipper) runConnectionLoop(ctx context.Context) {
 }
 
 func (s *Shipper) connectAndStream(ctx context.Context) error {
+	connCtx, connCancel := context.WithCancel(ctx)
+	defer connCancel()
+
 	opts := &websocket.DialOptions{}
 	if s.cfg.BearerToken != "" {
 		opts.HTTPHeader = http.Header{
@@ -136,13 +140,13 @@ func (s *Shipper) connectAndStream(ctx context.Context) error {
 		}
 	}
 
-	dialCtx, dialCancel := context.WithTimeout(ctx, 10*time.Second)
-	conn, _, err := websocket.Dial(dialCtx, s.cfg.IngesterURL, opts)
-	dialCancel()
+	conn, _, err := websocket.Dial(connCtx, s.cfg.IngesterURL, opts)
 	if err != nil {
 		return fmt.Errorf("dialing ingester %q: %w", s.cfg.IngesterURL, err)
 	}
-	defer conn.Close(websocket.StatusNormalClosure, "shutdown")
+	defer func() {
+		_ = conn.Close(websocket.StatusNormalClosure, "shutdown")
+	}()
 
 	// 1. Send Hello Frame
 	s.mu.Lock()
@@ -161,7 +165,7 @@ func (s *Shipper) connectAndStream(ctx context.Context) error {
 		return fmt.Errorf("marshaling hello message: %w", err)
 	}
 
-	if err := conn.Write(ctx, websocket.MessageText, helloBytes); err != nil {
+	if err := conn.Write(connCtx, websocket.MessageText, helloBytes); err != nil {
 		return fmt.Errorf("writing hello frame: %w", err)
 	}
 
@@ -182,12 +186,9 @@ func (s *Shipper) connectAndStream(ctx context.Context) error {
 			Frames: unackedFrames,
 		}
 		if data, err := json.Marshal(replayMsg); err == nil {
-			_ = conn.Write(ctx, websocket.MessageText, data)
+			_ = conn.Write(connCtx, websocket.MessageText, data)
 		}
 	}
-
-	connCtx, connCancel := context.WithCancel(ctx)
-	defer connCancel()
 
 	// 3. Start reader goroutine for acks
 	errCh := make(chan error, 2)
