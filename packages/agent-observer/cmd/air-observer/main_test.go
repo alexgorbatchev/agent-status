@@ -2,12 +2,34 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 )
+
+type testSyncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (s *testSyncBuffer) Write(p []byte) (n int, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.Write(p)
+}
+
+func (s *testSyncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.String()
+}
 
 func TestObserverCommandHelp(t *testing.T) {
 	cmd, _ := newRootCmd()
@@ -34,6 +56,8 @@ func TestObserverCommandHelp(t *testing.T) {
 		"--codex-sessions-dir",
 		"--opencode-db-path",
 		"--log-level",
+		"--log-dir",
+		"--log-file",
 	}
 
 	for _, s := range requiredHelpStrings {
@@ -92,6 +116,8 @@ func TestObserverCommandFlagParsing(t *testing.T) {
 		"--codex-sessions-dir", "/tmp/codex/sessions",
 		"--opencode-db-path", "/tmp/opencode.db",
 		"--log-level", "debug",
+		"--log-dir", "/tmp/logs",
+		"--log-file", "/tmp/logs/observer.log",
 	}
 
 	if err := cmd.ParseFlags(args); err != nil {
@@ -130,6 +156,12 @@ func TestObserverCommandFlagParsing(t *testing.T) {
 	}
 	if opts.logLevel != "debug" {
 		t.Errorf("logLevel = %q, want debug", opts.logLevel)
+	}
+	if opts.logDir != "/tmp/logs" {
+		t.Errorf("logDir = %q, want /tmp/logs", opts.logDir)
+	}
+	if opts.logFile != "/tmp/logs/observer.log" {
+		t.Errorf("logFile = %q, want /tmp/logs/observer.log", opts.logFile)
 	}
 }
 
@@ -207,5 +239,55 @@ func TestParserDispatchForHarnessTypes(t *testing.T) {
 				t.Errorf("expected at least 1 parsed event for valid line")
 			}
 		})
+	}
+}
+
+func TestObserverRunLogging(t *testing.T) {
+	buf := &testSyncBuffer{}
+	logger := logging.NewWithMode(buf, "observer", "info", false)
+	logging.SetDefault(logger)
+
+	tmpDir := t.TempDir()
+	cursorPath := filepath.Join(tmpDir, "cursors.json")
+	claudeDir := filepath.Join(tmpDir, "claude-sessions")
+	_ = os.MkdirAll(claudeDir, 0755)
+	piDir := filepath.Join(tmpDir, "pi-sessions")
+	_ = os.MkdirAll(piDir, 0755)
+	codexDir := filepath.Join(tmpDir, "codex-sessions")
+	_ = os.MkdirAll(codexDir, 0755)
+	opencodeDb := filepath.Join(tmpDir, "opencode.db")
+
+	opts := observerOptions{
+		ingesterURL:       "ws://127.0.0.1:9999/ws/ingest",
+		cursorPath:        cursorPath,
+		claudeSessionsDir: claudeDir,
+		piSessionsDir:     piDir,
+		codexSessionsDir:  codexDir,
+		opencodeDBPath:    opencodeDb,
+		scanInterval:      50 * time.Millisecond,
+		envFlag:           "test-env",
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runObserverContext(ctx, opts)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+
+	err := <-errCh
+	if err != nil {
+		t.Fatalf("runObserver returned error: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "observer_starting") {
+		t.Errorf("expected observer_starting in log output, got: %s", out)
+	}
+	if !strings.Contains(out, "observer_shutting_down") {
+		t.Errorf("expected observer_shutting_down in log output, got: %s", out)
 	}
 }

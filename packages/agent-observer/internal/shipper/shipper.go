@@ -169,6 +169,8 @@ func (s *Shipper) connectAndStream(ctx context.Context) error {
 		return fmt.Errorf("writing hello frame: %w", err)
 	}
 
+	logging.Info("ingester_connected", "ingesterUrl", s.cfg.IngesterURL)
+
 	// 2. Replay unacknowledged frames
 	s.mu.Lock()
 	var unackedFrames []types.ITelemetryFrame

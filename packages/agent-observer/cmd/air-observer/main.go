@@ -35,6 +35,8 @@ type observerOptions struct {
 	codexSessionsDir  string
 	opencodeDBPath    string
 	logLevel          string
+	logDir            string
+	logFile           string
 }
 
 func newRootCmd() (*cobra.Command, *observerOptions) {
@@ -74,6 +76,8 @@ func newRootCmd() (*cobra.Command, *observerOptions) {
 	flags.StringVar(&opts.codexSessionsDir, "codex-sessions-dir", "", "Custom directory for Codex sessions")
 	flags.StringVar(&opts.opencodeDBPath, "opencode-db-path", "", "Custom path for OpenCode database")
 	flags.StringVar(&opts.logLevel, "log-level", opts.logLevel, "Log level (debug, info, warn, error)")
+	flags.StringVar(&opts.logDir, "log-dir", "", "Custom directory for rotating log files on disk (default: $XDG_STATE_HOME/agent-status/logs)")
+	flags.StringVar(&opts.logFile, "log-file", "", "Custom path for rotating log file on disk")
 
 	cobrahelptree.Setup(rootCmd)
 	return rootCmd, opts
@@ -102,11 +106,31 @@ func parseLineForHarness(harness types.HarnessType, line []byte, cwd string) ([]
 }
 
 func runObserver(opts observerOptions) error {
+	var fileCfg *logging.FileConfig
+	if opts.logFile != "" || opts.logDir != "" {
+		cfg := logging.LoadFileConfigFromEnv("observer")
+		if opts.logFile != "" {
+			cfg.Filename = opts.logFile
+		}
+		if opts.logDir != "" {
+			cfg.Dir = opts.logDir
+		}
+		fileCfg = &cfg
+	}
+	logging.SetupWithOptions(logging.SetupOptions{
+		Service:    "observer",
+		Level:      opts.logLevel,
+		FileConfig: fileCfg,
+	})
+	defer func() {
+		_ = logging.Close()
+	}()
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	return runObserverContext(ctx, opts)
+}
 
-	logging.Setup("observer", opts.logLevel)
-
+func runObserverContext(ctx context.Context, opts observerOptions) error {
 	if opts.claudeProjectsDir != "" {
 		_ = os.Setenv("CLAUDE_PROJECTS_DIR", opts.claudeProjectsDir)
 	}
@@ -127,6 +151,8 @@ func runObserver(opts observerOptions) error {
 	if err != nil {
 		return fmt.Errorf("resolving environment: %w", err)
 	}
+
+	logging.Info("observer_starting", "env", env.Label, "envId", env.ID, "ingesterUrl", opts.ingesterURL)
 
 	cursorStore, err := tailer.NewCursorStore(opts.cursorPath)
 	if err != nil {
@@ -254,6 +280,8 @@ func runObserver(opts observerOptions) error {
 			cancel: tailCancel,
 		}
 		mu.Unlock()
+
+		logging.Info("session_attached", "harness", harness, "sessionId", sessionID, "pid", pid, "cwd", cwd)
 
 		go func() {
 			_ = t.Start(tailCtx)
@@ -572,6 +600,7 @@ func runObserver(opts observerOptions) error {
 	for {
 		select {
 		case <-ctx.Done():
+			logging.Info("observer_shutting_down")
 			mu.Lock()
 			for _, at := range activeTails {
 				at.cancel()

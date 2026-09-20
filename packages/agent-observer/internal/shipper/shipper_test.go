@@ -1,6 +1,7 @@
 package shipper
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/coder/websocket"
 )
@@ -384,5 +386,63 @@ func TestShipperRingBufferCap(t *testing.T) {
 
 	if s.DroppedCount() != 50 {
 		t.Errorf("s.DroppedCount() = %d, want 50", s.DroppedCount())
+	}
+}
+
+type testSyncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (s *testSyncBuffer) Write(p []byte) (n int, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.Write(p)
+}
+
+func (s *testSyncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.String()
+}
+
+func TestShipperLoggingOnConnect(t *testing.T) {
+	buf := &testSyncBuffer{}
+	logger := logging.NewWithMode(buf, "observer", "info", false)
+	logging.SetDefault(logger)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() {
+			_ = conn.Close(websocket.StatusNormalClosure, "bye")
+		}()
+		_, _, _ = conn.Read(r.Context())
+	}))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	cfg := Config{
+		IngesterURL: wsURL,
+		Environment: types.IEnvironmentInfo{ID: "env-log", Label: "log-test"},
+	}
+
+	s := NewShipper(cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := s.Start(ctx); err != nil {
+		t.Fatalf("s.Start error: %v", err)
+	}
+	defer s.Stop()
+
+	// Wait for connection log
+	time.Sleep(150 * time.Millisecond)
+
+	out := buf.String()
+	if !strings.Contains(out, "ingester_connected") {
+		t.Errorf("expected ingester_connected log on shipper connect, got: %s", out)
 	}
 }
