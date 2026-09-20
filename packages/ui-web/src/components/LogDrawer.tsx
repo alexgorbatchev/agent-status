@@ -158,7 +158,7 @@ export function LogDrawer({
                       </IconWrapper>
                     ) : null}
                     {isSubagent && (
-                      <span className="px-1.5 py-0.2 rounded bg-purple-900/50 text-purple-300 text-[10px]">
+                      <span className="px-1.5 py-0.5 rounded bg-purple-900/50 text-purple-300 text-[10px]">
                         Subagent: {log.subagentId}
                       </span>
                     )}

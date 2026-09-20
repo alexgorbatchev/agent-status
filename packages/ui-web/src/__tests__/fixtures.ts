@@ -7,7 +7,7 @@ export const fixture_environmentInfo: IEnvironmentInfo = {
   platform: "darwin",
   user: "alex",
   isStale: false,
-  lastHeartbeatAt: Date.now(),
+  lastHeartbeatAt: 1789850000000,
 };
 
 export const fixture_staleEnvironmentInfo: IEnvironmentInfo = {
@@ -17,7 +17,7 @@ export const fixture_staleEnvironmentInfo: IEnvironmentInfo = {
   platform: "linux",
   user: "ubuntu",
   isStale: true,
-  lastHeartbeatAt: Date.now() - 60000,
+  lastHeartbeatAt: 1789849940000,
 };
 
 export const fixture_agentStateRunning: IAgentState = {
@@ -67,11 +67,11 @@ export const fixture_agentStateRunning: IAgentState = {
       id: "run-1",
       pid: 12345,
       harnessVersion: "2.1.277",
-      startedAt: Date.now() - 60000,
+      startedAt: 1789849940000,
       endedAt: null,
     },
-    firstStartedAt: Date.now() - 3600000,
-    updatedAt: Date.now(),
+    firstStartedAt: 1789846400000,
+    updatedAt: 1789850000000,
   },
 };
 
@@ -122,11 +122,11 @@ export const fixture_agentStateWaitingQuestion: IAgentState = {
       id: "run-2",
       pid: 23456,
       harnessVersion: "2.1.277",
-      startedAt: Date.now() - 120000,
+      startedAt: 1789849880000,
       endedAt: null,
     },
-    firstStartedAt: Date.now() - 120000,
-    updatedAt: Date.now(),
+    firstStartedAt: 1789849880000,
+    updatedAt: 1789850000000,
   },
 };
 
@@ -177,11 +177,11 @@ export const fixture_agentStateError: IAgentState = {
       id: "run-3",
       pid: 34567,
       harnessVersion: "2.1.277",
-      startedAt: Date.now() - 180000,
+      startedAt: 1789849820000,
       endedAt: null,
     },
-    firstStartedAt: Date.now() - 180000,
-    updatedAt: Date.now(),
+    firstStartedAt: 1789849820000,
+    updatedAt: 1789850000000,
   },
 };
 
@@ -229,8 +229,8 @@ export const fixture_agentStateExited: IAgentState = {
     },
     subagentCount: 0,
     currentRun: null,
-    firstStartedAt: Date.now() - 7200000,
-    updatedAt: Date.now() - 3600000,
+    firstStartedAt: 1789842800000,
+    updatedAt: 1789846400000,
   },
 };
 
@@ -257,7 +257,7 @@ export const fixture_telemetryFrame: ITelemetryFrame = {
     relPath: null,
     cwd: "/Users/alex/dev/agent-status",
   },
-  timestamp: Date.now(),
+  timestamp: 1789850000000,
   eventType: "tool_call",
   data: {
     role: "assistant",
