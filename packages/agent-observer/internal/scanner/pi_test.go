@@ -20,14 +20,12 @@ func TestDefaultPiSessionsDir(t *testing.T) {
 		}
 	})
 
-	t.Run("with PI_CODING_AGENT_DIR unset", func(t *testing.T) {
+	t.Run("with PI_CODING_AGENT_DIR unset and valid HOME", func(t *testing.T) {
 		t.Setenv("PI_CODING_AGENT_DIR", "")
-		home, err := os.UserHomeDir()
-		if err != nil {
-			t.Skip("cannot get user home dir")
-		}
+		t.Setenv("PI_SESSIONS_DIR", "")
+		t.Setenv("HOME", "/custom/user/home")
 		got := DefaultPiSessionsDir()
-		want := filepath.Join(home, ".pi", "agent", "sessions")
+		want := filepath.Join("/custom/user/home", ".pi", "agent", "sessions")
 		if got != want {
 			t.Errorf("DefaultPiSessionsDir() = %q, want %q", got, want)
 		}
