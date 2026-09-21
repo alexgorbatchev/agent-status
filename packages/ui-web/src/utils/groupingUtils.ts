@@ -1,4 +1,24 @@
-import type { IAgentState, IEnvironmentGroupItem, IEnvironmentInfo, IProjectGroupItem } from "../types";
+import type { ActivityState, IAgentState, IEnvironmentGroupItem, IEnvironmentInfo, IProjectGroupItem } from "../types";
+
+const ACTIVITY_PRIORITY: Record<ActivityState, number> = {
+  BUSY: 0,
+  WAITING_QUESTION: 1,
+  ERROR: 2,
+  IDLE: 3,
+};
+
+export function compareAgentsByActivity(a: IAgentState, b: IAgentState): number {
+  const priorityA = ACTIVITY_PRIORITY[a.activity.activity] ?? 999;
+  const priorityB = ACTIVITY_PRIORITY[b.activity.activity] ?? 999;
+  if (priorityA !== priorityB) {
+    return priorityA - priorityB;
+  }
+  return (b.activity?.updatedAt ?? 0) - (a.activity?.updatedAt ?? 0);
+}
+
+export function sortAgents(agents: IAgentState[]): IAgentState[] {
+  return [...agents].sort(compareAgentsByActivity);
+}
 
 export function groupAgentsByProject(agents: IAgentState[]): IProjectGroupItem[] {
   const groups: Record<string, IProjectGroupItem> = {};
@@ -15,7 +35,12 @@ export function groupAgentsByProject(agents: IAgentState[]): IProjectGroupItem[]
       };
     }
   }
-  return Object.values(groups);
+
+  const result = Object.values(groups);
+  for (const group of result) {
+    group.agents.sort(compareAgentsByActivity);
+  }
+  return result;
 }
 
 export function groupAgentsByEnvironment(
@@ -35,6 +60,7 @@ export function groupAgentsByEnvironment(
   const result: IEnvironmentGroupItem[] = [];
   for (const env of envMap.values()) {
     const envAgents = agents.filter((a) => a.environment.id === env.id);
+    envAgents.sort(compareAgentsByActivity);
     result.push({
       environment: env,
       agents: envAgents,
