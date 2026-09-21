@@ -3,10 +3,40 @@ import type { ILogFrameItemProps } from "./types";
 import { Brain, Wrench, AlertTriangle, User, Play, CheckCircle2 } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
+import remarkGfm from "remark-gfm";
 import { ToolExecutionBlock } from "./ToolExecutionBlock";
 import { TokenUsageBar } from "./TokenUsageBar";
 import { rehypeAnsi } from "../utils/rehypeAnsi";
 import { preprocessMarkdownAnsi } from "../utils/ansiUtils";
+
+interface IMarkdownPreProps extends React.ComponentPropsWithoutRef<"pre"> {
+  node?: unknown;
+}
+
+interface IMarkdownCodeProps extends React.ComponentPropsWithoutRef<"code"> {
+  node?: unknown;
+}
+
+interface IMarkdownTableProps extends React.ComponentPropsWithoutRef<"table"> {
+  node?: unknown;
+}
+
+const markdownComponents = {
+  pre: ({ node: _node, className, ...props }: IMarkdownPreProps) => (
+    <pre
+      className={`min-w-0 max-w-full overflow-x-auto whitespace-pre-wrap [overflow-wrap:anywhere] break-all ${className ?? ""}`}
+      {...props}
+    />
+  ),
+  code: ({ node: _node, className, ...props }: IMarkdownCodeProps) => (
+    <code className={`min-w-0 max-w-full [overflow-wrap:anywhere] break-all ${className ?? ""}`} {...props} />
+  ),
+  table: ({ node: _node, className, ...props }: IMarkdownTableProps) => (
+    <div className="min-w-0 max-w-full overflow-x-auto my-2">
+      <table className={`min-w-0 max-w-full [overflow-wrap:anywhere] ${className ?? ""}`} {...props} />
+    </div>
+  ),
+};
 
 export function LogFrameItem({ frame }: ILogFrameItemProps): React.JSX.Element {
   const isSubagent = Boolean(frame.subagentId);
@@ -63,7 +93,7 @@ export function LogFrameItem({ frame }: ILogFrameItemProps): React.JSX.Element {
       ? "bg-purple-950/20 border-purple-900/40 ml-4"
       : "bg-slate-900/80 border-slate-800";
 
-  const remarkPlugins = useMemo(() => [remarkBreaks], []);
+  const remarkPlugins = useMemo(() => [remarkBreaks, remarkGfm], []);
   const rehypePlugins = useMemo(() => [rehypeAnsi], []);
   const processedContent = useMemo(
     () => (frame.data.content ? preprocessMarkdownAnsi(frame.data.content) : null),
@@ -75,7 +105,10 @@ export function LogFrameItem({ frame }: ILogFrameItemProps): React.JSX.Element {
   );
 
   return (
-    <div data-testid="LogFrameItem" className={`p-3 rounded-lg border transition-all ${containerClasses}`}>
+    <div
+      data-testid="LogFrameItem"
+      className={`p-3 rounded-lg border transition-all min-w-0 max-w-full overflow-hidden ${containerClasses}`}
+    >
       <div className="flex items-center justify-between gap-2 mb-1 text-[11px] text-slate-400 font-mono">
         <div className="flex items-center gap-1.5">
           {renderIcon()}
@@ -99,9 +132,9 @@ export function LogFrameItem({ frame }: ILogFrameItemProps): React.JSX.Element {
       {processedContent && (
         <div
           data-testid="LogFrameItem--content"
-          className="text-slate-300 prose prose-invert max-w-none text-xs leading-relaxed break-words space-y-1"
+          className="text-slate-300 prose prose-invert max-w-none text-xs leading-relaxed break-words space-y-1 min-w-0 max-w-full [overflow-wrap:anywhere]"
         >
-          <Markdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins}>
+          <Markdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={markdownComponents}>
             {processedContent}
           </Markdown>
         </div>
@@ -110,10 +143,10 @@ export function LogFrameItem({ frame }: ILogFrameItemProps): React.JSX.Element {
       {processedQuestion && (
         <div
           data-testid="LogFrameItem--question"
-          className="mt-1 p-2 rounded bg-amber-950/30 border border-amber-800/40 text-amber-200"
+          className="mt-1 p-2 rounded bg-amber-950/30 border border-amber-800/40 text-amber-200 min-w-0 max-w-full"
         >
           <span className="font-semibold text-[11px] block mb-1">Question:</span>
-          <Markdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins}>
+          <Markdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={markdownComponents}>
             {processedQuestion}
           </Markdown>
         </div>
