@@ -4,6 +4,7 @@ import assert from "node:assert";
 import { renderToString } from "react-dom/server";
 import { LogDrawer } from "../components/LogDrawer";
 import { LogFrameItem } from "../components/LogFrameItem";
+import { LogBuffer } from "../utils/LogBuffer";
 import { setupMockDomEnvironment, mountComponent } from "./helpers";
 import { fixture_agentStateRunning, fixture_agentStateWaitingQuestion, fixture_telemetryFrame } from "./fixtures";
 import type { ITelemetryFrame } from "../types";
@@ -221,5 +222,134 @@ describe("LogDrawer Component", () => {
     expect(fetchedUrls[1]).toContain(encodeURIComponent(fixture_agentStateWaitingQuestion.id));
     expect(eventSourceUrls[1]).toContain(encodeURIComponent(fixture_agentStateWaitingQuestion.id));
     cleanup2();
+  });
+
+  it("renders correlated tool execution with unified command and output in a single frame", () => {
+    const callFrame: ITelemetryFrame = {
+      ...fixture_telemetryFrame,
+      seq: 1,
+      timestamp: 1000,
+      eventType: "tool_call",
+      data: {
+        ...fixture_telemetryFrame.data,
+        toolCallId: "call-xyz",
+        toolName: "bash",
+        toolInput: { command: "bun test --coverage" },
+        toolOutput: null,
+      },
+    };
+    const resultFrame: ITelemetryFrame = {
+      ...fixture_telemetryFrame,
+      seq: 2,
+      timestamp: 1850,
+      eventType: "tool_result",
+      data: {
+        ...fixture_telemetryFrame.data,
+        toolCallId: "call-xyz",
+        toolOutput: "All tests passed with 100% coverage",
+        exitCode: 0,
+        isError: false,
+      },
+    };
+
+    const buffer = new LogBuffer([callFrame, resultFrame]);
+    const html = renderToString(<LogDrawer agent={fixture_agentStateRunning} logBuffer={buffer} onClose={() => {}} />);
+
+    const frameItemMatches = html.match(/data-testid="LogFrameItem"/g);
+    expect(frameItemMatches).not.toBeNull();
+    expect(frameItemMatches?.length).toBe(1);
+
+    expect(html).toContain("bun test --coverage");
+    expect(html).toContain("All tests passed with 100% coverage");
+    expect(html).toContain("exit 0");
+    expect(html).toContain("850ms");
+  });
+
+  it("renders orphaned tool_result when no matching tool_call exists", () => {
+    const orphanResult: ITelemetryFrame = {
+      ...fixture_telemetryFrame,
+      seq: 1,
+      timestamp: 1000,
+      eventType: "tool_result",
+      data: {
+        ...fixture_telemetryFrame.data,
+        toolCallId: "call-orphan",
+        toolOutput: "Orphaned result content",
+        exitCode: 1,
+        isError: true,
+      },
+    };
+
+    const buffer = new LogBuffer([orphanResult]);
+    const html = renderToString(<LogDrawer agent={fixture_agentStateRunning} logBuffer={buffer} onClose={() => {}} />);
+
+    const frameItemMatches = html.match(/data-testid="LogFrameItem"/g);
+    expect(frameItemMatches?.length).toBe(1);
+    expect(html).toContain("Orphaned result content");
+    expect(html).toContain("exit 1");
+  });
+
+  it("renders concurrent tool calls correlated to their respective results", () => {
+    const callA: ITelemetryFrame = {
+      ...fixture_telemetryFrame,
+      seq: 1,
+      timestamp: 1000,
+      eventType: "tool_call",
+      data: {
+        ...fixture_telemetryFrame.data,
+        toolCallId: "call-A",
+        toolName: "bash",
+        toolInput: { command: "echo testA" },
+      },
+    };
+    const callB: ITelemetryFrame = {
+      ...fixture_telemetryFrame,
+      seq: 2,
+      timestamp: 1050,
+      eventType: "tool_call",
+      data: {
+        ...fixture_telemetryFrame.data,
+        toolCallId: "call-B",
+        toolName: "bash",
+        toolInput: { command: "echo testB" },
+      },
+    };
+    const resultA: ITelemetryFrame = {
+      ...fixture_telemetryFrame,
+      seq: 3,
+      timestamp: 1300,
+      eventType: "tool_result",
+      data: {
+        ...fixture_telemetryFrame.data,
+        toolCallId: "call-A",
+        toolOutput: "output A",
+        exitCode: 0,
+        isError: false,
+      },
+    };
+    const resultB: ITelemetryFrame = {
+      ...fixture_telemetryFrame,
+      seq: 4,
+      timestamp: 1400,
+      eventType: "tool_result",
+      data: {
+        ...fixture_telemetryFrame.data,
+        toolCallId: "call-B",
+        toolOutput: "output B",
+        exitCode: 0,
+        isError: false,
+      },
+    };
+
+    const buffer = new LogBuffer([callA, callB, resultA, resultB]);
+    const html = renderToString(<LogDrawer agent={fixture_agentStateRunning} logBuffer={buffer} onClose={() => {}} />);
+
+    const frameItemMatches = html.match(/data-testid="LogFrameItem"/g);
+    expect(frameItemMatches?.length).toBe(2);
+
+    expect(html).toContain("echo testA");
+    expect(html).toContain("output A");
+    expect(html).toContain("echo testB");
+    expect(html).toContain("output B");
   });
 });

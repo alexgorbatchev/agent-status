@@ -160,6 +160,7 @@ export function LogFrameItem({ frame }: ILogFrameItemProps): React.JSX.Element {
           exitCode={frame.data.exitCode}
           isError={frame.data.isError}
           toolCallId={frame.data.toolCallId}
+          durationMs={frame.data.durationMs}
         />
       )}
 

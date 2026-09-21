@@ -30,6 +30,18 @@ function getShellCommand(toolName?: string | null, toolInput?: Record<string, un
   return null;
 }
 
+function formatDuration(ms: number): string {
+  if (ms < 1000) {
+    return `${ms}ms`;
+  }
+  if (ms < 60000) {
+    return `${(ms / 1000).toFixed(1)}s`;
+  }
+  const mins = Math.floor(ms / 60000);
+  const secs = Math.floor((ms % 60000) / 1000);
+  return `${mins}m ${secs}s`;
+}
+
 export function ToolExecutionBlock({
   toolName,
   toolInput,
@@ -37,6 +49,7 @@ export function ToolExecutionBlock({
   exitCode,
   isError,
   toolCallId: _toolCallId,
+  durationMs,
 }: IToolExecutionBlockProps): React.JSX.Element {
   const [hasCopiedCommand, setHasCopiedCommand] = useState<boolean>(false);
   const [hasCopiedOutput, setHasCopiedOutput] = useState<boolean>(false);
@@ -85,6 +98,18 @@ export function ToolExecutionBlock({
   const lineCount = outputLines.length;
   const streamType = isFailure ? "STDERR" : "OUTPUT";
 
+  const renderDurationBadge = (): React.JSX.Element | null => {
+    if (durationMs === undefined || durationMs === null) return null;
+    return (
+      <span
+        data-testid="ToolExecutionBlock--duration"
+        className="px-1.5 py-0.5 rounded text-[10px] bg-slate-800/80 text-slate-300 border border-slate-700/60 font-mono"
+      >
+        {formatDuration(durationMs)}
+      </span>
+    );
+  };
+
   const renderStatusBadge = (): React.JSX.Element | null => {
     if (!hasStatus) return null;
     return (
@@ -107,7 +132,10 @@ export function ToolExecutionBlock({
               <span data-testid="ToolExecutionBlock--name" className="text-amber-300 font-semibold">
                 {toolName}
               </span>
-              {renderStatusBadge()}
+              <div className="flex items-center space-x-1.5 shrink-0">
+                {renderDurationBadge()}
+                {renderStatusBadge()}
+              </div>
             </div>
           )}
           <DiffViewer payload={fileDiffPayload} />
@@ -129,6 +157,7 @@ export function ToolExecutionBlock({
               </span>
             </div>
             <div className="flex items-center space-x-2 shrink-0">
+              {renderDurationBadge()}
               {renderStatusBadge()}
               <button
                 type="button"
@@ -170,7 +199,7 @@ export function ToolExecutionBlock({
       ) : (
         /* Standard tool input / parameters */
         <>
-          {(toolName || hasStatus) && (
+          {(toolName || hasStatus || durationMs !== undefined) && (
             <div className="flex items-center justify-between mb-1 min-w-0">
               {toolName ? (
                 <span data-testid="ToolExecutionBlock--name" className="text-amber-300 font-semibold">
@@ -179,7 +208,10 @@ export function ToolExecutionBlock({
               ) : (
                 <span />
               )}
-              {renderStatusBadge()}
+              <div className="flex items-center space-x-1.5 shrink-0">
+                {renderDurationBadge()}
+                {renderStatusBadge()}
+              </div>
             </div>
           )}
 

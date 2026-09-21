@@ -1,4 +1,5 @@
 import type { ITelemetryFrame } from "../types";
+import { correlateTelemetryFrames } from "./correlateTelemetryFrames";
 
 export type LogBufferListener = () => void;
 export type LogBufferUnsubscribe = () => void;
@@ -6,6 +7,12 @@ export type LogBufferUnsubscribe = () => void;
 export class LogBuffer {
   private frames: readonly ITelemetryFrame[] = [];
   private readonly listeners: Set<LogBufferListener> = new Set<LogBufferListener>();
+
+  constructor(initialFrames?: readonly ITelemetryFrame[]) {
+    if (initialFrames && initialFrames.length > 0) {
+      this.frames = [...initialFrames];
+    }
+  }
 
   public subscribe = (listener: LogBufferListener): LogBufferUnsubscribe => {
     this.listeners.add(listener);
@@ -16,6 +23,10 @@ export class LogBuffer {
 
   public getSnapshot = (): readonly ITelemetryFrame[] => {
     return this.frames;
+  };
+
+  public getCorrelatedFrames = (): ITelemetryFrame[] => {
+    return correlateTelemetryFrames(this.frames);
   };
 
   public set(frames: readonly ITelemetryFrame[]): void {
