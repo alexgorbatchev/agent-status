@@ -175,6 +175,7 @@ describe("AgentCard Component", () => {
 
     const hideBtn = container.querySelector('[data-testid="AgentCard--hide-button"]');
     assert(hideBtn, "hide button must exist when onToggleHide is provided");
+    expect(hideBtn.getAttribute("class")).toContain("cursor-pointer");
     hideBtn.click();
 
     assert(holder.toggledAgent, "toggledAgent must be defined");
@@ -212,6 +213,29 @@ describe("AgentCard Component", () => {
 
     assert(holder.toggledAgent, "toggledAgent must be defined");
     expect(holder.toggledAgent.id).toBe(hiddenAgent.id);
+
+    await unmount();
+    cleanup();
+  });
+
+  it("does not trigger onOpenDrawer when keydown event occurs on hide button", async () => {
+    const { mockDoc, cleanup } = setupMockDomEnvironment();
+    let drawerOpened = false;
+
+    const onOpenDrawer = () => {
+      drawerOpened = true;
+    };
+
+    const { container, unmount } = await mountComponent(
+      <AgentCard agent={fixture_agentStateRunning} onToggleHide={() => {}} onOpenDrawer={onOpenDrawer} />,
+      mockDoc,
+    );
+
+    const hideBtn = container.querySelector('[data-testid="AgentCard--hide-button"]');
+    assert(hideBtn);
+
+    hideBtn.dispatchEvent({ type: "keydown", key: "Enter", target: hideBtn });
+    expect(drawerOpened).toBe(false);
 
     await unmount();
     cleanup();

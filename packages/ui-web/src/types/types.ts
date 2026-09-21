@@ -170,4 +170,5 @@ export interface IEventStreamState {
   environments: IEnvironmentInfo[];
   isConnected: boolean;
   error: string | null;
+  updateAgent?: (agent: IAgentState) => void;
 }

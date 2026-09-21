@@ -20,35 +20,24 @@ export interface IAppProps {
 
 export function App({ apiBaseUrl, token = DEFAULT_DEV_TOKEN }: IAppProps = {}): React.JSX.Element {
   const resolvedBaseUrl = resolveApiBaseUrl(apiBaseUrl);
-  const { agents, environments, isConnected, error } = useEventStream(apiBaseUrl, token);
+  const { agents, environments, isConnected, error, updateAgent } = useEventStream(apiBaseUrl, token);
   const [groupBy, setGroupBy] = useState<GroupByOption>("project");
   const [selectedAgent, setSelectedAgent] = useState<IAgentState | null>(null);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [showHidden, setShowHidden] = useState<boolean>(false);
-  const [hiddenOverrides, setHiddenOverrides] = useState<Record<string, boolean>>({});
-
-  const effectiveAgents = useMemo(() => {
-    return agents.map((agent) => {
-      const override = hiddenOverrides[agent.id];
-      if (override !== undefined) {
-        return { ...agent, isHidden: override };
-      }
-      return agent;
-    });
-  }, [agents, hiddenOverrides]);
 
   const hiddenCount = useMemo(() => {
-    return effectiveAgents.filter((a) => a.isHidden).length;
-  }, [effectiveAgents]);
+    return agents.filter((a) => a.isHidden).length;
+  }, [agents]);
 
   const visibleAgents = useMemo(() => {
-    return effectiveAgents.filter((a) => showHidden || !a.isHidden);
-  }, [effectiveAgents, showHidden]);
+    return agents.filter((a) => showHidden || !a.isHidden);
+  }, [agents, showHidden]);
 
   const handleToggleHide = useCallback(
     async (agent: IAgentState) => {
       const nextHidden = !agent.isHidden;
-      setHiddenOverrides((prev) => ({ ...prev, [agent.id]: nextHidden }));
+      updateAgent?.({ ...agent, isHidden: nextHidden });
 
       try {
         const response = await fetch(`${resolvedBaseUrl}/api/v1/agents/${encodeURIComponent(agent.id)}`, {
@@ -64,14 +53,11 @@ export function App({ apiBaseUrl, token = DEFAULT_DEV_TOKEN }: IAppProps = {}): 
         }
       } catch (err) {
         console.error("Failed to toggle agent visibility:", err);
-        setHiddenOverrides((prev) => {
-          const next = { ...prev };
-          delete next[agent.id];
-          return next;
-        });
+        // Revert optimistic update on error
+        updateAgent?.({ ...agent, isHidden: agent.isHidden });
       }
     },
-    [resolvedBaseUrl, token],
+    [resolvedBaseUrl, token, updateAgent],
   );
 
   const projectGroups = useMemo(() => groupAgentsByProject(visibleAgents), [visibleAgents]);
@@ -83,7 +69,7 @@ export function App({ apiBaseUrl, token = DEFAULT_DEV_TOKEN }: IAppProps = {}): 
   return (
     <div data-testid="App" className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
       <Header
-        agents={agents}
+        agents={visibleAgents}
         environments={environments}
         isConnected={isConnected}
         onOpenHelp={() => setIsHelpOpen(true)}
@@ -133,7 +119,7 @@ export function App({ apiBaseUrl, token = DEFAULT_DEV_TOKEN }: IAppProps = {}): 
                 data-testid="App--toggle-show-hidden"
                 onClick={() => setShowHidden((prev) => !prev)}
                 className={clsx(
-                  "flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg border font-mono transition-colors",
+                  "flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg border font-mono transition-colors cursor-pointer",
                   showHidden
                     ? "bg-slate-800 text-slate-200 border-slate-700"
                     : "bg-slate-900/60 text-slate-400 border-slate-800 hover:text-slate-200 hover:border-slate-700",

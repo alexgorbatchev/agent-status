@@ -61,10 +61,11 @@ describe("App Layout & Session Visibility", () => {
     assert(agentCountEl, "agent count element must exist");
     expect(agentCountEl.textContent).toContain("1 Agent (1 hidden)");
 
-    // Toggle button should exist
+    // Toggle button should exist and have cursor-pointer
     const toggleBtn = container.querySelector('[data-testid="App--toggle-show-hidden"]');
     assert(toggleBtn, "toggle show hidden button must exist when hidden agents exist");
     expect(toggleBtn.textContent).toContain("Show 1 hidden");
+    expect(toggleBtn.getAttribute("class")).toContain("cursor-pointer");
 
     // Click toggle button to reveal hidden agents inside act
     await act(async () => {
@@ -124,6 +125,120 @@ describe("App Layout & Session Visibility", () => {
 
     expect(patchCalledWithUrl).toContain("/api/v1/agents/agent-toggle-test");
     expect(patchCalledWithBody).toBe(JSON.stringify({ isHidden: true }));
+
+    await unmount();
+  });
+
+  it("reverts optimistic update when patch request fails", async () => {
+    const { mockDoc, cleanup } = setupMockDomEnvironment();
+    envCleanup = cleanup;
+
+    // Simulate server error response
+    globalThis.fetch = (async (): Promise<Response> => {
+      return new Response("Internal Server Error", { status: 500, statusText: "Internal Server Error" });
+    }) as unknown as typeof fetch;
+
+    const testAgent: IAgentState = {
+      ...fixture_agentStateRunning,
+      id: "agent-rollback-test",
+      isHidden: false,
+    };
+
+    const { container, unmount } = await mountComponent(<App />, mockDoc);
+
+    await act(async () => {
+      const snapshotEvent = new CustomEvent<ServerEvent>("mock-sse-event", {
+        detail: {
+          type: "snapshot",
+          at: Date.now(),
+          agents: [testAgent],
+          environments: [testAgent.environment],
+        },
+      });
+      window.dispatchEvent(snapshotEvent);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    const hideBtn = container.querySelector('[data-testid="AgentCard--hide-button"]');
+    assert(hideBtn);
+
+    await act(async () => {
+      hideBtn.click();
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+
+    // Since the network failed, the override was reverted and agent remains visible
+    const card = container.querySelector('[data-testid="AgentCard"]');
+    assert(card, "agent card must remain visible after network failure rollback");
+
+    await unmount();
+  });
+
+  it("converges hiddenOverrides when incoming stream auto-unhides agent", async () => {
+    const { mockDoc, cleanup } = setupMockDomEnvironment();
+    envCleanup = cleanup;
+
+    globalThis.fetch = (async (): Promise<Response> => {
+      return new Response(JSON.stringify({ isHidden: true }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const testAgent: IAgentState = {
+      ...fixture_agentStateRunning,
+      id: "agent-auto-unhide-test",
+      isHidden: false,
+    };
+
+    const { container, unmount } = await mountComponent(<App />, mockDoc);
+
+    // Initial snapshot
+    await act(async () => {
+      const snapshotEvent = new CustomEvent<ServerEvent>("mock-sse-event", {
+        detail: {
+          type: "snapshot",
+          at: Date.now(),
+          agents: [testAgent],
+          environments: [testAgent.environment],
+        },
+      });
+      window.dispatchEvent(snapshotEvent);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    // Hide the agent
+    const hideBtn = container.querySelector('[data-testid="AgentCard--hide-button"]');
+    assert(hideBtn);
+
+    await act(async () => {
+      hideBtn.click();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    // Now hidden, agent is filtered out (0 visible, 1 hidden)
+    const agentCountEl = container.querySelector('[data-testid="App--agent-count"]');
+    assert(agentCountEl);
+    expect(agentCountEl.textContent).toContain("0 Agents (1 hidden)");
+
+    // Backend auto-unhides the agent due to new activity and emits agent_upsert
+    await act(async () => {
+      const upsertEvent = new CustomEvent<ServerEvent>("mock-sse-event", {
+        detail: {
+          type: "agent_upsert",
+          at: Date.now(),
+          agent: {
+            ...testAgent,
+            isHidden: false,
+            hiddenAt: null,
+          },
+        },
+      });
+      window.dispatchEvent(upsertEvent);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    // hiddenOverrides should be pruned, and agent should immediately be visible again!
+    expect(agentCountEl.textContent).toBe("1 Agent");
+    const visibleCard = container.querySelector('[data-testid="AgentCard"]');
+    assert(visibleCard, "agent must reappear automatically on real-time auto-unhide event");
 
     await unmount();
   });

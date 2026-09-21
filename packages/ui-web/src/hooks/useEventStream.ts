@@ -53,6 +53,18 @@ export function useEventStream(apiBaseUrl?: string, token: string = DEFAULT_DEV_
     }
   }, []);
 
+  const updateAgent = useCallback((updated: IAgentState) => {
+    setAgents((prev) => {
+      const idx = prev.findIndex((a) => a.id === updated.id);
+      if (idx >= 0) {
+        const copy = [...prev];
+        copy[idx] = updated;
+        return copy;
+      }
+      return [updated, ...prev];
+    });
+  }, []);
+
   useEffect(() => {
     let es: EventSource | null = null;
     let retryTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -129,5 +141,5 @@ export function useEventStream(apiBaseUrl?: string, token: string = DEFAULT_DEV_
     };
   }, [resolvedBaseUrl, token, handleServerEvent]);
 
-  return { agents, environments, isConnected, error };
+  return { agents, environments, isConnected, error, updateAgent };
 }

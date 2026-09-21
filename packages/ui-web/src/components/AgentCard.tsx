@@ -37,6 +37,9 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
   const exactTime = formatExactTime(activity.updatedAt);
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget) {
+      return;
+    }
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       onOpenDrawer?.(agent);
@@ -90,7 +93,10 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
                   event.stopPropagation();
                   onToggleHide(agent);
                 }}
-                className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors focus:outline-none focus:ring-1 focus:ring-slate-500"
+                onKeyDown={(event: React.KeyboardEvent<HTMLButtonElement>) => {
+                  event.stopPropagation();
+                }}
+                className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors focus:outline-none focus:ring-1 focus:ring-slate-500 cursor-pointer"
               >
                 <IconWrapper size="xs" tone="muted">
                   {agent.isHidden ? <Eye size={13} /> : <EyeOff size={13} />}
