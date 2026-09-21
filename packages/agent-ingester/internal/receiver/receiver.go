@@ -26,6 +26,8 @@ type Receiver struct {
 	envNames    map[string]string
 }
 
+const maxMessageReadLimit = 64 * 1024 * 1024 // 64 MiB
+
 func New(s *store.Store, c *classifier.Classifier, p *notify.Publisher, token string) *Receiver {
 	return &Receiver{
 		store:       s,
@@ -81,6 +83,7 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		logging.Error("ws_accept_error", "err", err)
 		return
 	}
+	conn.SetReadLimit(maxMessageReadLimit)
 	logging.Debug("observer_connected", "remoteAddr", req.RemoteAddr)
 	defer func() {
 		logging.Debug("observer_disconnected", "remoteAddr", req.RemoteAddr)
@@ -92,8 +95,9 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	for {
 		typ, data, err := conn.Read(ctx)
 		if err != nil {
-			if websocket.CloseStatus(err) != -1 {
-				return
+			closeStatus := websocket.CloseStatus(err)
+			if closeStatus != websocket.StatusNormalClosure && closeStatus != websocket.StatusGoingAway && ctx.Err() == nil {
+				logging.Warn("observer_read_error", "err", err, "remoteAddr", req.RemoteAddr)
 			}
 			return
 		}

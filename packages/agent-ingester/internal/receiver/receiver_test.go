@@ -671,4 +671,267 @@ func TestReceiverEnvNameTracking(t *testing.T) {
 	if got := rcv.getEnvName("env-456"); got != "" {
 		t.Errorf("expected empty string for empty name, got %q", got)
 	}
+
+	// Nil envNames map initialization
+	bareRcv := &Receiver{}
+	bareRcv.setEnvName("env-nil", "Nil Map Box")
+	if got := bareRcv.getEnvName("env-nil"); got != "Nil Map Box" {
+		t.Errorf("bareRcv.getEnvName('env-nil') = %q, want 'Nil Map Box'", got)
+	}
+}
+
+func TestReceiver_OversizedFrameBatch(t *testing.T) {
+	rcv, st, _ := newTestReceiver(t)
+
+	mux := http.NewServeMux()
+	mux.Handle("/ws/ingest", rcv)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws/ingest"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	opts := &websocket.DialOptions{
+		HTTPHeader: http.Header{
+			"Authorization": []string{"Bearer test-token"},
+		},
+	}
+
+	conn, _, err := websocket.Dial(ctx, wsURL, opts)
+	if err != nil {
+		t.Fatalf("websocket dial failed: %v", err)
+	}
+	defer func() {
+		_ = conn.Close(websocket.StatusNormalClosure, "done")
+	}()
+
+	// Send hello frame (hello does not return an ACK)
+	helloMsg := types.IObserverMessage{
+		Type:  "hello",
+		EnvID: "env-large",
+		Environment: &types.IEnvironmentInfo{
+			ID:              "env-large",
+			Label:           "large-testbox",
+			Hostname:        "large-testbox",
+			Platform:        "darwin",
+			User:            "testuser",
+			LastHeartbeatAt: time.Now().UnixMilli(),
+		},
+	}
+	helloBytes, err := json.Marshal(helloMsg)
+	if err != nil {
+		t.Fatalf("marshaling hello: %v", err)
+	}
+	if err := conn.Write(ctx, websocket.MessageText, helloBytes); err != nil {
+		t.Fatalf("writing hello: %v", err)
+	}
+
+	// Create an oversized frame (> 32 KiB, e.g. 128 KiB tool output / diff)
+	// Default coder/websocket limit was 32768 bytes; this is ~100KB+
+	largePayload := strings.Repeat("A large log line output containing agent telemetry bash output\n", 2000)
+	toolName := "Bash"
+	toolResult := largePayload
+
+	largeFrame := types.ITelemetryFrame{
+		Version:        "1.0",
+		Seq:            1,
+		EnvID:          "env-large",
+		Environment:    *helloMsg.Environment,
+		AgentID:        "agent-large-1",
+		SessionID:      "sess-large-1",
+		PID:            12345,
+		Harness:        types.HarnessClaudeCode,
+		HarnessVersion: "1.0.0",
+		Project: types.IProjectInfo{
+			ID:            "proj-large",
+			Name:          "proj-large",
+			CanonicalRoot: "/workspaces/large",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "main",
+			CWD:    "/workspaces/large",
+		},
+		Timestamp: time.Now().UnixMilli(),
+		EventType: "tool_result",
+		Data: types.TelemetryFrameData{
+			ToolName:   &toolName,
+			ToolOutput: &toolResult,
+		},
+	}
+
+	framesMsg := types.IObserverMessage{
+		Type:   "frames",
+		EnvID:  "env-large",
+		Frames: []types.ITelemetryFrame{largeFrame},
+	}
+	framesBytes, err := json.Marshal(framesMsg)
+	if err != nil {
+		t.Fatalf("marshaling large frames: %v", err)
+	}
+
+	// Verify the payload actually exceeds 32 KiB
+	if len(framesBytes) <= 32*1024 {
+		t.Fatalf("payload size %d is not > 32 KiB", len(framesBytes))
+	}
+
+	// Send oversized message to receiver
+	if err := conn.Write(ctx, websocket.MessageText, framesBytes); err != nil {
+		t.Fatalf("writing oversized frame: %v", err)
+	}
+
+	// Read ack from receiver
+	_, frameAckBytes, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("reading frame ack (receiver dropped oversized connection): %v", err)
+	}
+	var frameAck types.IIngesterMessage
+	if err := json.Unmarshal(frameAckBytes, &frameAck); err != nil {
+		t.Fatalf("unmarshaling frame ack: %v", err)
+	}
+	if frameAck.Type != "ack" || frameAck.UpTo != 1 {
+		t.Fatalf("expected ack with UpTo=1, got %+v", frameAck)
+	}
+
+	// Verify agent was successfully saved in store
+	agent, err := st.GetAgent("agent-large-1")
+	if err != nil || agent == nil {
+		t.Fatalf("agent should have been created in store, got: %v (err: %v)", agent, err)
+	}
+}
+
+func TestReceiver_AbnormalCloseHandling(t *testing.T) {
+	rcv, _, _ := newTestReceiver(t)
+
+	mux := http.NewServeMux()
+	mux.Handle("/ws/ingest", rcv)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws/ingest"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	opts := &websocket.DialOptions{
+		HTTPHeader: http.Header{
+			"Authorization": []string{"Bearer test-token"},
+		},
+	}
+
+	conn, _, err := websocket.Dial(ctx, wsURL, opts)
+	if err != nil {
+		t.Fatalf("websocket dial failed: %v", err)
+	}
+
+	// Close abnormally with StatusPolicyViolation (neither normal nor going away)
+	_ = conn.Close(websocket.StatusPolicyViolation, "simulated policy violation")
+	time.Sleep(50 * time.Millisecond)
+}
+
+func TestReceiver_HelloWithHostnameOnlyAndEmptyLabel(t *testing.T) {
+	rcv, _, _ := newTestReceiver(t)
+
+	mux := http.NewServeMux()
+	mux.Handle("/ws/ingest", rcv)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws/ingest"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	opts := &websocket.DialOptions{
+		HTTPHeader: http.Header{
+			"Authorization": []string{"Bearer test-token"},
+		},
+	}
+
+	conn, _, err := websocket.Dial(ctx, wsURL, opts)
+	if err != nil {
+		t.Fatalf("websocket dial failed: %v", err)
+	}
+	defer func() {
+		_ = conn.Close(websocket.StatusNormalClosure, "done")
+	}()
+
+	helloMsg := types.IObserverMessage{
+		Type: "hello",
+		Environment: &types.IEnvironmentInfo{
+			ID:              "env-host-only",
+			Label:           "",
+			Hostname:        "host.local",
+			Platform:        "linux",
+			User:            "test",
+			LastHeartbeatAt: time.Now().UnixMilli(),
+		},
+	}
+	bytes, _ := json.Marshal(helloMsg)
+	if err := conn.Write(ctx, websocket.MessageText, bytes); err != nil {
+		t.Fatalf("failed to write hello: %v", err)
+	}
+
+	time.Sleep(20 * time.Millisecond)
+	if name := rcv.getEnvName("env-host-only"); name != "host.local" {
+		t.Errorf("expected hostname fallback 'host.local', got %q", name)
+	}
+}
+
+func TestReceiver_UnsupportedFrameVersion(t *testing.T) {
+	rcv, _, _ := newTestReceiver(t)
+
+	mux := http.NewServeMux()
+	mux.Handle("/ws/ingest", rcv)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws/ingest"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	opts := &websocket.DialOptions{
+		HTTPHeader: http.Header{
+			"Authorization": []string{"Bearer test-token"},
+		},
+	}
+
+	conn, _, err := websocket.Dial(ctx, wsURL, opts)
+	if err != nil {
+		t.Fatalf("websocket dial failed: %v", err)
+	}
+	defer func() {
+		_ = conn.Close(websocket.StatusNormalClosure, "done")
+	}()
+
+	msg := types.IObserverMessage{
+		Type:  "frames",
+		EnvID: "env-unsupp",
+		Frames: []types.ITelemetryFrame{
+			{
+				Version: "2.0",
+				Seq:     1,
+				EnvID:   "env-unsupp",
+			},
+		},
+	}
+	bytes, _ := json.Marshal(msg)
+	if err := conn.Write(ctx, websocket.MessageText, bytes); err != nil {
+		t.Fatalf("failed to write frame: %v", err)
+	}
+
+	_, respBytes, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("failed to read response: %v", err)
+	}
+
+	var errMsg types.IIngesterMessage
+	if err := json.Unmarshal(respBytes, &errMsg); err != nil {
+		t.Fatalf("failed to parse error: %v", err)
+	}
+	if errMsg.Type != "error" || errMsg.Code != "unsupported_version" {
+		t.Errorf("expected error code unsupported_version, got: %+v", errMsg)
+	}
 }
