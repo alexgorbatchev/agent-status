@@ -105,6 +105,11 @@ export interface IToolExecutionBlockProps {
   toolOutput?: string | null;
 }
 
+export interface IAnsiTextProps {
+  text: string;
+  className?: string;
+}
+
 export interface ITokenUsageBarProps {
   usage: ITokenUsage;
 }

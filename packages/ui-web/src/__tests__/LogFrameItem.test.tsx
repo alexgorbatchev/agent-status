@@ -7,6 +7,7 @@ import {
   fixture_telemetryFrameSubagent,
   fixture_telemetryFrameUserPrompt,
   fixture_telemetryFrameToolResult,
+  fixture_telemetryFrameThinkingAnsi,
 } from "./fixtures";
 
 describe("LogFrameItem Component", () => {
@@ -53,5 +54,27 @@ describe("LogFrameItem Component", () => {
 
     expect(html).toContain('data-testid="LogFrameItem--subagent"');
     expect(html).toContain("Subagent: subagent-worker-1");
+  });
+
+  it("renders thinking frame with ANSI colors and markdown intact", () => {
+    const html = renderToString(<LogFrameItem frame={fixture_telemetryFrameThinkingAnsi} />);
+
+    expect(html).toContain('data-testid="LogFrameItem"');
+    expect(html).toContain('data-testid="LogFrameItem--type"');
+    expect(html).toContain("thinking");
+
+    // Assert ANSI color codes are rendered as styled elements
+    expect(html).toContain('style="color:rgb(138, 190, 183)"');
+    expect(html).toContain("Thinking:");
+    expect(html).toContain('style="color:rgb(128, 128, 128)"');
+    expect(html).toContain("Okay, here&#x27;s my interpretation");
+
+    // Assert markdown elements are rendered
+    expect(html).toContain("<strong>");
+    expect(html).toContain("Running the Checks");
+
+    // Raw ANSI codes must not appear in output
+    expect(html).not.toContain("38;2;138;190;183m");
+    expect(html).not.toContain("[39m");
   });
 });

@@ -1,5 +1,6 @@
 import React from "react";
 import type { IToolExecutionBlockProps } from "./types";
+import { AnsiText } from "./AnsiText";
 
 export function ToolExecutionBlock({ toolName, toolInput, toolOutput }: IToolExecutionBlockProps): React.JSX.Element {
   return (
@@ -22,7 +23,7 @@ export function ToolExecutionBlock({ toolName, toolInput, toolOutput }: IToolExe
           data-testid="ToolExecutionBlock--output"
           className="mt-1 p-2 rounded bg-slate-950/80 text-slate-300 font-mono text-[10px] overflow-x-auto max-h-40 whitespace-pre-wrap break-words"
         >
-          {toolOutput}
+          <AnsiText text={toolOutput} />
         </pre>
       )}
     </div>

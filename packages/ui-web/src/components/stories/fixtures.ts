@@ -551,3 +551,19 @@ export const fixture_telemetryFrameWithUsage: ITelemetryFrame = {
     rawHarnessCost: 0.045,
   },
 };
+
+export const fixture_telemetryFrameThinkingAnsi: ITelemetryFrame = {
+  ...fixture_telemetryFrame,
+  seq: 6,
+  eventType: "thinking",
+  data: {
+    ...fixture_telemetryFrame.data,
+    role: "assistant",
+    content:
+      "\u001b[38;2;138;190;183mThinking:\u001b[39m  \u001b[38;2;128;128;128mOkay, here's my interpretation of that simple instruction, framed as my own thought process:\n\n**Running the Checks**\n\nAlright, that's straightforward enough. \"Now run just check!\" It's a command, likely within a build system. \u001b[39m",
+    toolName: null,
+    toolCallId: null,
+    toolInput: null,
+    toolOutput: null,
+  },
+};

@@ -6,6 +6,7 @@ import {
   fixture_telemetryFrameSubagent,
   fixture_telemetryFrameUserPrompt,
   fixture_telemetryFrameToolResult,
+  fixture_telemetryFrameThinkingAnsi,
 } from "./fixtures";
 
 const meta: Meta<typeof LogFrameItem> = {
@@ -73,5 +74,21 @@ export const ToolResult: Story = {
     await expect(canvas.getByTestId("ToolExecutionBlock--output")).toHaveTextContent(
       "PASS packages/ui-web/src/App.test.tsx",
     );
+  },
+};
+
+export const ThinkingWithAnsiColors: Story = {
+  args: {
+    frame: fixture_telemetryFrameThinkingAnsi,
+  },
+  async play({ canvasElement }) {
+    const canvas = within(canvasElement);
+    const item = canvas.getByTestId("LogFrameItem");
+    await expect(item).toBeInTheDocument();
+    await expect(canvas.getByTestId("LogFrameItem--type")).toHaveTextContent("thinking");
+    const content = canvas.getByTestId("LogFrameItem--content");
+    await expect(content).toBeInTheDocument();
+    await expect(content).toHaveTextContent("Thinking: Okay, here's my interpretation");
+    await expect(content).toHaveTextContent("Running the Checks");
   },
 };

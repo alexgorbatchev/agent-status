@@ -1,9 +1,11 @@
-import React from "react";
+import React, { useMemo } from "react";
 import type { ILogFrameItemProps } from "./types";
 import { Brain, Wrench, AlertTriangle, User, Play, CheckCircle2 } from "lucide-react";
 import Markdown from "react-markdown";
 import { ToolExecutionBlock } from "./ToolExecutionBlock";
 import { TokenUsageBar } from "./TokenUsageBar";
+import { rehypeAnsi } from "../utils/rehypeAnsi";
+import { preprocessMarkdownAnsi } from "../utils/ansiUtils";
 
 export function LogFrameItem({ frame }: ILogFrameItemProps): React.JSX.Element {
   const isSubagent = Boolean(frame.subagentId);
@@ -60,6 +62,16 @@ export function LogFrameItem({ frame }: ILogFrameItemProps): React.JSX.Element {
       ? "bg-purple-950/20 border-purple-900/40 ml-4"
       : "bg-slate-900/80 border-slate-800";
 
+  const rehypePlugins = useMemo(() => [rehypeAnsi], []);
+  const processedContent = useMemo(
+    () => (frame.data.content ? preprocessMarkdownAnsi(frame.data.content) : null),
+    [frame.data.content],
+  );
+  const processedQuestion = useMemo(
+    () => (frame.data.question ? preprocessMarkdownAnsi(frame.data.question) : null),
+    [frame.data.question],
+  );
+
   return (
     <div data-testid="LogFrameItem" className={`p-3 rounded-lg border transition-all ${containerClasses}`}>
       <div className="flex items-center justify-between gap-2 mb-1 text-[11px] text-slate-400 font-mono">
@@ -82,22 +94,22 @@ export function LogFrameItem({ frame }: ILogFrameItemProps): React.JSX.Element {
         </span>
       </div>
 
-      {frame.data.content && (
+      {processedContent && (
         <div
           data-testid="LogFrameItem--content"
           className="text-slate-300 prose prose-invert max-w-none text-xs leading-relaxed break-words space-y-1"
         >
-          <Markdown>{frame.data.content}</Markdown>
+          <Markdown rehypePlugins={rehypePlugins}>{processedContent}</Markdown>
         </div>
       )}
 
-      {frame.data.question && (
+      {processedQuestion && (
         <div
           data-testid="LogFrameItem--question"
           className="mt-1 p-2 rounded bg-amber-950/30 border border-amber-800/40 text-amber-200"
         >
           <span className="font-semibold text-[11px] block mb-1">Question:</span>
-          <Markdown>{frame.data.question}</Markdown>
+          <Markdown rehypePlugins={rehypePlugins}>{processedQuestion}</Markdown>
         </div>
       )}
 
