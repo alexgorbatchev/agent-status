@@ -243,6 +243,7 @@ test.describe("LogDrawer & Live Tail", () => {
 
     const stream = page.getByTestId("LogDrawer--stream");
     await expect(stream).toBeVisible();
+    await expect(page.getByTestId("LogFrameItem")).toBeVisible();
 
     // Verify stream scrollWidth does not exceed clientWidth (zero horizontal overflow)
     const overflowDiff = await stream.evaluate((el) => el.scrollWidth - el.clientWidth);
