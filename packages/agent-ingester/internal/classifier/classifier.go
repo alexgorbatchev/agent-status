@@ -566,17 +566,20 @@ func (c *Classifier) updateSummarization(agent *types.IAgentState, forceTrigger 
 
 	// Always compute fallback summary so the returned agent state is immediately valid
 	fb := summarizer.FallbackSummary(input)
-	if agent.Activity.Action == "" || forceTrigger {
-		agent.Activity.Action = fb.Action
-		agent.Activity.Phase = fb.Phase
-		if fb.ActiveTarget != nil {
-			agent.Activity.ActiveTarget = fb.ActiveTarget
-		}
+	agent.Activity.Action = fb.Action
+	agent.Activity.Phase = fb.Phase
+	if fb.ActiveTarget != nil {
+		agent.Activity.ActiveTarget = fb.ActiveTarget
+	}
+
+	eventTime := time.Now()
+	if agent.Activity.UpdatedAt > 0 {
+		eventTime = time.UnixMilli(agent.Activity.UpdatedAt)
 	}
 
 	// Synchronous mode execution (e.g. for deterministic unit test assertions)
 	if isSync {
-		if forceTrigger || c.summarizer.Allow(agent.ID) {
+		if forceTrigger || c.summarizer.AllowAt(agent.ID, eventTime) {
 			res := c.summarizer.Summarize(context.Background(), input)
 			isDup := summarizer.IsNearDuplicate(agent.Activity.Action, res.Action, summarizer.DefaultSimilarityThreshold)
 			phaseSame := (agent.Activity.Phase == nil && res.Phase == nil) || (agent.Activity.Phase != nil && res.Phase != nil && *agent.Activity.Phase == *res.Phase)
@@ -599,7 +602,7 @@ func (c *Classifier) updateSummarization(agent *types.IAgentState, forceTrigger 
 	}
 
 	// Check rate limit debounce for external LLM calls
-	if forceTrigger || c.summarizer.Allow(agent.ID) {
+	if forceTrigger || c.summarizer.AllowAt(agent.ID, eventTime) {
 		agent.Activity.ActionStale = false
 		return &summaryJob{
 			input:     input,

@@ -735,6 +735,42 @@ func TestDebounceRateLimiting(t *testing.T) {
 	}
 }
 
+func TestSummarizer_AllowAt(t *testing.T) {
+	s, err := New(Config{
+		NoSummarize:    true,
+		DebounceWindow: 10 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	agentID := "agent-event-rate-limit"
+	t0 := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
+
+	// First call at t0 should succeed
+	if !s.AllowAt(agentID, t0) {
+		t.Errorf("first AllowAt() at t0 should return true")
+	}
+
+	// Immediate call 2 seconds later in event time (within 10s debounce) should return false
+	t1 := t0.Add(2 * time.Second)
+	if s.AllowAt(agentID, t1) {
+		t.Errorf("AllowAt() at t0+2s should return false within 10s debounce window")
+	}
+
+	// Immediate call 15 seconds after t0 (exceeding 10s debounce) without wall-clock sleep should return true
+	t2 := t0.Add(15 * time.Second)
+	if !s.AllowAt(agentID, t2) {
+		t.Errorf("AllowAt() at t0+15s should return true without wall-clock sleep")
+	}
+
+	// nil receiver should return false
+	var nilSum *Summarizer
+	if nilSum.AllowAt(agentID, t2) {
+		t.Errorf("nil Summarizer.AllowAt() should return false")
+	}
+}
+
 func TestSummarizer_WithMockOpenAIServer(t *testing.T) {
 	var requestCount int64
 

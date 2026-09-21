@@ -715,6 +715,153 @@ func TestClassifier_ContinuousActivityDebounceAndStaleness(t *testing.T) {
 	}
 }
 
+func TestClassifier_BatchedFrames_TimestampDebounce(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]interface{}{
+			"id":     "chatcmpl-sum-batch",
+			"object": "chat.completion",
+			"choices": []map[string]interface{}{
+				{
+					"index": 0,
+					"message": map[string]interface{}{
+						"role":    "assistant",
+						"content": `{"action":"Running tests","phase":"testing","activeTarget":"./..."}`,
+					},
+					"finish_reason": "stop",
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(mockServer.Close)
+
+	p, err := openai.New(
+		anyllm.WithBaseURL(mockServer.URL+"/v1"),
+		anyllm.WithAPIKey("test-key"),
+	)
+	if err != nil {
+		t.Fatalf("openai.New() failed: %v", err)
+	}
+
+	sum, err := summarizer.New(summarizer.Config{
+		Providers: []summarizer.ProviderConfig{
+			{
+				Name:     "mock-openai",
+				Provider: p,
+				Model:    "gpt-4o-mini",
+			},
+		},
+		DebounceWindow: 10 * time.Second,
+		Timeout:        2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+
+	c, _ := newTestClassifier(t, sum)
+	c.SetSyncMode(true)
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{
+		Label:    "devbox",
+		Hostname: "devbox",
+		Platform: "linux",
+		User:     "testuser",
+	}
+	ws := types.IWorkspaceInfo{
+		Branch: "main",
+		CWD:    "/workspace",
+	}
+	proj := types.IProjectInfo{
+		ID:            "github.com/org/repo",
+		Name:          "repo",
+		CanonicalRoot: "/workspace",
+	}
+
+	editTool := "Edit"
+	f1 := types.ITelemetryFrame{
+		Version:        "1.0",
+		Seq:            1,
+		EnvID:          "env-batched",
+		Environment:    env,
+		AgentID:        "env-batched:claude-code:session-batched",
+		SessionID:      "session-batched",
+		PID:            7777,
+		Harness:        types.HarnessClaudeCode,
+		HarnessVersion: "2.1.277",
+		Project:        proj,
+		Workspace:      ws,
+		Timestamp:      1000,
+		EventType:      "tool_call",
+		Data: types.TelemetryFrameData{
+			ToolName: &editTool,
+			ToolInput: map[string]interface{}{
+				"file_path": "main.go",
+			},
+		},
+	}
+
+	agent, err := c.ProcessFrame(f1)
+	if err != nil {
+		t.Fatalf("ProcessFrame(f1) failed: %v", err)
+	}
+	if agent.Activity.ActionStale {
+		t.Errorf("expected ActionStale = false for initial frame")
+	}
+
+	// Frame 2 arrives immediately on wall clock (<1ms), but timestamp is 20s later (>10s debounce)
+	bashTool := "bash"
+	f2 := f1
+	f2.Seq = 2
+	f2.Timestamp = 21000 // 20 seconds later
+	f2.Data = types.TelemetryFrameData{
+		ToolName: &bashTool,
+		ToolInput: map[string]interface{}{
+			"command": "go test ./...",
+		},
+	}
+
+	agent, err = c.ProcessFrame(f2)
+	if err != nil {
+		t.Fatalf("ProcessFrame(f2) failed: %v", err)
+	}
+	// Without fix: Allow checks time.Now() (wall clock hasn't advanced), so ActionStale becomes true
+	// With fix: AllowAt checks event timestamp (20s > 10s debounce), so ActionStale is false
+	if agent.Activity.ActionStale {
+		t.Errorf("expected ActionStale = false for batched frame spaced 20s in event time")
+	}
+
+	// Frame 3 arrives immediately on wall clock, and timestamp is only 1s later (<10s debounce)
+	grepTool := "grep"
+	f3 := f1
+	f3.Seq = 3
+	f3.Timestamp = 22000 // 1 second later (within debounce)
+	f3.Data = types.TelemetryFrameData{
+		ToolName: &grepTool,
+		ToolInput: map[string]interface{}{
+			"pattern": "Test",
+			"path":    "main.go",
+		},
+	}
+
+	agent, err = c.ProcessFrame(f3)
+	if err != nil {
+		t.Fatalf("ProcessFrame(f3) failed: %v", err)
+	}
+	// ActionStale should be true because 1s < 10s debounce window
+	if !agent.Activity.ActionStale {
+		t.Errorf("expected ActionStale = true for frame within debounce window")
+	}
+	// But Action MUST still be immediately updated with the deterministic fallback summary!
+	// Without fix: Action is not updated when Action != "" and forceTrigger == false
+	// With fix: Action is always updated to fb.Action
+	expectedFallback := "Searching main.go"
+	if agent.Activity.Action != expectedFallback {
+		t.Errorf("expected Action to update immediately to fallback %q, got %q", expectedFallback, agent.Activity.Action)
+	}
+}
+
 func TestClassifier_DatabaseErrorHandling(t *testing.T) {
 	sum, _ := summarizer.New(summarizer.Config{NoSummarize: true})
 	c, s := newTestClassifier(t, sum)
