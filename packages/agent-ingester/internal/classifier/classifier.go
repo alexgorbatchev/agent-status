@@ -190,7 +190,9 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		agent.Environment = frame.Environment
 		agent.Workspace = frame.Workspace
 		agent.Project = frame.Project
-		agent.Activity.UpdatedAt = now
+		if frame.EventType != "run_exited" {
+			agent.Activity.UpdatedAt = now
+		}
 	}
 
 	// Auto-unhide if agent was hidden and shows new activity

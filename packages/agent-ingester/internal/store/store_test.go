@@ -95,6 +95,21 @@ func TestMigrate_ErrorCases(t *testing.T) {
 	if err := Migrate(db); err == nil {
 		t.Errorf("expected error on closed db, got nil")
 	}
+
+	// Test v2 failure when agents table does not exist
+	db2, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open failed: %v", err)
+	}
+	defer func() {
+		_ = db2.Close()
+	}()
+	if _, err := db2.Exec("PRAGMA user_version = 1;"); err != nil {
+		t.Fatalf("setting user_version = 1 failed: %v", err)
+	}
+	if err := Migrate(db2); err == nil {
+		t.Errorf("expected error running v2 migration without agents table, got nil")
+	}
 }
 
 func TestMigrate_V1ToV2(t *testing.T) {
@@ -1041,3 +1056,192 @@ func TestStore_GetDistinctSubagentIDs(t *testing.T) {
 	}
 }
 
+func TestStore_EndCurrentRun_PreservesUpdatedAt(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer func() {
+		_ = st.Close()
+	}()
+
+	now := int64(1000000)
+	agent := types.IAgentState{
+		ID:        "agent-preserve-updated-at",
+		SessionID: "sess-preserve",
+		Harness:   types.HarnessPi,
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-1",
+			Platform: "darwin",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle:      types.LifecycleRunning,
+			Activity:       types.ActivityIdle,
+			FirstStartedAt: now,
+			UpdatedAt:      now,
+			CurrentRun: &types.IRunInfo{
+				ID:        "run-1",
+				PID:       1234,
+				StartedAt: now,
+			},
+		},
+	}
+	if err := st.SaveAgentState(agent); err != nil {
+		t.Fatalf("SaveAgentState failed: %v", err)
+	}
+
+	// 24 hours later, the run exits
+	endedAt := now + 86400000
+	if err := st.EndCurrentRun(agent.ID, endedAt); err != nil {
+		t.Fatalf("EndCurrentRun failed: %v", err)
+	}
+
+	afterEnd, err := st.GetAgent(agent.ID)
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if afterEnd.Activity.Lifecycle != types.LifecycleExited {
+		t.Errorf("expected lifecycle %s, got %s", types.LifecycleExited, afterEnd.Activity.Lifecycle)
+	}
+	if afterEnd.Activity.UpdatedAt != now {
+		t.Errorf("expected UpdatedAt to be preserved at %d, but got %d (diff: %d ms)", now, afterEnd.Activity.UpdatedAt, afterEnd.Activity.UpdatedAt-now)
+	}
+}
+
+func TestStore_RecordTelemetryEvent_SubagentAndCoverage(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer func() {
+		_ = st.Close()
+	}()
+
+	now := int64(1000)
+	agent := types.IAgentState{
+		ID:        "agent-cov",
+		SessionID: "sess-cov",
+		Harness:   types.HarnessPi,
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-1",
+			Platform: "darwin",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityIdle,
+			UpdatedAt: now,
+		},
+	}
+	if err := st.SaveAgentState(agent); err != nil {
+		t.Fatalf("SaveAgentState failed: %v", err)
+	}
+
+	subID := "sub-xyz"
+	tool := "bash"
+	frame := types.ITelemetryFrame{
+		Seq:        1,
+		AgentID:    "agent-cov",
+		SubagentID: &subID,
+		SessionID:  "sess-cov",
+		EventType:  "tool_call",
+		Timestamp:  1000,
+		Data: types.TelemetryFrameData{
+			ToolName: &tool,
+		},
+	}
+	if err := st.RecordTelemetryEvent(frame); err != nil {
+		t.Fatalf("RecordTelemetryEvent with subagent failed: %v", err)
+	}
+
+	subIDs, err := st.GetDistinctSubagentIDs("agent-cov")
+	if err != nil {
+		t.Fatalf("GetDistinctSubagentIDs failed: %v", err)
+	}
+	if len(subIDs) != 1 || subIDs[0] != "sub-xyz" {
+		t.Errorf("unexpected subIDs: %v", subIDs)
+	}
+
+	// Empty string subagent ID should be treated as nil
+	emptySub := ""
+	frame2 := types.ITelemetryFrame{
+		Seq:        2,
+		AgentID:    "agent-cov",
+		SubagentID: &emptySub,
+		SessionID:  "sess-cov",
+		EventType:  "tool_result",
+		Timestamp:  1001,
+	}
+	if err := st.RecordTelemetryEvent(frame2); err != nil {
+		t.Fatalf("RecordTelemetryEvent with empty subagent failed: %v", err)
+	}
+
+	// Test ActionStale and Cost and Phase and Hidden in SaveAgentState
+	phase := types.PhasePlanning
+	cost := types.ICostInfo{Total: 1.23}
+	agentStale := types.IAgentState{
+		ID:        "agent-stale",
+		SessionID: "sess-stale",
+		Harness:   types.HarnessPi,
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-1",
+			Platform: "darwin",
+		},
+		IsHidden: true,
+		Activity: types.IAgentActivity{
+			Lifecycle:   types.LifecycleRunning,
+			Activity:    types.ActivityBusy,
+			ActionStale: true,
+			Cost:        &cost,
+			Phase:       &phase,
+			UpdatedAt:   now,
+		},
+	}
+	if err := st.SaveAgentState(agentStale); err != nil {
+		t.Fatalf("SaveAgentState with actionStale failed: %v", err)
+	}
+	gotStale, err := st.GetAgent("agent-stale")
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if !gotStale.Activity.ActionStale {
+		t.Errorf("expected ActionStale = true")
+	}
+	if gotStale.Activity.Cost == nil || gotStale.Activity.Cost.Total != 1.23 {
+		t.Errorf("expected Cost = 1.23")
+	}
+	if gotStale.Activity.Phase == nil || *gotStale.Activity.Phase != types.PhasePlanning {
+		t.Errorf("expected Phase = planning")
+	}
+
+	// Test error cases in SaveAgentState
+	badPlatformAgent := types.IAgentState{
+		ID: "bad-agent-platform",
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-1",
+			Platform: "invalid-platform",
+		},
+	}
+	if err := st.SaveAgentState(badPlatformAgent); err == nil {
+		t.Errorf("expected error with invalid platform in SaveAgentState")
+	}
+
+	badActivityAgent := types.IAgentState{
+		ID: "bad-agent-activity",
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-1",
+			Platform: "darwin",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityState("INVALID"),
+		},
+	}
+	if err := st.SaveAgentState(badActivityAgent); err == nil {
+		t.Errorf("expected error with invalid activity in SaveAgentState")
+	}
+
+	// Test Open error with inaccessible path
+	if _, err := Open("file:/nonexistent_dir/sub/test.db?mode=ro"); err == nil {
+		t.Errorf("expected error opening non-existent read-only path")
+	}
+}

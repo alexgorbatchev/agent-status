@@ -495,7 +495,7 @@ func (s *Store) EndCurrentRun(agentID string, endedAt int64) error {
 		}
 	}
 
-	_, err = tx.Exec("UPDATE agents SET current_run_id = NULL, updated_at = ? WHERE id = ?", endedAt, agentID)
+	_, err = tx.Exec("UPDATE agents SET current_run_id = NULL WHERE id = ?", agentID)
 	if err != nil {
 		return err
 	}
