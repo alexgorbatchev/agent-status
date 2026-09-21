@@ -627,7 +627,7 @@ func (c *Classifier) updateSummarization(agent *types.IAgentState, forceTrigger 
 			if !isDup || !phaseSame || !targetSame {
 				agent.Activity.Action = res.Action
 				agent.Activity.Phase = res.Phase
-				if res.ActiveTarget != nil && *res.ActiveTarget != "" {
+				if agent.Activity.ActiveTool != nil && res.ActiveTarget != nil && *res.ActiveTarget != "" {
 					agent.Activity.ActiveTarget = res.ActiveTarget
 				}
 			}
@@ -752,7 +752,7 @@ func (c *Classifier) processSummaryJob(agentID string, job summaryJob) {
 	// Apply updated summary
 	agent.Activity.Action = res.Action
 	agent.Activity.Phase = res.Phase
-	if res.ActiveTarget != nil && *res.ActiveTarget != "" {
+	if agent.Activity.ActiveTool != nil && res.ActiveTarget != nil && *res.ActiveTarget != "" {
 		agent.Activity.ActiveTarget = res.ActiveTarget
 	}
 	agent.Activity.ActionStale = false

@@ -171,31 +171,31 @@ func TestClassifier_LifecycleAndActivityTransitions(t *testing.T) {
 		t.Errorf("expected LastError truncated to <= 2000 chars, got len %d", len(*agent.Activity.LastError))
 	}
 
-	// 6. tool_call -> AskUserQuestion -> WAITING_QUESTION
-	q := "Should we proceed with migration?"
-	toolName := "AskUserQuestion"
+	// 6. tool_call -> Bash -> BUSY with ActiveTool and ActiveTarget
+	cmd := "npm test"
+	toolName := "Bash"
 	f2 := baseFrame
 	f2.Seq = 6
 	f2.EventType = "tool_call"
 	f2.Data = types.TelemetryFrameData{
-		ToolName: &toolName,
-		Question: &q,
+		ToolName:  &toolName,
+		ToolInput: map[string]interface{}{"command": cmd},
 	}
 	agent, err = c.ProcessFrame(f2)
 	if err != nil {
 		t.Fatalf("ProcessFrame(tool_call) error = %v", err)
 	}
-	if agent.Activity.Activity != types.ActivityWaitingQuestion {
-		t.Errorf("got activity %s, want %s", agent.Activity.Activity, types.ActivityWaitingQuestion)
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Errorf("got activity %s, want %s", agent.Activity.Activity, types.ActivityBusy)
 	}
-	if agent.Activity.Question == nil || *agent.Activity.Question != q {
-		t.Errorf("got question %v, want %s", agent.Activity.Question, q)
+	if agent.Activity.ActiveTool == nil || *agent.Activity.ActiveTool != toolName {
+		t.Fatalf("expected ActiveTool %q, got %v", toolName, agent.Activity.ActiveTool)
 	}
-	if agent.Activity.Action != "Waiting for user input" {
-		t.Errorf("got Action %q, want 'Waiting for user input'", agent.Activity.Action)
+	if agent.Activity.ActiveTarget == nil || *agent.Activity.ActiveTarget != cmd {
+		t.Fatalf("expected ActiveTarget %q, got %v", cmd, agent.Activity.ActiveTarget)
 	}
 
-	// 7. tool_result with isError = true -> Remains Busy (non-zero exits are normal shell workflow, not an error)
+	// 7. tool_result with isError = true -> Remains Busy, clears ActiveTool and ActiveTarget
 	errMsg := "permission denied: /etc/hosts"
 	isErr := true
 	f3 := baseFrame
@@ -215,12 +215,39 @@ func TestClassifier_LifecycleAndActivityTransitions(t *testing.T) {
 	if agent.Activity.LastError != nil {
 		t.Errorf("got lastError %v, want nil (tool error output must not be recorded as LastError)", *agent.Activity.LastError)
 	}
+	if agent.Activity.ActiveTool != nil {
+		t.Errorf("expected ActiveTool nil after tool_result with error, got %q", *agent.Activity.ActiveTool)
+	}
+	if agent.Activity.ActiveTarget != nil {
+		t.Errorf("expected ActiveTarget nil after tool_result with error, got %q", *agent.Activity.ActiveTarget)
+	}
 
-	// 8. tool_result with isError = false -> Busy
+	// 7b. tool_call -> Edit -> BUSY with ActiveTool and ActiveTarget
+	editPath := "src/index.ts"
+	editTool := "Edit"
+	f2b := baseFrame
+	f2b.Seq = 8
+	f2b.EventType = "tool_call"
+	f2b.Data = types.TelemetryFrameData{
+		ToolName:  &editTool,
+		ToolInput: map[string]interface{}{"path": editPath},
+	}
+	agent, err = c.ProcessFrame(f2b)
+	if err != nil {
+		t.Fatalf("ProcessFrame(tool_call edit) error = %v", err)
+	}
+	if agent.Activity.ActiveTool == nil || *agent.Activity.ActiveTool != editTool {
+		t.Fatalf("expected ActiveTool %q, got %v", editTool, agent.Activity.ActiveTool)
+	}
+	if agent.Activity.ActiveTarget == nil || *agent.Activity.ActiveTarget != editPath {
+		t.Fatalf("expected ActiveTarget %q, got %v", editPath, agent.Activity.ActiveTarget)
+	}
+
+	// 8. tool_result with isError = false -> Busy, clears ActiveTool and ActiveTarget
 	isErrFalse := false
 	okOut := "success"
 	fToolResOk := baseFrame
-	fToolResOk.Seq = 8
+	fToolResOk.Seq = 9
 	fToolResOk.EventType = "tool_result"
 	fToolResOk.Data = types.TelemetryFrameData{
 		IsError:    &isErrFalse,
@@ -232,6 +259,12 @@ func TestClassifier_LifecycleAndActivityTransitions(t *testing.T) {
 	}
 	if agent.Activity.Activity != types.ActivityBusy {
 		t.Errorf("got activity %s, want %s", agent.Activity.Activity, types.ActivityBusy)
+	}
+	if agent.Activity.ActiveTool != nil {
+		t.Errorf("expected ActiveTool nil after tool_result ok, got %q", *agent.Activity.ActiveTool)
+	}
+	if agent.Activity.ActiveTarget != nil {
+		t.Errorf("expected ActiveTarget nil after tool_result ok, got %q", *agent.Activity.ActiveTarget)
 	}
 
 	// 9. turn_end -> IDLE, clears question, active tool and target
@@ -2635,4 +2668,239 @@ func TestClassifier_RunExited_PreservesUpdatedAt(t *testing.T) {
 	if reloaded.Activity.UpdatedAt != toolTime {
 		t.Errorf("persisted reloaded.Activity.UpdatedAt was overwritten: expected %d, got %d (diff: %d ms)", toolTime, reloaded.Activity.UpdatedAt, reloaded.Activity.UpdatedAt-toolTime)
 	}
+}
+
+func TestClassifier_ToolResult_ClearsActiveToolAndTarget(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer func() {
+		_ = st.Close()
+	}()
+
+	p, err := pricing.NewPricingEngine()
+	if err != nil {
+		t.Fatalf("NewPricingEngine failed: %v", err)
+	}
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New failed: %v", err)
+	}
+	c := New(st, p, sum)
+	c.SetIdleGracePeriod(0)
+
+	now := int64(1000000)
+	baseFrame := types.ITelemetryFrame{
+		Version: "1.0",
+		EnvID:   "env-1",
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-1",
+			Platform: "darwin",
+		},
+		AgentID:   "agent-tool-result-clear",
+		SessionID: "sess-clear",
+		Harness:   types.HarnessClaudeCode,
+		Project: types.IProjectInfo{
+			ID:   "proj-1",
+			Name: "agent-status",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "main",
+			CWD:    "/workspace",
+		},
+		PID:       4321,
+		Timestamp: now,
+	}
+
+	// 1. run_started
+	f1 := baseFrame
+	f1.Seq = 1
+	f1.EventType = "run_started"
+	agent, err := c.ProcessFrame(f1)
+	if err != nil {
+		t.Fatalf("ProcessFrame(run_started) failed: %v", err)
+	}
+	if agent.Activity.ActiveTool != nil || agent.Activity.ActiveTarget != nil {
+		t.Fatalf("expected ActiveTool and ActiveTarget nil on start")
+	}
+
+	// 2. tool_call (Bash running tests)
+	toolBash := "Bash"
+	cmd := "go test -race ./..."
+	f2 := baseFrame
+	f2.Seq = 2
+	f2.Timestamp = now + 1000
+	f2.EventType = "tool_call"
+	f2.Data = types.TelemetryFrameData{
+		ToolName:  &toolBash,
+		ToolInput: map[string]interface{}{"command": cmd},
+	}
+	agent, err = c.ProcessFrame(f2)
+	if err != nil {
+		t.Fatalf("ProcessFrame(tool_call Bash) failed: %v", err)
+	}
+	if agent.Activity.ActiveTool == nil || *agent.Activity.ActiveTool != toolBash {
+		t.Fatalf("expected ActiveTool %q, got %v", toolBash, agent.Activity.ActiveTool)
+	}
+	if agent.Activity.ActiveTarget == nil || *agent.Activity.ActiveTarget != cmd {
+		t.Fatalf("expected ActiveTarget %q, got %v", cmd, agent.Activity.ActiveTarget)
+	}
+
+	// 3. tool_result (success) -> MUST clear ActiveTool and ActiveTarget
+	f3 := baseFrame
+	f3.Seq = 3
+	f3.Timestamp = now + 5000
+	f3.EventType = "tool_result"
+	outOk := "PASS\nok\n"
+	isErrFalse := false
+	f3.Data = types.TelemetryFrameData{
+		ToolOutput: &outOk,
+		IsError:    &isErrFalse,
+	}
+	agent, err = c.ProcessFrame(f3)
+	if err != nil {
+		t.Fatalf("ProcessFrame(tool_result ok) failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Errorf("expected ActivityBusy, got %s", agent.Activity.Activity)
+	}
+	if agent.Activity.ActiveTool != nil {
+		t.Errorf("expected ActiveTool nil after tool_result, got %q", *agent.Activity.ActiveTool)
+	}
+	if agent.Activity.ActiveTarget != nil {
+		t.Errorf("expected ActiveTarget nil after tool_result, got %q", *agent.Activity.ActiveTarget)
+	}
+
+	// Verify in SQLite store
+	persisted, err := st.GetAgent(agent.ID)
+	if err != nil {
+		t.Fatalf("st.GetAgent failed: %v", err)
+	}
+	if persisted.Activity.ActiveTool != nil {
+		t.Errorf("persisted ActiveTool must be nil after tool_result, got %q", *persisted.Activity.ActiveTool)
+	}
+	if persisted.Activity.ActiveTarget != nil {
+		t.Errorf("persisted ActiveTarget must be nil after tool_result, got %q", *persisted.Activity.ActiveTarget)
+	}
+
+	// 4. tool_call (Edit)
+	toolEdit := "Edit"
+	filePath := "internal/auth/jwt.go"
+	f4 := baseFrame
+	f4.Seq = 4
+	f4.Timestamp = now + 6000
+	f4.EventType = "tool_call"
+	f4.Data = types.TelemetryFrameData{
+		ToolName:  &toolEdit,
+		ToolInput: map[string]interface{}{"path": filePath},
+	}
+	agent, err = c.ProcessFrame(f4)
+	if err != nil {
+		t.Fatalf("ProcessFrame(tool_call Edit) failed: %v", err)
+	}
+	if agent.Activity.ActiveTool == nil || *agent.Activity.ActiveTool != toolEdit {
+		t.Fatalf("expected ActiveTool %q, got %v", toolEdit, agent.Activity.ActiveTool)
+	}
+	if agent.Activity.ActiveTarget == nil || *agent.Activity.ActiveTarget != filePath {
+		t.Fatalf("expected ActiveTarget %q, got %v", filePath, agent.Activity.ActiveTarget)
+	}
+
+	// 5. tool_result (error) -> MUST clear ActiveTool and ActiveTarget
+	f5 := baseFrame
+	f5.Seq = 5
+	f5.Timestamp = now + 7000
+	f5.EventType = "tool_result"
+	outErr := "syntax error: unexpected token"
+	isErrTrue := true
+	f5.Data = types.TelemetryFrameData{
+		ToolOutput: &outErr,
+		IsError:    &isErrTrue,
+	}
+	agent, err = c.ProcessFrame(f5)
+	if err != nil {
+		t.Fatalf("ProcessFrame(tool_result error) failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Errorf("expected ActivityBusy on tool error exit, got %s", agent.Activity.Activity)
+	}
+	if agent.Activity.ActiveTool != nil {
+		t.Errorf("expected ActiveTool nil after error tool_result, got %q", *agent.Activity.ActiveTool)
+	}
+	if agent.Activity.ActiveTarget != nil {
+		t.Errorf("expected ActiveTarget nil after error tool_result, got %q", *agent.Activity.ActiveTarget)
+	}
+
+	// Verify in SQLite store
+	persisted2, err := st.GetAgent(agent.ID)
+	if err != nil {
+		t.Fatalf("st.GetAgent failed: %v", err)
+	}
+	if persisted2.Activity.ActiveTool != nil {
+		t.Errorf("persisted ActiveTool must be nil after error tool_result, got %q", *persisted2.Activity.ActiveTool)
+	}
+	if persisted2.Activity.ActiveTarget != nil {
+		t.Errorf("persisted ActiveTarget must be nil after error tool_result, got %q", *persisted2.Activity.ActiveTarget)
+	}
+}
+
+func TestClassifier_FlushAll_And_Coverage(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	p, err := pricing.NewPricingEngine()
+	if err != nil {
+		t.Fatalf("NewPricingEngine failed: %v", err)
+	}
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New failed: %v", err)
+	}
+	c := New(st, p, sum)
+	defer func() { _ = c.Close() }()
+
+	// Test FlushAll with no workers
+	c.FlushAll()
+
+	// Test extractTarget coverage
+	if tgt := extractTarget("custom", nil); tgt != "" {
+		t.Errorf("expected empty string for nil input, got %q", tgt)
+	}
+	if tgt := extractTarget("custom", map[string]interface{}{"path": 123}); tgt != "" {
+		t.Errorf("expected empty string for non-string, got %q", tgt)
+	}
+	if tgt := extractTarget("custom", map[string]interface{}{"path": "   "}); tgt != "" {
+		t.Errorf("expected empty string for whitespace string, got %q", tgt)
+	}
+	for _, key := range []string{"file_path", "notebook_path", "description", "url", "query", "skill", "pattern", "prompt"} {
+		input := map[string]interface{}{key: "target-val"}
+		if tgt := extractTarget("custom", input); tgt != "target-val" {
+			t.Errorf("expected target-val for key %s, got %q", key, tgt)
+		}
+	}
+
+	// Test ensureAction when action is empty
+	agent := &types.IAgentState{
+		ID: "agent-ensure",
+		Activity: types.IAgentActivity{
+			Activity: types.ActivityIdle,
+		},
+	}
+	c.ensureAction(agent)
+	if agent.Activity.Action == "" {
+		t.Errorf("expected ensureAction to populate Action")
+	}
+
+	// Test FlushAll with active workers
+	f := types.ITelemetryFrame{
+		AgentID:   "agent-flush",
+		SessionID: "sess-flush",
+		EventType: "run_started",
+		Timestamp: 1000,
+	}
+	_, _ = c.ProcessFrame(f)
+	c.FlushAll()
 }
