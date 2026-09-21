@@ -9,7 +9,6 @@ require (
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/coder/websocket v1.8.15
 	github.com/fsnotify/fsnotify v1.10.1
-	github.com/gammazero/deque v1.2.1
 	github.com/ncruces/go-sqlite3 v0.35.5
 	github.com/shirou/gopsutil/v4 v4.26.8
 	github.com/spf13/cobra v1.10.2

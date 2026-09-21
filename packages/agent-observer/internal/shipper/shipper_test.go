@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -231,7 +232,7 @@ func TestShipperHeartbeat(t *testing.T) {
 	}
 }
 
-func TestShipperReconnectAndReplay(t *testing.T) {
+func TestShipperReconnectStreamsPendingFrames(t *testing.T) {
 	origBackoff := initialBackoff
 	initialBackoff = 20 * time.Millisecond
 	defer func() { initialBackoff = origBackoff }()
@@ -243,6 +244,12 @@ func TestShipperReconnectAndReplay(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempt := atomic.AddInt32(&connectionAttempts, 1)
 
+		if attempt == 1 {
+			// First connection: reject to simulate unavailable ingester
+			http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
+			return
+		}
+
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			return
@@ -250,13 +257,6 @@ func TestShipperReconnectAndReplay(t *testing.T) {
 		defer func() {
 			_ = conn.Close(websocket.StatusNormalClosure, "closed")
 		}()
-
-		if attempt == 1 {
-			// First connection: read hello, then abruptly close connection without acking
-			_, _, _ = conn.Read(r.Context())
-			time.Sleep(50 * time.Millisecond)
-			return
-		}
 
 		// Subsequent connection: read and ack everything
 		for {
@@ -305,7 +305,7 @@ func TestShipperReconnectAndReplay(t *testing.T) {
 	_ = s.Start(ctx)
 	defer s.Stop()
 
-	// Wait for reconnect and replay
+	// Wait for reconnect and delivery
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		serverMu.Lock()
@@ -319,11 +319,11 @@ func TestShipperReconnectAndReplay(t *testing.T) {
 
 	serverMu.Lock()
 	if len(allReceivedFrames) < 1 {
-		t.Errorf("expected frame to be replayed on reconnect, got 0")
+		t.Errorf("expected frame to be streamed on reconnect, got 0")
 	}
 	serverMu.Unlock()
 
-	// Verify unacked count is drained after replay and ack
+	// Verify unacked count is drained after stream and ack
 	deadline = time.Now().Add(1 * time.Second)
 	for time.Now().Before(deadline) {
 		if s.UnackedCount() == 0 {
@@ -357,35 +357,256 @@ func TestShipperConnectionFailureRetry(t *testing.T) {
 	<-ctx.Done()
 }
 
-func TestShipperRingBufferCap(t *testing.T) {
+func TestShipperBackpressureBlocksWhenChannelFull(t *testing.T) {
 	env := types.IEnvironmentInfo{
-		ID:    "env-123",
-		Label: "test",
+		ID:    "env-bp",
+		Label: "test-bp",
 	}
 	cfg := Config{
 		IngesterURL: "ws://127.0.0.1:0/ws/ingest", // not connected
 		Environment: env,
+		BufferSize:  3,
 	}
 
 	s := NewShipper(cfg)
 
-	// Enqueue 1050 frames
-	for i := 0; i < 1050; i++ {
-		s.Enqueue(types.ITelemetryFrame{
+	// Fill buffer with 3 frames (all should succeed immediately)
+	for i := 1; i <= 3; i++ {
+		err := s.EnqueueContext(context.Background(), types.ITelemetryFrame{
 			Version:   "1.0",
 			EnvID:     env.ID,
 			AgentID:   "a1",
 			SessionID: "s1",
 			EventType: "thinking",
 		})
+		if err != nil {
+			t.Fatalf("EnqueueContext %d failed: %v", i, err)
+		}
 	}
 
-	if s.UnackedCount() != MaxRingBufferSize {
-		t.Errorf("s.UnackedCount() = %d, want %d", s.UnackedCount(), MaxRingBufferSize)
+	// 4th frame should block on full buffer. Using a context with timeout must return DeadlineExceeded.
+	ctxTimeout, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	err := s.EnqueueContext(ctxTimeout, types.ITelemetryFrame{
+		Version:   "1.0",
+		EnvID:     env.ID,
+		AgentID:   "a1",
+		SessionID: "s1",
+		EventType: "tool_call",
+	})
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context.DeadlineExceeded when dispatch buffer full, got: %v", err)
 	}
 
-	if s.DroppedCount() != 50 {
-		t.Errorf("s.DroppedCount() = %d, want 50", s.DroppedCount())
+	// Drain 1 item from incomingCh in background
+	go func() {
+		<-s.incomingCh
+	}()
+
+	// Now enqueue should succeed once space is made available
+	ctxShort, cancelShort := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancelShort()
+
+	err = s.EnqueueContext(ctxShort, types.ITelemetryFrame{
+		Version:   "1.0",
+		EnvID:     env.ID,
+		AgentID:   "a1",
+		SessionID: "s1",
+		EventType: "tool_call",
+	})
+	if err != nil {
+		t.Fatalf("EnqueueContext after draining failed: %v", err)
+	}
+}
+
+func TestShipperEnqueueWithAckCallback(t *testing.T) {
+	var mu sync.Mutex
+	var receivedFrames []types.ITelemetryFrame
+	var wsConn *websocket.Conn
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		mu.Lock()
+		wsConn = conn
+		mu.Unlock()
+		defer func() { _ = conn.Close(websocket.StatusNormalClosure, "done") }()
+
+		for {
+			_, data, err := conn.Read(r.Context())
+			if err != nil {
+				return
+			}
+			var msg types.IObserverMessage
+			if err := json.Unmarshal(data, &msg); err == nil && msg.Type == "frames" {
+				mu.Lock()
+				receivedFrames = append(receivedFrames, msg.Frames...)
+				mu.Unlock()
+			}
+		}
+	}))
+	defer server.Close()
+
+	env := types.IEnvironmentInfo{ID: "ack-env", Label: "test-ack"}
+	s := NewShipper(Config{
+		IngesterURL: "ws" + strings.TrimPrefix(server.URL, "http") + "/ws/ingest",
+		Environment: env,
+		BufferSize:  10,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := s.Start(ctx); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer s.Stop()
+
+	// Wait for connection
+	time.Sleep(50 * time.Millisecond)
+
+	var ackCount int32
+	var ack1, ack2, ack3 int32
+
+	_ = s.EnqueueWithAck(ctx, types.ITelemetryFrame{Version: "1.0", EnvID: env.ID, AgentID: "a1", SessionID: "s1"}, func() {
+		atomic.StoreInt32(&ack1, 1)
+		atomic.AddInt32(&ackCount, 1)
+	})
+	_ = s.EnqueueWithAck(ctx, types.ITelemetryFrame{Version: "1.0", EnvID: env.ID, AgentID: "a1", SessionID: "s1"}, func() {
+		atomic.StoreInt32(&ack2, 1)
+		atomic.AddInt32(&ackCount, 1)
+	})
+	_ = s.EnqueueWithAck(ctx, types.ITelemetryFrame{Version: "1.0", EnvID: env.ID, AgentID: "a1", SessionID: "s1"}, func() {
+		atomic.StoreInt32(&ack3, 1)
+		atomic.AddInt32(&ackCount, 1)
+	})
+
+	// Wait until server received all 3 frames
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		count := len(receivedFrames)
+		mu.Unlock()
+		if count >= 3 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if s.UnackedCount() != 3 {
+		t.Fatalf("UnackedCount() = %d, want 3", s.UnackedCount())
+	}
+
+	// Send ACK UpTo 2: should trigger ack1 and ack2, leaving ack3 unacked
+	mu.Lock()
+	conn := wsConn
+	mu.Unlock()
+	if conn == nil {
+		t.Fatalf("wsConn is nil")
+	}
+
+	ackMsg, _ := json.Marshal(types.IIngesterMessage{Type: "ack", UpTo: 2})
+	_ = conn.Write(ctx, websocket.MessageText, ackMsg)
+
+	deadline = time.Now().Add(1 * time.Second)
+	for time.Now().Before(deadline) {
+		if atomic.LoadInt32(&ackCount) >= 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if atomic.LoadInt32(&ack1) != 1 || atomic.LoadInt32(&ack2) != 1 {
+		t.Errorf("expected ack1 and ack2 invoked, got ack1=%d, ack2=%d", ack1, ack2)
+	}
+	if atomic.LoadInt32(&ack3) != 0 {
+		t.Errorf("ack3 should not have been invoked yet, got %d", ack3)
+	}
+	if s.UnackedCount() != 1 {
+		t.Errorf("UnackedCount() = %d, want 1", s.UnackedCount())
+	}
+
+	// Send ACK UpTo 3: should trigger ack3
+	ackMsg3, _ := json.Marshal(types.IIngesterMessage{Type: "ack", UpTo: 3})
+	_ = conn.Write(ctx, websocket.MessageText, ackMsg3)
+
+	deadline = time.Now().Add(1 * time.Second)
+	for time.Now().Before(deadline) {
+		if atomic.LoadInt32(&ackCount) >= 3 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if atomic.LoadInt32(&ack3) != 1 {
+		t.Errorf("expected ack3 invoked, got %d", ack3)
+	}
+	if s.UnackedCount() != 0 {
+		t.Errorf("UnackedCount() = %d, want 0", s.UnackedCount())
+	}
+}
+
+func TestShipperStopUnblocksEnqueue(t *testing.T) {
+	env := types.IEnvironmentInfo{ID: "stop-env", Label: "test-stop"}
+	s := NewShipper(Config{
+		IngesterURL: "ws://127.0.0.1:0/ws/ingest",
+		Environment: env,
+		BufferSize:  1,
+	})
+
+	// Fill buffer
+	_ = s.EnqueueContext(context.Background(), types.ITelemetryFrame{Version: "1.0", EnvID: env.ID})
+
+	// Stop shipper in goroutine after 50ms
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		s.Stop()
+	}()
+
+	// Enqueue with onAck should unblock with ErrShipperStopped and clean up callback
+	callbackInvoked := false
+	err := s.EnqueueWithAck(context.Background(), types.ITelemetryFrame{Version: "1.0", EnvID: env.ID}, func() {
+		callbackInvoked = true
+	})
+	if err == nil || !errors.Is(err, ErrShipperStopped) {
+		t.Fatalf("expected ErrShipperStopped, got %v", err)
+	}
+	if callbackInvoked {
+		t.Errorf("callback should not be invoked when stopped")
+	}
+	if s.UnackedCount() != 0 {
+		t.Errorf("expected callback cleaned up on stop, unacked=%d", s.UnackedCount())
+	}
+}
+
+func TestShipperEnqueueWithAckContextCanceled(t *testing.T) {
+	env := types.IEnvironmentInfo{ID: "cancel-env", Label: "test-cancel"}
+	s := NewShipper(Config{
+		IngesterURL: "ws://127.0.0.1:0/ws/ingest",
+		Environment: env,
+		BufferSize:  1,
+	})
+
+	// Fill buffer
+	_ = s.EnqueueContext(context.Background(), types.ITelemetryFrame{Version: "1.0", EnvID: env.ID})
+
+	ctxTimeout, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+
+	callbackInvoked := false
+	err := s.EnqueueWithAck(ctxTimeout, types.ITelemetryFrame{Version: "1.0", EnvID: env.ID}, func() {
+		callbackInvoked = true
+	})
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected DeadlineExceeded, got %v", err)
+	}
+	if callbackInvoked {
+		t.Errorf("callback should not be invoked on context cancellation")
+	}
+	if s.UnackedCount() != 0 {
+		t.Errorf("expected callback cleaned up on cancel, unacked=%d", s.UnackedCount())
 	}
 }
 

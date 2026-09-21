@@ -183,14 +183,12 @@ func TestTailerFileTruncationAndHandlerError(t *testing.T) {
 
 	var mu sync.Mutex
 	var received []string
-	errCount := 0
 
 	tail, err := NewTailer(targetFile, store, func(line []byte) error {
 		mu.Lock()
 		defer mu.Unlock()
 		received = append(received, string(line))
-		errCount++
-		return errors.New("simulated handler error")
+		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -467,5 +465,162 @@ func TestTailerEventsChannel(t *testing.T) {
 	mu.Unlock()
 
 	tail.Stop()
+}
+
+func TestTailerBackpressureHandlerErrorPausesReads(t *testing.T) {
+	tmpDir := t.TempDir()
+	store, _ := NewCursorStore(filepath.Join(tmpDir, "cursors.json"))
+	targetFile := filepath.Join(tmpDir, "backpressure.jsonl")
+
+	line1 := "line 1 payload\n"
+	line2 := "line 2 payload\n"
+	line3 := "line 3 payload\n"
+	_ = os.WriteFile(targetFile, []byte(line1+line2+line3), 0600)
+
+	var mu sync.Mutex
+	var received []string
+	shouldFailLine2 := true
+
+	tail, err := NewTailer(targetFile, store, func(line []byte) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if string(line) == "line 2 payload" && shouldFailLine2 {
+			return errors.New("simulated backpressure / shipper full")
+		}
+		received = append(received, string(line))
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("NewTailer error: %v", err)
+	}
+
+	// 1. First readAvailable pass: Line 1 succeeds, Line 2 fails with backpressure
+	if err := tail.readAvailable(); err != nil {
+		t.Fatalf("readAvailable error: %v", err)
+	}
+
+	mu.Lock()
+	if len(received) != 1 || received[0] != "line 1 payload" {
+		t.Fatalf("expected only line 1 to be received on backpressure, got %v", received)
+	}
+	mu.Unlock()
+
+	// Offset must pause at line 1 and not skip line 2
+	expectedOffset1 := int64(len(line1))
+	if tail.CurrentOffset() != expectedOffset1 {
+		t.Errorf("CurrentOffset() = %d, want %d", tail.CurrentOffset(), expectedOffset1)
+	}
+
+	// 2. Clear backpressure condition and read again
+	mu.Lock()
+	shouldFailLine2 = false
+	mu.Unlock()
+
+	if err := tail.readAvailable(); err != nil {
+		t.Fatalf("second readAvailable error: %v", err)
+	}
+
+	mu.Lock()
+	if len(received) != 3 {
+		t.Fatalf("expected all 3 lines to be received after unblocking, got %d: %v", len(received), received)
+	}
+	if received[0] != "line 1 payload" || received[1] != "line 2 payload" || received[2] != "line 3 payload" {
+		t.Errorf("unexpected received lines: %v", received)
+	}
+	mu.Unlock()
+
+	totalBytes := int64(len(line1 + line2 + line3))
+	if tail.CurrentOffset() != totalBytes {
+		t.Errorf("final CurrentOffset() = %d, want %d", tail.CurrentOffset(), totalBytes)
+	}
+}
+
+func TestTailerCursorCommittedDelivery(t *testing.T) {
+	tmpDir := t.TempDir()
+	cursorPath := filepath.Join(tmpDir, "cursors.json")
+	store, _ := NewCursorStore(cursorPath)
+	targetFile := filepath.Join(tmpDir, "committed.jsonl")
+
+	line1 := "line 1 committed\n"
+	line2 := "line 2 committed\n"
+	_ = os.WriteFile(targetFile, []byte(line1+line2), 0600)
+
+	var mu sync.Mutex
+	var received []string
+	var offsets []int64
+
+	tail, err := NewTailerWithOffsetHandler(targetFile, store, func(line []byte, offset int64) error {
+		mu.Lock()
+		defer mu.Unlock()
+		received = append(received, string(line))
+		offsets = append(offsets, offset)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("NewTailerWithOffsetHandler error: %v", err)
+	}
+
+	// Read from disk
+	if err := tail.readAvailable(); err != nil {
+		t.Fatalf("readAvailable error: %v", err)
+	}
+
+	mu.Lock()
+	if len(received) != 2 {
+		t.Fatalf("expected 2 lines received, got %d", len(received))
+	}
+	mu.Unlock()
+
+	// In committed delivery mode, CurrentOffset is advanced in memory but CommittedOffset remains 0 until ACK
+	totalBytes := int64(len(line1 + line2))
+	if tail.CurrentOffset() != totalBytes {
+		t.Errorf("CurrentOffset() = %d, want %d", tail.CurrentOffset(), totalBytes)
+	}
+	if tail.CommittedOffset() != 0 {
+		t.Errorf("CommittedOffset() = %d, want 0 before commit", tail.CommittedOffset())
+	}
+
+	// Cursor store should not have committed offset yet
+	if c, ok := store.Get(tail.key); ok && c.Offset != 0 {
+		t.Errorf("store cursor offset = %d, want 0", c.Offset)
+	}
+
+	// Now simulate ACK for line 1
+	line1Offset := int64(len(line1))
+	if err := tail.Commit(line1Offset); err != nil {
+		t.Fatalf("tail.Commit error: %v", err)
+	}
+	if tail.CommittedOffset() != line1Offset {
+		t.Errorf("CommittedOffset() = %d, want %d", tail.CommittedOffset(), line1Offset)
+	}
+
+	c, ok := store.Get(tail.key)
+	if !ok || c.Offset != line1Offset {
+		t.Errorf("store.Get(%q) = %v (ok: %v), want offset %d", tail.key, c, ok, line1Offset)
+	}
+
+	// Re-reading from disk without new file writes should be a no-op
+	if err := tail.readAvailable(); err != nil {
+		t.Fatalf("readAvailable no-op error: %v", err)
+	}
+	if tail.CurrentOffset() != totalBytes {
+		t.Errorf("CurrentOffset() = %d, want %d", tail.CurrentOffset(), totalBytes)
+	}
+
+	// Now simulate ACK for line 2
+	if err := tail.Commit(totalBytes); err != nil {
+		t.Fatalf("tail.Commit line 2 error: %v", err)
+	}
+	if tail.CommittedOffset() != totalBytes {
+		t.Errorf("CommittedOffset() = %d, want %d", tail.CommittedOffset(), totalBytes)
+	}
+
+	// Lower offset commit should be ignored (monotonic)
+	if err := tail.Commit(line1Offset); err != nil {
+		t.Fatalf("tail.Commit lower offset error: %v", err)
+	}
+	if tail.CommittedOffset() != totalBytes {
+		t.Errorf("CommittedOffset() after lower commit = %d, want %d", tail.CommittedOffset(), totalBytes)
+	}
 }
 
