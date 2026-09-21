@@ -1,13 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
-import type { IAgentState, IEnvironmentInfo, ServerEvent } from "../types";
+import type { IAgentState, IEnvironmentInfo, IEventStreamState, ServerEvent } from "../types";
+import { calculateReconnectDelay } from "../utils/calculateReconnectDelay";
 import { DEFAULT_DEV_TOKEN, resolveApiBaseUrl } from "../utils/config";
-
-export interface IEventStreamState {
-  agents: IAgentState[];
-  environments: IEnvironmentInfo[];
-  isConnected: boolean;
-  error: string | null;
-}
 
 export function useEventStream(apiBaseUrl?: string, token: string = DEFAULT_DEV_TOKEN): IEventStreamState {
   const resolvedBaseUrl = resolveApiBaseUrl(apiBaseUrl);
@@ -61,7 +55,8 @@ export function useEventStream(apiBaseUrl?: string, token: string = DEFAULT_DEV_
 
   useEffect(() => {
     let es: EventSource | null = null;
-    let retryTimeout: Timer | null = null;
+    let retryTimeout: ReturnType<typeof setTimeout> | null = null;
+    let retryAttempt = 0;
 
     const handleMockEvent = (e: Event) => {
       const customEvent = e as CustomEvent<ServerEvent>;
@@ -81,6 +76,12 @@ export function useEventStream(apiBaseUrl?: string, token: string = DEFAULT_DEV_
       window.addEventListener("mock-sse-error", handleMockError);
     }
 
+    const scheduleReconnect = () => {
+      const delay = calculateReconnectDelay(retryAttempt);
+      retryAttempt++;
+      retryTimeout = setTimeout(connect, delay);
+    };
+
     const connect = () => {
       try {
         const url = `${resolvedBaseUrl}/api/v1/events?token=${encodeURIComponent(token)}`;
@@ -89,6 +90,7 @@ export function useEventStream(apiBaseUrl?: string, token: string = DEFAULT_DEV_
         es.onopen = () => {
           setIsConnected(true);
           setError(null);
+          retryAttempt = 0;
         };
 
         es.onmessage = (msg) => {
@@ -107,11 +109,11 @@ export function useEventStream(apiBaseUrl?: string, token: string = DEFAULT_DEV_
             es.close();
             es = null;
           }
-          retryTimeout = setTimeout(connect, 3000);
+          scheduleReconnect();
         };
       } catch (error) {
         setError(String(error));
-        retryTimeout = setTimeout(connect, 3000);
+        scheduleReconnect();
       }
     };
 
