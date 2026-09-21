@@ -260,6 +260,21 @@ func TestAuthMiddleware(t *testing.T) {
 	})
 }
 
+func TestCORSPreflight_PatchMethod(t *testing.T) {
+	srv, _, _ := setupTestServer(t)
+
+	req := httptest.NewRequest("OPTIONS", "/api/v1/agents/agent-1", nil)
+	req.Header.Set("Origin", "http://localhost:3000")
+	req.Header.Set("Access-Control-Request-Method", "PATCH")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	allowMethods := w.Header().Get("Access-Control-Allow-Methods")
+	if !strings.Contains(allowMethods, "PATCH") {
+		t.Errorf("Access-Control-Allow-Methods = %q, want it to contain PATCH", allowMethods)
+	}
+}
+
 func TestGetStatus(t *testing.T) {
 	srv, mock, _ := setupTestServer(t)
 
