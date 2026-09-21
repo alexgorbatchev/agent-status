@@ -2,6 +2,7 @@ import React, { useMemo } from "react";
 import type { ILogFrameItemProps } from "./types";
 import { Brain, Wrench, AlertTriangle, User, Play, CheckCircle2 } from "lucide-react";
 import Markdown from "react-markdown";
+import remarkBreaks from "remark-breaks";
 import { ToolExecutionBlock } from "./ToolExecutionBlock";
 import { TokenUsageBar } from "./TokenUsageBar";
 import { rehypeAnsi } from "../utils/rehypeAnsi";
@@ -62,6 +63,7 @@ export function LogFrameItem({ frame }: ILogFrameItemProps): React.JSX.Element {
       ? "bg-purple-950/20 border-purple-900/40 ml-4"
       : "bg-slate-900/80 border-slate-800";
 
+  const remarkPlugins = useMemo(() => [remarkBreaks], []);
   const rehypePlugins = useMemo(() => [rehypeAnsi], []);
   const processedContent = useMemo(
     () => (frame.data.content ? preprocessMarkdownAnsi(frame.data.content) : null),
@@ -99,7 +101,9 @@ export function LogFrameItem({ frame }: ILogFrameItemProps): React.JSX.Element {
           data-testid="LogFrameItem--content"
           className="text-slate-300 prose prose-invert max-w-none text-xs leading-relaxed break-words space-y-1"
         >
-          <Markdown rehypePlugins={rehypePlugins}>{processedContent}</Markdown>
+          <Markdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins}>
+            {processedContent}
+          </Markdown>
         </div>
       )}
 
@@ -109,7 +113,9 @@ export function LogFrameItem({ frame }: ILogFrameItemProps): React.JSX.Element {
           className="mt-1 p-2 rounded bg-amber-950/30 border border-amber-800/40 text-amber-200"
         >
           <span className="font-semibold text-[11px] block mb-1">Question:</span>
-          <Markdown rehypePlugins={rehypePlugins}>{processedQuestion}</Markdown>
+          <Markdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins}>
+            {processedQuestion}
+          </Markdown>
         </div>
       )}
 

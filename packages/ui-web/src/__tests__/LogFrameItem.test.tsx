@@ -77,4 +77,21 @@ describe("LogFrameItem Component", () => {
     expect(html).not.toContain("38;2;138;190;183m");
     expect(html).not.toContain("[39m");
   });
+
+  it("preserves each new line in markdown content as line break", () => {
+    const frameWithNewlines = {
+      ...fixture_telemetryFrame,
+      data: {
+        ...fixture_telemetryFrame.data,
+        content: "First line of log\nSecond line of log\nThird line of log",
+      },
+    };
+    const html = renderToString(<LogFrameItem frame={frameWithNewlines} />);
+
+    expect(html).toContain('data-testid="LogFrameItem--content"');
+    expect(html).toContain("First line of log");
+    expect(html).toContain("Second line of log");
+    expect(html).toContain("Third line of log");
+    expect(html).toContain("<br/>");
+  });
 });
