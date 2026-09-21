@@ -1504,3 +1504,283 @@ func TestClassifier_CloseAndFlush(t *testing.T) {
 		t.Errorf("second c.Close() returned error: %v", err)
 	}
 }
+
+func TestClassifier_WorkerCleanupOnRunExited(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]interface{}{
+			"id":     "chatcmpl-exit",
+			"object": "chat.completion",
+			"choices": []map[string]interface{}{
+				{
+					"index": 0,
+					"message": map[string]interface{}{
+						"role":    "assistant",
+						"content": `{"action":"Testing exit","phase":"testing"}`,
+					},
+					"finish_reason": "stop",
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(mockServer.Close)
+
+	p, err := openai.New(
+		anyllm.WithBaseURL(mockServer.URL+"/v1"),
+		anyllm.WithAPIKey("test-key"),
+	)
+	if err != nil {
+		t.Fatalf("openai.New() failed: %v", err)
+	}
+
+	sum, err := summarizer.New(summarizer.Config{
+		Providers: []summarizer.ProviderConfig{
+			{
+				Name:     "mock-openai",
+				Provider: p,
+				Model:    "gpt-4o-mini",
+			},
+		},
+		DebounceWindow: 1 * time.Millisecond,
+		Timeout:        2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+
+	c, _ := newTestClassifier(t, sum)
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{
+		ID:              "env-exit",
+		Label:           "testbox",
+		Hostname:        "testbox",
+		Platform:        "linux",
+		User:            "tester",
+		LastHeartbeatAt: time.Now().UnixMilli(),
+	}
+	proj := types.IProjectInfo{
+		ID:            "github.com/org/repo",
+		Name:          "repo",
+		CanonicalRoot: "/workspace",
+	}
+	ws := types.IWorkspaceInfo{Branch: "main", CWD: "/workspace"}
+	agentID := "env-exit:claude:sess-exit"
+
+	// 1. Tool call enqueues worker
+	toolName := "Bash"
+	f1 := types.ITelemetryFrame{
+		Version:        "1.0",
+		Seq:            1,
+		EnvID:          "env-exit",
+		Environment:    env,
+		AgentID:        agentID,
+		SessionID:      "sess-exit",
+		PID:            101,
+		Harness:        types.HarnessClaudeCode,
+		HarnessVersion: "2.0.0",
+		Project:        proj,
+		Workspace:      ws,
+		Timestamp:      1000,
+		EventType:      "tool_call",
+		Data: types.TelemetryFrameData{
+			ToolName: &toolName,
+		},
+	}
+	if _, err := c.ProcessFrame(f1); err != nil {
+		t.Fatalf("ProcessFrame 1 failed: %v", err)
+	}
+
+	c.mu.Lock()
+	_, workerExists := c.workers[agentID]
+	_, ctxExists := c.agentCtx[agentID]
+	c.mu.Unlock()
+
+	if !workerExists {
+		t.Errorf("expected worker to exist after tool call")
+	}
+	if !ctxExists {
+		t.Errorf("expected agentCtx to exist after tool call")
+	}
+
+	// 2. run_exited terminates worker and cleans up maps
+	fExit := types.ITelemetryFrame{
+		Version:        "1.0",
+		Seq:            2,
+		EnvID:          "env-exit",
+		Environment:    env,
+		AgentID:        agentID,
+		SessionID:      "sess-exit",
+		PID:            101,
+		Harness:        types.HarnessClaudeCode,
+		HarnessVersion: "2.0.0",
+		Project:        proj,
+		Workspace:      ws,
+		Timestamp:      1100,
+		EventType:      "run_exited",
+	}
+	if _, err := c.ProcessFrame(fExit); err != nil {
+		t.Fatalf("ProcessFrame exit failed: %v", err)
+	}
+
+	c.mu.Lock()
+	_, workerExistsAfter := c.workers[agentID]
+	_, ctxExistsAfter := c.agentCtx[agentID]
+	c.mu.Unlock()
+
+	if workerExistsAfter {
+		t.Errorf("expected worker to be removed on run_exited")
+	}
+	if ctxExistsAfter {
+		t.Errorf("expected agentCtx to be removed on run_exited")
+	}
+}
+
+func TestClassifier_DiscardStaleSummaryOnStateTransition(t *testing.T) {
+	var mu sync.Mutex
+	updateCount := 0
+	serverHold := make(chan struct{})
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-serverHold // hold response until frame transition occurs
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]interface{}{
+			"id":     "chatcmpl-stale",
+			"object": "chat.completion",
+			"choices": []map[string]interface{}{
+				{
+					"index": 0,
+					"message": map[string]interface{}{
+						"role":    "assistant",
+						"content": `{"action":"Old slow tool summary","phase":"editing","activeTarget":"old.go"}`,
+					},
+					"finish_reason": "stop",
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(mockServer.Close)
+	defer close(serverHold)
+
+	p, err := openai.New(
+		anyllm.WithBaseURL(mockServer.URL+"/v1"),
+		anyllm.WithAPIKey("test-key"),
+	)
+	if err != nil {
+		t.Fatalf("openai.New() failed: %v", err)
+	}
+
+	sum, err := summarizer.New(summarizer.Config{
+		Providers: []summarizer.ProviderConfig{
+			{
+				Name:     "mock-openai",
+				Provider: p,
+				Model:    "gpt-4o-mini",
+			},
+		},
+		DebounceWindow: 1 * time.Millisecond,
+		Timeout:        2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+
+	c, s := newTestClassifier(t, sum)
+	defer func() { _ = c.Close() }()
+
+	c.SetOnUpdate(func(a *types.IAgentState) {
+		mu.Lock()
+		updateCount++
+		mu.Unlock()
+	})
+
+	env := types.IEnvironmentInfo{
+		ID:              "env-stale",
+		Label:           "testbox",
+		Hostname:        "testbox",
+		Platform:        "linux",
+		User:            "tester",
+		LastHeartbeatAt: time.Now().UnixMilli(),
+	}
+	proj := types.IProjectInfo{
+		ID:            "github.com/org/repo",
+		Name:          "repo",
+		CanonicalRoot: "/workspace",
+	}
+	ws := types.IWorkspaceInfo{Branch: "main", CWD: "/workspace"}
+	agentID := "env-stale:claude:sess-stale"
+
+	// 1. Tool call enqueues background job (held in mockServer)
+	toolName := "Edit"
+	f1 := types.ITelemetryFrame{
+		Version:        "1.0",
+		Seq:            1,
+		EnvID:          "env-stale",
+		Environment:    env,
+		AgentID:        agentID,
+		SessionID:      "sess-stale",
+		PID:            101,
+		Harness:        types.HarnessClaudeCode,
+		HarnessVersion: "2.0.0",
+		Project:        proj,
+		Workspace:      ws,
+		Timestamp:      1000,
+		EventType:      "tool_call",
+		Data: types.TelemetryFrameData{
+			ToolName: &toolName,
+			ToolInput: map[string]interface{}{
+				"file_path": "old.go",
+			},
+		},
+	}
+	if _, err := c.ProcessFrame(f1); err != nil {
+		t.Fatalf("ProcessFrame 1 failed: %v", err)
+	}
+
+	// 2. Question prompt transitions agent to WAITING_QUESTION before background job completes
+	q := "Do you want to apply this change?"
+	fQ := types.ITelemetryFrame{
+		Version:        "1.0",
+		Seq:            2,
+		EnvID:          "env-stale",
+		Environment:    env,
+		AgentID:        agentID,
+		SessionID:      "sess-stale",
+		PID:            101,
+		Harness:        types.HarnessClaudeCode,
+		HarnessVersion: "2.0.0",
+		Project:        proj,
+		Workspace:      ws,
+		Timestamp:      1050,
+		EventType:      "question_prompt",
+		Data: types.TelemetryFrameData{
+			Question: &q,
+		},
+	}
+	if _, err := c.ProcessFrame(fQ); err != nil {
+		t.Fatalf("ProcessFrame question failed: %v", err)
+	}
+
+	// Release mock server to allow background worker to process stale job
+	serverHold <- struct{}{}
+
+	// Flush queue
+	c.Flush(agentID)
+
+	// Verify agent remains in WAITING_QUESTION and was not overwritten by stale tool summary
+	agent, err := s.GetAgent(agentID)
+	if err != nil || agent == nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityWaitingQuestion {
+		t.Errorf("expected Activity to remain WAITING_QUESTION, got %v", agent.Activity.Activity)
+	}
+	if agent.Activity.Action != "Do you want to apply this change?" {
+		t.Errorf("expected Action to remain question text, got %q", agent.Activity.Action)
+	}
+	if agent.Activity.ActiveTarget != nil {
+		t.Errorf("expected ActiveTarget to be nil, got %v", *agent.Activity.ActiveTarget)
+	}
+}

@@ -425,12 +425,16 @@ func TestSanitizeToolInput(t *testing.T) {
 			omits:    nil,
 		},
 		{
-			name: "filters large body and preserves path/command",
+			name: "filters large body and sensitive credentials, preserves path/command",
 			input: map[string]interface{}{
-				"file_path":   "/src/app.ts",
-				"content":     strings.Repeat("var x = 1;\n", 100),
-				"replacement": "huge block",
-				"command":     "npm test",
+				"file_path":     "/src/app.ts",
+				"content":       strings.Repeat("var x = 1;\n", 100),
+				"replacement":   "huge block",
+				"command":       "npm test",
+				"api_key":       "sk-secret123",
+				"token":         "ghp_token456",
+				"password":      "hunter2",
+				"authorization": "Bearer xyz",
 			},
 			maxLen: 300,
 			contains: []string{
@@ -441,6 +445,10 @@ func TestSanitizeToolInput(t *testing.T) {
 				"content",
 				"replacement",
 				"var x = 1",
+				"sk-secret123",
+				"ghp_token456",
+				"hunter2",
+				"Bearer xyz",
 			},
 		},
 		{

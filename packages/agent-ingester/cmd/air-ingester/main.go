@@ -70,7 +70,9 @@ func newRootCmd(cfg *config.Config) *cobra.Command {
 				LiteLLMAPIKey:   cfg.LiteLLMAPIKey,
 				LiteLLMModel:    cfg.SummarizerModel,
 				GeminiAPIKey:    cfg.GeminiAPIKey,
+				GeminiModel:     cfg.SummarizerModel,
 				AnthropicAPIKey: cfg.AnthropicAPIKey,
+				AnthropicModel:  cfg.SummarizerModel,
 			})
 			if err != nil {
 				return fmt.Errorf("initializing summarizer engine: %w", err)

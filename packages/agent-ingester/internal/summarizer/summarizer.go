@@ -185,6 +185,9 @@ func New(cfg Config) (*Summarizer, error) {
 		if err == nil && p != nil {
 			model := cfg.GeminiModel
 			if model == "" {
+				model = os.Getenv("AIR_SUMMARIZER_MODEL")
+			}
+			if model == "" {
 				model = "gemini-2.0-flash"
 			}
 			s.providers = append(s.providers, ProviderConfig{
@@ -204,6 +207,9 @@ func New(cfg Config) (*Summarizer, error) {
 		p, err := anthropic.New(anyllm.WithAPIKey(anthropicKey))
 		if err == nil && p != nil {
 			model := cfg.AnthropicModel
+			if model == "" {
+				model = os.Getenv("AIR_SUMMARIZER_MODEL")
+			}
 			if model == "" {
 				model = "claude-3-5-haiku-latest"
 			}
@@ -284,9 +290,6 @@ Do not output any reasoning, markdown formatting, or preamble.`
 	userPrompt := buildUserPrompt(input)
 
 	for i, pCfg := range s.providers {
-		callCtx, cancel := context.WithTimeout(ctx, s.timeout)
-		defer cancel()
-
 		temp := 0.1
 		maxTokens := 150
 		params := anyllm.CompletionParams{
@@ -305,7 +308,10 @@ Do not output any reasoning, markdown formatting, or preamble.`
 			MaxTokens:   &maxTokens,
 		}
 
+		callCtx, cancel := context.WithTimeout(ctx, s.timeout)
 		resp, err := pCfg.Provider.Completion(callCtx, params)
+		cancel()
+
 		if err == nil && resp != nil && len(resp.Choices) > 0 {
 			content := resp.Choices[0].Message.ContentString()
 			parsed, parseErr := parseStructuredOutput(content)
@@ -341,25 +347,38 @@ func SanitizeToolInput(input map[string]interface{}, maxLen int) string {
 		maxLen = MaxToolArgsLength
 	}
 
-	// Filter out large payload fields
+	// Filter out large payload fields and sensitive credential parameters
 	skipKeys := map[string]bool{
-		"content":      true,
-		"file_text":    true,
-		"replacement":  true,
-		"patch":        true,
-		"old_str":      true,
-		"new_str":      true,
-		"old_text":     true,
-		"new_text":     true,
-		"text":         true,
-		"code":         true,
-		"body":         true,
-		"edits":        true,
-		"raw":          true,
-		"bytes":        true,
-		"items":        true,
-		"output":       true,
-		"instructions": true,
+		"content":       true,
+		"file_text":     true,
+		"replacement":   true,
+		"patch":         true,
+		"old_str":       true,
+		"new_str":       true,
+		"old_text":      true,
+		"new_text":      true,
+		"text":          true,
+		"code":          true,
+		"body":          true,
+		"edits":         true,
+		"raw":           true,
+		"bytes":         true,
+		"items":         true,
+		"output":        true,
+		"instructions":  true,
+		"api_key":       true,
+		"apikey":        true,
+		"token":         true,
+		"password":      true,
+		"secret":        true,
+		"auth":          true,
+		"authorization": true,
+		"access_token":  true,
+		"refresh_token": true,
+		"credential":    true,
+		"credentials":   true,
+		"private_key":   true,
+		"key":           true,
 	}
 
 	// Extract keys in sorted order for deterministic preview
@@ -512,6 +531,8 @@ func WordOverlapSimilarity(s1, s2 string) float64 {
 }
 
 // IsNearDuplicate checks whether newSummary has >= threshold word overlap (Jaccard or token overlap similarity) with lastSummary.
+// Token overlap similarity is only applied when both strings have at least 3 tokens, preventing 1-2 word fallback states
+// (like "Working" or "Thinking") from falsely matching detailed summaries.
 func IsNearDuplicate(lastSummary, newSummary string, threshold float64) bool {
 	if threshold <= 0 {
 		threshold = DefaultSimilarityThreshold
@@ -526,9 +547,18 @@ func IsNearDuplicate(lastSummary, newSummary string, threshold float64) bool {
 		return true
 	}
 
-	jaccard := JaccardSimilarity(s1, s2)
-	overlap := WordOverlapSimilarity(s1, s2)
-	return jaccard >= threshold || overlap >= threshold
+	if JaccardSimilarity(s1, s2) >= threshold {
+		return true
+	}
+
+	t1 := Tokenize(s1)
+	t2 := Tokenize(s2)
+	minTokens := min(len(t1), len(t2))
+	if minTokens >= 3 && WordOverlapSimilarity(s1, s2) >= threshold {
+		return true
+	}
+
+	return false
 }
 
 func buildUserPrompt(input SummaryInput) string {
@@ -817,12 +847,20 @@ func FallbackSummary(input SummaryInput) SummaryResult {
 		case types.ActivityWaitingQuestion:
 			p := types.PhasePlanning
 			phase = &p
-			action = "Waiting for user input"
+			if input.Question != nil && strings.TrimSpace(*input.Question) != "" {
+				action = strings.TrimSpace(*input.Question)
+			} else {
+				action = "Waiting for user input"
+			}
 
 		case types.ActivityError:
 			p := types.PhaseDebugging
 			phase = &p
-			action = "Encountered error"
+			if input.LastError != nil && strings.TrimSpace(*input.LastError) != "" {
+				action = strings.TrimSpace(*input.LastError)
+			} else {
+				action = "Encountered error"
+			}
 
 		case types.ActivityIdle:
 			if input.LastAssistantResponse != "" && len(input.RecentTools) == 0 {

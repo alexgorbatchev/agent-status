@@ -251,9 +251,18 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			if agent.Activity.CurrentRun != nil {
 				agent.Activity.CurrentRun.EndedAt = &now
 			}
+			c.mu.Lock()
+			if w, ok := c.workers[agent.ID]; ok {
+				close(w.stop)
+				delete(c.workers, agent.ID)
+			}
+			delete(c.agentCtx, agent.ID)
+			c.mu.Unlock()
 
 		case "question_prompt":
 			agent.Activity.Activity = types.ActivityWaitingQuestion
+			agent.Activity.ActiveTool = nil
+			agent.Activity.ActiveTarget = nil
 			if frame.Data.Question != nil {
 				agent.Activity.Question = frame.Data.Question
 			}
@@ -261,6 +270,8 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 
 		case "error":
 			agent.Activity.Activity = types.ActivityError
+			agent.Activity.ActiveTool = nil
+			agent.Activity.ActiveTarget = nil
 			if frame.Data.Content != nil {
 				errStr := *frame.Data.Content
 				if len(errStr) > 2000 {
@@ -344,14 +355,13 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				actx.lastAssistantResponse = strings.TrimSpace(*frame.Data.Content)
 				c.mu.Unlock()
 			}
-			// Summarize on turn_end before clearing active tool fields
-			pendingJob = c.updateSummarization(agent, true)
 			if frame.Data.StopReason == nil || *frame.Data.StopReason != "tool_use" {
 				agent.Activity.Activity = types.ActivityIdle
 				agent.Activity.ActiveTool = nil
 				agent.Activity.ActiveTarget = nil
 				agent.Activity.Question = nil
 			}
+			pendingJob = c.updateSummarization(agent, true)
 		}
 	} else {
 		// Subagent event: increment subagent count
@@ -509,7 +519,10 @@ func (c *Classifier) enqueueJob(agentID string, input summarizer.SummaryInput, t
 	default:
 		// Drop older unstarted job from queue to maintain latest context
 		select {
-		case <-w.jobs:
+		case dropped := <-w.jobs:
+			if dropped.flushDone != nil {
+				close(dropped.flushDone)
+			}
 		default:
 		}
 		w.jobs <- job
@@ -542,11 +555,16 @@ func (c *Classifier) processSummaryJob(agentID string, job summaryJob) {
 		return
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	agent, err := c.store.GetAgent(agentID)
 	if err != nil || agent == nil {
+		return
+	}
+
+	// Discard stale summary if agent has exited or transitioned to another activity state
+	if agent.Activity.CurrentRun != nil && agent.Activity.CurrentRun.EndedAt != nil {
+		return
+	}
+	if agent.Activity.Activity != job.input.Activity {
 		return
 	}
 
@@ -577,8 +595,12 @@ func (c *Classifier) processSummaryJob(agentID string, job summaryJob) {
 		return
 	}
 
-	if c.onUpdate != nil {
-		c.onUpdate(agent)
+	c.mu.Lock()
+	cb := c.onUpdate
+	c.mu.Unlock()
+
+	if cb != nil {
+		cb(agent)
 	}
 }
 
