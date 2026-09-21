@@ -132,6 +132,9 @@ func Migrate(db *sql.DB) error {
 		if _, err := tx.Exec("ALTER TABLE agents ADD COLUMN hidden_at INTEGER;"); err != nil {
 			return fmt.Errorf("executing migration v2 hidden_at: %w", err)
 		}
+		if _, err := tx.Exec("CREATE INDEX IF NOT EXISTS idx_agents_hidden ON agents(is_hidden);"); err != nil {
+			return fmt.Errorf("executing migration v2 idx_agents_hidden: %w", err)
+		}
 
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("committing migration v2: %w", err)

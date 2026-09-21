@@ -126,6 +126,14 @@ func TestMigrate_V1ToV2(t *testing.T) {
 	if version != 2 {
 		t.Errorf("got user_version = %d, want 2", version)
 	}
+
+	var indexCount int
+	if err := db.QueryRow("SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_agents_hidden';").Scan(&indexCount); err != nil {
+		t.Fatalf("querying index: %v", err)
+	}
+	if indexCount != 1 {
+		t.Errorf("expected idx_agents_hidden to exist, got count %d", indexCount)
+	}
 }
 
 func TestCursors(t *testing.T) {
