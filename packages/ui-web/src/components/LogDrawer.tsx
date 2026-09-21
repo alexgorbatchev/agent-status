@@ -6,6 +6,7 @@ import { LogFrameItem } from "./LogFrameItem";
 import { IconWrapper } from "./IconWrapper";
 import { DEFAULT_DEV_TOKEN } from "../utils/config";
 import { LogBuffer } from "../utils/LogBuffer";
+import { correlateTelemetryFrames } from "../utils/correlateTelemetryFrames";
 import { getAgentDebugCommand } from "../utils/agentUtils";
 import { logDrawerMachine } from "../machines/logDrawerMachine";
 import { X, RefreshCw, AlertCircle, Terminal, Check } from "lucide-react";
@@ -15,8 +16,10 @@ export function LogDrawer({
   apiBaseUrl,
   token = DEFAULT_DEV_TOKEN,
   onClose,
+  logBuffer: externalLogBuffer,
 }: ILogDrawerProps): React.JSX.Element | null {
-  const logBuffer = useMemo(() => new LogBuffer(), []);
+  const internalLogBuffer = useMemo(() => new LogBuffer(), []);
+  const logBuffer = externalLogBuffer ?? internalLogBuffer;
   const [snapshot, send] = useMachine(logDrawerMachine, {
     input: {
       agent,
@@ -27,6 +30,7 @@ export function LogDrawer({
   });
 
   const logs = useSyncExternalStore(logBuffer.subscribe, logBuffer.getSnapshot, logBuffer.getSnapshot);
+  const correlatedLogs = useMemo(() => correlateTelemetryFrames(logs), [logs]);
 
   const [copiedAgentId, setCopiedAgentId] = useState<string | null>(null);
   const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -170,12 +174,12 @@ export function LogDrawer({
         data-testid="LogDrawer--stream"
         className="flex-1 overflow-y-auto overflow-x-hidden min-w-0 w-full p-4 space-y-3 text-xs"
       >
-        {logs.length === 0 ? (
+        {correlatedLogs.length === 0 ? (
           <div className="text-center py-12 text-slate-500 font-mono">
             {isFetchingHistory ? "Loading telemetry log events..." : "No telemetry log events recorded yet."}
           </div>
         ) : (
-          logs.map((log, idx) => <LogFrameItem key={`${log.seq}-${log.timestamp}-${idx}`} frame={log} />)
+          correlatedLogs.map((log, idx) => <LogFrameItem key={`${log.seq}-${log.timestamp}-${idx}`} frame={log} />)
         )}
       </div>
     </div>

@@ -1,5 +1,6 @@
 import type React from "react";
 import type { IFileModificationPayload } from "../utils/diffUtils";
+import type { LogBuffer } from "../utils/LogBuffer";
 import type {
   IAgentState,
   IEnvironmentInfo,
@@ -98,6 +99,7 @@ export interface ILogDrawerProps {
   apiBaseUrl?: string;
   token?: string;
   onClose: () => void;
+  logBuffer?: LogBuffer;
 }
 
 export interface ILogFrameItemProps {
@@ -111,6 +113,7 @@ export interface IToolExecutionBlockProps {
   exitCode?: number | null;
   isError?: boolean | null;
   toolCallId?: string | null;
+  durationMs?: number | null;
 }
 
 export interface IAnsiTextProps {

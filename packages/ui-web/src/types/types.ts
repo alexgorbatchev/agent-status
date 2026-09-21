@@ -99,6 +99,7 @@ export interface ITelemetryFrameData {
   toolOutput: string | null;
   isError: boolean | null;
   exitCode: number | null;
+  durationMs?: number | null;
   question: string | null;
   stopReason: string | null;
   usage: ITokenUsage | null;
