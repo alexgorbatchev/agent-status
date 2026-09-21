@@ -337,6 +337,61 @@ func TestAgentActivityJSON(t *testing.T) {
 	}
 }
 
+func TestAgentStateJSON(t *testing.T) {
+	hiddenAt := int64(1700000005000)
+	agent := IAgentState{
+		ID:        "env-1:claude-code:session-1",
+		SessionID: "session-1",
+		Harness:   HarnessClaudeCode,
+		Environment: IEnvironmentInfo{
+			ID:              "env-1",
+			Label:           "local-dev",
+			Hostname:        "dev-box",
+			Platform:        "darwin",
+			User:            "alice",
+			IsStale:         false,
+			LastHeartbeatAt: 1700000000000,
+		},
+		Project: IProjectInfo{
+			ID:            "github.com/org/repo",
+			Name:          "repo",
+			CanonicalRoot: "/work/repo",
+		},
+		Workspace: IWorkspaceInfo{
+			IsWorktree: false,
+			Branch:     "main",
+			IsDetached: false,
+			CWD:        "/work/repo",
+		},
+		Activity: IAgentActivity{
+			Lifecycle:      LifecycleRunning,
+			Activity:       ActivityBusy,
+			Title:          "Refactoring",
+			FirstStartedAt: 1700000000000,
+			UpdatedAt:      1700000005000,
+		},
+		IsHidden: true,
+		HiddenAt: &hiddenAt,
+	}
+
+	data, err := json.Marshal(agent)
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+
+	var decoded IAgentState
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v", err)
+	}
+
+	if !decoded.IsHidden {
+		t.Fatalf("IsHidden = false, want true")
+	}
+	if decoded.HiddenAt == nil || *decoded.HiddenAt != hiddenAt {
+		t.Fatalf("HiddenAt = %v, want %d", decoded.HiddenAt, hiddenAt)
+	}
+}
+
 func TestTelemetryFrameJSON(t *testing.T) {
 	subagentID := "sub-1"
 	role := "assistant"

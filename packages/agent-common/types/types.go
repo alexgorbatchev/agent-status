@@ -110,6 +110,8 @@ type IAgentState struct {
 	Project     IProjectInfo     `json:"project"`
 	Workspace   IWorkspaceInfo   `json:"workspace"`
 	Activity    IAgentActivity   `json:"activity"`
+	IsHidden    bool             `json:"isHidden"`
+	HiddenAt    *int64           `json:"hiddenAt,omitempty"`
 }
 
 type StatusResponse struct {
