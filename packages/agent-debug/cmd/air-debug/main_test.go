@@ -361,4 +361,251 @@ func TestCLI_ErrorPaths(t *testing.T) {
 			t.Errorf("session command failed: %v", err)
 		}
 	})
+
+	t.Run("db command help", func(t *testing.T) {
+		cmd := newRootCmd()
+		cmd.SetArgs([]string{"db"})
+		if err := cmd.Execute(); err != nil {
+			t.Errorf("db command failed: %v", err)
+		}
+	})
+
+	t.Run("db inspect human and json", func(t *testing.T) {
+		t.Setenv("AGENT", "0")
+		statusDB := createTestStatusDB(t, t.TempDir())
+
+		// 1. Human mode
+		cmd := newRootCmd()
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetArgs([]string{"db", "inspect", "test-session", "--db", statusDB})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("db inspect human mode failed: %v", err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, "Persisted Agent Record (test-session)") {
+			t.Errorf("expected header in human mode, got: %s", out)
+		}
+		if !strings.Contains(out, "Main Test Agent") {
+			t.Errorf("expected title in human mode, got: %s", out)
+		}
+
+		// 2. JSON mode
+		cmdJSON := newRootCmd()
+		var bufJSON bytes.Buffer
+		cmdJSON.SetOut(&bufJSON)
+		cmdJSON.SetArgs([]string{"db", "inspect", "test-session", "--db", statusDB, "--json"})
+		if err := cmdJSON.Execute(); err != nil {
+			t.Fatalf("db inspect json mode failed: %v", err)
+		}
+		outJSON := bufJSON.String()
+		if !strings.Contains(outJSON, `"sessionId": "test-session"`) {
+			t.Errorf("expected sessionId in json mode, got: %s", outJSON)
+		}
+	})
+
+	t.Run("session replay with db comparison", func(t *testing.T) {
+		t.Setenv("AGENT", "0")
+		transcriptPath := createTestClaudeTranscript(t, t.TempDir())
+		statusDB := createTestStatusDB(t, t.TempDir())
+
+		cmd := newRootCmd()
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetArgs([]string{"session", "replay", "--db", statusDB, transcriptPath})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("session replay with db failed: %v", err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, "Live Database Comparison") {
+			t.Errorf("expected Live Database Comparison section, got: %s", out)
+		}
+		if !strings.Contains(out, "Lifecycle") {
+			t.Errorf("expected comparison fields in output, got: %s", out)
+		}
+
+		// Also verify AGENT=1 mode
+		t.Setenv("AGENT", "1")
+		var bufAgent bytes.Buffer
+		cmdAgent := newRootCmd()
+		cmdAgent.SetOut(&bufAgent)
+		cmdAgent.SetArgs([]string{"session", "replay", "--db", statusDB, transcriptPath})
+		if err := cmdAgent.Execute(); err != nil {
+			t.Fatalf("session replay in agent mode failed: %v", err)
+		}
+		outAgent := bufAgent.String()
+		if !strings.Contains(outAgent, "db_comparison") {
+			t.Errorf("expected db_comparison in agent mode, got: %s", outAgent)
+		}
+	})
+
+	t.Run("session validate with db comparison", func(t *testing.T) {
+		transcriptPath := createTestClaudeTranscript(t, t.TempDir())
+		statusDB := createTestStatusDB(t, t.TempDir())
+
+		cmd := newRootCmd()
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetArgs([]string{"session", "validate", "--db", statusDB, transcriptPath})
+		// validate might fail due to drift (e.g. tokens/cost or lifecycle), but the check should execute!
+		_ = cmd.Execute()
+		out := buf.String()
+		if !strings.Contains(out, "Database Discrepancy Check") {
+			t.Errorf("expected Database Discrepancy Check in validation output, got: %s", out)
+		}
+	})
+
+	t.Run("db commands error paths", func(t *testing.T) {
+		transcriptPath := createTestClaudeTranscript(t, t.TempDir())
+		statusDB := createTestStatusDB(t, t.TempDir())
+
+		// 1. db inspect with missing db
+		cmd1 := newRootCmd()
+		cmd1.SetArgs([]string{"db", "inspect", "ses-1", "--db", "/non/existent/db.sqlite"})
+		if err := cmd1.Execute(); err == nil {
+			t.Error("expected error for non-existent db in db inspect, got nil")
+		}
+
+		// 2. db inspect with missing session
+		cmd2 := newRootCmd()
+		cmd2.SetArgs([]string{"db", "inspect", "ses-missing", "--db", statusDB})
+		if err := cmd2.Execute(); err == nil {
+			t.Error("expected error for missing session in db inspect, got nil")
+		}
+
+		// 3. session replay with invalid db path
+		cmd3 := newRootCmd()
+		cmd3.SetArgs([]string{"session", "replay", "--db", "/non/existent/db.sqlite", transcriptPath})
+		if err := cmd3.Execute(); err == nil {
+			t.Error("expected error for non-existent db in replay, got nil")
+		}
+
+		// 4. session replay with valid db but session missing
+		emptyDBDir := t.TempDir()
+		emptyDB := filepath.Join(emptyDBDir, "empty.db")
+		edb, err := sql.Open("sqlite3", "file:"+emptyDB)
+		if err == nil {
+			_, _ = edb.Exec(`CREATE TABLE agents (id TEXT, session_id TEXT); CREATE TABLE runs (id TEXT); CREATE TABLE telemetry_events (id INTEGER); CREATE TABLE environments (id TEXT);`)
+			_ = edb.Close()
+		}
+		cmd4 := newRootCmd()
+		cmd4.SetArgs([]string{"session", "replay", "--db", emptyDB, transcriptPath})
+		if err := cmd4.Execute(); err == nil {
+			t.Error("expected error for missing session in replay --db, got nil")
+		}
+
+		// 5. session validate with invalid db path
+		cmd5 := newRootCmd()
+		var buf5 bytes.Buffer
+		cmd5.SetOut(&buf5)
+		cmd5.SetArgs([]string{"session", "validate", "--db", "/non/existent/db.sqlite", transcriptPath})
+		_ = cmd5.Execute()
+		if !strings.Contains(buf5.String(), "resolving database failed") {
+			t.Errorf("expected resolving database failed, got: %s", buf5.String())
+		}
+
+		// 6. session validate with valid db but session missing
+		cmd6 := newRootCmd()
+		var buf6 bytes.Buffer
+		cmd6.SetOut(&buf6)
+		cmd6.SetArgs([]string{"session", "validate", "--db", emptyDB, transcriptPath})
+		_ = cmd6.Execute()
+		if !strings.Contains(buf6.String(), "session not found in database") {
+			t.Errorf("expected session not found in database, got: %s", buf6.String())
+		}
+	})
+}
+
+func createTestStatusDB(t *testing.T, dir string) string {
+	t.Helper()
+	p := filepath.Join(dir, "test-agent-status.db")
+	db, err := sql.Open("sqlite3", "file:"+p)
+	if err != nil {
+		t.Fatalf("opening sqlite: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	schema := `
+	CREATE TABLE environments (
+		id TEXT PRIMARY KEY,
+		label TEXT NOT NULL,
+		hostname TEXT NOT NULL,
+		platform TEXT NOT NULL,
+		user TEXT NOT NULL,
+		dropped_frames INTEGER NOT NULL DEFAULT 0,
+		last_heartbeat_at INTEGER NOT NULL
+	);
+	CREATE TABLE runs (
+		id TEXT PRIMARY KEY,
+		agent_id TEXT NOT NULL,
+		pid INTEGER NOT NULL,
+		harness_version TEXT NOT NULL,
+		started_at INTEGER NOT NULL,
+		ended_at INTEGER
+	);
+	CREATE TABLE agents (
+		id TEXT PRIMARY KEY,
+		session_id TEXT NOT NULL,
+		environment_id TEXT NOT NULL,
+		harness TEXT NOT NULL,
+		project_id TEXT NOT NULL,
+		project_name TEXT NOT NULL,
+		canonical_root TEXT NOT NULL,
+		branch TEXT NOT NULL,
+		is_detached INTEGER NOT NULL DEFAULT 0,
+		is_worktree INTEGER NOT NULL DEFAULT 0,
+		worktree_rel_path TEXT,
+		cwd TEXT NOT NULL,
+		current_run_id TEXT,
+		activity TEXT NOT NULL,
+		title TEXT NOT NULL DEFAULT '',
+		action TEXT NOT NULL DEFAULT '',
+		action_stale INTEGER NOT NULL DEFAULT 0,
+		phase TEXT,
+		active_tool TEXT,
+		active_target TEXT,
+		question TEXT,
+		last_thinking_excerpt TEXT,
+		last_error TEXT,
+		tokens_input INTEGER NOT NULL DEFAULT 0,
+		tokens_output INTEGER NOT NULL DEFAULT 0,
+		tokens_cache_read INTEGER NOT NULL DEFAULT 0,
+		tokens_cache_write INTEGER NOT NULL DEFAULT 0,
+		tokens_reasoning INTEGER NOT NULL DEFAULT 0,
+		tokens_total INTEGER NOT NULL DEFAULT 0,
+		cost_usd REAL,
+		subagent_count INTEGER NOT NULL DEFAULT 0,
+		first_started_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL
+	);
+	CREATE TABLE telemetry_events (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		agent_id TEXT NOT NULL,
+		subagent_id TEXT,
+		event_type TEXT NOT NULL,
+		timestamp INTEGER NOT NULL,
+		data_json TEXT NOT NULL
+	);
+	`
+	if _, err := db.Exec(schema); err != nil {
+		t.Fatalf("creating test status db schema: %v", err)
+	}
+	now := time.Now().UnixMilli()
+	_, _ = db.Exec(`INSERT INTO environments VALUES ('env-1', 'local', 'host', 'darwin', 'dev', 0, ?)`, now)
+	agentID := "env-1:claude-code:test-session"
+	sessID := "test-session"
+	_, _ = db.Exec(`
+		INSERT INTO agents (
+			id, session_id, environment_id, harness, project_id, project_name,
+			canonical_root, branch, cwd, current_run_id, activity, title, action,
+			tokens_input, tokens_output, tokens_total, cost_usd, first_started_at, updated_at
+		) VALUES (
+			?, ?, 'env-1', 'claude-code', 'proj-1', 'agent-status',
+			'/repo', 'main', '/repo', 'run-1', 'IDLE', 'Main Test Agent', 'Done',
+			100, 20, 120, 0.005, ?, ?
+		)
+	`, agentID, sessID, now-5000, now)
+	_, _ = db.Exec(`INSERT INTO runs VALUES ('run-1', ?, 5555, '1.0', ?, NULL)`, agentID, now-5000)
+	_, _ = db.Exec(`INSERT INTO telemetry_events (agent_id, event_type, timestamp, data_json) VALUES (?, 'run_started', ?, '{}')`, agentID, now-5000)
+	return p
 }
