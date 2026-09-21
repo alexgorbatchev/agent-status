@@ -24,7 +24,7 @@ test.describe("Live Stream & Fleet Hydration", () => {
     // Verify Active count and Total spend calculations
     await expect(page.getByTestId("Header--active-agents")).toContainText("Active:1");
     await expect(page.getByTestId("Header--environments")).toContainText("Environments:1/1");
-    await expect(page.getByTestId("App--agent-count")).toContainText("2 Total Agents");
+    await expect(page.getByTestId("App--agent-count")).toContainText("2 Agents");
 
     // Verify agent cards rendered
     await expect(page.getByText("Build agent-status dashboard")).toBeVisible();
@@ -43,7 +43,7 @@ test.describe("Live Stream & Fleet Hydration", () => {
     // Verify dynamic update in attention counter and total agent count
     await expect(page.getByTestId("Header--active-agents")).toContainText("Active:1");
     await expect(page.getByTestId("Header--attention-agents")).toContainText("Needs Attention:1");
-    await expect(page.getByTestId("App--agent-count")).toContainText("3 Total Agents");
+    await expect(page.getByTestId("App--agent-count")).toContainText("3 Agents");
     // Verify card rendered
     await expect(page.getByRole("heading", { name: "Implement user authentication flow" })).toBeVisible();
 
@@ -56,7 +56,7 @@ test.describe("Live Stream & Fleet Hydration", () => {
 
     await expect(page.getByTestId("Header--active-agents")).toContainText("Active:1");
     await expect(page.getByTestId("Header--attention-agents")).toContainText("Needs Attention:2");
-    await expect(page.getByTestId("App--agent-count")).toContainText("4 Total Agents");
+    await expect(page.getByTestId("App--agent-count")).toContainText("4 Agents");
 
     // Send a live upsert with a new BUSY agent to verify active counter increment
     const secondBusyAgent = {
@@ -74,7 +74,7 @@ test.describe("Live Stream & Fleet Hydration", () => {
     });
 
     await expect(page.getByTestId("Header--active-agents")).toContainText("Active:2");
-    await expect(page.getByTestId("App--agent-count")).toContainText("5 Total Agents");
+    await expect(page.getByTestId("App--agent-count")).toContainText("5 Agents");
     await expect(page.getByRole("heading", { name: "Optimize image compression pipeline" })).toBeVisible();
   });
 
@@ -93,7 +93,7 @@ test.describe("Live Stream & Fleet Hydration", () => {
     // Both agents are initially visible
     await expect(page.getByText("Build agent-status dashboard")).toBeVisible();
     await expect(page.getByText("Refactor telemetry pipeline")).toBeVisible();
-    await expect(page.getByTestId("App--agent-count")).toContainText("2 Total Agents");
+    await expect(page.getByTestId("App--agent-count")).toContainText("2 Agents");
 
     // Dispatch agent_removed for the exited agent
     await sseServer.sendEvent({
@@ -105,7 +105,7 @@ test.describe("Live Stream & Fleet Hydration", () => {
     // Exited agent card should disappear, running agent remains
     await expect(page.getByText("Refactor telemetry pipeline")).not.toBeVisible();
     await expect(page.getByText("Build agent-status dashboard")).toBeVisible();
-    await expect(page.getByTestId("App--agent-count")).toContainText("1 Total Agent");
+    await expect(page.getByTestId("App--agent-count")).toContainText("1 Agent");
 
     // Dispatch agent_removed for the remaining running agent
     await sseServer.sendEvent({
@@ -117,7 +117,7 @@ test.describe("Live Stream & Fleet Hydration", () => {
     // Both cards should now be gone, showing empty state
     await expect(page.getByText("Build agent-status dashboard")).not.toBeVisible();
     await expect(page.getByTestId("App--empty-state")).toBeVisible();
-    await expect(page.getByTestId("App--agent-count")).toContainText("0 Total Agents");
+    await expect(page.getByTestId("App--agent-count")).toContainText("0 Agents");
   });
 
   test("displays disconnect indicator and error banner on stream drop and recovers on reconnect", async ({ page }) => {

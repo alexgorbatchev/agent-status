@@ -26,7 +26,7 @@ test.describe("Empty State & Initial Connection", () => {
     await expect(emptyState).toContainText("No active or recent agent runs detected.");
     await expect(emptyState).toContainText("Start Claude Code or Pi in any observed environment.");
 
-    // Verify total agent counter shows 0 Total Agents
-    await expect(page.getByTestId("App--agent-count")).toContainText("0 Total Agents");
+    // Verify agent counter shows 0 Agents
+    await expect(page.getByTestId("App--agent-count")).toContainText("0 Agents");
   });
 });
