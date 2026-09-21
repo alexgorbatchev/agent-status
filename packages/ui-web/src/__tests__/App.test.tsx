@@ -174,7 +174,7 @@ describe("App Layout & Session Visibility", () => {
     await unmount();
   });
 
-  it("converges hiddenOverrides when incoming stream auto-unhides agent", async () => {
+  it("displays agent immediately when incoming stream auto-unhides agent", async () => {
     const { mockDoc, cleanup } = setupMockDomEnvironment();
     envCleanup = cleanup;
 
