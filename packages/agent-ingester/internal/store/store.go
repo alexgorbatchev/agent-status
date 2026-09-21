@@ -502,3 +502,33 @@ func (s *Store) EndCurrentRun(agentID string, endedAt int64) error {
 
 	return tx.Commit()
 }
+
+// GetDistinctSubagentIDs returns all distinct non-empty subagent IDs recorded in telemetry_events for an agent.
+func (s *Store) GetDistinctSubagentIDs(agentID string) ([]string, error) {
+	rows, err := s.db.Query(`
+		SELECT DISTINCT subagent_id
+		FROM telemetry_events
+		WHERE agent_id = ? AND subagent_id IS NOT NULL AND subagent_id != ''
+		ORDER BY subagent_id ASC
+	`, agentID)
+	if err != nil {
+		return nil, fmt.Errorf("querying distinct subagent IDs: %w", err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scanning subagent ID: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating subagent IDs: %w", err)
+	}
+	return ids, nil
+}
+
