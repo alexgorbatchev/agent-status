@@ -158,6 +158,11 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 	if err != nil {
 		return fmt.Errorf("initializing cursor store: %w", err)
 	}
+	defer func() {
+		if err := cursorStore.Save(); err != nil {
+			logging.Warn("cursor_store_save_error", "err", err)
+		}
+	}()
 
 	ship := shipper.NewShipper(shipper.Config{
 		IngesterURL: opts.ingesterURL,

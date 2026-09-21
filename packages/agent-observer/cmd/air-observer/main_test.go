@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
+	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/tailer"
 )
 
 type testSyncBuffer struct {
@@ -289,5 +291,249 @@ func TestObserverRunLogging(t *testing.T) {
 	}
 	if !strings.Contains(out, "observer_shutting_down") {
 		t.Errorf("expected observer_shutting_down in log output, got: %s", out)
+	}
+}
+
+func TestObserverContextCancellationFlushesCursorStore(t *testing.T) {
+	t.Setenv("AGENT_STATUS_TEST_MOCK_PROC", "1")
+
+	buf := &testSyncBuffer{}
+	logger := logging.NewWithMode(buf, "observer", "info", false)
+	logging.SetDefault(logger)
+
+	tmpDir := t.TempDir()
+	cursorPath := filepath.Join(tmpDir, "cursors.json")
+
+	// Verify cursor file does not exist initially
+	if _, err := os.Stat(cursorPath); !os.IsNotExist(err) {
+		t.Fatalf("expected cursorPath to not exist initially, stat err: %v", err)
+	}
+
+	claudeDir := filepath.Join(tmpDir, "claude-sessions")
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		t.Fatalf("creating claudeDir: %v", err)
+	}
+	transcriptPath := filepath.Join(tmpDir, "test-session.jsonl")
+	transcriptData := []byte("{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello world\"}]}}\n")
+	if err := os.WriteFile(transcriptPath, transcriptData, 0644); err != nil {
+		t.Fatalf("writing transcript: %v", err)
+	}
+
+	subagentsDir := filepath.Join(tmpDir, "subagents")
+	if err := os.MkdirAll(subagentsDir, 0755); err != nil {
+		t.Fatalf("creating subagentsDir: %v", err)
+	}
+	subagentPath := filepath.Join(subagentsDir, "agent-worker.jsonl")
+	subagentData := []byte("{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"worker active\"}]}}\n")
+	if err := os.WriteFile(subagentPath, subagentData, 0644); err != nil {
+		t.Fatalf("writing subagent transcript: %v", err)
+	}
+
+	metaPath := filepath.Join(claudeDir, "session-1.json")
+	metaData := []byte(`{"pid":99999,"sessionId":"test-session-1","cwd":"` + tmpDir + `","transcriptPath":"` + transcriptPath + `"}`)
+	if err := os.WriteFile(metaPath, metaData, 0644); err != nil {
+		t.Fatalf("writing session metadata: %v", err)
+	}
+
+	piDir := filepath.Join(tmpDir, "pi-sessions")
+	_ = os.MkdirAll(piDir, 0755)
+	codexDir := filepath.Join(tmpDir, "codex-sessions")
+	_ = os.MkdirAll(codexDir, 0755)
+	opencodeDb := filepath.Join(tmpDir, "opencode.db")
+
+	opts := observerOptions{
+		ingesterURL:       "ws://127.0.0.1:9999/ws/ingest",
+		cursorPath:        cursorPath,
+		claudeSessionsDir: claudeDir,
+		piSessionsDir:     piDir,
+		codexSessionsDir:  codexDir,
+		opencodeDBPath:    opencodeDb,
+		scanInterval:      50 * time.Millisecond,
+		envFlag:           "test-env",
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runObserverContext(ctx, opts)
+	}()
+
+	// Allow scanner and tailer to run and process the transcript and subagent
+	time.Sleep(100 * time.Millisecond)
+
+	// Remove session to trigger exit detection on the next scan ticker tick
+	_ = os.Remove(metaPath)
+	time.Sleep(100 * time.Millisecond)
+
+	// Cancel context to simulate daemon shutdown
+	cancel()
+
+	err := <-errCh
+	if err != nil {
+		t.Fatalf("runObserverContext returned unexpected error: %v", err)
+	}
+
+	// Verify that cursorPath was created on disk upon shutdown
+	if _, err := os.Stat(cursorPath); os.IsNotExist(err) {
+		t.Fatalf("expected cursor file %q to exist after shutdown, but it does not", cursorPath)
+	}
+
+	rawJSON, err := os.ReadFile(cursorPath)
+	if err != nil {
+		t.Fatalf("reading cursors.json: %v", err)
+	}
+
+	var savedCursors map[string]*tailer.Cursor
+	if err := json.Unmarshal(rawJSON, &savedCursors); err != nil {
+		t.Fatalf("parsing cursors.json: %v", err)
+	}
+
+	var foundCursor *tailer.Cursor
+	var foundSubagentCursor *tailer.Cursor
+	for _, c := range savedCursors {
+		if c.Path == transcriptPath {
+			foundCursor = c
+		}
+		if c.Path == subagentPath {
+			foundSubagentCursor = c
+		}
+	}
+	if foundCursor == nil {
+		t.Fatalf("expected cursor with path %q in flushed store, but found none in %+v", transcriptPath, savedCursors)
+	}
+	if foundSubagentCursor == nil {
+		t.Fatalf("expected subagent cursor with path %q in flushed store, but found none in %+v", subagentPath, savedCursors)
+	}
+
+	if foundCursor.Offset != int64(len(transcriptData)) {
+		t.Errorf("expected cursor offset %d, got %d", len(transcriptData), foundCursor.Offset)
+	}
+	if foundSubagentCursor.Offset != int64(len(subagentData)) {
+		t.Errorf("expected subagent cursor offset %d, got %d", len(subagentData), foundSubagentCursor.Offset)
+	}
+}
+
+func TestObserverCursorStoreSaveErrorOnShutdown(t *testing.T) {
+	buf := &testSyncBuffer{}
+	logger := logging.NewWithMode(buf, "observer", "warn", false)
+	logging.SetDefault(logger)
+
+	tmpDir := t.TempDir()
+	cursorDir := filepath.Join(tmpDir, "readonly-dir")
+	if err := os.MkdirAll(cursorDir, 0755); err != nil {
+		t.Fatalf("creating cursorDir: %v", err)
+	}
+	cursorPath := filepath.Join(cursorDir, "cursors.json")
+
+	opts := observerOptions{
+		ingesterURL:       "ws://127.0.0.1:9999/ws/ingest",
+		cursorPath:        cursorPath,
+		claudeSessionsDir: filepath.Join(tmpDir, "claude"),
+		piSessionsDir:     filepath.Join(tmpDir, "pi"),
+		codexSessionsDir:  filepath.Join(tmpDir, "codex"),
+		opencodeDBPath:    filepath.Join(tmpDir, "opencode.db"),
+		scanInterval:      50 * time.Millisecond,
+		envFlag:           "test-env",
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runObserverContext(ctx, opts)
+	}()
+
+	// Wait for NewCursorStore initialization
+	time.Sleep(50 * time.Millisecond)
+
+	// Make directory read-only so Save() fails when creating temp file
+	_ = os.Chmod(cursorDir, 0500)
+	t.Cleanup(func() {
+		_ = os.Chmod(cursorDir, 0755)
+	})
+
+	cancel()
+	<-errCh
+
+	out := buf.String()
+	if !strings.Contains(out, "cursor_store_save_error") {
+		t.Errorf("expected cursor_store_save_error in log, got: %s", out)
+	}
+}
+
+func TestRunObserverInvalidCursorPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	corruptedCursor := filepath.Join(tmpDir, "corrupted.json")
+	if err := os.WriteFile(corruptedCursor, []byte("invalid json"), 0644); err != nil {
+		t.Fatalf("writing corrupt file: %v", err)
+	}
+
+	opts := observerOptions{
+		cursorPath: corruptedCursor,
+		envFlag:    "test-env",
+		logLevel:   "error",
+		logDir:     tmpDir,
+		logFile:    "test-observer.log",
+	}
+
+	err := runObserver(opts)
+	if err == nil {
+		t.Fatalf("expected error from runObserver with corrupted cursor store, got nil")
+	}
+	if !strings.Contains(err.Error(), "initializing cursor store") {
+		t.Errorf("expected 'initializing cursor store' in error, got: %v", err)
+	}
+}
+
+func TestRootCmdExecute_RunE(t *testing.T) {
+	tmpDir := t.TempDir()
+	corruptedCursor := filepath.Join(tmpDir, "corrupted.json")
+	if err := os.WriteFile(corruptedCursor, []byte("invalid json"), 0644); err != nil {
+		t.Fatalf("writing corrupt file: %v", err)
+	}
+
+	cmd, _ := newRootCmd()
+	cmd.SetArgs([]string{"--cursor-path", corruptedCursor, "--env", "test-env"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected error from cmd.Execute(), got nil")
+	}
+	if !strings.Contains(err.Error(), "initializing cursor store") {
+		t.Errorf("expected 'initializing cursor store' in error, got: %v", err)
+	}
+}
+
+func TestObserverEnvScannerDirs(t *testing.T) {
+	tmpDir := t.TempDir()
+	claudeDir := filepath.Join(tmpDir, "env-claude")
+	piDir := filepath.Join(tmpDir, "env-pi")
+	codexDir := filepath.Join(tmpDir, "env-codex")
+	opencodeDb := filepath.Join(tmpDir, "env-opencode.db")
+
+	_ = os.MkdirAll(claudeDir, 0755)
+	_ = os.MkdirAll(piDir, 0755)
+	_ = os.MkdirAll(codexDir, 0755)
+
+	t.Setenv("CLAUDE_SESSIONS_DIR", claudeDir)
+	t.Setenv("PI_SESSIONS_DIR", piDir)
+	t.Setenv("CODEX_SESSIONS_DIR", codexDir)
+	t.Setenv("OPENCODE_DB_PATH", opencodeDb)
+
+	cursorPath := filepath.Join(tmpDir, "cursors.json")
+	opts := observerOptions{
+		ingesterURL:  "ws://127.0.0.1:9999/ws/ingest",
+		cursorPath:   cursorPath,
+		scanInterval: 50 * time.Millisecond,
+		envFlag:      "test-env",
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately after start
+
+	err := runObserverContext(ctx, opts)
+	if err != nil {
+		t.Fatalf("runObserverContext returned error: %v", err)
 	}
 }
