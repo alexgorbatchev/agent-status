@@ -495,3 +495,343 @@ func TestShipperLoggingOnDisconnect(t *testing.T) {
 		t.Errorf("expected ingester_disconnected log on disconnect, got: %s", out)
 	}
 }
+
+func TestShipperBackoffSuccessivelyIncreasesOnImmediateDisconnect(t *testing.T) {
+	origBackoff := initialBackoff
+	initialBackoff = 30 * time.Millisecond
+	defer func() { initialBackoff = origBackoff }()
+
+	origRandomization := backoffRandomization
+	backoffRandomization = 0
+	defer func() { backoffRandomization = origRandomization }()
+
+	origSustained := sustainedHealthDuration
+	sustainedHealthDuration = 10 * time.Second
+	defer func() { sustainedHealthDuration = origSustained }()
+
+	var mu sync.Mutex
+	var connectTimes []time.Time
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		// Read the hello frame
+		_, _, err = conn.Read(r.Context())
+		if err != nil {
+			_ = conn.Close(websocket.StatusInternalError, "read error")
+			return
+		}
+
+		mu.Lock()
+		connectTimes = append(connectTimes, time.Now())
+		mu.Unlock()
+
+		// Immediately close connection with error after reading hello frame
+		_ = conn.Close(websocket.StatusInternalError, "immediate streaming failure")
+	}))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	cfg := Config{
+		IngesterURL: wsURL,
+		Environment: types.IEnvironmentInfo{ID: "env-backoff-test", Label: "backoff-test"},
+	}
+
+	s := NewShipper(cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := s.Start(ctx); err != nil {
+		t.Fatalf("s.Start error: %v", err)
+	}
+	defer s.Stop()
+
+	// Wait for at least 4 connections
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		count := len(connectTimes)
+		mu.Unlock()
+		if count >= 4 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	mu.Lock()
+	times := make([]time.Time, len(connectTimes))
+	copy(times, connectTimes)
+	mu.Unlock()
+
+	if len(times) < 4 {
+		t.Fatalf("expected at least 4 connection attempts, got %d", len(times))
+	}
+
+	interval1 := times[1].Sub(times[0])
+	interval2 := times[2].Sub(times[1])
+	interval3 := times[3].Sub(times[2])
+
+	t.Logf("intervals: 1=%v, 2=%v, 3=%v", interval1, interval2, interval3)
+
+	// In the buggy implementation, onConnected() is called on hello frame,
+	// which resets backoff so interval2 and interval3 are each ~30ms (initialBackoff).
+	// With the fix, backoff increases exponentially: ~30ms -> ~60ms -> ~120ms.
+	if interval2 <= interval1 {
+		t.Errorf("expected interval2 (%v) > interval1 (%v)", interval2, interval1)
+	}
+	if interval3 <= interval2 {
+		t.Errorf("expected interval3 (%v) > interval2 (%v)", interval3, interval2)
+	}
+	if interval2 < 45*time.Millisecond {
+		t.Errorf("expected interval2 (%v) >= 45ms (backed off from 30ms)", interval2)
+	}
+	if interval3 < 90*time.Millisecond {
+		t.Errorf("expected interval3 (%v) >= 90ms (backed off from 60ms)", interval3)
+	}
+}
+
+func TestShipperBackoffResetsOnAck(t *testing.T) {
+	origBackoff := initialBackoff
+	initialBackoff = 30 * time.Millisecond
+	defer func() { initialBackoff = origBackoff }()
+
+	origRandomization := backoffRandomization
+	backoffRandomization = 0
+	defer func() { backoffRandomization = origRandomization }()
+
+	origSustained := sustainedHealthDuration
+	sustainedHealthDuration = 10 * time.Second
+	defer func() { sustainedHealthDuration = origSustained }()
+
+	var mu sync.Mutex
+	var connectTimes []time.Time
+	attempt := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		// Read hello
+		_, _, err = conn.Read(r.Context())
+		if err != nil {
+			_ = conn.Close(websocket.StatusInternalError, "read error")
+			return
+		}
+
+		mu.Lock()
+		attempt++
+		currentAttempt := attempt
+		connectTimes = append(connectTimes, time.Now())
+		mu.Unlock()
+
+		if currentAttempt == 2 {
+			// Attempt 2: send an ACK to reset backoff before closing
+			ackMsg := types.IIngesterMessage{
+				Type: "ack",
+				UpTo: 1,
+			}
+			ackBytes, _ := json.Marshal(ackMsg)
+			_ = conn.Write(r.Context(), websocket.MessageText, ackBytes)
+			time.Sleep(10 * time.Millisecond)
+		}
+
+		// Close connection
+		_ = conn.Close(websocket.StatusInternalError, "closing connection")
+	}))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	cfg := Config{
+		IngesterURL: wsURL,
+		Environment: types.IEnvironmentInfo{ID: "env-ack-reset", Label: "ack-reset"},
+	}
+
+	s := NewShipper(cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := s.Start(ctx); err != nil {
+		t.Fatalf("s.Start error: %v", err)
+	}
+	defer s.Stop()
+
+	// Wait for 3 connections:
+	// 1: initial -> fail (next backoff = 30ms)
+	// 2: reconnect after 30ms -> receives ACK -> backoff resets! -> fail (next backoff = 30ms, not 60ms)
+	// 3: reconnect after 30ms (because reset!)
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		count := len(connectTimes)
+		mu.Unlock()
+		if count >= 3 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	mu.Lock()
+	times := make([]time.Time, len(connectTimes))
+	copy(times, connectTimes)
+	mu.Unlock()
+
+	if len(times) < 3 {
+		t.Fatalf("expected at least 3 connection attempts, got %d", len(times))
+	}
+
+	intervalAfterAck := times[2].Sub(times[1])
+	t.Logf("interval after ACK reset: %v", intervalAfterAck)
+
+	// If backoff was not reset on ACK, intervalAfterAck would be ~60ms.
+	// Since it was reset to initialBackoff (30ms), it should be around 30-45ms (< 55ms).
+	if intervalAfterAck > 55*time.Millisecond {
+		t.Errorf("expected interval after ACK to reset to initialBackoff (~30ms), got %v", intervalAfterAck)
+	}
+}
+
+func TestShipperBackoffResetsOnSustainedHealth(t *testing.T) {
+	origBackoff := initialBackoff
+	initialBackoff = 30 * time.Millisecond
+	defer func() { initialBackoff = origBackoff }()
+
+	origRandomization := backoffRandomization
+	backoffRandomization = 0
+	defer func() { backoffRandomization = origRandomization }()
+
+	origSustained := sustainedHealthDuration
+	sustainedHealthDuration = 40 * time.Millisecond
+	defer func() { sustainedHealthDuration = origSustained }()
+
+	var mu sync.Mutex
+	var connectTimes []time.Time
+	attempt := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		_, _, err = conn.Read(r.Context())
+		if err != nil {
+			_ = conn.Close(websocket.StatusInternalError, "read error")
+			return
+		}
+
+		mu.Lock()
+		attempt++
+		currentAttempt := attempt
+		connectTimes = append(connectTimes, time.Now())
+		mu.Unlock()
+
+		if currentAttempt == 1 {
+			// Hold connection open past sustainedHealthDuration (40ms)
+			time.Sleep(70 * time.Millisecond)
+		}
+
+		_ = conn.Close(websocket.StatusInternalError, "closing connection")
+	}))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	cfg := Config{
+		IngesterURL: wsURL,
+		Environment: types.IEnvironmentInfo{ID: "env-sustained-reset", Label: "sustained-reset"},
+	}
+
+	s := NewShipper(cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := s.Start(ctx); err != nil {
+		t.Fatalf("s.Start error: %v", err)
+	}
+	defer s.Stop()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		count := len(connectTimes)
+		mu.Unlock()
+		if count >= 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	mu.Lock()
+	times := make([]time.Time, len(connectTimes))
+	copy(times, connectTimes)
+	mu.Unlock()
+
+	if len(times) < 2 {
+		t.Fatalf("expected at least 2 connection attempts, got %d", len(times))
+	}
+
+	// Connection 1 held for 70ms, sustainedHealthDuration fired at 40ms and reset backoff.
+	// Connection 2 should occur ~30ms after connection 1 closes (total ~100ms after connect 1).
+	totalElapsed := times[1].Sub(times[0])
+	t.Logf("total elapsed from connect 1 to connect 2: %v", totalElapsed)
+
+	// Since connection was held 70ms, interval between disconnect and reconnect should be ~30ms.
+	disconnectInterval := totalElapsed - 70*time.Millisecond
+	if disconnectInterval > 55*time.Millisecond {
+		t.Errorf("expected disconnect interval to reset to initialBackoff (~30ms), got %v", disconnectInterval)
+	}
+}
+
+func TestShipperOnConnectedInvokedOncePerConnection(t *testing.T) {
+	origSustained := sustainedHealthDuration
+	sustainedHealthDuration = 30 * time.Millisecond
+	defer func() { sustainedHealthDuration = origSustained }()
+
+	var onConnectedCalls int
+	var callMu sync.Mutex
+	onConnected := func() {
+		callMu.Lock()
+		onConnectedCalls++
+		callMu.Unlock()
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		_, _, _ = conn.Read(r.Context())
+
+		// Send multiple ACKs
+		for i := 1; i <= 3; i++ {
+			ackMsg := types.IIngesterMessage{Type: "ack", UpTo: int64(i)}
+			ackBytes, _ := json.Marshal(ackMsg)
+			_ = conn.Write(r.Context(), websocket.MessageText, ackBytes)
+		}
+
+		// Also wait past sustainedHealthDuration so the timer fires too
+		time.Sleep(50 * time.Millisecond)
+		_ = conn.Close(websocket.StatusNormalClosure, "done")
+	}))
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	cfg := Config{
+		IngesterURL: wsURL,
+		Environment: types.IEnvironmentInfo{ID: "env-once-test", Label: "once-test"},
+	}
+
+	s := NewShipper(cfg)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_ = s.connectAndStream(ctx, onConnected)
+
+	callMu.Lock()
+	calls := onConnectedCalls
+	callMu.Unlock()
+
+	if calls != 1 {
+		t.Errorf("expected onConnected to be called exactly once per connection, got %d", calls)
+	}
+}

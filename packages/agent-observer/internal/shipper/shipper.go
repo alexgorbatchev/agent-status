@@ -18,8 +18,10 @@ import (
 const MaxRingBufferSize = 1000
 
 var (
-	heartbeatInterval = 10 * time.Second
-	initialBackoff    = 500 * time.Millisecond
+	heartbeatInterval       = 10 * time.Second
+	initialBackoff          = 500 * time.Millisecond
+	sustainedHealthDuration = 5 * time.Second
+	backoffRandomization    = 0.5
 )
 
 type Config struct {
@@ -98,7 +100,15 @@ func (s *Shipper) runConnectionLoop(ctx context.Context) {
 	expBackoff.InitialInterval = initialBackoff
 	expBackoff.Multiplier = 2.0
 	expBackoff.MaxInterval = 30 * time.Second
-	expBackoff.RandomizationFactor = 0.5
+	expBackoff.RandomizationFactor = backoffRandomization
+	expBackoff.Reset()
+
+	var backoffMu sync.Mutex
+	resetBackoff := func() {
+		backoffMu.Lock()
+		expBackoff.Reset()
+		backoffMu.Unlock()
+	}
 
 	for {
 		select {
@@ -110,7 +120,7 @@ func (s *Shipper) runConnectionLoop(ctx context.Context) {
 		}
 
 		logging.Info("ingester_connecting", "ingesterUrl", s.cfg.IngesterURL)
-		err := s.connectAndStream(ctx, expBackoff.Reset)
+		err := s.connectAndStream(ctx, resetBackoff)
 		if err != nil && ctx.Err() == nil {
 			select {
 			case <-s.stopCh:
@@ -119,7 +129,9 @@ func (s *Shipper) runConnectionLoop(ctx context.Context) {
 			}
 		}
 
+		backoffMu.Lock()
 		nextInterval := expBackoff.NextBackOff()
+		backoffMu.Unlock()
 		if nextInterval == backoff.Stop {
 			nextInterval = 30 * time.Second
 		}
@@ -137,6 +149,13 @@ func (s *Shipper) runConnectionLoop(ctx context.Context) {
 func (s *Shipper) connectAndStream(ctx context.Context, onConnected func()) error {
 	connCtx, connCancel := context.WithCancel(ctx)
 	defer connCancel()
+
+	var resetOnce sync.Once
+	markHealthy := func() {
+		if onConnected != nil {
+			resetOnce.Do(onConnected)
+		}
+	}
 
 	opts := &websocket.DialOptions{}
 	if s.cfg.BearerToken != "" {
@@ -175,9 +194,6 @@ func (s *Shipper) connectAndStream(ctx context.Context, onConnected func()) erro
 	}
 
 	logging.Info("ingester_connected", "ingesterUrl", s.cfg.IngesterURL)
-	if onConnected != nil {
-		onConnected()
-	}
 
 	// 2. Replay unacknowledged frames
 	s.mu.Lock()
@@ -211,24 +227,36 @@ func (s *Shipper) connectAndStream(ctx context.Context, onConnected func()) erro
 			}
 
 			var ack types.IIngesterMessage
-			if err := json.Unmarshal(data, &ack); err == nil && ack.Type == "ack" && ack.UpTo > 0 {
-				s.mu.Lock()
-				s.lastAckedSeq = max(s.lastAckedSeq, ack.UpTo)
-				for s.ringBuffer.Len() > 0 {
-					front := s.ringBuffer.Front()
-					if front != nil && front.Seq <= ack.UpTo {
-						s.ringBuffer.PopFront()
-					} else {
-						break
+			if err := json.Unmarshal(data, &ack); err == nil && ack.Type == "ack" {
+				markHealthy()
+				if ack.UpTo > 0 {
+					s.mu.Lock()
+					s.lastAckedSeq = max(s.lastAckedSeq, ack.UpTo)
+					for s.ringBuffer.Len() > 0 {
+						front := s.ringBuffer.Front()
+						if front != nil && front.Seq <= ack.UpTo {
+							s.ringBuffer.PopFront()
+						} else {
+							break
+						}
 					}
+					s.mu.Unlock()
 				}
-				s.mu.Unlock()
 			}
 		}
 	}()
 
 	heartbeatTicker := time.NewTicker(heartbeatInterval)
 	defer heartbeatTicker.Stop()
+
+	var healthTimerCh <-chan time.Time
+	if sustainedHealthDuration > 0 {
+		healthTimer := time.NewTimer(sustainedHealthDuration)
+		defer healthTimer.Stop()
+		healthTimerCh = healthTimer.C
+	} else {
+		markHealthy()
+	}
 
 	// 4. Stream incoming frames and heartbeats
 	for {
@@ -239,6 +267,8 @@ func (s *Shipper) connectAndStream(ctx context.Context, onConnected func()) erro
 			return nil
 		case err := <-errCh:
 			return err
+		case <-healthTimerCh:
+			markHealthy()
 		case frame := <-s.incomingCh:
 			msg := types.IObserverMessage{
 				Type:   "frames",
