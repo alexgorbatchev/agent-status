@@ -1,11 +1,13 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useMemo, useSyncExternalStore } from "react";
+import { useMachine } from "@xstate/react";
 import type { ILogDrawerProps } from "./types";
-import type { ITelemetryFrame } from "../types";
 import { StatusBadge } from "./StatusBadge";
 import { LogFrameItem } from "./LogFrameItem";
 import { IconWrapper } from "./IconWrapper";
-import { DEFAULT_DEV_TOKEN, resolveApiBaseUrl } from "../utils/config";
-import { X } from "lucide-react";
+import { DEFAULT_DEV_TOKEN } from "../utils/config";
+import { LogBuffer } from "../utils/LogBuffer";
+import { logDrawerMachine } from "../machines/logDrawerMachine";
+import { X, RefreshCw, AlertCircle } from "lucide-react";
 
 export function LogDrawer({
   agent,
@@ -13,52 +15,33 @@ export function LogDrawer({
   token = DEFAULT_DEV_TOKEN,
   onClose,
 }: ILogDrawerProps): React.JSX.Element | null {
-  const resolvedBaseUrl = resolveApiBaseUrl(apiBaseUrl);
-  const [logs, setLogs] = useState<ITelemetryFrame[]>([]);
-  const [prevAgentId, setPrevAgentId] = useState(agent?.id);
+  const logBuffer = useMemo(() => new LogBuffer(), []);
+  const [snapshot, send] = useMachine(logDrawerMachine, {
+    input: {
+      agent,
+      apiBaseUrl,
+      token,
+      logBuffer,
+    },
+  });
 
-  if (agent?.id !== prevAgentId) {
-    setPrevAgentId(agent?.id);
-    setLogs([]);
-  }
+  const logs = useSyncExternalStore(logBuffer.subscribe, logBuffer.getSnapshot, logBuffer.getSnapshot);
 
   useEffect(() => {
-    if (!agent) {
-      return;
+    if (agent) {
+      send({ type: "SELECT_AGENT", agent, apiBaseUrl, token });
+    } else {
+      send({ type: "CLOSE" });
     }
+  }, [agent, apiBaseUrl, token, send]);
 
-    // Fetch initial logs
-    fetch(`${resolvedBaseUrl}/api/v1/agents/${encodeURIComponent(agent.id)}/logs?limit=100`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        if (Array.isArray(data)) {
-          setLogs(data);
-        }
-      })
-      .catch((error) => console.error("Failed to load agent logs:", error));
+  if (!agent) {
+    return null;
+  }
 
-    // Live tail SSE connection
-    const es = new EventSource(
-      `${resolvedBaseUrl}/api/v1/agents/${encodeURIComponent(agent.id)}/live-tail?token=${encodeURIComponent(token)}`,
-    );
-
-    es.onmessage = (msg) => {
-      try {
-        const frame: ITelemetryFrame = JSON.parse(msg.data);
-        setLogs((prev) => [frame, ...prev]);
-      } catch (error) {
-        console.error("Failed to parse log frame:", error);
-      }
-    };
-
-    return () => {
-      es.close();
-    };
-  }, [agent, resolvedBaseUrl, token]);
-
-  if (!agent) return null;
+  const isError = snapshot.matches("error");
+  const isReconnecting = snapshot.matches("reconnecting");
+  const isFetchingHistory = snapshot.matches("fetchingHistory");
 
   return (
     <div
@@ -95,10 +78,50 @@ export function LogDrawer({
         </button>
       </div>
 
+      {/* Error / Reconnect Banner */}
+      {isError && (
+        <div
+          data-testid="LogDrawer--error"
+          className="p-3 bg-red-950/70 border-b border-red-800/80 flex items-center justify-between text-xs text-red-200 font-mono"
+        >
+          <div className="flex items-center gap-2">
+            <IconWrapper size="sm" tone="error">
+              <AlertCircle size={14} />
+            </IconWrapper>
+            <span>{snapshot.context.errorMessage ?? "Failed to load agent telemetry logs"}</span>
+          </div>
+          <button
+            type="button"
+            data-testid="LogDrawer--retry-button"
+            onClick={() => send({ type: "RETRY" })}
+            className="px-2 py-1 bg-red-900/60 hover:bg-red-800/80 rounded text-red-100 flex items-center gap-1 transition-colors"
+          >
+            <IconWrapper size="xs">
+              <RefreshCw size={12} />
+            </IconWrapper>
+            <span>Retry</span>
+          </button>
+        </div>
+      )}
+
+      {isReconnecting && (
+        <div
+          data-testid="LogDrawer--reconnecting"
+          className="p-2 bg-amber-950/60 border-b border-amber-800/60 flex items-center gap-2 text-xs text-amber-200 font-mono"
+        >
+          <IconWrapper size="xs" tone="warning">
+            <RefreshCw size={12} />
+          </IconWrapper>
+          <span>Live tail disconnected. Reconnecting...</span>
+        </div>
+      )}
+
       {/* Live Log Stream */}
       <div data-testid="LogDrawer--stream" className="flex-1 overflow-y-auto p-4 space-y-3 text-xs">
         {logs.length === 0 ? (
-          <div className="text-center py-12 text-slate-500 font-mono">No telemetry log events recorded yet.</div>
+          <div className="text-center py-12 text-slate-500 font-mono">
+            {isFetchingHistory ? "Loading telemetry log events..." : "No telemetry log events recorded yet."}
+          </div>
         ) : (
           logs.map((log, idx) => <LogFrameItem key={`${log.seq}-${log.timestamp}-${idx}`} frame={log} />)
         )}

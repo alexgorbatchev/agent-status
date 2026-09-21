@@ -14,12 +14,14 @@ Web frontend dashboard for agent-status built with React 19, Tailwind CSS v4, Lu
 
 - Components live in `src/components/ComponentName.tsx` with Storybook stories in `src/components/stories/ComponentName.stories.tsx`.
 - Centralized TypeScript types live in `src/types/types.ts` and re-export via `src/types/index.ts`.
+- State machines live in `src/machines/` with XState v5 actors and strict event typing.
 - Enforce strict TypeScript: no `any`, no type assertions (`as Type`), explicit return types on public functions.
 
 ## Local gotchas
 
 - Tailwind v4 uses `@tailwindcss/vite` and CSS `@theme`; there is no `tailwind.config.js`.
 - Real-time SSE updates are consumed via `src/hooks/useEventStream.ts`.
+- LogDrawer uses `logDrawerMachine` with external `LogBuffer` store consumed via `useSyncExternalStore`.
 
 ## Boundaries
 
@@ -33,4 +35,6 @@ Web frontend dashboard for agent-status built with React 19, Tailwind CSS v4, Lu
 - App layout: `src/layouts/App.tsx`
 - Types: `src/types/types.ts`
 - SSE hook: `src/hooks/useEventStream.ts`
+- State machine: `src/machines/logDrawerMachine.ts`
+- Log buffer store: `src/utils/LogBuffer.ts`
 - Dev server: `src/server.ts`

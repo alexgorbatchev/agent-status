@@ -5,15 +5,16 @@
   "scripts": {
     "dev": "bun run src/server.ts",
     "build": "bun run src/build.ts",
-    "typecheck": "tsc --noEmit",
     "check": "bun run typescript-ai-policy -- check",
+    "typecheck": "tsc --noEmit",
     "lint": "bun run typescript-ai-policy -- check && bun x tsc --noEmit",
-    "test": "bun run check && bun test src",
+    "test": "bun run check && NODE_ENV=test bun test src",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.0.0",
+    "@xstate/react": "^6.1.0",
     "bun-plugin-tailwind": "^0.1.2",
     "clsx": "^2.1.1",
     "lucide-react": "^1.16.0",
@@ -21,7 +22,8 @@
     "react-dom": "^19.0.0",
     "react-markdown": "^10.1.0",
     "tailwind-merge": "^3.0.0",
-    "tailwindcss": "^4.0.0"
+    "tailwindcss": "^4.0.0",
+    "xstate": "^5.33.2"
   },
   "devDependencies": {
     "@alexgorbatchev/typescript-ai-policy": "^13.0.0",
