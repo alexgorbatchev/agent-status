@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
+	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/db"
 	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/output"
 	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/replay"
 	"github.com/alexgorbatchev/agent-status/packages/agent-parser"
@@ -31,6 +32,7 @@ type replayFlags struct {
 	envFlag         string
 	harnessFlag     string
 	strictLifecycle bool
+	dbPath          string
 }
 
 func newRootCmd() *cobra.Command {
@@ -151,6 +153,22 @@ func newRootCmd() *cobra.Command {
 				return err
 			}
 
+			if rFlags.dbPath != "" {
+				resolvedDB, err := db.ResolveDBPath(rFlags.dbPath)
+				if err != nil {
+					return fmt.Errorf("resolving database for comparison: %w", err)
+				}
+				compareSessID := rFlags.sessionID
+				if compareSessID == "" && res != nil {
+					compareSessID = res.SessionID
+				}
+				record, err := db.InspectSession(ctx, resolvedDB, compareSessID)
+				if err != nil {
+					return fmt.Errorf("inspecting database session %s: %w", compareSessID, err)
+				}
+				res.Comparison = replay.CompareSessionWithDB(res, record)
+			}
+
 			if rFlags.jsonOut {
 				enc := json.NewEncoder(cmd.OutOrStdout())
 				enc.SetIndent("", "  ")
@@ -158,6 +176,9 @@ func newRootCmd() *cobra.Command {
 			}
 
 			output.RenderReplaySummary(cmd.OutOrStdout(), res.Summary(), output.IsAgentMode())
+			if res.Comparison != nil {
+				output.RenderComparison(cmd.OutOrStdout(), res.Comparison, output.IsAgentMode())
+			}
 			if res.Verification != nil && !res.Verification.Passed && !strings.Contains(res.Verification.LastError, "transcript is open-ended") {
 				return fmt.Errorf("read-side verification failed: %s", res.Verification.LastError)
 			}
@@ -179,6 +200,7 @@ func newRootCmd() *cobra.Command {
 	flags.StringVar(&rFlags.harnessFlag, "harness", "", "Explicit harness override (claude-code, pi, codex, opencode)")
 	flags.BoolVar(&rFlags.strictLifecycle, "strict-lifecycle", false, "Disable automatic synthesis of run_started and run_exited boundary frames")
 	flags.BoolVar(&rFlags.strictLifecycle, "no-synthetic-lifecycle", false, "Disable automatic synthesis of run_started and run_exited boundary frames (alias)")
+	flags.StringVar(&rFlags.dbPath, "db", "", "Path to agent-status.db for discrepancy comparison (or 'auto' for auto-detection)")
 
 	// 3. session validate
 	vFlags := replayFlags{}
@@ -309,6 +331,52 @@ func newRootCmd() *cobra.Command {
 					Passed:  verPassed,
 					Details: verDetails,
 				})
+
+				// Check 6: Live Database Discrepancy Check
+				if vFlags.dbPath != "" {
+					resolvedDB, err := db.ResolveDBPath(vFlags.dbPath)
+					if err != nil {
+						report.Passed = false
+						report.Checks = append(report.Checks, output.ValidationCheck{
+							Name:    "Database Discrepancy Check",
+							Passed:  false,
+							Details: fmt.Sprintf("resolving database failed: %v", err),
+						})
+					} else {
+						compareSessID := vFlags.sessionID
+						if compareSessID == "" && res != nil {
+							compareSessID = res.SessionID
+						}
+						record, err := db.InspectSession(ctx, resolvedDB, compareSessID)
+						if err != nil {
+							report.Passed = false
+							report.Checks = append(report.Checks, output.ValidationCheck{
+								Name:    "Database Discrepancy Check",
+								Passed:  false,
+								Details: fmt.Sprintf("session not found in database: %v", err),
+							})
+						} else {
+							comp := replay.CompareSessionWithDB(res, record)
+							res.Comparison = comp
+							driftCount := 0
+							for _, f := range comp.Fields {
+								if f.IsDrift {
+									driftCount++
+								}
+							}
+							details := "persisted database state matches replayed transcript"
+							if comp.HasDrift {
+								details = fmt.Sprintf("drift detected across %d field(s)", driftCount)
+								report.Passed = false
+							}
+							report.Checks = append(report.Checks, output.ValidationCheck{
+								Name:    "Database Discrepancy Check",
+								Passed:  !comp.HasDrift,
+								Details: details,
+							})
+						}
+					}
+				}
 			}
 
 			if vFlags.jsonOut {
@@ -319,6 +387,9 @@ func newRootCmd() *cobra.Command {
 				}
 			} else {
 				output.RenderValidationReport(cmd.OutOrStdout(), report, output.IsAgentMode())
+				if res != nil && res.Comparison != nil {
+					output.RenderComparison(cmd.OutOrStdout(), res.Comparison, output.IsAgentMode())
+				}
 			}
 
 			if !report.Passed {
@@ -336,11 +407,55 @@ func newRootCmd() *cobra.Command {
 	vflags.StringVar(&vFlags.harnessFlag, "harness", "", "Explicit harness override (claude-code, pi, codex, opencode)")
 	vflags.BoolVar(&vFlags.strictLifecycle, "strict-lifecycle", false, "Disable automatic synthesis of run_started and run_exited boundary frames")
 	vflags.BoolVar(&vFlags.strictLifecycle, "no-synthetic-lifecycle", false, "Disable automatic synthesis of run_started and run_exited boundary frames (alias)")
+	vflags.StringVar(&vFlags.dbPath, "db", "", "Path to agent-status.db for discrepancy comparison (or 'auto' for auto-detection)")
 
 	sessionCmd.AddCommand(listCmd)
 	sessionCmd.AddCommand(replayCmd)
 	sessionCmd.AddCommand(validateCmd)
 	rootCmd.AddCommand(sessionCmd)
+
+	// 4. db
+	dbCmd := &cobra.Command{
+		Use:   "db",
+		Short: "Inspect persisted agent-status SQLite database records",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmd.Help()
+		},
+	}
+
+	var dbInspectPath string
+	var dbInspectJSON bool
+	inspectCmd := &cobra.Command{
+		Use:   "inspect <session-id>",
+		Short: "Inspect persisted agent state and runs from SQLite database",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			if ctx == nil {
+				ctx = context.Background()
+			}
+			resolvedDB, err := db.ResolveDBPath(dbInspectPath)
+			if err != nil {
+				return err
+			}
+			record, err := db.InspectSession(ctx, resolvedDB, args[0])
+			if err != nil {
+				return err
+			}
+			if dbInspectJSON {
+				enc := json.NewEncoder(cmd.OutOrStdout())
+				enc.SetIndent("", "  ")
+				return enc.Encode(record)
+			}
+			output.RenderSessionInspect(cmd.OutOrStdout(), record, output.IsAgentMode())
+			return nil
+		},
+	}
+	inspectFlags := inspectCmd.Flags()
+	inspectFlags.StringVar(&dbInspectPath, "db", "auto", "Path to agent-status.db (default: auto-detect)")
+	inspectFlags.BoolVar(&dbInspectJSON, "json", false, "Output inspection result as JSON")
+	dbCmd.AddCommand(inspectCmd)
+	rootCmd.AddCommand(dbCmd)
 
 	cobrahelptree.Setup(rootCmd)
 	return rootCmd

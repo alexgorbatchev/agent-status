@@ -54,6 +54,8 @@ type ReplayResult struct {
 	HasSyntheticStart bool                       `json:"hasSyntheticStart,omitempty"`
 	HasSyntheticEnd   bool                       `json:"hasSyntheticEnd,omitempty"`
 	StrictLifecycle   bool                       `json:"strictLifecycle,omitempty"`
+	LastEventTimestamp int64                     `json:"lastEventTimestamp,omitempty"`
+	Comparison        *ComparisonResult          `json:"comparison,omitempty"`
 }
 
 // Summary builds a ReplaySummary presentation model from the replay result.
@@ -174,8 +176,10 @@ func RunReplay(ctx context.Context, opts ReplayOptions) (*ReplayResult, error) {
 	var replayErrors []string
 	eventCounts := make(map[string]int)
 	framesProcessed := 0
+	var lastEventTS int64
 
 	for stepIdx, rev := range session.Events {
+		lastEventTS = rev.Event.Timestamp
 		// Line-based breakpoint
 		if opts.UntilLine > 0 && rev.SourceLine > opts.UntilLine {
 			break
@@ -289,6 +293,7 @@ func RunReplay(ctx context.Context, opts ReplayOptions) (*ReplayResult, error) {
 		HasSyntheticStart: hasSyntheticStart,
 		HasSyntheticEnd:   hasSyntheticEnd,
 		StrictLifecycle:   opts.StrictLifecycle,
+		LastEventTimestamp: lastEventTS,
 	}
 
 	return result, nil

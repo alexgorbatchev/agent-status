@@ -48,6 +48,12 @@ air-debug session replay ~/.claude/sessions/session-abc.jsonl
 # Replay with turn-by-turn state transition diffs
 air-debug session replay --diff session-abc.jsonl
 
+# Compare transcript replay against a live agent-status database
+air-debug session replay --db ~/.local/share/agent-status/agent-status.db session-abc.jsonl
+
+# Directly inspect persisted agent state in SQLite database
+air-debug db inspect 01a0bd5b-0024-7222-9709-194e2fa6a892
+
 # Validate session transcript against parser, classifier, and query assertions
 air-debug session validate session-abc.jsonl
 
@@ -86,6 +92,7 @@ Session Replay Summary (pi)
 | `--session-id <id>` | (none) | `""` | OpenCode session ID to replay (required if database has multiple sessions) |
 | `--cwd <path>` | (none) | `""` | Override transcript working directory for local Git resolution |
 | `--diff` | (none) | `false` | Display turn-by-turn state mutations during replay |
+| `--db <path>` | (none) | `""` | Path to `agent-status.db` for discrepancy comparison (or `auto`) |
 | `--until-line <N>` | (none) | `0` | Halt replay after processing source line N |
 | `--until-event <type>` | (none) | `""` | Halt replay after encountering event type |
 | `--stop-on-error` | (none) | `false` | Halt immediately on first parse or state machine error |
@@ -101,5 +108,13 @@ Session Replay Summary (pi)
 | `--harness <name>` | (none) | `""` | Explicit harness override (`claude-code`, `pi`, `codex`, `opencode`) |
 | `--session-id <id>` | (none) | `""` | OpenCode session ID to validate |
 | `--cwd <path>` | (none) | `""` | Override transcript working directory for local Git resolution |
+| `--db <path>` | (none) | `""` | Path to `agent-status.db` for discrepancy comparison (or `auto`) |
 | `--json` | (none) | `false` | Output validation report as JSON |
 | `--env <label>` | (none) | `debug` | Environment label override |
+
+### `air-debug db inspect`
+
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--db <path>` | (none) | `auto` | Path to `agent-status.db` (auto-detects if omitted) |
+| `--json` | (none) | `false` | Output persisted session record as JSON |

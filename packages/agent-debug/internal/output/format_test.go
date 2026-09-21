@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
+	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/db"
 )
 
 func TestIsAgentMode(t *testing.T) {
@@ -320,6 +321,144 @@ func TestRenderValidationReport(t *testing.T) {
 		out := buf.String()
 		if !strings.Contains(out, "validation target:session-abc.jsonl harness:claude-code status:PASS") {
 			t.Errorf("expected compact agent output, got: %s", out)
+		}
+	})
+}
+
+func TestRenderComparison(t *testing.T) {
+	comp := &ComparisonResult{
+		DBPath:    "/tmp/agent-status.db",
+		SessionID: "ses-1",
+		AgentID:   "env-1:claude-code:ses-1",
+		Fields: []DiscrepancyField{
+			{Name: "Lifecycle", ReplayedValue: "EXITED", PersistedValue: "RUNNING", Status: "DRIFT", IsDrift: true},
+			{Name: "Tokens Total", ReplayedValue: "1,000", PersistedValue: "1,000", Status: "MATCH", IsDrift: false},
+		},
+		Warnings: []string{"Database updated_at is 2h newer than transcript last event time!"},
+		HasDrift: true,
+	}
+
+	t.Run("nil comparison", func(t *testing.T) {
+		var buf bytes.Buffer
+		RenderComparison(&buf, nil, false)
+		if buf.Len() != 0 {
+			t.Errorf("expected empty output for nil comparison")
+		}
+	})
+
+	t.Run("human mode", func(t *testing.T) {
+		var buf bytes.Buffer
+		RenderComparison(&buf, comp, false)
+		out := buf.String()
+		if !strings.Contains(out, "Live Database Comparison (agent-status.db)") {
+			t.Errorf("expected header, got %s", out)
+		}
+		if !strings.Contains(out, "Lifecycle") || !strings.Contains(out, "DRIFT") {
+			t.Errorf("expected Lifecycle row with DRIFT, got %s", out)
+		}
+		if !strings.Contains(out, "[WARN] Database updated_at is 2h newer") {
+			t.Errorf("expected warning, got %s", out)
+		}
+	})
+
+	t.Run("agent mode", func(t *testing.T) {
+		var buf bytes.Buffer
+		RenderComparison(&buf, comp, true)
+		out := buf.String()
+		if !strings.Contains(out, "db_comparison status:DRIFT db_path:/tmp/agent-status.db") {
+			t.Errorf("expected db_comparison line, got %s", out)
+		}
+		if !strings.Contains(out, "db_field name:Lifecycle") {
+			t.Errorf("expected db_field line, got %s", out)
+		}
+		if !strings.Contains(out, "db_warning") {
+			t.Errorf("expected db_warning line, got %s", out)
+		}
+	})
+}
+
+func TestRenderSessionInspect(t *testing.T) {
+	now := time.Now().UnixMilli()
+	rec := &db.SessionRecord{
+		DBPath: "/tmp/agent-status.db",
+		Agent: &types.IAgentState{
+			ID:        "env-1:claude-code:ses-1",
+			SessionID: "ses-1",
+			Harness:   types.HarnessClaudeCode,
+			Environment: types.IEnvironmentInfo{
+				Label:    "local-dev",
+				Hostname: "macbook",
+			},
+			Project: types.IProjectInfo{
+				Name: "agent-status",
+			},
+			Workspace: types.IWorkspaceInfo{
+				Branch: "main",
+				CWD:    "/repo",
+			},
+			Activity: types.IAgentActivity{
+				Lifecycle: types.LifecycleRunning,
+				Activity:  types.ActivityBusy,
+				Title:     "Debugging test",
+				Action:    "Editing file",
+				Usage: types.ITokenUsage{
+					Input:  1000,
+					Output: 200,
+					Total:  1200,
+				},
+				Cost: &types.ICostInfo{
+					Total: 0.045,
+				},
+				CurrentRun: &types.IRunInfo{
+					ID:  "run-1",
+					PID: 9999,
+				},
+				UpdatedAt: now,
+			},
+		},
+		Runs: []db.RunRecord{
+			{ID: "run-1", PID: 9999, HarnessVersion: "1.0", StartedAt: now - 10000, EndedAt: nil},
+		},
+		EventCount:          15,
+		FirstEventTimestamp: &now,
+		LastEventTimestamp:  &now,
+	}
+
+	t.Run("nil record", func(t *testing.T) {
+		var buf bytes.Buffer
+		RenderSessionInspect(&buf, nil, false)
+		if buf.Len() != 0 {
+			t.Errorf("expected empty output for nil record")
+		}
+	})
+
+	t.Run("human mode", func(t *testing.T) {
+		var buf bytes.Buffer
+		RenderSessionInspect(&buf, rec, false)
+		out := buf.String()
+		if !strings.Contains(out, "Persisted Agent Record (ses-1)") {
+			t.Errorf("expected header, got %s", out)
+		}
+		if !strings.Contains(out, "env-1:claude-code:ses-1") {
+			t.Errorf("expected Agent ID, got %s", out)
+		}
+		if !strings.Contains(out, "Debugging test") {
+			t.Errorf("expected Title, got %s", out)
+		}
+		if !strings.Contains(out, "Telemetry Events: 15 recorded") {
+			t.Errorf("expected event count, got %s", out)
+		}
+	})
+
+	t.Run("agent mode", func(t *testing.T) {
+		var buf bytes.Buffer
+		RenderSessionInspect(&buf, rec, true)
+		out := buf.String()
+		if !strings.Contains(out, "db_agent id:env-1:claude-code:ses-1 session_id:ses-1") {
+			t.Errorf("expected db_agent line, got %s", out)
+		}
+		if !strings.Contains(out, "db_run id:run-1 pid:9999") {
+			t.Errorf("expected db_run line, got %s", out)
 		}
 	})
 }
