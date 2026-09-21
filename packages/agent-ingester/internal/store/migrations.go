@@ -114,6 +114,32 @@ func Migrate(db *sql.DB) error {
 		if _, err := db.Exec("PRAGMA user_version = 1;"); err != nil {
 			return fmt.Errorf("updating user_version to 1: %w", err)
 		}
+		version = 1
+	}
+
+	if version < 2 {
+		tx, err := db.Begin()
+		if err != nil {
+			return fmt.Errorf("beginning migration v2 transaction: %w", err)
+		}
+		defer func() {
+			_ = tx.Rollback()
+		}()
+
+		if _, err := tx.Exec("ALTER TABLE agents ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0;"); err != nil {
+			return fmt.Errorf("executing migration v2 is_hidden: %w", err)
+		}
+		if _, err := tx.Exec("ALTER TABLE agents ADD COLUMN hidden_at INTEGER;"); err != nil {
+			return fmt.Errorf("executing migration v2 hidden_at: %w", err)
+		}
+
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("committing migration v2: %w", err)
+		}
+
+		if _, err := db.Exec("PRAGMA user_version = 2;"); err != nil {
+			return fmt.Errorf("updating user_version to 2: %w", err)
+		}
 	}
 
 	return nil

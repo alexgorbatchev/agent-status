@@ -260,3 +260,63 @@ func (r *Receiver) sendError(ctx context.Context, conn *websocket.Conn, code, ms
 	bytes, _ := json.Marshal(errMsg)
 	_ = conn.Write(ctx, websocket.MessageText, bytes)
 }
+
+type visibilityRequest struct {
+	IsHidden bool `json:"isHidden"`
+}
+
+func (r *Receiver) HandleSetVisibility(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPatch && req.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if r.bearerToken != "" {
+		authHeader := req.Header.Get("Authorization")
+		if !strings.HasPrefix(authHeader, "Bearer ") {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+		if subtle.ConstantTimeCompare([]byte(token), []byte(r.bearerToken)) != 1 {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+	}
+
+	id := req.PathValue("id")
+	if id == "" {
+		http.Error(w, "missing agent id", http.StatusBadRequest)
+		return
+	}
+
+	var body visibilityRequest
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	now := time.Now().UnixMilli()
+	var hiddenAt *int64
+	if body.IsHidden {
+		hiddenAt = &now
+	}
+
+	agent, err := r.store.SetAgentVisibility(id, body.IsHidden, hiddenAt)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	if r.publisher != nil && agent != nil {
+		r.publisher.Publish(types.IServerEvent{
+			Type:  "agent_upsert",
+			At:    now,
+			Agent: agent,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(agent)
+}

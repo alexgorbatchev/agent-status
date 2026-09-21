@@ -2037,4 +2037,125 @@ func TestClassifier_QuestionPromptPreservedAcrossTurnEnd(t *testing.T) {
 	}
 }
 
+func TestClassifier_AutoUnhideOnActivity(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+
+	cls, st := newTestClassifier(t, sum)
+	cls.SetSyncMode(true)
+
+	t0 := int64(10000)
+	baseFrame := types.ITelemetryFrame{
+		Version: "1.0",
+		Seq:     1,
+		EnvID:   "env-1",
+		Environment: types.IEnvironmentInfo{
+			ID:              "env-1",
+			Label:           "local",
+			Hostname:        "dev",
+			Platform:        "linux",
+			User:            "user",
+			LastHeartbeatAt: t0,
+		},
+		SessionID: "sess-hide-test",
+		AgentID:   "env-1:claude-code:sess-hide-test",
+		Harness:   types.HarnessClaudeCode,
+		Project: types.IProjectInfo{
+			ID:            "proj",
+			Name:          "proj",
+			CanonicalRoot: "/work/proj",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "main",
+			CWD:    "/work/proj",
+		},
+		Timestamp: t0,
+		EventType: "run_started",
+	}
+
+	// 1. Initial run_started
+	agent, err := cls.ProcessFrame(baseFrame)
+	if err != nil {
+		t.Fatalf("ProcessFrame failed: %v", err)
+	}
+	if agent.IsHidden {
+		t.Fatalf("expected initial agent not to be hidden")
+	}
+
+	// 2. Hide the agent at t0 + 1000
+	tHide := t0 + 1000
+	_, err = st.SetAgentVisibility(agent.ID, true, &tHide)
+	if err != nil {
+		t.Fatalf("SetAgentVisibility failed: %v", err)
+	}
+
+	// 3. Stale frame arriving with timestamp <= tHide should NOT unhide
+	toolName := "read_file"
+	staleFrame := baseFrame
+	staleFrame.Seq = 2
+	staleFrame.Timestamp = tHide - 500
+	staleFrame.EventType = "tool_call"
+	staleFrame.Data = types.TelemetryFrameData{
+		ToolName: &toolName,
+	}
+	agent, err = cls.ProcessFrame(staleFrame)
+	if err != nil {
+		t.Fatalf("ProcessFrame stale failed: %v", err)
+	}
+	if !agent.IsHidden {
+		t.Fatalf("expected agent to stay hidden on stale frame before hiddenAt")
+	}
+
+	// 4. run_exited frame should NOT unhide
+	exitCode := 0
+	exitFrame := baseFrame
+	exitFrame.Seq = 3
+	exitFrame.Timestamp = tHide + 500
+	exitFrame.EventType = "run_exited"
+	exitFrame.Data = types.TelemetryFrameData{
+		ExitCode: &exitCode,
+	}
+	agent, err = cls.ProcessFrame(exitFrame)
+	if err != nil {
+		t.Fatalf("ProcessFrame exit failed: %v", err)
+	}
+	if !agent.IsHidden {
+		t.Fatalf("expected agent to stay hidden on run_exited")
+	}
+
+	// 5. New activity frame after tHide (e.g. tool_call) MUST unhide automatically
+	newTool := "grep"
+	activityFrame := baseFrame
+	activityFrame.Seq = 4
+	activityFrame.Timestamp = tHide + 1000
+	activityFrame.EventType = "tool_call"
+	activityFrame.Data = types.TelemetryFrameData{
+		ToolName: &newTool,
+	}
+	agent, err = cls.ProcessFrame(activityFrame)
+	if err != nil {
+		t.Fatalf("ProcessFrame activity failed: %v", err)
+	}
+	if agent.IsHidden {
+		t.Fatalf("expected agent to auto-unhide on new activity after hiddenAt, but it is still hidden")
+	}
+	if agent.HiddenAt != nil {
+		t.Fatalf("expected agent.HiddenAt to be nil after unhide, got %v", agent.HiddenAt)
+	}
+
+	// Verify persistence in DB
+	persisted, err := st.GetAgent(agent.ID)
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if persisted.IsHidden {
+		t.Fatalf("expected persisted agent to be unhidden in DB")
+	}
+	if persisted.HiddenAt != nil {
+		t.Fatalf("expected persisted agent.HiddenAt to be nil in DB")
+	}
+}
+
 

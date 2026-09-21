@@ -185,6 +185,11 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 	if agent.Activity.ActionStale {
 		actionStale = 1
 	}
+	isHidden := 0
+	if agent.IsHidden {
+		isHidden = 1
+	}
+	hiddenAt := agent.HiddenAt
 
 	_, err = tx.Exec(`
 		INSERT INTO agents (
@@ -194,7 +199,8 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 			current_run_id, activity, title, action, action_stale,
 			phase, active_tool, active_target, question, last_thinking_excerpt, last_error,
 			tokens_input, tokens_output, tokens_cache_read, tokens_cache_write, tokens_reasoning, tokens_total,
-			cost_usd, subagent_count, first_started_at, updated_at
+			cost_usd, subagent_count, first_started_at, updated_at,
+			is_hidden, hidden_at
 		) VALUES (
 			?, ?, ?, ?,
 			?, ?, ?,
@@ -202,7 +208,8 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 			?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
-			?, ?, ?, ?
+			?, ?, ?, ?,
+			?, ?
 		)
 		ON CONFLICT(id) DO UPDATE SET
 			project_id = excluded.project_id,
@@ -232,7 +239,9 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 			tokens_total = excluded.tokens_total,
 			cost_usd = excluded.cost_usd,
 			subagent_count = excluded.subagent_count,
-			updated_at = excluded.updated_at
+			updated_at = excluded.updated_at,
+			is_hidden = excluded.is_hidden,
+			hidden_at = excluded.hidden_at
 	`,
 		agent.ID, agent.SessionID, agent.Environment.ID, string(agent.Harness),
 		agent.Project.ID, agent.Project.Name, agent.Project.CanonicalRoot,
@@ -241,6 +250,7 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 		phaseStr, agent.Activity.ActiveTool, agent.Activity.ActiveTarget, agent.Activity.Question, agent.Activity.LastThinkingExcerpt, agent.Activity.LastError,
 		agent.Activity.Usage.Input, agent.Activity.Usage.Output, agent.Activity.Usage.CacheRead, agent.Activity.Usage.CacheWrite, agent.Activity.Usage.Reasoning, agent.Activity.Usage.Total,
 		costUSD, agent.Activity.SubagentCount, agent.Activity.FirstStartedAt, agent.Activity.UpdatedAt,
+		isHidden, hiddenAt,
 	)
 	if err != nil {
 		return fmt.Errorf("upserting agent: %w", err)
@@ -259,7 +269,8 @@ func (s *Store) GetAgent(id string) (*types.IAgentState, error) {
 			a.tokens_input, a.tokens_output, a.tokens_cache_read, a.tokens_cache_write, a.tokens_reasoning, a.tokens_total,
 			a.cost_usd, a.subagent_count, a.first_started_at, a.updated_at,
 			e.id, e.label, e.hostname, e.platform, e.user, e.last_heartbeat_at,
-			r.id, r.pid, r.harness_version, r.started_at, r.ended_at
+			r.id, r.pid, r.harness_version, r.started_at, r.ended_at,
+			a.is_hidden, a.hidden_at
 		FROM agents a
 		JOIN environments e ON a.environment_id = e.id
 		LEFT JOIN runs r ON a.current_run_id = r.id
@@ -270,6 +281,8 @@ func (s *Store) GetAgent(id string) (*types.IAgentState, error) {
 		agent                                              types.IAgentState
 		harnessStr, activityStr                            string
 		isDetached, isWorktree, actionStale                int
+		isHidden                                           int
+		hiddenAt                                           sql.NullInt64
 		phaseStr                                           sql.NullString
 		activeTool, activeTarget, question, thinking, lErr sql.NullString
 		worktreeRel                                        sql.NullString
@@ -291,6 +304,7 @@ func (s *Store) GetAgent(id string) (*types.IAgentState, error) {
 		&costUSD, &agent.Activity.SubagentCount, &agent.Activity.FirstStartedAt, &agent.Activity.UpdatedAt,
 		&agent.Environment.ID, &agent.Environment.Label, &agent.Environment.Hostname, &envPlatform, &agent.Environment.User, &agent.Environment.LastHeartbeatAt,
 		&runID, &runPID, &runHarnessVer, &runStart, &runEnd,
+		&isHidden, &hiddenAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -305,6 +319,11 @@ func (s *Store) GetAgent(id string) (*types.IAgentState, error) {
 	agent.Workspace.IsDetached = isDetached == 1
 	agent.Workspace.IsWorktree = isWorktree == 1
 	agent.Activity.ActionStale = actionStale == 1
+	agent.IsHidden = isHidden == 1
+	if hiddenAt.Valid {
+		v := hiddenAt.Int64
+		agent.HiddenAt = &v
+	}
 
 	if worktreeRel.Valid {
 		agent.Workspace.RelPath = &worktreeRel.String
@@ -369,6 +388,30 @@ func (s *Store) GetAgent(id string) (*types.IAgentState, error) {
 	agent.Environment.IsStale = (now - agent.Environment.LastHeartbeatAt) > 30000
 
 	return &agent, nil
+}
+
+func (s *Store) SetAgentVisibility(id string, isHidden bool, hiddenAt *int64) (*types.IAgentState, error) {
+	val := 0
+	if isHidden {
+		val = 1
+	}
+	now := time.Now().UnixMilli()
+	res, err := s.db.Exec(`
+		UPDATE agents
+		SET is_hidden = ?, hidden_at = ?, updated_at = ?
+		WHERE id = ?
+	`, val, hiddenAt, now, id)
+	if err != nil {
+		return nil, fmt.Errorf("updating agent visibility %s: %w", id, err)
+	}
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("checking rows affected for %s: %w", id, err)
+	}
+	if rowsAffected == 0 {
+		return nil, fmt.Errorf("agent %s not found", id)
+	}
+	return s.GetAgent(id)
 }
 
 func (s *Store) GetAllActiveAgents() ([]types.IAgentState, error) {

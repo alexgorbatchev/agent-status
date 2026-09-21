@@ -192,6 +192,25 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		agent.Activity.UpdatedAt = now
 	}
 
+	// Auto-unhide if agent was hidden and shows new activity
+	if agent.IsHidden && frame.EventType != "run_exited" {
+		isAfterHide := agent.HiddenAt == nil || now > *agent.HiddenAt
+		if isAfterHide {
+			isActiveEvent := frame.EventType == "run_started" ||
+				frame.EventType == "turn_start" ||
+				frame.EventType == "tool_call" ||
+				frame.EventType == "tool_result" ||
+				frame.EventType == "thinking" ||
+				frame.EventType == "question_prompt" ||
+				frame.EventType == "error"
+			if isActiveEvent {
+				agent.IsHidden = false
+				agent.HiddenAt = nil
+				logging.Info("agent_unhidden_on_activity", "id", agent.ID, "event", frame.EventType)
+			}
+		}
+	}
+
 	isSubagent := frame.SubagentID != nil && *frame.SubagentID != ""
 
 	// Accumulate Usage & Cost

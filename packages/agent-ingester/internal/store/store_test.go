@@ -27,8 +27,8 @@ func TestOpen_Memory(t *testing.T) {
 	if err := st.DB().QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("query user_version failed: %v", err)
 	}
-	if version != 1 {
-		t.Errorf("got user_version = %d, want 1", version)
+	if version != 2 {
+		t.Errorf("got user_version = %d, want 2", version)
 	}
 }
 
@@ -94,6 +94,37 @@ func TestMigrate_ErrorCases(t *testing.T) {
 	_ = db.Close()
 	if err := Migrate(db); err == nil {
 		t.Errorf("expected error on closed db, got nil")
+	}
+}
+
+func TestMigrate_V1ToV2(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open failed: %v", err)
+	}
+	defer func() {
+		_ = db.Close()
+	}()
+
+	// Execute v1 schema manually and set user_version = 1
+	if _, err := db.Exec(schemaV1); err != nil {
+		t.Fatalf("schemaV1 failed: %v", err)
+	}
+	if _, err := db.Exec("PRAGMA user_version = 1;"); err != nil {
+		t.Fatalf("setting user_version = 1 failed: %v", err)
+	}
+
+	// Now run Migrate, which should run v2
+	if err := Migrate(db); err != nil {
+		t.Fatalf("Migrate() v1->v2 failed: %v", err)
+	}
+
+	var version int
+	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
+		t.Fatalf("reading user_version: %v", err)
+	}
+	if version != 2 {
+		t.Errorf("got user_version = %d, want 2", version)
 	}
 }
 
@@ -664,8 +695,20 @@ func TestStore_ErrorHandlingOnClosedDB(t *testing.T) {
 	if _, err := st.GetAllEnvironments(); err == nil {
 		t.Errorf("expected error on closed db for GetAllEnvironments")
 	}
+	if err := st.RecordTelemetryEvent(types.ITelemetryFrame{}); err == nil {
+		t.Errorf("expected error on closed db for RecordTelemetryEvent")
+	}
 	if err := st.EndCurrentRun("a", 100); err == nil {
 		t.Errorf("expected error on closed db for EndCurrentRun")
+	}
+	if _, err := st.SetAgentVisibility("a", true, nil); err == nil {
+		t.Errorf("expected error on closed db for SetAgentVisibility")
+	}
+	if _, err := st.GetAllActiveAgents(); err == nil {
+		t.Errorf("expected error on closed db for GetAllActiveAgents")
+	}
+	if _, err := st.GetAllEnvironments(); err == nil {
+		t.Errorf("expected error on closed db for GetAllEnvironments")
 	}
 	if err := st.PruneOldEventsAndExitedAgents(100, 100); err == nil {
 		t.Errorf("expected error on closed db for PruneOldEventsAndExitedAgents")
@@ -796,5 +839,115 @@ func TestPruneOldEventsAndExitedAgents(t *testing.T) {
 	}
 	if eventCount != 1 {
 		t.Errorf("got %d telemetry events, want 1", eventCount)
+	}
+}
+
+func TestAgentVisibility(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer func() {
+		_ = st.Close()
+	}()
+
+	now := time.Now().UnixMilli()
+	agent := types.IAgentState{
+		ID:        "env-1:claude-code:session-vis",
+		SessionID: "session-vis",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:              "env-1",
+			Label:           "test-env",
+			Hostname:        "host-1",
+			Platform:        "linux",
+			User:            "user-1",
+			LastHeartbeatAt: now,
+		},
+		Project: types.IProjectInfo{
+			ID:            "proj-1",
+			Name:          "proj",
+			CanonicalRoot: "/work/proj",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "main",
+			CWD:    "/work/proj",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle:      types.LifecycleRunning,
+			Activity:       types.ActivityIdle,
+			Title:          "Visibility test",
+			FirstStartedAt: now,
+			UpdatedAt:      now,
+		},
+	}
+
+	if err := st.SaveAgentState(agent); err != nil {
+		t.Fatalf("SaveAgentState failed: %v", err)
+	}
+
+	loaded, err := st.GetAgent(agent.ID)
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if loaded.IsHidden {
+		t.Fatalf("expected loaded.IsHidden == false, got true")
+	}
+	if loaded.HiddenAt != nil {
+		t.Fatalf("expected loaded.HiddenAt == nil, got %v", loaded.HiddenAt)
+	}
+
+	hiddenAt := now + 1000
+	updated, err := st.SetAgentVisibility(agent.ID, true, &hiddenAt)
+	if err != nil {
+		t.Fatalf("SetAgentVisibility failed: %v", err)
+	}
+	if !updated.IsHidden {
+		t.Fatalf("expected updated.IsHidden == true, got false")
+	}
+	if updated.HiddenAt == nil || *updated.HiddenAt != hiddenAt {
+		t.Fatalf("expected updated.HiddenAt == %d, got %v", hiddenAt, updated.HiddenAt)
+	}
+
+	// Verify persistence in DB
+	loaded, err = st.GetAgent(agent.ID)
+	if err != nil {
+		t.Fatalf("GetAgent after hide failed: %v", err)
+	}
+	if !loaded.IsHidden {
+		t.Fatalf("expected loaded.IsHidden == true, got false")
+	}
+	if loaded.HiddenAt == nil || *loaded.HiddenAt != hiddenAt {
+		t.Fatalf("expected loaded.HiddenAt == %d, got %v", hiddenAt, loaded.HiddenAt)
+	}
+
+	// Now unhide
+	updated, err = st.SetAgentVisibility(agent.ID, false, nil)
+	if err != nil {
+		t.Fatalf("SetAgentVisibility(false) failed: %v", err)
+	}
+	if updated.IsHidden {
+		t.Fatalf("expected updated.IsHidden == false, got true")
+	}
+	if updated.HiddenAt != nil {
+		t.Fatalf("expected updated.HiddenAt == nil, got %v", updated.HiddenAt)
+	}
+
+	// Verify persistence
+	loaded, err = st.GetAgent(agent.ID)
+	if err != nil {
+		t.Fatalf("GetAgent after unhide failed: %v", err)
+	}
+	if loaded.IsHidden {
+		t.Fatalf("expected loaded.IsHidden == false, got true")
+	}
+	if loaded.HiddenAt != nil {
+		t.Fatalf("expected loaded.HiddenAt == nil, got %v", loaded.HiddenAt)
+	}
+
+	// Not found error check
+	_, err = st.SetAgentVisibility("non-existent", true, &hiddenAt)
+	if err == nil {
+		t.Fatalf("expected error for non-existent agent, got nil")
 	}
 }

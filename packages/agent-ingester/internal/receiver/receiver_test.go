@@ -938,3 +938,108 @@ func TestReceiver_UnsupportedFrameVersion(t *testing.T) {
 	// Write binary frame (should be ignored without breaking connection)
 	_ = conn.Write(ctx, websocket.MessageBinary, []byte{0x01, 0x02})
 }
+
+func TestReceiver_HandleSetVisibility(t *testing.T) {
+	rcv, st, _ := newTestReceiver(t)
+
+	now := time.Now().UnixMilli()
+	agent := types.IAgentState{
+		ID:        "env-1:claude-code:sess-vis-api",
+		SessionID: "sess-vis-api",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:              "env-1",
+			Label:           "local",
+			Hostname:        "dev",
+			Platform:        "linux",
+			User:            "user",
+			LastHeartbeatAt: now,
+		},
+		Project: types.IProjectInfo{
+			ID:            "proj",
+			Name:          "proj",
+			CanonicalRoot: "/work/proj",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "main",
+			CWD:    "/work/proj",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle:      types.LifecycleRunning,
+			Activity:       types.ActivityIdle,
+			Title:          "Visibility API Test",
+			FirstStartedAt: now,
+			UpdatedAt:      now,
+		},
+	}
+	if err := st.SaveAgentState(agent); err != nil {
+		t.Fatalf("SaveAgentState failed: %v", err)
+	}
+
+	// 1. Unauthorized without token
+	body := strings.NewReader(`{"isHidden":true}`)
+	req := httptest.NewRequest("PATCH", "/api/v1/internal/agents/env-1:claude-code:sess-vis-api/visibility", body)
+	req.SetPathValue("id", "env-1:claude-code:sess-vis-api")
+	w := httptest.NewRecorder()
+	rcv.HandleSetVisibility(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("got status %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+
+	// 2. 404 for non-existent agent
+	body = strings.NewReader(`{"isHidden":true}`)
+	req = httptest.NewRequest("PATCH", "/api/v1/internal/agents/non-existent/visibility", body)
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.SetPathValue("id", "non-existent")
+	w = httptest.NewRecorder()
+	rcv.HandleSetVisibility(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("got status %d, want %d", w.Code, http.StatusNotFound)
+	}
+
+	// 3. 400 on malformed json
+	body = strings.NewReader(`{invalid json`)
+	req = httptest.NewRequest("PATCH", "/api/v1/internal/agents/env-1:claude-code:sess-vis-api/visibility", body)
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.SetPathValue("id", "env-1:claude-code:sess-vis-api")
+	w = httptest.NewRecorder()
+	rcv.HandleSetVisibility(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("got status %d, want %d", w.Code, http.StatusBadRequest)
+	}
+
+	// 4. Success hide
+	body = strings.NewReader(`{"isHidden":true}`)
+	req = httptest.NewRequest("PATCH", "/api/v1/internal/agents/env-1:claude-code:sess-vis-api/visibility", body)
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.SetPathValue("id", "env-1:claude-code:sess-vis-api")
+	w = httptest.NewRecorder()
+	rcv.HandleSetVisibility(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("got status %d, want %d", w.Code, http.StatusOK)
+	}
+	var resAgent types.IAgentState
+	if err := json.NewDecoder(w.Body).Decode(&resAgent); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if !resAgent.IsHidden {
+		t.Errorf("expected resAgent.IsHidden == true")
+	}
+
+	// 5. Success unhide
+	body = strings.NewReader(`{"isHidden":false}`)
+	req = httptest.NewRequest("PATCH", "/api/v1/internal/agents/env-1:claude-code:sess-vis-api/visibility", body)
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.SetPathValue("id", "env-1:claude-code:sess-vis-api")
+	w = httptest.NewRecorder()
+	rcv.HandleSetVisibility(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("got status %d, want %d", w.Code, http.StatusOK)
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resAgent); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resAgent.IsHidden {
+		t.Errorf("expected resAgent.IsHidden == false")
+	}
+}
