@@ -64,6 +64,8 @@ CREATE TABLE IF NOT EXISTS agents (
     subagent_count        INTEGER NOT NULL DEFAULT 0,
     first_started_at      INTEGER NOT NULL,
     updated_at            INTEGER NOT NULL,
+    is_hidden             INTEGER NOT NULL DEFAULT 0,
+    hidden_at             INTEGER,
     UNIQUE (environment_id, harness, session_id)
 );
 
@@ -156,7 +158,8 @@ func seedTestData(t *testing.T, s *Store) {
 			phase, last_error,
 			tokens_input, tokens_output, tokens_cache_read, tokens_cache_write,
 			tokens_reasoning, tokens_total, cost_usd, subagent_count,
-			first_started_at, updated_at
+			first_started_at, updated_at,
+			is_hidden, hidden_at
 		) VALUES (
 			'env1:claude-code:sess2', 'sess2', 'env1', 'claude-code',
 			'github.com/org/repo1', 'repo1', '/path/to/repo1',
@@ -165,9 +168,10 @@ func seedTestData(t *testing.T, s *Store) {
 			'debugging', 'Build failed with syntax error',
 			200, 100, 0, 0,
 			0, 300, 2.50, 0,
-			?, ?
+			?, ?,
+			1, ?
 		)
-	`, now-20000, now-1000)
+	`, now-20000, now-1000, now-1000)
 	if err != nil {
 		t.Fatalf("inserting agent 2: %v", err)
 	}
@@ -328,6 +332,10 @@ func TestStore_GetEnvironments(t *testing.T) {
 	})
 }
 
+func boolPtr(b bool) *bool {
+	return &b
+}
+
 func TestStore_GetAgents(t *testing.T) {
 	s := setupTestDB(t)
 	seedTestData(t, s)
@@ -352,6 +360,8 @@ func TestStore_GetAgents(t *testing.T) {
 		{"combined project and running", AgentFilter{Project: "github.com/org/repo1", Lifecycle: types.LifecycleRunning}, 1},
 		{"combined project and exited", AgentFilter{Project: "github.com/org/repo1", Lifecycle: types.LifecycleExited}, 1},
 		{"combined env and activity", AgentFilter{Environment: "env1", Activity: types.ActivityWaitingQuestion}, 1},
+		{"hidden only", AgentFilter{Hidden: boolPtr(true)}, 1},
+		{"visible only", AgentFilter{Hidden: boolPtr(false)}, 2},
 	}
 
 	for _, tt := range tests {
@@ -415,12 +425,21 @@ func TestStore_GetAgentByID(t *testing.T) {
 		if agent.Activity.Cost == nil || agent.Activity.Cost.Total != 1.25 {
 			t.Errorf("agent cost = %v, want 1.25", agent.Activity.Cost)
 		}
+		if agent.IsHidden {
+			t.Errorf("expected agent.IsHidden == false")
+		}
 	})
 
 	t.Run("found exited agent with worktree and error", func(t *testing.T) {
 		agent, err := s.GetAgentByID(context.Background(), "env1:claude-code:sess2")
 		if err != nil {
 			t.Fatalf("GetAgentByID() error = %v", err)
+		}
+		if !agent.IsHidden {
+			t.Errorf("expected agent.IsHidden == true")
+		}
+		if agent.HiddenAt == nil {
+			t.Errorf("expected agent.HiddenAt != nil")
 		}
 		if agent.Activity.Lifecycle != types.LifecycleExited {
 			t.Errorf("agent lifecycle = %q, want EXITED", agent.Activity.Lifecycle)

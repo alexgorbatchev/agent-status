@@ -49,6 +49,7 @@ type AgentFilter struct {
 	Environment string
 	Lifecycle   types.LifecycleState
 	Activity    types.ActivityState
+	Hidden      *bool
 }
 
 func (s *Store) GetEnvironments(ctx context.Context) ([]types.IEnvironmentInfo, error) {
@@ -132,7 +133,8 @@ const selectAgentBaseQuery = `
 		a.tokens_reasoning, a.tokens_total,
 		a.cost_usd, a.subagent_count, a.first_started_at, a.updated_at,
 		e.label, e.hostname, e.platform, e.user, e.last_heartbeat_at,
-		r.pid, r.harness_version, r.started_at, r.ended_at
+		r.pid, r.harness_version, r.started_at, r.ended_at,
+		a.is_hidden, a.hidden_at
 	FROM agents a
 	INNER JOIN environments e ON a.environment_id = e.id
 	LEFT JOIN runs r ON a.current_run_id = r.id
@@ -166,6 +168,8 @@ func scanAgent(s agentRowScanner, nowMs int64) (*types.IAgentState, error) {
 		runPID                                                        sql.NullInt64
 		runHarnessVersion                                             sql.NullString
 		runStartedAt, runEndedAt                                      sql.NullInt64
+		isHidden                                                      int
+		hiddenAt                                                      sql.NullInt64
 	)
 
 	err := s.Scan(
@@ -180,6 +184,7 @@ func scanAgent(s agentRowScanner, nowMs int64) (*types.IAgentState, error) {
 		&costUSD, &subagentCount, &firstStartedAt, &updatedAt,
 		&envLabel, &envHostname, &envPlatform, &envUser, &envLastHeartbeat,
 		&runPID, &runHarnessVersion, &runStartedAt, &runEndedAt,
+		&isHidden, &hiddenAt,
 	)
 	if err != nil {
 		return nil, err
@@ -248,10 +253,18 @@ func scanAgent(s agentRowScanner, nowMs int64) (*types.IAgentState, error) {
 		lastErrorPtr = &lastError.String
 	}
 
+	var hiddenAtPtr *int64
+	if hiddenAt.Valid {
+		v := hiddenAt.Int64
+		hiddenAtPtr = &v
+	}
+
 	agent := &types.IAgentState{
 		ID:        id,
 		SessionID: sessionID,
 		Harness:   types.HarnessType(harness),
+		IsHidden:  isHidden == 1,
+		HiddenAt:  hiddenAtPtr,
 		Environment: types.IEnvironmentInfo{
 			ID:              envID,
 			Label:           envLabel,
@@ -325,6 +338,13 @@ func (s *Store) GetAgents(ctx context.Context, filter AgentFilter) ([]types.IAge
 		whereClauses = append(whereClauses, "a.current_run_id IS NOT NULL")
 	case types.LifecycleExited:
 		whereClauses = append(whereClauses, "a.current_run_id IS NULL")
+	}
+	if filter.Hidden != nil {
+		if *filter.Hidden {
+			whereClauses = append(whereClauses, "a.is_hidden = 1")
+		} else {
+			whereClauses = append(whereClauses, "a.is_hidden = 0")
+		}
 	}
 
 	query := selectAgentBaseQuery

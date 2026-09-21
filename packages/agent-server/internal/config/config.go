@@ -9,6 +9,7 @@ type Config struct {
 	Addr          string
 	DBPath        string
 	SocketPath    string
+	IngesterURL   string
 	AuthToken     string
 	CORSOrigins   []string
 	LogLevel      string
@@ -37,10 +38,15 @@ func DefaultSocketPath() string {
 
 func DefaultConfig() Config {
 	token := os.Getenv("AGENT_STATUS_TOKEN")
+	ingesterURL := os.Getenv("AIR_INGESTER_URL")
+	if ingesterURL == "" {
+		ingesterURL = "http://127.0.0.1:4501"
+	}
 	return Config{
 		Addr:        ":4502",
 		DBPath:      DefaultDBPath(),
 		SocketPath:  DefaultSocketPath(),
+		IngesterURL: ingesterURL,
 		AuthToken:   token,
 		CORSOrigins: []string{"http://localhost:3000"},
 		LogLevel:    "info",

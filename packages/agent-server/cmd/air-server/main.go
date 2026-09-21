@@ -38,6 +38,7 @@ func newRootCmd(cfg *config.Config) *cobra.Command {
 	flags.StringVarP(&cfg.Addr, "addr", "a", cfg.Addr, "HTTP listen address (e.g. :4502 or 127.0.0.1:4502)")
 	flags.StringVar(&cfg.DBPath, "db", cfg.DBPath, "Path to agent-status SQLite database (read-only)")
 	flags.StringVar(&cfg.SocketPath, "socket", cfg.SocketPath, "Path to notify unix domain socket")
+	flags.StringVar(&cfg.IngesterURL, "ingester-url", cfg.IngesterURL, "URL of air-ingester for mutation proxying")
 	flags.StringSliceVar(&cfg.CORSOrigins, "cors-origin", cfg.CORSOrigins, "Allowed CORS origins")
 	flags.StringVar(&cfg.AuthToken, "token", cfg.AuthToken, "Bearer authentication token (or AGENT_STATUS_TOKEN env)")
 	flags.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "Log level (debug, info, warn, error)")
@@ -106,6 +107,7 @@ func run(ctx context.Context, cfg config.Config) error {
 	server := api.NewServer(api.ServerConfig{
 		Store:       sqliteStore,
 		Hub:         hub,
+		IngesterURL: cfg.IngesterURL,
 		AuthToken:   cfg.AuthToken,
 		CORSOrigins: cfg.CORSOrigins,
 		Logger:      logger,

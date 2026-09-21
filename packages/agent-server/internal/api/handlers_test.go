@@ -539,6 +539,132 @@ func TestGetAgentByID(t *testing.T) {
 	})
 }
 
+func TestPatchAgent(t *testing.T) {
+	// Fake ingester backend
+	fakeIngester := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer secret-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		if r.Method != http.MethodPatch {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+
+		if strings.Contains(r.URL.Path, "non-existent") {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"not found"}`))
+			return
+		}
+
+		var body struct {
+			IsHidden bool `json:"isHidden"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(types.IAgentState{
+			ID:       "agent-1",
+			IsHidden: body.IsHidden,
+		})
+	}))
+	defer fakeIngester.Close()
+
+	mock := &mockStore{}
+	hub := stream.NewHub()
+	defer hub.Close()
+
+	srv := NewServer(ServerConfig{
+		Store:       mock,
+		Hub:         hub,
+		AuthToken:   "secret-token",
+		IngesterURL: fakeIngester.URL,
+	})
+
+	t.Run("success hide agent", func(t *testing.T) {
+		body := strings.NewReader(`{"isHidden":true}`)
+		req := httptest.NewRequest("PATCH", "/api/v1/agents/agent-1", body)
+		req.Header.Set("Authorization", "Bearer secret-token")
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+		}
+
+		var agent types.IAgentState
+		if err := json.NewDecoder(w.Body).Decode(&agent); err != nil {
+			t.Fatalf("decoding json: %v", err)
+		}
+		if !agent.IsHidden {
+			t.Errorf("expected agent.IsHidden == true")
+		}
+	})
+
+	t.Run("404 when agent not found in ingester", func(t *testing.T) {
+		body := strings.NewReader(`{"isHidden":true}`)
+		req := httptest.NewRequest("PATCH", "/api/v1/agents/non-existent", body)
+		req.Header.Set("Authorization", "Bearer secret-token")
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want %d", w.Code, http.StatusNotFound)
+		}
+	})
+
+	t.Run("400 on invalid body", func(t *testing.T) {
+		body := strings.NewReader(`{invalid json`)
+		req := httptest.NewRequest("PATCH", "/api/v1/agents/agent-1", body)
+		req.Header.Set("Authorization", "Bearer secret-token")
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want %d", w.Code, http.StatusBadRequest)
+		}
+	})
+
+	t.Run("502 when ingester is unreachable", func(t *testing.T) {
+		unreachableSrv := NewServer(ServerConfig{
+			Store:       mock,
+			Hub:         hub,
+			AuthToken:   "secret-token",
+			IngesterURL: "http://127.0.0.1:59999",
+		})
+		body := strings.NewReader(`{"isHidden":true}`)
+		req := httptest.NewRequest("PATCH", "/api/v1/agents/agent-1", body)
+		req.Header.Set("Authorization", "Bearer secret-token")
+		w := httptest.NewRecorder()
+		unreachableSrv.Router().ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadGateway {
+			t.Fatalf("status = %d, want %d", w.Code, http.StatusBadGateway)
+		}
+	})
+
+	t.Run("forwards incoming auth header when cfg.AuthToken is empty", func(t *testing.T) {
+		noAuthSrv := NewServer(ServerConfig{
+			Store:       mock,
+			Hub:         hub,
+			IngesterURL: fakeIngester.URL,
+		})
+		body := strings.NewReader(`{"isHidden":true}`)
+		req := httptest.NewRequest("PATCH", "/api/v1/agents/agent-1", body)
+		req.Header.Set("Authorization", "Bearer secret-token")
+		w := httptest.NewRecorder()
+		noAuthSrv.Router().ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+		}
+	})
+}
+
 func TestGetAgentLogs(t *testing.T) {
 	srv, mock, _ := setupTestServer(t)
 

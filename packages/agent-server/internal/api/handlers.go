@@ -1,10 +1,12 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -33,6 +35,7 @@ type StoreInterface interface {
 type ServerConfig struct {
 	Store       StoreInterface
 	Hub         *stream.Hub
+	IngesterURL string
 	AuthToken   string
 	CORSOrigins []string
 	Logger      *logging.Logger
@@ -101,6 +104,7 @@ func (s *Server) setupRoutes() {
 		r.Get("/api/v1/environments", s.handleGetEnvironments)
 		r.Get("/api/v1/agents", s.handleGetAgents)
 		r.Get("/api/v1/agents/{id}", s.handleGetAgentByID)
+		r.Patch("/api/v1/agents/{id}", s.handlePatchAgent)
 		r.Get("/api/v1/agents/{id}/logs", s.handleGetAgentLogs)
 	})
 
@@ -158,6 +162,15 @@ func (s *Server) handleGetAgents(w http.ResponseWriter, r *http.Request) {
 		Activity:    types.ActivityState(q.Get("activity")),
 	}
 
+	switch q.Get("hidden") {
+	case "true":
+		b := true
+		filter.Hidden = &b
+	case "false":
+		b := false
+		filter.Hidden = &b
+	}
+
 	agents, err := s.store.GetAgents(r.Context(), filter)
 	if err != nil {
 		s.logger.ErrorContext(r.Context(), "agents_fetch_failed", "err", err)
@@ -190,6 +203,62 @@ func (s *Server) handleGetAgentByID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, agent)
+}
+
+func (s *Server) handlePatchAgent(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if unescaped, err := url.PathUnescape(id); err == nil && unescaped != "" {
+		id = unescaped
+	}
+
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing agent id")
+		return
+	}
+
+	var body struct {
+		IsHidden bool `json:"isHidden"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	ingesterURL := s.cfg.IngesterURL
+	if ingesterURL == "" {
+		ingesterURL = "http://127.0.0.1:4501"
+	}
+
+	targetURL := fmt.Sprintf("%s/api/v1/internal/agents/%s/visibility", ingesterURL, url.PathEscape(id))
+	payload, _ := json.Marshal(body)
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPatch, targetURL, bytes.NewReader(payload))
+	if err != nil {
+		s.logger.ErrorContext(r.Context(), "create_ingester_request_failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to create proxy request")
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if s.cfg.AuthToken != "" {
+		req.Header.Set("Authorization", "Bearer "+s.cfg.AuthToken)
+	} else if auth := r.Header.Get("Authorization"); auth != "" {
+		req.Header.Set("Authorization", auth)
+	}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		s.logger.ErrorContext(r.Context(), "ingester_proxy_failed", "err", err)
+		writeError(w, http.StatusBadGateway, "failed to reach ingester")
+		return
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
 }
 
 func (s *Server) handleGetAgentLogs(w http.ResponseWriter, r *http.Request) {
