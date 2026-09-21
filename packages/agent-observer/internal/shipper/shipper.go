@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 
@@ -173,11 +174,14 @@ func (s *Shipper) runConnectionLoop(ctx context.Context) {
 			nextInterval = 30 * time.Second
 		}
 
+		timer := time.NewTimer(nextInterval)
 		select {
-		case <-time.After(nextInterval):
+		case <-timer.C:
 		case <-ctx.Done():
+			timer.Stop()
 			return
 		case <-s.stopCh:
+			timer.Stop()
 			return
 		}
 	}
@@ -248,14 +252,20 @@ func (s *Shipper) connectAndStream(ctx context.Context, onConnected func()) erro
 				if ack.UpTo > 0 {
 					s.mu.Lock()
 					s.lastAckedSeq = max(s.lastAckedSeq, ack.UpTo)
-					var toInvoke []AckCallback
-					for seq, cb := range s.ackCallbacks {
+					var seqs []int64
+					for seq := range s.ackCallbacks {
 						if seq <= ack.UpTo {
-							if cb != nil {
-								toInvoke = append(toInvoke, cb)
-							}
-							delete(s.ackCallbacks, seq)
+							seqs = append(seqs, seq)
 						}
+					}
+					sort.Slice(seqs, func(i, j int) bool { return seqs[i] < seqs[j] })
+
+					var toInvoke []AckCallback
+					for _, seq := range seqs {
+						if cb := s.ackCallbacks[seq]; cb != nil {
+							toInvoke = append(toInvoke, cb)
+						}
+						delete(s.ackCallbacks, seq)
 					}
 					s.mu.Unlock()
 
@@ -300,6 +310,13 @@ func (s *Shipper) connectAndStream(ctx context.Context, onConnected func()) erro
 				continue
 			}
 			if err := conn.Write(connCtx, websocket.MessageText, data); err != nil {
+				select {
+				case s.incomingCh <- item:
+				default:
+					s.mu.Lock()
+					delete(s.ackCallbacks, item.frame.Seq)
+					s.mu.Unlock()
+				}
 				return fmt.Errorf("writing frame: %w", err)
 			}
 		case <-heartbeatTicker.C:

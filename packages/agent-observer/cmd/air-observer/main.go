@@ -327,7 +327,7 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 					if s.StartedAt > 0 {
 						now = s.StartedAt
 					}
-					ship.Enqueue(types.ITelemetryFrame{
+					_ = ship.EnqueueContext(ctx, types.ITelemetryFrame{
 						Version:        "1.0",
 						EnvID:          env.ID,
 						Environment:    *env,
@@ -362,7 +362,7 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 			if !newCCMap[sessID] {
 				// Claude Code session exited
 				agentID := fmt.Sprintf("%s:%s:%s", env.ID, types.HarnessClaudeCode, sessID)
-				ship.Enqueue(types.ITelemetryFrame{
+				_ = ship.EnqueueContext(ctx, types.ITelemetryFrame{
 					Version:        "1.0",
 					EnvID:          env.ID,
 					Environment:    *env,
@@ -399,7 +399,7 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 					if s.StartedAt > 0 {
 						now = s.StartedAt
 					}
-					ship.Enqueue(types.ITelemetryFrame{
+					_ = ship.EnqueueContext(ctx, types.ITelemetryFrame{
 						Version:        "1.0",
 						EnvID:          env.ID,
 						Environment:    *env,
@@ -429,7 +429,7 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 				// Pi process terminated or session ended
 				agentID := fmt.Sprintf("%s:%s:%s", env.ID, types.HarnessPi, sessID)
 				proj, ws, _ := gitResolver.Resolve(ctx, oldDesc.CWD, "")
-				ship.Enqueue(types.ITelemetryFrame{
+				_ = ship.EnqueueContext(ctx, types.ITelemetryFrame{
 					Version:        "1.0",
 					EnvID:          env.ID,
 					Environment:    *env,
@@ -474,7 +474,7 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 					if s.IsSubagent && s.ParentThreadID != "" {
 						subID = &s.SessionID
 					}
-					ship.Enqueue(types.ITelemetryFrame{
+					_ = ship.EnqueueContext(ctx, types.ITelemetryFrame{
 						Version:        "1.0",
 						EnvID:          env.ID,
 						Environment:    *env,
@@ -508,7 +508,7 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 			if oldDesc.IsActive && (!exists || !newDesc.IsActive) {
 				agentID := fmt.Sprintf("%s:%s:%s", env.ID, types.HarnessCodex, sessID)
 				proj, ws, _ := gitResolver.Resolve(ctx, oldDesc.CWD, "")
-				ship.Enqueue(types.ITelemetryFrame{
+				_ = ship.EnqueueContext(ctx, types.ITelemetryFrame{
 					Version:        "1.0",
 					EnvID:          env.ID,
 					Environment:    *env,
@@ -557,7 +557,7 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 					if s.Title != "" {
 						titlePtr = &s.Title
 					}
-					ship.Enqueue(types.ITelemetryFrame{
+					_ = ship.EnqueueContext(ctx, types.ITelemetryFrame{
 						Version:        "1.0",
 						EnvID:          env.ID,
 						Environment:    *env,
@@ -586,7 +586,7 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 			if oldDesc.IsActive && (!exists || !newDesc.IsActive) {
 				agentID := fmt.Sprintf("%s:%s:%s", env.ID, types.HarnessOpencode, sessID)
 				proj, ws, _ := gitResolver.Resolve(ctx, oldDesc.CWD, "")
-				ship.Enqueue(types.ITelemetryFrame{
+				_ = ship.EnqueueContext(ctx, types.ITelemetryFrame{
 					Version:        "1.0",
 					EnvID:          env.ID,
 					Environment:    *env,
