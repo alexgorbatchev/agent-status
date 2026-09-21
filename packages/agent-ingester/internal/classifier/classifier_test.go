@@ -2536,6 +2536,103 @@ func TestClassifier_DistinctSubagentCount_RestartRecovery(t *testing.T) {
 	}
 }
 
+func TestClassifier_RunExited_PreservesUpdatedAt(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer func() {
+		_ = st.Close()
+	}()
 
+	p, err := pricing.NewPricingEngine()
+	if err != nil {
+		t.Fatalf("NewPricingEngine failed: %v", err)
+	}
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New failed: %v", err)
+	}
+	c := New(st, p, sum)
+	c.SetIdleGracePeriod(0)
 
+	now := int64(1000000)
+	baseFrame := types.ITelemetryFrame{
+		Version: "1.0",
+		EnvID:   "env-1",
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-1",
+			Platform: "darwin",
+		},
+		AgentID:   "agent-preserve-updated-at",
+		SessionID: "sess-preserve",
+		Harness:   types.HarnessPi,
+		Project: types.IProjectInfo{
+			ID:   "proj-1",
+			Name: "agent-status",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "main",
+			CWD:    "/workspace",
+		},
+		PID:       1234,
+		Timestamp: now,
+	}
 
+	// 1. run_started at T0
+	f1 := baseFrame
+	f1.Seq = 1
+	f1.EventType = "run_started"
+	agent, err := c.ProcessFrame(f1)
+	if err != nil {
+		t.Fatalf("ProcessFrame(run_started) failed: %v", err)
+	}
+	if agent.Activity.UpdatedAt != now {
+		t.Fatalf("expected UpdatedAt %d, got %d", now, agent.Activity.UpdatedAt)
+	}
+
+	// 2. tool_call at T0 + 2000
+	toolTime := now + 2000
+	tool := "bash"
+	f2 := baseFrame
+	f2.Seq = 2
+	f2.EventType = "tool_call"
+	f2.Timestamp = toolTime
+	f2.Data.ToolName = &tool
+	agent, err = c.ProcessFrame(f2)
+	if err != nil {
+		t.Fatalf("ProcessFrame(tool_call) failed: %v", err)
+	}
+	if agent.Activity.UpdatedAt != toolTime {
+		t.Fatalf("expected UpdatedAt %d, got %d", toolTime, agent.Activity.UpdatedAt)
+	}
+
+	// 3. run_exited 24 hours later (T0 + 86400000)
+	exitTime := now + 86400000
+	fExit := baseFrame
+	fExit.Seq = 3
+	fExit.EventType = "run_exited"
+	fExit.Timestamp = exitTime
+	agent, err = c.ProcessFrame(fExit)
+	if err != nil {
+		t.Fatalf("ProcessFrame(run_exited) failed: %v", err)
+	}
+
+	if agent.Activity.Lifecycle != types.LifecycleExited {
+		t.Errorf("expected Lifecycle %s, got %s", types.LifecycleExited, agent.Activity.Lifecycle)
+	}
+
+	// The in-memory state returned must preserve the last actual active timestamp (toolTime)
+	if agent.Activity.UpdatedAt != toolTime {
+		t.Errorf("agent.Activity.UpdatedAt was overwritten: expected %d, got %d (diff: %d ms)", toolTime, agent.Activity.UpdatedAt, agent.Activity.UpdatedAt-toolTime)
+	}
+
+	// Persisted state in SQLite must also preserve toolTime
+	reloaded, err := st.GetAgent(agent.ID)
+	if err != nil {
+		t.Fatalf("st.GetAgent failed: %v", err)
+	}
+	if reloaded.Activity.UpdatedAt != toolTime {
+		t.Errorf("persisted reloaded.Activity.UpdatedAt was overwritten: expected %d, got %d (diff: %d ms)", toolTime, reloaded.Activity.UpdatedAt, reloaded.Activity.UpdatedAt-toolTime)
+	}
+}
