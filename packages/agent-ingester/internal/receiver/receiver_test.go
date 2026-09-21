@@ -671,4 +671,105 @@ func TestReceiverEnvNameTracking(t *testing.T) {
 	if got := rcv.getEnvName("env-456"); got != "" {
 		t.Errorf("expected empty string for empty name, got %q", got)
 	}
+
+	// Nil envNames map initialization
+	bareRcv := &Receiver{}
+	bareRcv.setEnvName("env-beta", "Beta Box")
+	if name := bareRcv.getEnvName("env-beta"); name != "Beta Box" {
+		t.Errorf("bareRcv.getEnvName('env-beta') = %q, want 'Beta Box'", name)
+	}
+}
+
+func TestReceiver_HelloWithHostnameOnly(t *testing.T) {
+	rcv, _, _ := newTestReceiver(t)
+	server := httptest.NewServer(rcv)
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws/ingest"
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		HTTPHeader: http.Header{
+			"Authorization": []string{"Bearer test-token"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to connect websocket: %v", err)
+	}
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "done") }()
+
+	helloMsg := types.IObserverMessage{
+		Type: "hello",
+		Environment: &types.IEnvironmentInfo{
+			ID:              "env-host",
+			Hostname:        "host.local",
+			Platform:        "linux",
+			User:            "test",
+			LastHeartbeatAt: time.Now().UnixMilli(),
+		},
+		Dropped: 1,
+		Since:   100,
+	}
+	bytes, _ := json.Marshal(helloMsg)
+	if err := conn.Write(ctx, websocket.MessageText, bytes); err != nil {
+		t.Fatalf("failed to write hello: %v", err)
+	}
+	time.Sleep(20 * time.Millisecond)
+
+	if name := rcv.getEnvName("env-host"); name != "host.local" {
+		t.Errorf("expected hostname fallback 'host.local', got %q", name)
+	}
+}
+
+func TestReceiver_UnsupportedFrameVersion(t *testing.T) {
+	rcv, _, _ := newTestReceiver(t)
+	server := httptest.NewServer(rcv)
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws/ingest"
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		HTTPHeader: http.Header{
+			"Authorization": []string{"Bearer test-token"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to connect websocket: %v", err)
+	}
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "done") }()
+
+	msg := types.IObserverMessage{
+		Type:  "frames",
+		EnvID: "env1",
+		Frames: []types.ITelemetryFrame{
+			{
+				Version: "2.0",
+				Seq:     1,
+				EnvID:   "env1",
+			},
+		},
+	}
+	bytes, _ := json.Marshal(msg)
+	if err := conn.Write(ctx, websocket.MessageText, bytes); err != nil {
+		t.Fatalf("failed to write frame: %v", err)
+	}
+
+	_, respBytes, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("failed to read response: %v", err)
+	}
+
+	var errMsg types.IIngesterMessage
+	if err := json.Unmarshal(respBytes, &errMsg); err != nil {
+		t.Fatalf("failed to parse error: %v", err)
+	}
+	if errMsg.Type != "error" || errMsg.Code != "unsupported_version" {
+		t.Errorf("expected error code unsupported_version, got: %+v", errMsg)
+	}
+
+	// Write binary frame (should be ignored without breaking connection)
+	_ = conn.Write(ctx, websocket.MessageBinary, []byte{0x01, 0x02})
 }

@@ -41,6 +41,9 @@ func Open(dbPath string) (*Store, error) {
 	}
 
 	maxConns := max(4, runtime.GOMAXPROCS(0))
+	if dbPath == ":memory:" {
+		maxConns = 1
+	}
 	db.SetMaxOpenConns(maxConns)
 	db.SetMaxIdleConns(maxConns)
 

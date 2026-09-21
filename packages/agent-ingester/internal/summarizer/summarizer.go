@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	anyllm "github.com/mozilla-ai/any-llm-go"
@@ -20,11 +22,14 @@ import (
 )
 
 const (
-	DefaultDebounceWindow = 12 * time.Second
-	DefaultTimeout        = 10 * time.Second
-	MaxThinkingLength     = 1200 // ~300 tokens
-	MaxPromptLength       = 1000
-	MaxRecentTools        = 3
+	DefaultDebounceWindow      = 12 * time.Second
+	DefaultTimeout             = 10 * time.Second
+	DefaultSimilarityThreshold = 0.60
+	MaxThinkingLength          = 1200 // ~300 tokens
+	MaxPromptLength            = 1000
+	MaxToolArgsLength          = 300
+	MaxErrorLength             = 300
+	MaxRecentTools             = 3
 )
 
 type ToolExecution struct {
@@ -41,6 +46,8 @@ type SummaryInput struct {
 	Activity              types.ActivityState
 	ActiveTool            *string
 	ActiveTarget          *string
+	ActiveToolArgs        *string
+	ActiveToolInput       map[string]interface{}
 	LastError             *string
 	Question              *string
 }
@@ -324,83 +331,332 @@ Do not output any reasoning, markdown formatting, or preamble.`
 	return nil, lastErr
 }
 
+// SanitizeToolInput produces a bounded single-line preview of tool arguments (max 300 chars),
+// filtering out large payload bodies like full file contents, replacement blocks, or diffs.
+func SanitizeToolInput(input map[string]interface{}, maxLen int) string {
+	if len(input) == 0 {
+		return ""
+	}
+	if maxLen <= 0 {
+		maxLen = MaxToolArgsLength
+	}
+
+	// Filter out large payload fields
+	skipKeys := map[string]bool{
+		"content":      true,
+		"file_text":    true,
+		"replacement":  true,
+		"patch":        true,
+		"old_str":      true,
+		"new_str":      true,
+		"old_text":     true,
+		"new_text":     true,
+		"text":         true,
+		"code":         true,
+		"body":         true,
+		"edits":        true,
+		"raw":          true,
+		"bytes":        true,
+		"items":        true,
+		"output":       true,
+		"instructions": true,
+	}
+
+	// Extract keys in sorted order for deterministic preview
+	keys := make([]string, 0, len(input))
+	for k := range input {
+		if !skipKeys[strings.ToLower(k)] {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+
+	var parts []string
+	for _, k := range keys {
+		val := input[k]
+		if val == nil {
+			continue
+		}
+		strVal := fmt.Sprintf("%v", val)
+		strVal = strings.ReplaceAll(strVal, "\n", " ")
+		strVal = strings.TrimSpace(strVal)
+		if strVal == "" {
+			continue
+		}
+		if len(strVal) > 100 {
+			strVal = strVal[:100] + "..."
+		}
+		parts = append(parts, fmt.Sprintf("%s: %s", k, strVal))
+	}
+
+	if len(parts) == 0 {
+		return ""
+	}
+
+	preview := strings.Join(parts, ", ")
+	if len(preview) > maxLen {
+		preview = preview[:maxLen] + "..."
+	}
+	return preview
+}
+
+// Tokenize normalizes text and splits it into lowercase alphanumeric word tokens.
+func Tokenize(text string) []string {
+	text = strings.ToLower(text)
+	var tokens []string
+	var cur strings.Builder
+
+	for _, r := range text {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			cur.WriteRune(r)
+		} else if cur.Len() > 0 {
+			tokens = append(tokens, cur.String())
+			cur.Reset()
+		}
+	}
+	if cur.Len() > 0 {
+		tokens = append(tokens, cur.String())
+	}
+	return tokens
+}
+
+// JaccardSimilarity calculates the token-level Jaccard similarity index between two strings.
+// Returns a value between 0.0 (no overlap) and 1.0 (identical token sets).
+func JaccardSimilarity(s1, s2 string) float64 {
+	t1 := Tokenize(s1)
+	t2 := Tokenize(s2)
+
+	if len(t1) == 0 && len(t2) == 0 {
+		if strings.EqualFold(strings.TrimSpace(s1), strings.TrimSpace(s2)) {
+			return 1.0
+		}
+		return 0.0
+	}
+	if len(t1) == 0 || len(t2) == 0 {
+		return 0.0
+	}
+
+	set1 := make(map[string]struct{}, len(t1))
+	for _, t := range t1 {
+		set1[t] = struct{}{}
+	}
+
+	set2 := make(map[string]struct{}, len(t2))
+	for _, t := range t2 {
+		set2[t] = struct{}{}
+	}
+
+	intersection := 0
+	for t := range set1 {
+		if _, exists := set2[t]; exists {
+			intersection++
+		}
+	}
+
+	union := len(set1)
+	for t := range set2 {
+		if _, exists := set1[t]; !exists {
+			union++
+		}
+	}
+
+	if union == 0 {
+		return 0.0
+	}
+
+	return float64(intersection) / float64(union)
+}
+
+// WordOverlapSimilarity calculates the ratio of shared tokens relative to the smaller token set.
+func WordOverlapSimilarity(s1, s2 string) float64 {
+	t1 := Tokenize(s1)
+	t2 := Tokenize(s2)
+
+	if len(t1) == 0 && len(t2) == 0 {
+		if strings.EqualFold(strings.TrimSpace(s1), strings.TrimSpace(s2)) {
+			return 1.0
+		}
+		return 0.0
+	}
+	if len(t1) == 0 || len(t2) == 0 {
+		return 0.0
+	}
+
+	set1 := make(map[string]struct{}, len(t1))
+	for _, t := range t1 {
+		set1[t] = struct{}{}
+	}
+
+	set2 := make(map[string]struct{}, len(t2))
+	for _, t := range t2 {
+		set2[t] = struct{}{}
+	}
+
+	intersection := 0
+	for t := range set1 {
+		if _, exists := set2[t]; exists {
+			intersection++
+		}
+	}
+
+	minSize := len(set1)
+	if len(set2) < minSize {
+		minSize = len(set2)
+	}
+
+	if minSize == 0 {
+		return 0.0
+	}
+
+	return float64(intersection) / float64(minSize)
+}
+
+// IsNearDuplicate checks whether newSummary has >= threshold word overlap (Jaccard or token overlap similarity) with lastSummary.
+func IsNearDuplicate(lastSummary, newSummary string, threshold float64) bool {
+	if threshold <= 0 {
+		threshold = DefaultSimilarityThreshold
+	}
+	s1 := strings.TrimSpace(lastSummary)
+	s2 := strings.TrimSpace(newSummary)
+
+	if s1 == "" || s2 == "" {
+		return s1 == s2
+	}
+	if strings.EqualFold(s1, s2) {
+		return true
+	}
+
+	jaccard := JaccardSimilarity(s1, s2)
+	overlap := WordOverlapSimilarity(s1, s2)
+	return jaccard >= threshold || overlap >= threshold
+}
+
 func buildUserPrompt(input SummaryInput) string {
 	var sb strings.Builder
 
-	if input.LastPrompt != "" {
-		p := input.LastPrompt
-		if len(p) > MaxPromptLength {
-			p = p[:MaxPromptLength] + "..."
+	hasThinking := strings.TrimSpace(input.LastThinkingExcerpt) != ""
+	hasTool := input.ActiveTool != nil && strings.TrimSpace(*input.ActiveTool) != ""
+	hasPrompt := strings.TrimSpace(input.LastPrompt) != ""
+
+	formatPrompt := func() {
+		if hasPrompt {
+			p := strings.TrimSpace(input.LastPrompt)
+			if len(p) > MaxPromptLength {
+				p = p[:MaxPromptLength] + "..."
+			}
+			sb.WriteString("User Prompt: ")
+			sb.WriteString(p)
+			sb.WriteString("\n")
 		}
-		sb.WriteString("User Prompt: ")
-		sb.WriteString(p)
-		sb.WriteString("\n")
 	}
 
-	if input.LastAssistantResponse != "" {
-		r := input.LastAssistantResponse
-		if len(r) > MaxPromptLength {
-			r = r[:MaxPromptLength] + "..."
+	formatThinking := func() {
+		if hasThinking {
+			th := strings.TrimSpace(input.LastThinkingExcerpt)
+			if len(th) > MaxThinkingLength {
+				th = th[:MaxThinkingLength] + "..."
+			}
+			sb.WriteString("Thinking: ")
+			sb.WriteString(th)
+			sb.WriteString("\n")
 		}
-		sb.WriteString("Assistant Response: ")
-		sb.WriteString(r)
-		sb.WriteString("\n")
 	}
 
-	sb.WriteString("Current Activity State: ")
-	sb.WriteString(string(input.Activity))
-	sb.WriteString("\n")
+	formatTool := func() {
+		if hasTool {
+			tool := strings.TrimSpace(*input.ActiveTool)
+			sb.WriteString("Active Tool: ")
+			sb.WriteString(tool)
+			if input.ActiveTarget != nil && strings.TrimSpace(*input.ActiveTarget) != "" {
+				sb.WriteString(" (Target: ")
+				sb.WriteString(strings.TrimSpace(*input.ActiveTarget))
+				sb.WriteString(")")
+			}
+			sb.WriteString("\n")
 
-	if input.ActiveTool != nil && *input.ActiveTool != "" {
-		sb.WriteString("Active Tool: ")
-		sb.WriteString(*input.ActiveTool)
-		if input.ActiveTarget != nil && *input.ActiveTarget != "" {
-			sb.WriteString(" (Target: ")
-			sb.WriteString(*input.ActiveTarget)
-			sb.WriteString(")")
-		}
-		sb.WriteString("\n")
-	}
-
-	if len(input.RecentTools) > 0 {
-		sb.WriteString("Recent Tool Calls:\n")
-		start := 0
-		if len(input.RecentTools) > MaxRecentTools {
-			start = len(input.RecentTools) - MaxRecentTools
-		}
-		for _, t := range input.RecentTools[start:] {
-			if t.Target != "" {
-				fmt.Fprintf(&sb, "- %s on %s\n", t.ToolName, t.Target)
-			} else {
-				fmt.Fprintf(&sb, "- %s\n", t.ToolName)
+			args := ""
+			if input.ActiveToolArgs != nil && strings.TrimSpace(*input.ActiveToolArgs) != "" {
+				args = strings.TrimSpace(*input.ActiveToolArgs)
+			} else if input.ActiveToolInput != nil {
+				args = SanitizeToolInput(input.ActiveToolInput, MaxToolArgsLength)
+			}
+			if args != "" {
+				if len(args) > MaxToolArgsLength {
+					args = args[:MaxToolArgsLength] + "..."
+				}
+				sb.WriteString("Tool Arguments: ")
+				sb.WriteString(args)
+				sb.WriteString("\n")
 			}
 		}
 	}
 
-	if input.LastThinkingExcerpt != "" {
-		th := input.LastThinkingExcerpt
-		if len(th) > MaxThinkingLength {
-			th = th[:MaxThinkingLength] + "..."
+	formatRecentTools := func() {
+		if len(input.RecentTools) > 0 {
+			sb.WriteString("Recent Tool Calls:\n")
+			start := 0
+			if len(input.RecentTools) > MaxRecentTools {
+				start = len(input.RecentTools) - MaxRecentTools
+			}
+			for _, t := range input.RecentTools[start:] {
+				if t.Target != "" {
+					fmt.Fprintf(&sb, "- %s on %s\n", t.ToolName, t.Target)
+				} else {
+					fmt.Fprintf(&sb, "- %s\n", t.ToolName)
+				}
+			}
 		}
-		sb.WriteString("Thinking: ")
-		sb.WriteString(th)
-		sb.WriteString("\n")
 	}
 
-	if input.Question != nil && *input.Question != "" {
-		sb.WriteString("Question Asked: ")
-		sb.WriteString(*input.Question)
-		sb.WriteString("\n")
-	}
+	// Specialized prompt template selection based on active context
+	switch {
+	case hasThinking && hasTool:
+		// Strategy 1: Combined thinking + tool execution
+		formatPrompt()
+		formatThinking()
+		formatTool()
 
-	if input.LastError != nil && *input.LastError != "" {
-		lErr := *input.LastError
-		if len(lErr) > 300 {
-			lErr = lErr[:300] + "..."
+	case hasThinking && !hasTool:
+		// Strategy 2: Thinking only
+		formatPrompt()
+		formatThinking()
+
+	case !hasThinking && hasTool:
+		// Strategy 3: Tool execution only
+		formatPrompt()
+		formatTool()
+		formatRecentTools()
+
+	default:
+		// Strategy 4: Conversational / Error / Idle status context
+		formatPrompt()
+		if input.LastAssistantResponse != "" {
+			r := strings.TrimSpace(input.LastAssistantResponse)
+			if len(r) > MaxPromptLength {
+				r = r[:MaxPromptLength] + "..."
+			}
+			sb.WriteString("Assistant Response: ")
+			sb.WriteString(r)
+			sb.WriteString("\n")
 		}
-		sb.WriteString("Last Error: ")
-		sb.WriteString(lErr)
+		sb.WriteString("Current Activity State: ")
+		sb.WriteString(string(input.Activity))
 		sb.WriteString("\n")
+		formatRecentTools()
+		if input.Question != nil && strings.TrimSpace(*input.Question) != "" {
+			sb.WriteString("Question Asked: ")
+			sb.WriteString(strings.TrimSpace(*input.Question))
+			sb.WriteString("\n")
+		}
+		if input.LastError != nil && strings.TrimSpace(*input.LastError) != "" {
+			lErr := strings.TrimSpace(*input.LastError)
+			if len(lErr) > MaxErrorLength {
+				lErr = lErr[:MaxErrorLength] + "..."
+			}
+			sb.WriteString("Last Error: ")
+			sb.WriteString(lErr)
+			sb.WriteString("\n")
+		}
 	}
 
 	return sb.String()

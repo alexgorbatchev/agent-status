@@ -402,6 +402,274 @@ func TestDeterministicFallbackSummary(t *testing.T) {
 	}
 }
 
+func TestSanitizeToolInput(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    map[string]interface{}
+		maxLen   int
+		contains []string
+		omits    []string
+	}{
+		{
+			name:     "nil input",
+			input:    nil,
+			maxLen:   300,
+			contains: nil,
+			omits:    nil,
+		},
+		{
+			name:     "empty input",
+			input:    map[string]interface{}{},
+			maxLen:   300,
+			contains: nil,
+			omits:    nil,
+		},
+		{
+			name: "filters large body and preserves path/command",
+			input: map[string]interface{}{
+				"file_path":   "/src/app.ts",
+				"content":     strings.Repeat("var x = 1;\n", 100),
+				"replacement": "huge block",
+				"command":     "npm test",
+			},
+			maxLen: 300,
+			contains: []string{
+				"command: npm test",
+				"file_path: /src/app.ts",
+			},
+			omits: []string{
+				"content",
+				"replacement",
+				"var x = 1",
+			},
+		},
+		{
+			name: "truncates long string values and overall preview",
+			input: map[string]interface{}{
+				"query": strings.Repeat("sqlite ", 50),
+			},
+			maxLen: 50,
+			contains: []string{
+				"query: sqlite",
+				"...",
+			},
+			omits: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := SanitizeToolInput(tt.input, tt.maxLen)
+			if len(tt.input) == 0 {
+				if got != "" {
+					t.Errorf("expected empty string for empty input, got %q", got)
+				}
+				return
+			}
+			for _, exp := range tt.contains {
+				if !strings.Contains(got, exp) {
+					t.Errorf("SanitizeToolInput() = %q, expected to contain %q", got, exp)
+				}
+			}
+			for _, omit := range tt.omits {
+				if strings.Contains(got, omit) {
+					t.Errorf("SanitizeToolInput() = %q, expected NOT to contain %q", got, omit)
+				}
+			}
+			if tt.maxLen > 0 && len(got) > tt.maxLen+3 { // +3 for ellipsis
+				t.Errorf("SanitizeToolInput() len %d exceeds maxLen %d", len(got), tt.maxLen)
+			}
+		})
+	}
+}
+
+func TestDeduplicationAndSimilarity(t *testing.T) {
+	// 1. Tokenize
+	t.Run("Tokenize", func(t *testing.T) {
+		toks := Tokenize("Editing packages/agent-ingester/internal/store/store.go, please wait!")
+		want := []string{"editing", "packages", "agent", "ingester", "internal", "store", "store", "go", "please", "wait"}
+		if len(toks) != len(want) {
+			t.Fatalf("got %d tokens %+v, want %d tokens %+v", len(toks), toks, len(want), want)
+		}
+		for i, tok := range toks {
+			if tok != want[i] {
+				t.Errorf("tok[%d] = %q, want %q", i, tok, want[i])
+			}
+		}
+	})
+
+	// 2. Jaccard & Word Overlap Similarity
+	t.Run("JaccardSimilarity", func(t *testing.T) {
+		if sim := JaccardSimilarity("", ""); sim != 1.0 {
+			t.Errorf("expected Jaccard('', '') = 1.0, got %f", sim)
+		}
+		if sim := JaccardSimilarity("Editing auth.go", ""); sim != 0.0 {
+			t.Errorf("expected Jaccard('Editing auth.go', '') = 0.0, got %f", sim)
+		}
+		if sim := JaccardSimilarity("Editing auth.go", "Editing auth.go"); sim != 1.0 {
+			t.Errorf("expected identical strings Jaccard = 1.0, got %f", sim)
+		}
+
+		// "Editing auth.go" (editing, auth, go -> 3) vs "Editing file auth.go" (editing, file, auth, go -> 4)
+		// intersection: 3, union: 4 -> 0.75
+		sim := JaccardSimilarity("Editing auth.go", "Editing file auth.go")
+		if sim != 0.75 {
+			t.Errorf("got Jaccard %f, want 0.75", sim)
+		}
+
+		// "Editing auth.go" vs "Editing user.go"
+		// tokens1: {editing, auth, go}, tokens2: {editing, user, go}
+		// intersection: {editing, go} (2), union: {editing, auth, go, user} (4) -> 0.50
+		sim2 := JaccardSimilarity("Editing auth.go", "Editing user.go")
+		if sim2 != 0.50 {
+			t.Errorf("got Jaccard %f, want 0.50", sim2)
+		}
+	})
+
+	t.Run("WordOverlapSimilarity", func(t *testing.T) {
+		if sim := WordOverlapSimilarity("", ""); sim != 1.0 {
+			t.Errorf("expected WordOverlap('', '') = 1.0, got %f", sim)
+		}
+		// Overlap of "Editing auth.go" (3) vs "Editing file auth.go and testing" (6)
+		// intersection = 3, min size = 3 -> 1.0
+		sim := WordOverlapSimilarity("Editing auth.go", "Editing file auth.go and testing")
+		if sim != 1.0 {
+			t.Errorf("got WordOverlap %f, want 1.0", sim)
+		}
+	})
+
+	// 3. IsNearDuplicate
+	t.Run("IsNearDuplicate", func(t *testing.T) {
+		// Near duplicates (>= 60% overlap)
+		if !IsNearDuplicate("Editing file auth.go", "Updating auth.go", 0.50) {
+			t.Errorf("expected near duplicate with 50%% threshold")
+		}
+		if !IsNearDuplicate("Editing auth.go", "Editing file auth.go", 0.60) {
+			t.Errorf("expected 'Editing auth.go' and 'Editing file auth.go' to be near duplicates")
+		}
+		if !IsNearDuplicate("Fixing TypeScript errors", "Fixing TypeScript errors in build.ts", 0.60) {
+			t.Errorf("expected near duplicate for TypeScript errors")
+		}
+
+		// Distinct actions (< 60% overlap)
+		if IsNearDuplicate("Editing auth.go", "Running unit tests", 0.60) {
+			t.Errorf("expected 'Editing auth.go' and 'Running unit tests' NOT to be near duplicates")
+		}
+		if IsNearDuplicate("Reading schema.sql", "Editing build.ts", 0.60) {
+			t.Errorf("expected distinct files NOT to be near duplicates")
+		}
+
+		// Empty string edge cases
+		if IsNearDuplicate("", "Editing auth.go", 0.60) {
+			t.Errorf("expected empty string NOT to be duplicate with non-empty string")
+		}
+		if !IsNearDuplicate("", "", 0.60) {
+			t.Errorf("expected empty string to be duplicate with empty string")
+		}
+	})
+}
+
+func TestBuildUserPrompt_SpecializedStrategies(t *testing.T) {
+	t.Run("Strategy 1: Thinking + Tool", func(t *testing.T) {
+		args := "file_path: main.go"
+		input := SummaryInput{
+			LastPrompt:          "Refactor database connection",
+			LastThinkingExcerpt: "I will now edit main.go to update the sqlite connection string.",
+			ActiveTool:          ptrString("Edit"),
+			ActiveTarget:        ptrString("main.go"),
+			ActiveToolArgs:      &args,
+		}
+		prompt := buildUserPrompt(input)
+		if !strings.Contains(prompt, "User Prompt: Refactor database connection") {
+			t.Errorf("missing user prompt, got: %s", prompt)
+		}
+		if !strings.Contains(prompt, "Thinking: I will now edit main.go") {
+			t.Errorf("missing thinking, got: %s", prompt)
+		}
+		if !strings.Contains(prompt, "Active Tool: Edit (Target: main.go)") {
+			t.Errorf("missing active tool, got: %s", prompt)
+		}
+		if !strings.Contains(prompt, "Tool Arguments: file_path: main.go") {
+			t.Errorf("missing tool arguments, got: %s", prompt)
+		}
+	})
+
+	t.Run("Strategy 2: Thinking Only", func(t *testing.T) {
+		input := SummaryInput{
+			LastPrompt:          "Analyze system performance",
+			LastThinkingExcerpt: "Evaluating CPU profiles and memory allocations.",
+		}
+		prompt := buildUserPrompt(input)
+		if !strings.Contains(prompt, "User Prompt: Analyze system performance") {
+			t.Errorf("missing user prompt, got: %s", prompt)
+		}
+		if !strings.Contains(prompt, "Thinking: Evaluating CPU profiles") {
+			t.Errorf("missing thinking, got: %s", prompt)
+		}
+		if strings.Contains(prompt, "Active Tool:") {
+			t.Errorf("unexpected active tool in thinking-only strategy, got: %s", prompt)
+		}
+	})
+
+	t.Run("Strategy 3: Tool Only with Recent Tools", func(t *testing.T) {
+		input := SummaryInput{
+			LastPrompt: "Run test suite",
+			ActiveTool: ptrString("Bash"),
+			ActiveTarget: ptrString("go test ./..."),
+			ActiveToolInput: map[string]interface{}{
+				"command": "go test ./...",
+			},
+			RecentTools: []ToolExecution{
+				{ToolName: "Edit", Target: "main_test.go"},
+			},
+		}
+		prompt := buildUserPrompt(input)
+		if !strings.Contains(prompt, "User Prompt: Run test suite") {
+			t.Errorf("missing user prompt, got: %s", prompt)
+		}
+		if !strings.Contains(prompt, "Active Tool: Bash (Target: go test ./...)") {
+			t.Errorf("missing active tool, got: %s", prompt)
+		}
+		if !strings.Contains(prompt, "Tool Arguments: command: go test ./...") {
+			t.Errorf("missing tool arguments, got: %s", prompt)
+		}
+		if !strings.Contains(prompt, "Recent Tool Calls:") || !strings.Contains(prompt, "- Edit on main_test.go") {
+			t.Errorf("missing recent tools, got: %s", prompt)
+		}
+		if strings.Contains(prompt, "Thinking:") {
+			t.Errorf("unexpected thinking in tool-only strategy, got: %s", prompt)
+		}
+	})
+
+	t.Run("Strategy 4: Conversational / Error / Status", func(t *testing.T) {
+		errMsg := "connection refused"
+		q := "Should I retry?"
+		input := SummaryInput{
+			LastPrompt:            "Connect to remote DB",
+			LastAssistantResponse: "Failed to connect to database.",
+			Activity:              types.ActivityError,
+			LastError:             &errMsg,
+			Question:              &q,
+		}
+		prompt := buildUserPrompt(input)
+		if !strings.Contains(prompt, "User Prompt: Connect to remote DB") {
+			t.Errorf("missing user prompt, got: %s", prompt)
+		}
+		if !strings.Contains(prompt, "Assistant Response: Failed to connect to database.") {
+			t.Errorf("missing assistant response, got: %s", prompt)
+		}
+		if !strings.Contains(prompt, "Current Activity State: ERROR") {
+			t.Errorf("missing activity state, got: %s", prompt)
+		}
+		if !strings.Contains(prompt, "Question Asked: Should I retry?") {
+			t.Errorf("missing question, got: %s", prompt)
+		}
+		if !strings.Contains(prompt, "Last Error: connection refused") {
+			t.Errorf("missing error, got: %s", prompt)
+		}
+	})
+}
+
 func TestBuildUserPrompt_TruncationAndDetails(t *testing.T) {
 	longPrompt := strings.Repeat("A", 1500)
 	longThinking := strings.Repeat("B", 1500)
@@ -409,18 +677,10 @@ func TestBuildUserPrompt_TruncationAndDetails(t *testing.T) {
 	longResp := strings.Repeat("D", 1500)
 	q := "Would you like to deploy now?"
 
-	recentTools := []ToolExecution{
-		{ToolName: "Tool1", Target: "target1"},
-		{ToolName: "Tool2", Target: ""},
-		{ToolName: "Tool3", Target: "target3"},
-		{ToolName: "Tool4", Target: "target4"},
-	}
-
 	input := SummaryInput{
 		AgentID:               "agent-trunc",
 		LastPrompt:            longPrompt,
 		LastAssistantResponse: longResp,
-		RecentTools:           recentTools,
 		LastThinkingExcerpt:   longThinking,
 		Activity:              types.ActivityBusy,
 		ActiveTool:            ptrString("Edit"),
@@ -433,23 +693,11 @@ func TestBuildUserPrompt_TruncationAndDetails(t *testing.T) {
 	if !strings.Contains(prompt, "User Prompt: ") || !strings.Contains(prompt, "...") {
 		t.Errorf("expected truncated prompt")
 	}
-	if !strings.Contains(prompt, "Assistant Response: ") {
-		t.Errorf("expected assistant response in prompt")
+	if !strings.Contains(prompt, "Thinking: ") {
+		t.Errorf("expected thinking in prompt")
 	}
 	if !strings.Contains(prompt, "Active Tool: Edit (Target: main.go)") {
 		t.Errorf("expected active tool with target in prompt, got %s", prompt)
-	}
-	if !strings.Contains(prompt, "- Tool4 on target4") || !strings.Contains(prompt, "- Tool2") {
-		t.Errorf("expected recent tools in prompt, got %s", prompt)
-	}
-	if strings.Contains(prompt, "- Tool1") {
-		t.Errorf("expected Tool1 to be truncated by MaxRecentTools=3")
-	}
-	if !strings.Contains(prompt, "Question Asked: Would you like to deploy now?") {
-		t.Errorf("expected question in prompt")
-	}
-	if !strings.Contains(prompt, "Last Error: ") {
-		t.Errorf("expected last error in prompt")
 	}
 }
 

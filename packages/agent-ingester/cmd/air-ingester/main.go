@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/classifier"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/config"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/notify"
@@ -84,6 +85,18 @@ func newRootCmd(cfg *config.Config) *cobra.Command {
 			}()
 
 			cls := classifier.New(st, priceEngine, sumEngine)
+			defer func() {
+				_ = cls.Close()
+			}()
+			cls.SetOnUpdate(func(agent *types.IAgentState) {
+				if pub != nil && agent != nil {
+					pub.Publish(types.IServerEvent{
+						Type:  "agent_upsert",
+						At:    time.Now().UnixMilli(),
+						Agent: agent,
+					})
+				}
+			})
 			rcv := receiver.New(st, cls, pub, cfg.BearerToken)
 
 			mux := http.NewServeMux()
