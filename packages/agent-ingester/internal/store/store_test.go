@@ -959,3 +959,85 @@ func TestAgentVisibility(t *testing.T) {
 		t.Fatalf("expected error for non-existent agent, got nil")
 	}
 }
+
+func TestStore_GetDistinctSubagentIDs(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open(:memory:) failed: %v", err)
+	}
+	defer func() {
+		_ = st.Close()
+	}()
+
+	agentID := "agent-sub-test"
+	sub1 := "subagent-alpha"
+	sub2 := "subagent-beta"
+
+	for _, id := range []string{agentID, "other-agent"} {
+		if err := st.SaveAgentState(types.IAgentState{
+			ID:          id,
+			SessionID:   id,
+			Harness:     types.HarnessClaudeCode,
+			Environment: types.IEnvironmentInfo{ID: "env-1", Platform: "darwin"},
+			Activity: types.IAgentActivity{
+				Lifecycle: types.LifecycleRunning,
+				Activity:  types.ActivityIdle,
+			},
+		}); err != nil {
+			t.Fatalf("SaveAgentState(%s) failed: %v", id, err)
+		}
+	}
+
+	// Initial check on empty store (no events recorded yet)
+	ids, err := st.GetDistinctSubagentIDs(agentID)
+	if err != nil {
+		t.Fatalf("GetDistinctSubagentIDs failed on empty store: %v", err)
+	}
+	if len(ids) != 0 {
+		t.Fatalf("expected 0 subagent IDs, got %d", len(ids))
+	}
+
+	// Record multiple frames with sub1, sub2, nil, empty, and duplicate sub1
+	frames := []types.ITelemetryFrame{
+		{AgentID: agentID, SubagentID: &sub1, EventType: "tool_call", Timestamp: 100},
+		{AgentID: agentID, SubagentID: &sub1, EventType: "tool_result", Timestamp: 101},
+		{AgentID: agentID, SubagentID: &sub2, EventType: "turn_start", Timestamp: 102},
+		{AgentID: agentID, SubagentID: nil, EventType: "thinking", Timestamp: 103},
+		{AgentID: agentID, SubagentID: new(string), EventType: "turn_end", Timestamp: 104}, // empty string
+		{AgentID: "other-agent", SubagentID: &sub1, EventType: "tool_call", Timestamp: 105},
+	}
+	for _, f := range frames {
+		if err := st.RecordTelemetryEvent(f); err != nil {
+			t.Fatalf("RecordTelemetryEvent failed: %v", err)
+		}
+	}
+
+	ids, err = st.GetDistinctSubagentIDs(agentID)
+	if err != nil {
+		t.Fatalf("GetDistinctSubagentIDs failed: %v", err)
+	}
+	if len(ids) != 2 {
+		t.Fatalf("expected 2 distinct subagent IDs, got %d: %v", len(ids), ids)
+	}
+	if ids[0] != "subagent-alpha" || ids[1] != "subagent-beta" {
+		t.Fatalf("unexpected subagent IDs: %v", ids)
+	}
+
+	// Verify other-agent isolation
+	otherIDs, err := st.GetDistinctSubagentIDs("other-agent")
+	if err != nil {
+		t.Fatalf("GetDistinctSubagentIDs(other-agent) failed: %v", err)
+	}
+	if len(otherIDs) != 1 || otherIDs[0] != "subagent-alpha" {
+		t.Fatalf("expected [subagent-alpha] for other-agent, got: %v", otherIDs)
+	}
+
+	// Error check on closed db
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+	if _, err := st.GetDistinctSubagentIDs(agentID); err == nil {
+		t.Fatalf("expected error querying closed database, got nil")
+	}
+}
+

@@ -303,9 +303,53 @@ func TestClassifier_LifecycleAndActivityTransitions(t *testing.T) {
 		t.Errorf("expected subagent_count = 1, got %d", agent.Activity.SubagentCount)
 	}
 
+	// Frame from the same subagent should NOT increment SubagentCount
+	bashTool := "bash"
+	f6b := baseFrame
+	f6b.Seq = 12
+	f6b.SubagentID = &subagentID
+	f6b.EventType = "tool_call"
+	f6b.Data = types.TelemetryFrameData{
+		ToolName: &bashTool,
+	}
+	agent, err = c.ProcessFrame(f6b)
+	if err != nil {
+		t.Fatalf("ProcessFrame(subagent second frame) error = %v", err)
+	}
+	if agent.Activity.SubagentCount != 1 {
+		t.Errorf("expected subagent_count = 1 after second frame from same subagent, got %d", agent.Activity.SubagentCount)
+	}
+
+	// Frame from a distinct subagent SHOULD increment SubagentCount to 2
+	subagent2ID := "sub-2"
+	f6c := baseFrame
+	f6c.Seq = 13
+	f6c.SubagentID = &subagent2ID
+	f6c.EventType = "turn_start"
+	agent, err = c.ProcessFrame(f6c)
+	if err != nil {
+		t.Fatalf("ProcessFrame(subagent-2 first frame) error = %v", err)
+	}
+	if agent.Activity.SubagentCount != 2 {
+		t.Errorf("expected subagent_count = 2 after new subagent, got %d", agent.Activity.SubagentCount)
+	}
+
+	// Another frame from subagent 2 should NOT increment SubagentCount
+	f6d := baseFrame
+	f6d.Seq = 14
+	f6d.SubagentID = &subagent2ID
+	f6d.EventType = "turn_end"
+	agent, err = c.ProcessFrame(f6d)
+	if err != nil {
+		t.Fatalf("ProcessFrame(subagent-2 second frame) error = %v", err)
+	}
+	if agent.Activity.SubagentCount != 2 {
+		t.Errorf("expected subagent_count = 2 after second frame from subagent-2, got %d", agent.Activity.SubagentCount)
+	}
+
 	// 12. run_exited -> EXITED
 	f7 := baseFrame
-	f7.Seq = 12
+	f7.Seq = 15
 	f7.EventType = "run_exited"
 	agent, err = c.ProcessFrame(f7)
 	if err != nil {
@@ -2304,5 +2348,194 @@ func TestClassifier_AutoUnhideOnActivity(t *testing.T) {
 		t.Fatalf("expected persisted agent.HiddenAt to be nil in DB")
 	}
 }
+
+func TestClassifier_DistinctSubagentCount(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	cls, st := newTestClassifier(t, sum)
+
+	agentID := "agent-distinct-subagents"
+	baseFrame := types.ITelemetryFrame{
+		Version:   "1.0",
+		EnvID:     "env-1",
+		AgentID:   agentID,
+		SessionID: "sess-distinct",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-1",
+			Label:    "test-mac",
+			Platform: "darwin",
+		},
+		Timestamp: 1000,
+		EventType: "run_started",
+	}
+
+	// 1. Initialize root session
+	agent, err := cls.ProcessFrame(baseFrame)
+	if err != nil {
+		t.Fatalf("ProcessFrame(run_started) failed: %v", err)
+	}
+	if agent.Activity.SubagentCount != 0 {
+		t.Fatalf("expected initial subagent_count = 0, got %d", agent.Activity.SubagentCount)
+	}
+
+	// 2. Subagent 1 emits multiple frames
+	sub1 := "sub-1"
+	sub1Events := []string{"turn_start", "tool_call", "tool_result", "thinking", "turn_end"}
+	for i, evType := range sub1Events {
+		frame := baseFrame
+		frame.Seq = int64(i + 2)
+		frame.Timestamp = int64(1100 + i*10)
+		frame.SubagentID = &sub1
+		frame.EventType = evType
+		agent, err = cls.ProcessFrame(frame)
+		if err != nil {
+			t.Fatalf("ProcessFrame(%s for sub-1) failed: %v", evType, err)
+		}
+		if agent.Activity.SubagentCount != 1 {
+			t.Fatalf("expected subagent_count = 1 after sub-1 event %s (step %d), got %d", evType, i+1, agent.Activity.SubagentCount)
+		}
+	}
+
+	// 3. Subagent 2 emits multiple frames
+	sub2 := "sub-2"
+	sub2Events := []string{"turn_start", "tool_call", "turn_end"}
+	for i, evType := range sub2Events {
+		frame := baseFrame
+		frame.Seq = int64(len(sub1Events) + i + 2)
+		frame.Timestamp = int64(1200 + i*10)
+		frame.SubagentID = &sub2
+		frame.EventType = evType
+		agent, err = cls.ProcessFrame(frame)
+		if err != nil {
+			t.Fatalf("ProcessFrame(%s for sub-2) failed: %v", evType, err)
+		}
+		if agent.Activity.SubagentCount != 2 {
+			t.Fatalf("expected subagent_count = 2 after sub-2 event %s (step %d), got %d", evType, i+1, agent.Activity.SubagentCount)
+		}
+	}
+
+	// 4. Subagent 1 emits another frame -> should stay 2
+	fSub1Again := baseFrame
+	fSub1Again.Seq = 20
+	fSub1Again.Timestamp = 1300
+	fSub1Again.SubagentID = &sub1
+	fSub1Again.EventType = "tool_call"
+	agent, err = cls.ProcessFrame(fSub1Again)
+	if err != nil {
+		t.Fatalf("ProcessFrame(sub-1 again) failed: %v", err)
+	}
+	if agent.Activity.SubagentCount != 2 {
+		t.Fatalf("expected subagent_count to remain 2 on re-encountering sub-1, got %d", agent.Activity.SubagentCount)
+	}
+
+	// 5. Subagent 3 emits a frame -> increments to 3
+	sub3 := "sub-3"
+	fSub3 := baseFrame
+	fSub3.Seq = 21
+	fSub3.Timestamp = 1400
+	fSub3.SubagentID = &sub3
+	fSub3.EventType = "tool_call"
+	agent, err = cls.ProcessFrame(fSub3)
+	if err != nil {
+		t.Fatalf("ProcessFrame(sub-3) failed: %v", err)
+	}
+	if agent.Activity.SubagentCount != 3 {
+		t.Fatalf("expected subagent_count = 3 after sub-3, got %d", agent.Activity.SubagentCount)
+	}
+
+	// Verify DB persistence
+	persisted, err := st.GetAgent(agentID)
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if persisted.Activity.SubagentCount != 3 {
+		t.Fatalf("expected persisted subagent_count = 3, got %d", persisted.Activity.SubagentCount)
+	}
+}
+
+func TestClassifier_DistinctSubagentCount_RestartRecovery(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	cls, st := newTestClassifier(t, sum)
+
+	agentID := "agent-restart-subagents"
+	baseFrame := types.ITelemetryFrame{
+		Version:   "1.0",
+		EnvID:     "env-1",
+		AgentID:   agentID,
+		SessionID: "sess-restart",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-1",
+			Label:    "test-mac",
+			Platform: "darwin",
+		},
+		Timestamp: 1000,
+		EventType: "run_started",
+	}
+
+	// 1. Process root run_started
+	if _, err := cls.ProcessFrame(baseFrame); err != nil {
+		t.Fatalf("ProcessFrame(run_started) failed: %v", err)
+	}
+
+	// 2. Subagent 1 emits frames and persists events in store
+	sub1 := "sub-alpha"
+	f1 := baseFrame
+	f1.Seq = 2
+	f1.Timestamp = 1100
+	f1.SubagentID = &sub1
+	f1.EventType = "tool_call"
+	if _, err := cls.ProcessFrame(f1); err != nil {
+		t.Fatalf("ProcessFrame(sub-alpha) failed: %v", err)
+	}
+	if err := st.RecordTelemetryEvent(f1); err != nil {
+		t.Fatalf("RecordTelemetryEvent(f1) failed: %v", err)
+	}
+
+	// 3. Create a brand new Classifier instance pointing to the same store (simulating daemon restart)
+	p, err := pricing.NewPricingEngine()
+	if err != nil {
+		t.Fatalf("pricing.NewPricingEngine failed: %v", err)
+	}
+	cls2 := New(st, p, sum)
+	cls2.SetIdleGracePeriod(0)
+
+	// 4. Send another frame from sub-alpha to the new classifier instance -> SubagentCount should remain 1
+	f2 := baseFrame
+	f2.Seq = 3
+	f2.Timestamp = 1200
+	f2.SubagentID = &sub1
+	f2.EventType = "tool_result"
+	agent, err := cls2.ProcessFrame(f2)
+	if err != nil {
+		t.Fatalf("ProcessFrame on cls2 failed: %v", err)
+	}
+	if agent.Activity.SubagentCount != 1 {
+		t.Fatalf("expected subagent_count = 1 after restart for already-seen subagent, got %d", agent.Activity.SubagentCount)
+	}
+
+	// 5. Send frame from a new subagent beta to the new classifier instance -> SubagentCount increments to 2
+	sub2 := "sub-beta"
+	f3 := baseFrame
+	f3.Seq = 4
+	f3.Timestamp = 1300
+	f3.SubagentID = &sub2
+	f3.EventType = "tool_call"
+	agent, err = cls2.ProcessFrame(f3)
+	if err != nil {
+		t.Fatalf("ProcessFrame(sub-beta) on cls2 failed: %v", err)
+	}
+	if agent.Activity.SubagentCount != 2 {
+		t.Fatalf("expected subagent_count = 2 for new subagent on cls2, got %d", agent.Activity.SubagentCount)
+	}
+}
+
+
 
 

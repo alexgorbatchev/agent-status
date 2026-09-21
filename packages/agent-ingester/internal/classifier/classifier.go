@@ -19,6 +19,7 @@ type agentContext struct {
 	lastAssistantResponse string
 	lastToolArgs          string
 	recentTools           []summarizer.ToolExecution
+	seenSubagents         map[string]struct{}
 }
 
 type summaryJob struct {
@@ -255,9 +256,31 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 	// Update Prompt Context if provided
 	c.mu.Lock()
 	actx, exists := c.agentCtx[agent.ID]
+	c.mu.Unlock()
+
 	if !exists {
-		actx = &agentContext{}
-		c.agentCtx[agent.ID] = actx
+		preloaded := make(map[string]struct{})
+		if c.store != nil && agent.Activity.SubagentCount > 0 {
+			if ids, err := c.store.GetDistinctSubagentIDs(agent.ID); err == nil {
+				for _, id := range ids {
+					preloaded[id] = struct{}{}
+				}
+			}
+		}
+		c.mu.Lock()
+		actx, exists = c.agentCtx[agent.ID]
+		if !exists {
+			actx = &agentContext{
+				seenSubagents: preloaded,
+			}
+			c.agentCtx[agent.ID] = actx
+		}
+		c.mu.Unlock()
+	}
+
+	c.mu.Lock()
+	if actx.seenSubagents == nil {
+		actx.seenSubagents = make(map[string]struct{})
 	}
 	if frame.Data.LastPrompt != nil && strings.TrimSpace(*frame.Data.LastPrompt) != "" {
 		newPrompt := strings.TrimSpace(*frame.Data.LastPrompt)
@@ -487,11 +510,25 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			}
 		}
 	} else {
-		// Subagent event: cancel parent idle timer and increment subagent count
+		// Subagent event: cancel parent idle timer and increment subagent count for distinct subagents
 		c.mu.Lock()
 		c.cancelIdleTimerLocked(agent.ID)
+		isNewSubagent := false
+		if frame.SubagentID != nil && *frame.SubagentID != "" {
+			subID := *frame.SubagentID
+			if actx.seenSubagents == nil {
+				actx.seenSubagents = make(map[string]struct{})
+			}
+			if _, seen := actx.seenSubagents[subID]; !seen {
+				actx.seenSubagents[subID] = struct{}{}
+				isNewSubagent = true
+			}
+		}
 		c.mu.Unlock()
-		agent.Activity.SubagentCount++
+
+		if isNewSubagent {
+			agent.Activity.SubagentCount++
+		}
 	}
 
 	if err := c.store.SaveAgentState(*agent); err != nil {
