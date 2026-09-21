@@ -188,4 +188,23 @@ describe("LogFrameItem Component", () => {
       /<pre[^>]*class="[^"]*min-w-0[^"]*max-w-full[^"]*\[overflow-wrap:anywhere\][^"]*break-all[^"]*"/,
     );
   });
+
+  it("passes exitCode and isError from frame.data to ToolExecutionBlock", () => {
+    const errorFrame: ITelemetryFrame = {
+      ...fixture_telemetryFrame,
+      data: {
+        ...fixture_telemetryFrame.data,
+        toolName: "Bash",
+        toolOutput: "Command failed",
+        exitCode: 1,
+        isError: true,
+      },
+    };
+    const html = renderToString(<LogFrameItem frame={errorFrame} />);
+
+    expect(html).toContain('data-testid="ToolExecutionBlock--status"');
+    expect(html).toContain("exit 1");
+    expect(html).toContain('data-testid="ToolExecutionBlock--stream-type"');
+    expect(html).toContain("STDERR");
+  });
 });

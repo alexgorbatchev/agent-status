@@ -71,3 +71,53 @@ export const WithoutInputOrOutput: Story = {
     await expect(canvas.queryByTestId("ToolExecutionBlock--output")).not.toBeInTheDocument();
   },
 };
+
+export const CleanExit: Story = {
+  args: {
+    toolName: "bash",
+    toolInput: { command: "just test" },
+    toolOutput: "16 pass, 0 fail",
+    exitCode: 0,
+    isError: false,
+  },
+  async play({ canvasElement }) {
+    const canvas = within(canvasElement);
+    const status = canvas.getByTestId("ToolExecutionBlock--status");
+    await expect(status).toBeInTheDocument();
+    await expect(status).toHaveTextContent("exit 0");
+    await expect(canvas.getByTestId("ToolExecutionBlock--stream-type")).toHaveTextContent("OUTPUT");
+  },
+};
+
+export const FailedExit: Story = {
+  args: {
+    toolName: "bash",
+    toolInput: { command: "bun run build" },
+    toolOutput: "Error: build failed with exit code 1",
+    exitCode: 1,
+    isError: true,
+  },
+  async play({ canvasElement }) {
+    const canvas = within(canvasElement);
+    const status = canvas.getByTestId("ToolExecutionBlock--status");
+    await expect(status).toBeInTheDocument();
+    await expect(status).toHaveTextContent("exit 1");
+    await expect(canvas.getByTestId("ToolExecutionBlock--stream-type")).toHaveTextContent("STDERR");
+  },
+};
+
+export const StructuredParameters: Story = {
+  args: {
+    toolName: "grep",
+    toolInput: { pattern: "TODO", path: "src", recursive: true },
+    toolOutput: "src/App.tsx:42: // TODO: fix",
+    exitCode: 0,
+  },
+  async play({ canvasElement }) {
+    const canvas = within(canvasElement);
+    const params = canvas.getByTestId("ToolExecutionBlock--params");
+    await expect(params).toBeInTheDocument();
+    await expect(params).toHaveTextContent("pattern");
+    await expect(params).toHaveTextContent("TODO");
+  },
+};

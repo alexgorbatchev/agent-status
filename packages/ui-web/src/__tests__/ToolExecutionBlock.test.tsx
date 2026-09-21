@@ -1,7 +1,9 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, mock } from "bun:test";
+import assert from "node:assert";
 import React from "react";
 import { renderToString } from "react-dom/server";
 import { ToolExecutionBlock } from "../components/ToolExecutionBlock";
+import { setupMockDomEnvironment, mountComponent } from "./helpers";
 
 describe("ToolExecutionBlock Component", () => {
   it("renders tool name, input, and output", () => {
@@ -142,5 +144,159 @@ describe("ToolExecutionBlock Component", () => {
     expect(html).toContain('data-testid="DiffViewer--path"');
     expect(html).toContain("README.md");
     expect(html).not.toContain('data-testid="ToolExecutionBlock--input"');
+  });
+
+  it("renders status badge for clean exit (exitCode 0)", () => {
+    const html = renderToString(<ToolExecutionBlock toolName="Bash" exitCode={0} />);
+
+    expect(html).toContain('data-testid="ToolExecutionBlock--status"');
+    expect(html).toContain("exit 0");
+    expect(html).toContain("text-emerald-400");
+  });
+
+  it("renders status badge for non-zero exit code (failure)", () => {
+    const html = renderToString(<ToolExecutionBlock toolName="Bash" exitCode={127} />);
+
+    expect(html).toContain('data-testid="ToolExecutionBlock--status"');
+    expect(html).toContain("exit 127");
+    expect(html).toContain("text-red-400");
+  });
+
+  it("renders status badge for isError true without explicit exit code", () => {
+    const html = renderToString(<ToolExecutionBlock toolName="CustomTool" isError={true} />);
+
+    expect(html).toContain('data-testid="ToolExecutionBlock--status"');
+    expect(html).toContain("failed");
+    expect(html).toContain("text-red-400");
+  });
+
+  it("renders terminal view with $ prompt and copy button for shell tools", () => {
+    const multilineCmd = "git status\nbun test";
+    const html = renderToString(<ToolExecutionBlock toolName="bash" toolInput={{ command: multilineCmd }} />);
+
+    expect(html).toContain('data-testid="ToolExecutionBlock--terminal"');
+    expect(html).toContain('data-testid="ToolExecutionBlock--copy-command-btn"');
+    expect(html).toContain("$");
+    expect(html).toContain("git status");
+    expect(html).toContain("bun test");
+  });
+
+  it("renders structured parameter pills for search and navigation tools", () => {
+    const html = renderToString(
+      <ToolExecutionBlock toolName="grep" toolInput={{ pattern: "TODO", path: "src/components", maxResults: 10 }} />,
+    );
+
+    expect(html).toContain('data-testid="ToolExecutionBlock--params"');
+    expect(html).toContain("pattern");
+    expect(html).toContain("TODO");
+    expect(html).toContain("path");
+    expect(html).toContain("src/components");
+    expect(html).toContain("maxResults");
+    expect(html).toContain("10");
+  });
+
+  it("renders enhanced output viewer with line count badge, stream label, copy button, and line gutter", () => {
+    const output = "first line\nsecond line\nthird line";
+    const html = renderToString(<ToolExecutionBlock toolName="bash" toolOutput={output} exitCode={0} />);
+
+    expect(html).toContain('data-testid="ToolExecutionBlock--output-header"');
+    expect(html).toContain('data-testid="ToolExecutionBlock--line-count"');
+    expect(html).toContain("3 lines");
+    expect(html).toContain('data-testid="ToolExecutionBlock--stream-type"');
+    expect(html).toContain("OUTPUT");
+    expect(html).toContain('data-testid="ToolExecutionBlock--copy-output-btn"');
+    expect(html).toContain('data-testid="ToolExecutionBlock--line-gutter"');
+    expect(html).toContain("1");
+    expect(html).toContain("2");
+    expect(html).toContain("3");
+  });
+
+  it("renders stream label as STDERR when isError is true or exitCode is non-zero", () => {
+    const html = renderToString(
+      <ToolExecutionBlock toolName="bash" toolOutput="Command failed: exit 1" exitCode={1} isError={true} />,
+    );
+
+    expect(html).toContain('data-testid="ToolExecutionBlock--stream-type"');
+    expect(html).toContain("STDERR");
+  });
+
+  it("copies shell command to clipboard when copy-command button is clicked", async () => {
+    let copiedText = "";
+    const originalClipboard = navigator.clipboard;
+    Object.assign(navigator, {
+      clipboard: {
+        writeText: mock(async (text: string) => {
+          copiedText = text;
+        }),
+      },
+    });
+
+    const { mockDoc, cleanup } = setupMockDomEnvironment();
+    try {
+      const { container, unmount } = await mountComponent(
+        <ToolExecutionBlock toolName="bash" toolInput={{ command: "bun test --coverage" }} />,
+        mockDoc,
+      );
+
+      const copyBtn = container.querySelector('[data-testid="ToolExecutionBlock--copy-command-btn"]');
+      assert(copyBtn);
+      copyBtn.click();
+
+      expect(copiedText).toBe("bun test --coverage");
+      await unmount();
+    } finally {
+      cleanup();
+      Object.assign(navigator, { clipboard: originalClipboard });
+    }
+  });
+
+  it("copies output text to clipboard when copy-output button is clicked", async () => {
+    let copiedText = "";
+    const originalClipboard = navigator.clipboard;
+    Object.assign(navigator, {
+      clipboard: {
+        writeText: mock(async (text: string) => {
+          copiedText = text;
+        }),
+      },
+    });
+
+    const { mockDoc, cleanup } = setupMockDomEnvironment();
+    try {
+      const { container, unmount } = await mountComponent(
+        <ToolExecutionBlock toolName="bash" toolOutput="Build complete in 12ms" />,
+        mockDoc,
+      );
+
+      const copyBtn = container.querySelector('[data-testid="ToolExecutionBlock--copy-output-btn"]');
+      assert(copyBtn);
+      copyBtn.click();
+
+      expect(copiedText).toBe("Build complete in 12ms");
+      await unmount();
+    } finally {
+      cleanup();
+      Object.assign(navigator, { clipboard: originalClipboard });
+    }
+  });
+
+  it("extracts command from cmd and script fields for shell tools", () => {
+    const htmlCmd = renderToString(<ToolExecutionBlock toolName="sh" toolInput={{ cmd: "echo 123" }} />);
+    expect(htmlCmd).toContain('data-testid="ToolExecutionBlock--terminal"');
+    expect(htmlCmd).toContain("echo 123");
+
+    const htmlScript = renderToString(<ToolExecutionBlock toolName="exec" toolInput={{ script: "node app.js" }} />);
+    expect(htmlScript).toContain('data-testid="ToolExecutionBlock--terminal"');
+    expect(htmlScript).toContain("node app.js");
+  });
+
+  it("renders status badge when toolName is absent but isError is provided", () => {
+    const htmlSuccess = renderToString(<ToolExecutionBlock isError={false} />);
+    expect(htmlSuccess).toContain('data-testid="ToolExecutionBlock--status"');
+    expect(htmlSuccess).toContain("success");
+
+    const htmlFailure = renderToString(<ToolExecutionBlock isError={true} />);
+    expect(htmlFailure).toContain('data-testid="ToolExecutionBlock--status"');
+    expect(htmlFailure).toContain("failed");
   });
 });
