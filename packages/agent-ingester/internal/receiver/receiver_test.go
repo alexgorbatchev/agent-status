@@ -934,4 +934,7 @@ func TestReceiver_UnsupportedFrameVersion(t *testing.T) {
 	if errMsg.Type != "error" || errMsg.Code != "unsupported_version" {
 		t.Errorf("expected error code unsupported_version, got: %+v", errMsg)
 	}
+
+	// Write binary frame (should be ignored without breaking connection)
+	_ = conn.Write(ctx, websocket.MessageBinary, []byte{0x01, 0x02})
 }

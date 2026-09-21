@@ -13,6 +13,9 @@ Central telemetry ingestion daemon (`air-ingester`) that receives agent events, 
 - Real-time updates broadcast over Unix domain socket `$XDG_RUNTIME_DIR/agent-status/notify.sock` via `internal/notify/publisher.go`.
 - Telemetry and session logging resolves human environment and project names for clean human-facing logs while preserving machine IDs under `AGENT=1`.
 - Pricing calculations use static rates defined in `internal/pricing/pricing.go`.
+- Action summarization runs asynchronously via per-agent serialized queues to avoid blocking WebSocket ingestion.
+- Summaries use specialized prompt templates (Thinking + Tool, Thinking only, Tool only) with sanitized tool arguments (max 300 chars).
+- Semantic deduplication rejects state updates with >= 60% word overlap (Jaccard similarity) when target and phase are unchanged.
 
 ## Local gotchas
 - Unlisted models report `nil` cost rather than `$0.00` to distinguish free usage from unknown rates.
@@ -28,4 +31,5 @@ Central telemetry ingestion daemon (`air-ingester`) that receives agent events, 
 - Entry point: `cmd/air-ingester/main.go`
 - Store & migrations: `internal/store/`
 - Classifier: `internal/classifier/classifier.go`
+- Summarizer: `internal/summarizer/summarizer.go`
 - Pricing engine: `internal/pricing/pricing.go`
