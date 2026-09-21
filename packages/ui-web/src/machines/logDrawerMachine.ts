@@ -25,6 +25,13 @@ export const logDrawerMachine = setup({
     events: {} as LogDrawerMachineEvent,
     input: {} as ILogDrawerMachineInput | undefined,
   },
+  delays: {
+    calculateBackoff: ({ context }): number => {
+      const exponentialDelay = 1000 * Math.pow(2, Math.min(context.retryCount, 5));
+      const jitter = Math.floor(Math.random() * 500);
+      return Math.min(exponentialDelay + jitter, 30000);
+    },
+  },
   actors: {
     fetchHistory: fromPromise(async ({ input, signal }: IFetchHistoryArgs): Promise<ITelemetryFrame[]> => {
       if (!input.agentId) {
@@ -102,6 +109,7 @@ export const logDrawerMachine = setup({
       return {
         agent: null,
         errorMessage: null,
+        retryCount: 0,
       };
     }),
 
@@ -111,6 +119,17 @@ export const logDrawerMachine = setup({
 
     clearError: assign({
       errorMessage: null,
+      retryCount: 0,
+    }),
+
+    incrementRetry: assign({
+      retryCount: ({ context }) => context.retryCount + 1,
+      errorMessage: ({ event }) => {
+        if ("error" in event && typeof event.error === "string") {
+          return event.error;
+        }
+        return "Failed to load agent logs";
+      },
     }),
 
     setError: assign({
@@ -129,6 +148,15 @@ export const logDrawerMachine = setup({
     isAgentNull: ({ event }) => {
       return "agent" in event && (event.agent === null || event.agent === undefined);
     },
+    isSameAgent: ({ context, event }) => {
+      return (
+        "agent" in event &&
+        event.agent !== null &&
+        event.agent !== undefined &&
+        context.agent !== null &&
+        event.agent.id === context.agent.id
+      );
+    },
   },
 }).createMachine({
   id: "logDrawerMachine",
@@ -139,6 +167,7 @@ export const logDrawerMachine = setup({
     token: input?.token ?? DEFAULT_DEV_TOKEN,
     logBuffer: input?.logBuffer ?? new LogBuffer(),
     errorMessage: null,
+    retryCount: 0,
   }),
   states: {
     idle: {
@@ -198,17 +227,27 @@ export const logDrawerMachine = setup({
             actions: "resetMachine",
           },
           {
+            guard: "isSameAgent",
+            actions: "setAgentAndConfig",
+          },
+          {
             target: "fetchingHistory",
             reenter: true,
             actions: "setAgentAndConfig",
           },
         ],
-        OPEN: {
-          guard: "hasAgent",
-          target: "fetchingHistory",
-          reenter: true,
-          actions: "setAgentAndConfig",
-        },
+        OPEN: [
+          {
+            guard: "isSameAgent",
+            actions: "setAgentAndConfig",
+          },
+          {
+            guard: "hasAgent",
+            target: "fetchingHistory",
+            reenter: true,
+            actions: "setAgentAndConfig",
+          },
+        ],
       },
     },
 
@@ -225,7 +264,7 @@ export const logDrawerMachine = setup({
       on: {
         SSE_ERROR: {
           target: "reconnecting",
-          actions: "setError",
+          actions: "incrementRetry",
         },
         SSE_OPEN: {
           actions: "clearError",
@@ -241,27 +280,38 @@ export const logDrawerMachine = setup({
             actions: "resetMachine",
           },
           {
+            guard: "isSameAgent",
+            actions: "setAgentAndConfig",
+          },
+          {
             target: "fetchingHistory",
             actions: "setAgentAndConfig",
           },
         ],
-        OPEN: {
-          guard: "hasAgent",
-          target: "fetchingHistory",
-          actions: "setAgentAndConfig",
-        },
+        OPEN: [
+          {
+            guard: "isSameAgent",
+            actions: "setAgentAndConfig",
+          },
+          {
+            guard: "hasAgent",
+            target: "fetchingHistory",
+            actions: "setAgentAndConfig",
+          },
+        ],
       },
     },
 
     reconnecting: {
       after: {
-        3000: {
+        calculateBackoff: {
           target: "streamingLive",
         },
       },
       on: {
         RETRY: {
           target: "streamingLive",
+          actions: "clearError",
         },
         CLOSE: {
           target: "idle",
@@ -274,15 +324,25 @@ export const logDrawerMachine = setup({
             actions: "resetMachine",
           },
           {
+            guard: "isSameAgent",
+            actions: "setAgentAndConfig",
+          },
+          {
             target: "fetchingHistory",
             actions: "setAgentAndConfig",
           },
         ],
-        OPEN: {
-          guard: "hasAgent",
-          target: "fetchingHistory",
-          actions: "setAgentAndConfig",
-        },
+        OPEN: [
+          {
+            guard: "isSameAgent",
+            actions: "setAgentAndConfig",
+          },
+          {
+            guard: "hasAgent",
+            target: "fetchingHistory",
+            actions: "setAgentAndConfig",
+          },
+        ],
       },
     },
 
@@ -303,15 +363,25 @@ export const logDrawerMachine = setup({
             actions: "resetMachine",
           },
           {
+            guard: "isSameAgent",
+            actions: "setAgentAndConfig",
+          },
+          {
             target: "fetchingHistory",
             actions: "setAgentAndConfig",
           },
         ],
-        OPEN: {
-          guard: "hasAgent",
-          target: "fetchingHistory",
-          actions: "setAgentAndConfig",
-        },
+        OPEN: [
+          {
+            guard: "isSameAgent",
+            actions: "setAgentAndConfig",
+          },
+          {
+            guard: "hasAgent",
+            target: "fetchingHistory",
+            actions: "setAgentAndConfig",
+          },
+        ],
       },
     },
   },

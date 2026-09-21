@@ -90,4 +90,28 @@ describe("LogBuffer Store", () => {
     expect(sub1).toHaveBeenCalledTimes(1);
     expect(sub2).toHaveBeenCalledTimes(2);
   });
+
+  it("enforces maxCapacity when prepending frames beyond the limit", () => {
+    const buffer = new LogBuffer(2);
+    buffer.prepend({ ...fixture_telemetryFrame, seq: 1 });
+    buffer.prepend({ ...fixture_telemetryFrame, seq: 2 });
+    buffer.prepend({ ...fixture_telemetryFrame, seq: 3 });
+
+    expect(buffer.count).toBe(2);
+    expect(buffer.getSnapshot()[0]?.seq).toBe(3);
+    expect(buffer.getSnapshot()[1]?.seq).toBe(2);
+  });
+
+  it("enforces maxCapacity when setting frames larger than the limit", () => {
+    const buffer = new LogBuffer(2);
+    buffer.set([
+      { ...fixture_telemetryFrame, seq: 1 },
+      { ...fixture_telemetryFrame, seq: 2 },
+      { ...fixture_telemetryFrame, seq: 3 },
+    ]);
+
+    expect(buffer.count).toBe(2);
+    expect(buffer.getSnapshot()[0]?.seq).toBe(1);
+    expect(buffer.getSnapshot()[1]?.seq).toBe(2);
+  });
 });

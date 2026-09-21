@@ -487,4 +487,96 @@ describe("logDrawerMachine State Machine", () => {
       globalWindow.window = prevWindow;
     }
   });
+
+  it("updates context metadata in-place without re-fetching or clearing logs when SELECT_AGENT is dispatched with same agent id", async () => {
+    let fetchCount = 0;
+    const mockMachine = logDrawerMachine.provide({
+      actors: {
+        fetchHistory: fromPromise(async (): Promise<ITelemetryFrame[]> => {
+          fetchCount++;
+          return [fixture_machineTelemetryFrame1];
+        }),
+        streamLiveTail: fromCallback((): StreamCleanupFn => {
+          return (): void => {};
+        }),
+      },
+    });
+
+    const buffer = new LogBuffer();
+    const actor = createActor(mockMachine, {
+      input: { logBuffer: buffer },
+    });
+    actor.start();
+
+    actor.send({ type: "OPEN", agent: fixture_machineAgent1 });
+    await flushTicks();
+
+    expect(actor.getSnapshot().value).toBe("streamingLive");
+    expect(fetchCount).toBe(1);
+    expect(buffer.count).toBe(1);
+
+    // Update agent metadata (e.g. title or activity changes, but ID remains fixture_machineAgent1.id)
+    const updatedAgent = {
+      ...fixture_machineAgent1,
+      activity: {
+        ...fixture_machineAgent1.activity,
+        title: "Updated Task Title",
+        subagentCount: 3,
+      },
+    };
+
+    actor.send({ type: "SELECT_AGENT", agent: updatedAgent });
+    await flushTicks();
+
+    // Should stay in streamingLive, not increment fetchCount, and not clear buffer
+    expect(actor.getSnapshot().value).toBe("streamingLive");
+    expect(fetchCount).toBe(1);
+    expect(buffer.count).toBe(1);
+    expect(actor.getSnapshot().context.agent?.activity.title).toBe("Updated Task Title");
+
+    actor.stop();
+  });
+
+  it("increments retryCount on SSE_ERROR and resets it on SSE_OPEN", async () => {
+    let triggerSSEError: VoidCallback = () => {};
+    let triggerSSEOpen: VoidCallback = () => {};
+
+    const mockMachine = logDrawerMachine.provide({
+      actors: {
+        fetchHistory: fromPromise(async (): Promise<ITelemetryFrame[]> => {
+          return [];
+        }),
+        streamLiveTail: fromCallback(({ sendBack }): StreamCleanupFn => {
+          triggerSSEError = (): void => {
+            sendBack({ type: "SSE_ERROR", error: "Stream error" });
+          };
+          triggerSSEOpen = (): void => {
+            sendBack({ type: "SSE_OPEN" });
+          };
+          return (): void => {};
+        }),
+      },
+    });
+
+    const actor = createActor(mockMachine, { input: undefined });
+    actor.start();
+
+    actor.send({ type: "OPEN", agent: fixture_machineAgent1 });
+    await flushTicks();
+
+    expect(actor.getSnapshot().value).toBe("streamingLive");
+    expect(actor.getSnapshot().context.retryCount).toBe(0);
+
+    triggerSSEError();
+    expect(actor.getSnapshot().value).toBe("reconnecting");
+    expect(actor.getSnapshot().context.retryCount).toBe(1);
+
+    actor.send({ type: "RETRY" });
+    expect(actor.getSnapshot().value).toBe("streamingLive");
+
+    triggerSSEOpen();
+    expect(actor.getSnapshot().context.retryCount).toBe(0);
+
+    actor.stop();
+  });
 });

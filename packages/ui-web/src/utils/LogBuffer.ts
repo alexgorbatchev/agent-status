@@ -3,14 +3,25 @@ import { correlateTelemetryFrames } from "./correlateTelemetryFrames";
 
 export type LogBufferListener = () => void;
 export type LogBufferUnsubscribe = () => void;
+export type LogBufferInit = number | readonly ITelemetryFrame[];
+
+export const DEFAULT_LOG_BUFFER_CAPACITY = 500;
 
 export class LogBuffer {
   private frames: readonly ITelemetryFrame[] = [];
   private readonly listeners: Set<LogBufferListener> = new Set<LogBufferListener>();
+  private readonly maxCapacity: number;
 
-  constructor(initialFrames?: readonly ITelemetryFrame[]) {
-    if (initialFrames && initialFrames.length > 0) {
-      this.frames = [...initialFrames];
+  public constructor(maxCapacity?: number);
+  public constructor(initialFrames?: readonly ITelemetryFrame[], maxCapacity?: number);
+  public constructor(arg?: LogBufferInit, maxCapacity: number = DEFAULT_LOG_BUFFER_CAPACITY) {
+    if (typeof arg === "number") {
+      this.maxCapacity = arg;
+    } else {
+      this.maxCapacity = maxCapacity;
+      if (arg && arg.length > 0) {
+        this.frames = arg.length > this.maxCapacity ? arg.slice(0, this.maxCapacity) : [...arg];
+      }
     }
   }
 
@@ -30,12 +41,13 @@ export class LogBuffer {
   };
 
   public set(frames: readonly ITelemetryFrame[]): void {
-    this.frames = [...frames];
+    this.frames = frames.length > this.maxCapacity ? frames.slice(0, this.maxCapacity) : [...frames];
     this.notify();
   }
 
   public prepend(frame: ITelemetryFrame): void {
-    this.frames = [frame, ...this.frames];
+    const next = [frame, ...this.frames];
+    this.frames = next.length > this.maxCapacity ? next.slice(0, this.maxCapacity) : next;
     this.notify();
   }
 

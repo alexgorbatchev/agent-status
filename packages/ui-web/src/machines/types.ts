@@ -7,6 +7,7 @@ export interface ILogDrawerMachineContext {
   token: string;
   logBuffer: LogBuffer;
   errorMessage: string | null;
+  retryCount: number;
 }
 
 export type LogDrawerMachineEvent =
