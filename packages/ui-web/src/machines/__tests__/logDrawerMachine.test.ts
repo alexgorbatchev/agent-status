@@ -3,7 +3,7 @@ import assert from "node:assert";
 import { createActor, fromPromise, fromCallback } from "xstate";
 import { logDrawerMachine } from "../logDrawerMachine";
 import { LogBuffer } from "../../utils/LogBuffer";
-import type { ITelemetryFrame } from "../../types";
+import type { ITelemetryFrame, IWindowWithAgentStatus } from "../../types";
 import type { IFetchHistoryArgs, StreamCleanupFn } from "../types";
 import {
   fixture_machineAgent1,
@@ -19,6 +19,10 @@ type FetchInput = RequestInfo | URL;
 
 interface IGlobalScope {
   EventSource?: typeof EventSource;
+}
+
+interface IGlobalWindowScope {
+  window?: IWindowWithAgentStatus;
 }
 
 const flushTicks = async (): Promise<void> => {
@@ -462,5 +466,25 @@ describe("logDrawerMachine State Machine", () => {
 
     actor.stop();
     globalScope.EventSource = originalEventSource;
+  });
+
+  it("resolves apiBaseUrl from window.__AGENT_STATUS_API_URL__ when input apiBaseUrl is omitted", () => {
+    const globalWindow = globalThis as unknown as IGlobalWindowScope;
+    const prevWindow = globalWindow.window;
+    globalWindow.window = { __AGENT_STATUS_API_URL__: "http://injected-server:5000" };
+
+    try {
+      const actor = createActor(logDrawerMachine, {
+        input: {
+          token: "my-token",
+        },
+      });
+      actor.start();
+
+      expect(actor.getSnapshot().context.apiBaseUrl).toBe("http://injected-server:5000");
+      actor.stop();
+    } finally {
+      globalWindow.window = prevWindow;
+    }
   });
 });

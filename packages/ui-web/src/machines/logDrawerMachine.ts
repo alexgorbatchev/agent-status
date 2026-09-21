@@ -1,7 +1,7 @@
 import { setup, assign, fromPromise, fromCallback } from "xstate";
 import type { ITelemetryFrame } from "../types";
 import { LogBuffer } from "../utils/LogBuffer";
-import { DEFAULT_API_BASE_URL, DEFAULT_DEV_TOKEN, resolveApiBaseUrl } from "../utils/config";
+import { DEFAULT_DEV_TOKEN, resolveApiBaseUrl } from "../utils/config";
 import type {
   ILogDrawerMachineContext,
   LogDrawerMachineEvent,
@@ -84,7 +84,8 @@ export const logDrawerMachine = setup({
   actions: {
     setAgentAndConfig: assign(({ context, event }) => {
       if ("agent" in event) {
-        const nextBaseUrl = "apiBaseUrl" in event && event.apiBaseUrl ? event.apiBaseUrl : context.apiBaseUrl;
+        const nextBaseUrl =
+          "apiBaseUrl" in event && event.apiBaseUrl ? resolveApiBaseUrl(event.apiBaseUrl) : context.apiBaseUrl;
         const nextToken = "token" in event && event.token ? event.token : context.token;
         return {
           agent: event.agent,
@@ -134,7 +135,7 @@ export const logDrawerMachine = setup({
   initial: "idle",
   context: ({ input }) => ({
     agent: input?.agent ?? null,
-    apiBaseUrl: input?.apiBaseUrl ?? DEFAULT_API_BASE_URL,
+    apiBaseUrl: resolveApiBaseUrl(input?.apiBaseUrl),
     token: input?.token ?? DEFAULT_DEV_TOKEN,
     logBuffer: input?.logBuffer ?? new LogBuffer(),
     errorMessage: null,
