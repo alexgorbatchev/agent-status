@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -88,11 +89,37 @@ func TestCLI_Version(t *testing.T) {
 	}
 }
 
+func TestMainFunc(t *testing.T) {
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	os.Args = []string{"air-debug", "--version"}
+	main()
+}
+
+func TestMain_ErrorExit(t *testing.T) {
+	oldArgs := os.Args
+	oldExit := exitFunc
+	defer func() {
+		os.Args = oldArgs
+		exitFunc = oldExit
+	}()
+	exitCalled := false
+	exitFunc = func(code int) {
+		exitCalled = true
+	}
+	os.Args = []string{"air-debug", "unknown-subcommand"}
+	main()
+	if !exitCalled {
+		t.Errorf("expected exitFunc to be called on error")
+	}
+}
+
 func TestCLI_SessionList(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := createTestOpencodeDB(t, tmpDir)
 
 	cmd := newRootCmd()
+	cmd.SetContext(context.Background())
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 	cmd.SetArgs([]string{"session", "list", dbPath})
@@ -104,6 +131,15 @@ func TestCLI_SessionList(t *testing.T) {
 	if !strings.Contains(out, "ses_cli_1") {
 		t.Errorf("expected session ID in output, got: %s", out)
 	}
+
+	// Test invalid db file error path
+	badDB := filepath.Join(tmpDir, "bad.db")
+	_ = os.WriteFile(badDB, []byte("not a sqlite db"), 0644)
+	cmdBad := newRootCmd()
+	cmdBad.SetArgs([]string{"session", "list", badDB})
+	if err := cmdBad.Execute(); err == nil {
+		t.Errorf("expected error opening invalid db file")
+	}
 }
 
 func TestCLI_SessionReplay(t *testing.T) {
@@ -112,6 +148,7 @@ func TestCLI_SessionReplay(t *testing.T) {
 
 	t.Run("human output", func(t *testing.T) {
 		cmd := newRootCmd()
+		cmd.SetContext(context.Background())
 		var buf bytes.Buffer
 		cmd.SetOut(&buf)
 		cmd.SetArgs([]string{"session", "replay", transcriptPath})
@@ -138,6 +175,17 @@ func TestCLI_SessionReplay(t *testing.T) {
 		}
 	})
 
+	t.Run("export-db and until options", func(t *testing.T) {
+		exportPath := filepath.Join(tmpDir, "exported.db")
+		cmd := newRootCmd()
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetArgs([]string{"session", "replay", "--export-db", exportPath, "--until-line", "1", "--stop-on-error", "--harness", "claude-code", "--env", "custom-env", transcriptPath})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("session replay with export-db failed: %v", err)
+		}
+	})
+
 	t.Run("diff flag", func(t *testing.T) {
 		cmd := newRootCmd()
 		var buf bytes.Buffer
@@ -159,9 +207,10 @@ func TestCLI_SessionValidate(t *testing.T) {
 
 	t.Run("human output", func(t *testing.T) {
 		cmd := newRootCmd()
+		cmd.SetContext(context.Background())
 		var buf bytes.Buffer
 		cmd.SetOut(&buf)
-		cmd.SetArgs([]string{"session", "validate", transcriptPath})
+		cmd.SetArgs([]string{"session", "validate", "--env", "test-env", "--harness", "claude-code", transcriptPath})
 		if err := cmd.Execute(); err != nil {
 			t.Fatalf("session validate failed: %v", err)
 		}
@@ -225,6 +274,20 @@ func TestCLI_ErrorPaths(t *testing.T) {
 		}
 	})
 
+	t.Run("session validate with parse errors", func(t *testing.T) {
+		corruptPath := filepath.Join(tmpDir, "corrupt.jsonl")
+		content := `{"type":"invalid_json"
+{"type":"user","message":"hello"}
+`
+		_ = os.WriteFile(corruptPath, []byte(content), 0644)
+		cmd := newRootCmd()
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetArgs([]string{"session", "validate", corruptPath})
+		// validate should execute and return error due to parse error
+		_ = cmd.Execute()
+	})
+
 	t.Run("session validate failure path json", func(t *testing.T) {
 		emptyFile := filepath.Join(tmpDir, "empty.jsonl")
 		cmd := newRootCmd()
@@ -233,6 +296,53 @@ func TestCLI_ErrorPaths(t *testing.T) {
 		cmd.SetArgs([]string{"session", "validate", "--json", emptyFile})
 		if err := cmd.Execute(); err == nil {
 			t.Errorf("expected validation to fail for empty file with --json")
+		}
+	})
+
+	t.Run("session replay with strict lifecycle", func(t *testing.T) {
+		transcriptPath := createTestClaudeTranscript(t, tmpDir)
+		cmd := newRootCmd()
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetArgs([]string{"session", "replay", "--strict-lifecycle", "--diff", transcriptPath})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("session replay with --strict-lifecycle failed: %v", err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, "Session Replay Summary") && !strings.Contains(out, "harness:claude-code") {
+			t.Errorf("expected summary, got: %s", out)
+		}
+	})
+
+	t.Run("session validate with strict lifecycle detects open-ended transcript", func(t *testing.T) {
+		transcriptPath := createTestClaudeTranscript(t, tmpDir)
+		cmd := newRootCmd()
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetArgs([]string{"session", "validate", "--strict-lifecycle", transcriptPath})
+		err := cmd.Execute()
+		if err == nil {
+			t.Errorf("expected validation failure in strict mode for open-ended transcript")
+		}
+		out := buf.String()
+		if !strings.Contains(out, "open-ended transcript") {
+			t.Errorf("expected 'open-ended transcript' in validation output, got: %s", out)
+		}
+	})
+
+	t.Run("session validate with alias no-synthetic-lifecycle", func(t *testing.T) {
+		transcriptPath := createTestClaudeTranscript(t, tmpDir)
+		cmd := newRootCmd()
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetArgs([]string{"session", "validate", "--no-synthetic-lifecycle", "--json", transcriptPath})
+		err := cmd.Execute()
+		if err == nil {
+			t.Errorf("expected validation failure with --no-synthetic-lifecycle")
+		}
+		out := buf.String()
+		if !strings.Contains(out, "open-ended transcript") {
+			t.Errorf("expected 'open-ended transcript' in json output, got: %s", out)
 		}
 	})
 

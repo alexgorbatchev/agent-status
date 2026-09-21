@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
+	"github.com/alexgorbatchev/agent-status/packages/agent-parser"
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
 
@@ -87,6 +88,43 @@ func TestLoadSession_EdgeCases(t *testing.T) {
 		_, _, err := readJSONLLines(filepath.Join(tmpDir, "does-not-exist.jsonl"), nil)
 		if err == nil {
 			t.Errorf("expected error for missing file")
+		}
+	})
+
+	t.Run("ensureSyntheticLifecycle tags synthetic frames and respects strictLifecycle", func(t *testing.T) {
+		events := []ReplayEvent{
+			{
+				Event: parser.ParsedEvent{
+					EventType: "tool_call",
+					Timestamp: 1500,
+					CWD:       "/repo",
+				},
+				SourceLine: 1,
+			},
+		}
+
+		// Non-strict: should inject synthetic run_started and run_exited
+		res := ensureSyntheticLifecycle(events, 1000, 2000, "/repo", false)
+		if len(res) != 3 {
+			t.Fatalf("expected 3 events, got %d", len(res))
+		}
+		if !res[0].IsSynthetic || res[0].Event.EventType != "run_started" {
+			t.Errorf("expected synthetic run_started at index 0, got synthetic=%v type=%s", res[0].IsSynthetic, res[0].Event.EventType)
+		}
+		if res[1].IsSynthetic {
+			t.Errorf("expected native event at index 1 to not be synthetic")
+		}
+		if !res[2].IsSynthetic || res[2].Event.EventType != "run_exited" {
+			t.Errorf("expected synthetic run_exited at index 2, got synthetic=%v type=%s", res[2].IsSynthetic, res[2].Event.EventType)
+		}
+
+		// Strict: should NOT inject synthetic run_started or run_exited
+		strictRes := ensureSyntheticLifecycle(events, 1000, 2000, "/repo", true)
+		if len(strictRes) != 1 {
+			t.Fatalf("expected 1 event in strict mode, got %d", len(strictRes))
+		}
+		if strictRes[0].Event.EventType != "tool_call" {
+			t.Errorf("expected tool_call, got %s", strictRes[0].Event.EventType)
 		}
 	})
 }

@@ -205,6 +205,39 @@ func TestReplay_Pi(t *testing.T) {
 	if res.Verification == nil || !res.Verification.Passed {
 		t.Errorf("expected verification to pass, report: %+v", res.Verification)
 	}
+	if !res.HasSyntheticEnd {
+		t.Errorf("expected HasSyntheticEnd to be true in default mode")
+	}
+	if !res.Summary().IsLifecycleSynthetic {
+		t.Errorf("expected IsLifecycleSynthetic to be true in default mode")
+	}
+
+	// In strict mode, open-ended Pi transcript must NOT inject synthetic run_exited
+	resStrict, err := RunReplay(ctx, ReplayOptions{
+		FilePath:        piFile,
+		StrictLifecycle: true,
+	})
+	if err != nil {
+		t.Fatalf("RunReplay(Pi, strict) failed: %v", err)
+	}
+	if resStrict.Agent == nil {
+		t.Fatalf("expected non-nil Agent in strict mode")
+	}
+	if resStrict.Agent.Activity.Lifecycle != types.LifecycleRunning {
+		t.Errorf("expected Lifecycle RUNNING in strict mode, got %s", resStrict.Agent.Activity.Lifecycle)
+	}
+	if resStrict.HasSyntheticEnd {
+		t.Errorf("expected HasSyntheticEnd to be false in strict mode")
+	}
+	if resStrict.Summary().Lifecycle != types.LifecycleRunning {
+		t.Errorf("expected Summary Lifecycle RUNNING in strict mode, got %s", resStrict.Summary().Lifecycle)
+	}
+	if resStrict.Summary().IsLifecycleSynthetic {
+		t.Errorf("expected IsLifecycleSynthetic to be false in strict mode")
+	}
+	if resStrict.Verification == nil || resStrict.Verification.Passed {
+		t.Errorf("expected verification to fail in strict mode for open-ended transcript")
+	}
 }
 
 func TestReplay_Codex(t *testing.T) {

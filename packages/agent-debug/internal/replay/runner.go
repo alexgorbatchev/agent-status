@@ -29,8 +29,9 @@ type ReplayOptions struct {
 	StopOnError bool
 	ExportDB    string
 	Summarize   bool
-	AgentMode   bool
-	OnDiff      func(diff output.StateDiff)
+	AgentMode       bool
+	StrictLifecycle bool
+	OnDiff          func(diff output.StateDiff)
 	OnStep      func(step int, frame types.ITelemetryFrame)
 }
 
@@ -46,8 +47,13 @@ type ReplayResult struct {
 	Diffs           []output.StateDiff         `json:"diffs,omitempty"`
 	Verification    *VerificationReport        `json:"verification"`
 	Duration        time.Duration              `json:"duration"`
-	ExportDBPath    string                     `json:"exportDbPath,omitempty"`
-	Errors          []string                   `json:"errors,omitempty"`
+	ExportDBPath      string                     `json:"exportDbPath,omitempty"`
+	Errors            []string                   `json:"errors,omitempty"`
+	HasNativeStart    bool                       `json:"hasNativeStart,omitempty"`
+	HasNativeEnd      bool                       `json:"hasNativeEnd,omitempty"`
+	HasSyntheticStart bool                       `json:"hasSyntheticStart,omitempty"`
+	HasSyntheticEnd   bool                       `json:"hasSyntheticEnd,omitempty"`
+	StrictLifecycle   bool                       `json:"strictLifecycle,omitempty"`
 }
 
 // Summary builds a ReplaySummary presentation model from the replay result.
@@ -73,6 +79,9 @@ func (r *ReplayResult) Summary() output.ReplaySummary {
 		s.CWD = r.Agent.Workspace.CWD
 		s.Activity = r.Agent.Activity.Activity
 		s.Lifecycle = r.Agent.Activity.Lifecycle
+		if r.Agent.Activity.Lifecycle == types.LifecycleExited {
+			s.IsLifecycleSynthetic = r.HasSyntheticEnd
+		}
 		s.Title = r.Agent.Activity.Title
 		s.Action = r.Agent.Activity.Action
 		s.TokensInput = r.Agent.Activity.Usage.Input
@@ -94,7 +103,7 @@ func RunReplay(ctx context.Context, opts ReplayOptions) (*ReplayResult, error) {
 	start := time.Now()
 
 	// 1. Load session data across supported harnesses
-	session, err := LoadSession(ctx, opts.FilePath, opts.Harness, opts.SessionID, opts.CWD)
+	session, err := LoadSession(ctx, opts.FilePath, opts.Harness, opts.SessionID, opts.CWD, opts.StrictLifecycle)
 	if err != nil {
 		return nil, fmt.Errorf("loading session: %w", err)
 	}
@@ -206,6 +215,7 @@ func RunReplay(ctx context.Context, opts ReplayOptions) (*ReplayResult, error) {
 
 		if opts.Diff || opts.OnDiff != nil {
 			diff := ComputeStateDiff(stepIdx+1, rev.SourceLine, frame.EventType, rev.SubagentID, prevAgent, newAgent)
+			diff.IsSynthetic = rev.IsSynthetic
 			diffs = append(diffs, diff)
 			if opts.OnDiff != nil {
 				opts.OnDiff(diff)
@@ -227,25 +237,58 @@ func RunReplay(ctx context.Context, opts ReplayOptions) (*ReplayResult, error) {
 	// 9. Flush async jobs
 	cls.FlushAll()
 
+	hasNativeStart := false
+	hasNativeEnd := false
+	hasSyntheticStart := false
+	hasSyntheticEnd := false
+	for _, rev := range session.Events {
+		if rev.Event.EventType == "run_started" {
+			if rev.IsSynthetic {
+				hasSyntheticStart = true
+			} else {
+				hasNativeStart = true
+			}
+		}
+		if rev.Event.EventType == "run_exited" {
+			if rev.IsSynthetic {
+				hasSyntheticEnd = true
+			} else {
+				hasNativeEnd = true
+			}
+		}
+	}
+
+	if !hasNativeEnd && !hasSyntheticEnd && finalAgent != nil {
+		finalAgent.Activity.Lifecycle = types.LifecycleRunning
+	}
+
 	// 10. Run server-side read query verification
-	verReport, vErr := VerifyAgentState(ctx, st.DB(), agentID)
+	verReport, vErr := VerifyAgentState(ctx, st.DB(), agentID, VerifyOptions{
+		StrictLifecycle: opts.StrictLifecycle,
+		HasExplicitExit: hasNativeEnd,
+	})
 	if vErr != nil {
 		replayErrors = append(replayErrors, fmt.Sprintf("verification driver error: %v", vErr))
 	}
 
 	result := &ReplayResult{
-		Harness:         session.Harness,
-		SessionID:       session.SessionID,
-		AgentID:         agentID,
-		Agent:           finalAgent,
-		FramesProcessed: framesProcessed,
-		EventCounts:     eventCounts,
-		Subagents:       session.Subagents,
-		Diffs:           diffs,
-		Verification:    verReport,
-		Duration:        time.Since(start),
-		ExportDBPath:    opts.ExportDB,
-		Errors:          replayErrors,
+		Harness:           session.Harness,
+		SessionID:         session.SessionID,
+		AgentID:           agentID,
+		Agent:             finalAgent,
+		FramesProcessed:   framesProcessed,
+		EventCounts:       eventCounts,
+		Subagents:         session.Subagents,
+		Diffs:             diffs,
+		Verification:      verReport,
+		Duration:          time.Since(start),
+		ExportDBPath:      opts.ExportDB,
+		Errors:            replayErrors,
+		HasNativeStart:    hasNativeStart,
+		HasNativeEnd:      hasNativeEnd,
+		HasSyntheticStart: hasSyntheticStart,
+		HasSyntheticEnd:   hasSyntheticEnd,
+		StrictLifecycle:   opts.StrictLifecycle,
 	}
 
 	return result, nil

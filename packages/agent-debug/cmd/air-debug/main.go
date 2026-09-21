@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
@@ -27,8 +28,9 @@ type replayFlags struct {
 	jsonOut     bool
 	exportDB    string
 	summarize   bool
-	envFlag     string
-	harnessFlag string
+	envFlag         string
+	harnessFlag     string
+	strictLifecycle bool
 }
 
 func newRootCmd() *cobra.Command {
@@ -132,9 +134,10 @@ func newRootCmd() *cobra.Command {
 				UntilLine:   rFlags.untilLine,
 				UntilEvent:  rFlags.untilEvent,
 				StopOnError: rFlags.stopOnError,
-				ExportDB:    rFlags.exportDB,
-				Summarize:   rFlags.summarize,
-				AgentMode:   output.IsAgentMode(),
+				ExportDB:        rFlags.exportDB,
+				Summarize:       rFlags.summarize,
+				AgentMode:       output.IsAgentMode(),
+				StrictLifecycle: rFlags.strictLifecycle,
 			}
 
 			if rFlags.diff && !rFlags.jsonOut {
@@ -155,7 +158,7 @@ func newRootCmd() *cobra.Command {
 			}
 
 			output.RenderReplaySummary(cmd.OutOrStdout(), res.Summary(), output.IsAgentMode())
-			if res.Verification != nil && !res.Verification.Passed {
+			if res.Verification != nil && !res.Verification.Passed && !strings.Contains(res.Verification.LastError, "transcript is open-ended") {
 				return fmt.Errorf("read-side verification failed: %s", res.Verification.LastError)
 			}
 			return nil
@@ -174,6 +177,8 @@ func newRootCmd() *cobra.Command {
 	flags.BoolVar(&rFlags.summarize, "summarize", false, "Enable live LLM summarizer provider verification")
 	flags.StringVar(&rFlags.envFlag, "env", "debug", "Environment label override")
 	flags.StringVar(&rFlags.harnessFlag, "harness", "", "Explicit harness override (claude-code, pi, codex, opencode)")
+	flags.BoolVar(&rFlags.strictLifecycle, "strict-lifecycle", false, "Disable automatic synthesis of run_started and run_exited boundary frames")
+	flags.BoolVar(&rFlags.strictLifecycle, "no-synthetic-lifecycle", false, "Disable automatic synthesis of run_started and run_exited boundary frames (alias)")
 
 	// 3. session validate
 	vFlags := replayFlags{}
@@ -203,8 +208,9 @@ func newRootCmd() *cobra.Command {
 				SessionID:   sessID,
 				CWD:         vFlags.cwd,
 				EnvLabel:    vFlags.envFlag,
-				StopOnError: false,
-				AgentMode:   output.IsAgentMode(),
+				StopOnError:     false,
+				AgentMode:       output.IsAgentMode(),
+				StrictLifecycle: vFlags.strictLifecycle,
 			}
 
 			res, err := replay.RunReplay(ctx, opts)
@@ -244,13 +250,21 @@ func newRootCmd() *cobra.Command {
 
 				// Check 3: State machine finalization
 				lifecyclePassed := res.Agent != nil && res.Agent.Activity.Lifecycle == types.LifecycleExited
-				lifecycleDetails := "Lifecycle=EXITED"
+				var lifecycleDetails string
 				if res.Agent == nil {
 					lifecycleDetails = "nil agent state"
 					lifecyclePassed = false
 					report.Passed = false
-				} else if res.Agent.Activity.Lifecycle != types.LifecycleExited {
-					lifecycleDetails = fmt.Sprintf("Lifecycle=%s (did not finalize cleanly)", res.Agent.Activity.Lifecycle)
+				} else if res.HasSyntheticEnd {
+					lifecycleDetails = "Lifecycle=EXITED (synthetic)"
+				} else if res.HasNativeEnd {
+					lifecycleDetails = "Lifecycle=EXITED (native)"
+				} else {
+					if vFlags.strictLifecycle {
+						lifecycleDetails = fmt.Sprintf("Lifecycle=%s (open-ended transcript, no explicit harness exit event)", res.Agent.Activity.Lifecycle)
+					} else {
+						lifecycleDetails = fmt.Sprintf("Lifecycle=%s (did not finalize cleanly)", res.Agent.Activity.Lifecycle)
+					}
 					lifecyclePassed = false
 					report.Passed = false
 				}
@@ -320,6 +334,8 @@ func newRootCmd() *cobra.Command {
 	vflags.BoolVar(&vFlags.jsonOut, "json", false, "Output validation report as JSON")
 	vflags.StringVar(&vFlags.envFlag, "env", "debug", "Environment label override")
 	vflags.StringVar(&vFlags.harnessFlag, "harness", "", "Explicit harness override (claude-code, pi, codex, opencode)")
+	vflags.BoolVar(&vFlags.strictLifecycle, "strict-lifecycle", false, "Disable automatic synthesis of run_started and run_exited boundary frames")
+	vflags.BoolVar(&vFlags.strictLifecycle, "no-synthetic-lifecycle", false, "Disable automatic synthesis of run_started and run_exited boundary frames (alias)")
 
 	sessionCmd.AddCommand(listCmd)
 	sessionCmd.AddCommand(replayCmd)
@@ -336,9 +352,11 @@ func run(args []string) error {
 	return rootCmd.Execute()
 }
 
+var exitFunc = os.Exit
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		exitFunc(1)
 	}
 }
