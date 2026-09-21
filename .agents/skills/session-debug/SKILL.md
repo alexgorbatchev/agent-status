@@ -91,6 +91,23 @@ just debug session list ~/.local/share/opencode/opencode.db
 just debug session replay --session-id ses_123 opencode.db
 ```
 
+### D. Ingested Telemetry Event Inspection (`events`)
+Inspect the raw sequence of telemetry events persisted to SQLite `agent-status.db`:
+
+```bash
+# View last 20 events for a session
+just debug events <session-id>
+
+# Filter by event types (e.g. lifecycle and errors)
+just debug events <session-id> --type run_started,run_exited,error
+
+# Inspect specific event payload by ID as JSON
+just debug events --id <event-id> --json
+
+# Stream events in ascending chronological order
+just debug events <session-id> --asc
+```
+
 ---
 
 ## 4. Root-Cause Analysis Techniques
