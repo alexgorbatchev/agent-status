@@ -3,6 +3,7 @@ package scanner_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -367,6 +368,8 @@ func TestScannerAudit_LiveFindersWithTempDirs(t *testing.T) {
 		);
 		INSERT INTO session (id, directory, time_created, time_updated, tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write)
 		VALUES ('opencode-sess-1', '/Users/opencode', 1758400000000, 1758400000000, 0, 0, 0, 0, 0);
+		INSERT INTO session (id, directory, time_created, time_updated, time_archived, tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write)
+		VALUES ('opencode-archived', '/Users/opencode', 1758400000000, 1758400000000, 1758400010000, 0, 0, 0, 0, 0);
 	`)
 	_ = db.Close()
 	if err != nil {
@@ -400,6 +403,9 @@ func TestScannerAudit_LiveFindersWithTempDirs(t *testing.T) {
 		}
 		if r.SessionID == "opencode-sess-1" {
 			foundOpencode = true
+		}
+		if r.SessionID == "opencode-archived" {
+			t.Errorf("expected archived opencode session to be skipped, but found in records")
 		}
 	}
 
@@ -521,4 +527,147 @@ func TestScannerAudit_LiveProcessFinders(t *testing.T) {
 	scanner.EnrichProcessInfo(ctx, -1, &info)
 	scanner.EnrichProcessInfo(ctx, 99999999, &info)
 	scanner.EnrichProcessInfo(ctx, os.Getpid(), &info)
+}
+
+func TestScannerAudit_MultipleOpencodeSessionsSameDB(t *testing.T) {
+	ctx := context.Background()
+	now := time.UnixMilli(1758400000000)
+
+	auditor := &scanner.Auditor{
+		NowFunc: func() time.Time { return now },
+		OpencodeProcsFinder: func(ctx context.Context) ([]scanner.ProcessInfo, error) {
+			return []scanner.ProcessInfo{
+				{PID: 101, CreatedAt: 1758399900000, CWD: "/repo/opencode-1"},
+				{PID: 102, CreatedAt: 1758399905000, CWD: "/repo/opencode-2"},
+			}, nil
+		},
+		OpencodeSessionsFinder: func(ctx context.Context) ([]scanner.SessionInfo, error) {
+			return []scanner.SessionInfo{
+				{
+					Harness:    "opencode",
+					SessionID:  "opencode-sess-1",
+					CWD:        "/repo/opencode-1",
+					HeaderTime: 1758399900010,
+					FilePath:   "/shared/opencode.db",
+				},
+				{
+					Harness:    "opencode",
+					SessionID:  "opencode-sess-2",
+					CWD:        "/repo/opencode-2",
+					HeaderTime: 1758399905010,
+					FilePath:   "/shared/opencode.db", // Same db file!
+				},
+			}, nil
+		},
+	}
+
+	records, err := auditor.Audit(ctx, scanner.AuditFilter{Harness: "opencode"})
+	if err != nil {
+		t.Fatalf("Audit failed: %v", err)
+	}
+
+	if len(records) != 2 {
+		t.Fatalf("expected 2 records, got %d", len(records))
+	}
+
+	for _, r := range records {
+		if r.Status != scanner.StatusPaired {
+			t.Errorf("expected both sessions to be PAIRED, got PID %d status %s (sessionId: %s)", r.PID, r.Status, r.SessionID)
+		}
+	}
+}
+
+func TestScannerAudit_MultipleClaudeSessionsSamePID(t *testing.T) {
+	ctx := context.Background()
+	now := time.UnixMilli(1758400000000)
+
+	auditor := &scanner.Auditor{
+		NowFunc: func() time.Time { return now },
+		ClaudeProcsFinder: func(ctx context.Context) ([]scanner.ProcessInfo, error) {
+			return []scanner.ProcessInfo{
+				{PID: 5555, CreatedAt: 1758399900000, CWD: "/repo/claude", Cmdline: "claude"},
+			}, nil
+		},
+		ClaudeSessionsFinder: func(ctx context.Context) ([]scanner.SessionInfo, error) {
+			return []scanner.SessionInfo{
+				{
+					Harness:    "claude-code",
+					SessionID:  "claude-new",
+					CWD:        "/repo/claude",
+					PID:        5555,
+					HeaderTime: 1758399950000, // Newer session
+					FilePath:   "/path/to/claude-new.json",
+				},
+				{
+					Harness:    "claude-code",
+					SessionID:  "claude-old",
+					CWD:        "/repo/claude",
+					PID:        5555,
+					HeaderTime: 1758399910000, // Older session referencing same PID
+					FilePath:   "/path/to/claude-old.json",
+				},
+			}, nil
+		},
+	}
+
+	records, err := auditor.Audit(ctx, scanner.AuditFilter{Harness: "claude-code"})
+	if err != nil {
+		t.Fatalf("Audit failed: %v", err)
+	}
+
+	var pairedCount, orphanSessionCount int
+	for _, r := range records {
+		switch r.Status {
+		case scanner.StatusPaired:
+			pairedCount++
+			if r.SessionID != "claude-new" {
+				t.Errorf("expected newest session claude-new to be paired, got %s", r.SessionID)
+			}
+		case scanner.StatusOrphanSession:
+			orphanSessionCount++
+			if r.SessionID != "claude-old" {
+				t.Errorf("expected older session claude-old to be orphan session, got %s", r.SessionID)
+			}
+		default:
+			t.Errorf("unexpected status %s for record %v", r.Status, r)
+		}
+	}
+
+	if pairedCount != 1 {
+		t.Errorf("expected exactly 1 PAIRED record, got %d", pairedCount)
+	}
+	if orphanSessionCount != 1 {
+		t.Errorf("expected exactly 1 ORPHAN_SESSION record, got %d", orphanSessionCount)
+	}
+}
+
+func TestScannerAudit_EmptyJSONOutput(t *testing.T) {
+	ctx := context.Background()
+	auditor := &scanner.Auditor{
+		PiProcsFinder:        func(ctx context.Context) ([]scanner.ProcessInfo, error) { return nil, nil },
+		PiSessionsFinder:     func(ctx context.Context) ([]scanner.SessionInfo, error) { return nil, nil },
+		ClaudeProcsFinder:    func(ctx context.Context) ([]scanner.ProcessInfo, error) { return nil, nil },
+		ClaudeSessionsFinder: func(ctx context.Context) ([]scanner.SessionInfo, error) { return nil, nil },
+		CodexProcsFinder:     func(ctx context.Context) ([]scanner.ProcessInfo, error) { return nil, nil },
+		CodexSessionsFinder:  func(ctx context.Context) ([]scanner.SessionInfo, error) { return nil, nil },
+		OpencodeProcsFinder:  func(ctx context.Context) ([]scanner.ProcessInfo, error) { return nil, nil },
+		OpencodeSessionsFinder: func(ctx context.Context) ([]scanner.SessionInfo, error) { return nil, nil },
+	}
+
+	records, err := auditor.Audit(ctx, scanner.AuditFilter{})
+	if err != nil {
+		t.Fatalf("Audit failed: %v", err)
+	}
+
+	if records == nil {
+		t.Errorf("expected non-nil slice from Audit, got nil")
+	}
+
+	data, err := json.Marshal(records)
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+	if string(data) != "[]" {
+		t.Errorf("expected JSON '[]', got %q", string(data))
+	}
 }

@@ -109,7 +109,7 @@ func (a *Auditor) Audit(ctx context.Context, filter AuditFilter) ([]AuditRecord,
 		filterCWD = filepath.Clean(filter.CWD)
 	}
 
-	var allRecords []AuditRecord
+	allRecords := []AuditRecord{}
 
 	checkHarness := func(name string, aliases ...string) bool {
 		if harnessTarget == "" {
@@ -207,6 +207,13 @@ func auditCWDMatchedHarness(harness string, procs []ProcessInfo, sessions []Sess
 		}
 	}
 
+	sessionKey := func(s *SessionInfo) string {
+		if s.SessionID != "" {
+			return s.FilePath + ":" + s.SessionID
+		}
+		return s.FilePath
+	}
+
 	usedSessions := make(map[string]bool)
 	var records []AuditRecord
 
@@ -218,7 +225,7 @@ func auditCWDMatchedHarness(harness string, procs []ProcessInfo, sessions []Sess
 
 		for i := range filteredSessions {
 			sess := &filteredSessions[i]
-			if usedSessions[sess.FilePath] {
+			if usedSessions[sessionKey(sess)] {
 				continue
 			}
 			if filepath.Clean(sess.CWD) != cleanProcCWD {
@@ -240,7 +247,7 @@ func auditCWDMatchedHarness(harness string, procs []ProcessInfo, sessions []Sess
 		}
 
 		if bestSession != nil {
-			usedSessions[bestSession.FilePath] = true
+			usedSessions[sessionKey(bestSession)] = true
 			delta := bestDelta
 			statusDetails := ComputeStatusDetails(bestSession.HeaderTime, now)
 			records = append(records, AuditRecord{
@@ -273,7 +280,7 @@ func auditCWDMatchedHarness(harness string, procs []ProcessInfo, sessions []Sess
 	}
 
 	for _, sess := range filteredSessions {
-		if !usedSessions[sess.FilePath] {
+		if !usedSessions[sessionKey(&sess)] {
 			records = append(records, AuditRecord{
 				Harness:     harness,
 				PID:         sess.PID,
@@ -307,11 +314,15 @@ func auditClaudeHarness(procs []ProcessInfo, sessions []SessionInfo, filterCWD s
 		}
 	}
 
+	sort.SliceStable(filteredSessions, func(i, j int) bool {
+		return filteredSessions[i].HeaderTime > filteredSessions[j].HeaderTime
+	})
+
 	usedPIDs := make(map[int]bool)
 	var records []AuditRecord
 
 	for _, sess := range filteredSessions {
-		if sess.PID > 0 {
+		if sess.PID > 0 && !usedPIDs[sess.PID] {
 			if proc, alive := procsByPID[sess.PID]; alive {
 				usedPIDs[sess.PID] = true
 				delta := sess.HeaderTime - proc.CreatedAt
@@ -646,6 +657,9 @@ func LiveOpencodeSessions(ctx context.Context) ([]SessionInfo, error) {
 	}
 	var res []SessionInfo
 	for _, s := range sessions {
+		if s.TimeArchived != nil && *s.TimeArchived > 0 {
+			continue
+		}
 		res = append(res, SessionInfo{
 			Harness:    "opencode",
 			SessionID:  s.ID,
