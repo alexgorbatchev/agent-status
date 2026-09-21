@@ -216,10 +216,22 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 
 	var mu sync.Mutex
 	activeTails := make(map[string]*activeTail)
+	sessionTails := make(map[string][]string)
 	activeClaudeSessions := make(map[string]bool)
 	activePiSessions := make(map[string]scanner.PiSessionDescriptor)
 	activeCodexSessions := make(map[string]scanner.CodexSessionDescriptor)
 	activeOpencodeSessions := make(map[string]scanner.OpencodeSessionDescriptor)
+
+	cleanupSessionTailsLocked := func(sessionID string) {
+		for _, p := range sessionTails[sessionID] {
+			if at, exists := activeTails[p]; exists {
+				at.cancel()
+				at.tailer.Stop()
+				delete(activeTails, p)
+			}
+		}
+		delete(sessionTails, sessionID)
+	}
 
 	attachTailer := func(
 		path string,
@@ -295,6 +307,7 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 			tailer: t,
 			cancel: tailCancel,
 		}
+		sessionTails[sessionID] = append(sessionTails[sessionID], path)
 		mu.Unlock()
 
 		logging.Info("session_attached", "harness", harness, "sessionId", sessionID, "pid", pid, "cwd", cwd)
@@ -373,6 +386,7 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 					EventType:      "run_exited",
 					Data:           types.TelemetryFrameData{},
 				})
+				cleanupSessionTailsLocked(sessID)
 			}
 		}
 		activeClaudeSessions = newCCMap
@@ -415,7 +429,7 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 						Data:           types.TelemetryFrameData{},
 					})
 				}
-				if s.TranscriptPath != "" {
+				if s.IsActive && s.TranscriptPath != "" {
 					attachTailer(s.TranscriptPath, types.HarnessPi, s.HarnessVersion, s.SessionID, s.CWD, s.PID, nil)
 				}
 			}
@@ -444,6 +458,7 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 					EventType:      "run_exited",
 					Data:           types.TelemetryFrameData{},
 				})
+				cleanupSessionTailsLocked(sessID)
 			}
 		}
 		activePiSessions = newPiMap
@@ -491,7 +506,7 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 						Data:           types.TelemetryFrameData{},
 					})
 				}
-				if s.TranscriptPath != "" {
+				if s.IsActive && s.TranscriptPath != "" {
 					var subID *string
 					if s.IsSubagent && s.ParentThreadID != "" {
 						subID = &s.SessionID
@@ -523,6 +538,7 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 					EventType:      "run_exited",
 					Data:           types.TelemetryFrameData{},
 				})
+				cleanupSessionTailsLocked(sessID)
 			}
 		}
 		activeCodexSessions = newCodexMap

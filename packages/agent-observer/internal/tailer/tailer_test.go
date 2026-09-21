@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -623,4 +624,54 @@ func TestTailerCursorCommittedDelivery(t *testing.T) {
 		t.Errorf("CommittedOffset() after lower commit = %d, want %d", tail.CommittedOffset(), totalBytes)
 	}
 }
+
+func TestTailerCommitInsideOffsetCallback(t *testing.T) {
+	tmpDir := t.TempDir()
+	cursorPath := filepath.Join(tmpDir, "cursors.json")
+	store, _ := NewCursorStore(cursorPath)
+	targetFile := filepath.Join(tmpDir, "zero_events.jsonl")
+
+	line1 := "{\"type\":\"session\",\"id\":\"s1\"}\n"
+	line2 := "{\"type\":\"thinking_level_change\"}\n" // line with 0 events
+	line3 := "{\"type\":\"message\",\"text\":\"hello\"}\n"
+	_ = os.WriteFile(targetFile, []byte(line1+line2+line3), 0600)
+
+	var tail *Tailer
+	var err error
+	var processedLines []string
+
+	tail, err = NewTailerWithOffsetHandler(targetFile, store, func(line []byte, offset int64) error {
+		str := string(line)
+		processedLines = append(processedLines, str)
+		// For line2 (zero events), Commit directly inside the callback, exactly as air-observer does.
+		if strings.Contains(str, "thinking_level_change") {
+			if cErr := tail.Commit(offset); cErr != nil {
+				return cErr
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("NewTailerWithOffsetHandler error: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- tail.readAvailable()
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("readAvailable error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("DEADLOCK detected: readAvailable() deadlocked when Commit() was called inside onOffset callback")
+	}
+
+	if len(processedLines) != 3 {
+		t.Fatalf("expected 3 processed lines, got %d: %v", len(processedLines), processedLines)
+	}
+}
+
 

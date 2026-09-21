@@ -15,6 +15,7 @@ import (
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
+	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/scanner"
 	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/tailer"
 	"github.com/coder/websocket"
 )
@@ -565,3 +566,159 @@ func TestObserverEnvScannerDirs(t *testing.T) {
 		t.Fatalf("runObserverContext returned error: %v", err)
 	}
 }
+
+func TestObserverPiSessionIngestionWithThinkingLevelChange(t *testing.T) {
+	t.Setenv("AGENT_STATUS_TEST_MOCK_PROC", "1")
+
+	buf := &testSyncBuffer{}
+	logger := logging.NewWithMode(buf, "observer", "info", false)
+	logging.SetDefault(logger)
+
+	tmpDir := t.TempDir()
+	cursorPath := filepath.Join(tmpDir, "cursors.json")
+	piSessionsDir := filepath.Join(tmpDir, "pi-sessions")
+	claudeDir := filepath.Join(tmpDir, "claude-sessions")
+	codexDir := filepath.Join(tmpDir, "codex-sessions")
+	opencodeDb := filepath.Join(tmpDir, "opencode.db")
+
+	_ = os.MkdirAll(piSessionsDir, 0755)
+	_ = os.MkdirAll(claudeDir, 0755)
+	_ = os.MkdirAll(codexDir, 0755)
+
+	sessionCWD := filepath.Join(tmpDir, "my-project")
+	_ = os.MkdirAll(sessionCWD, 0755)
+
+	encodedCWD := scanner.EncodePiCWD(sessionCWD)
+	projectSessionsDir := filepath.Join(piSessionsDir, encodedCWD)
+	if err := os.MkdirAll(projectSessionsDir, 0755); err != nil {
+		t.Fatalf("creating projectSessionsDir: %v", err)
+	}
+
+	sessionID := "01a0c530-test-session-id"
+	transcriptPath := filepath.Join(projectSessionsDir, "2026-09-21T18-00-00-000Z_"+sessionID+".jsonl")
+
+	lines := []string{
+		`{"type":"session","version":3,"id":"` + sessionID + `","timestamp":"2026-09-21T18:00:00.000Z","cwd":"` + sessionCWD + `"}`,
+		`{"type":"model_change","id":"m1","timestamp":"2026-09-21T18:00:01.000Z","modelId":"gemini-3.8-flash"}`,
+		`{"type":"thinking_level_change","id":"t1","timestamp":"2026-09-21T18:00:01.500Z","thinkingLevel":"medium"}`,
+		`{"type":"message","id":"msg1","timestamp":"2026-09-21T18:00:02.000Z","message":{"role":"user","content":[{"type":"text","text":"hello pi"}]}}`,
+		`{"type":"message","id":"msg2","timestamp":"2026-09-21T18:00:03.000Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"pondering"},{"type":"text","text":"hi user"}]}}`,
+	}
+	transcriptContent := strings.Join(lines, "\n") + "\n"
+	if err := os.WriteFile(transcriptPath, []byte(transcriptContent), 0644); err != nil {
+		t.Fatalf("writing transcript: %v", err)
+	}
+
+	var receivedFramesMu sync.Mutex
+	var receivedEventTypes []string
+	ingesterReceivedAll := make(chan struct{})
+	ingesterReceivedExit := make(chan struct{})
+	var closeOnce sync.Once
+	var exitOnce sync.Once
+
+	mockIngester := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close(websocket.StatusNormalClosure, "done") }()
+		for {
+			_, data, err := conn.Read(r.Context())
+			if err != nil {
+				return
+			}
+			var msg types.IObserverMessage
+			if err := json.Unmarshal(data, &msg); err == nil && msg.Type == "frames" && len(msg.Frames) > 0 {
+				receivedFramesMu.Lock()
+				for _, f := range msg.Frames {
+					receivedEventTypes = append(receivedEventTypes, f.EventType)
+					if f.EventType == "run_exited" {
+						exitOnce.Do(func() { close(ingesterReceivedExit) })
+					}
+				}
+				hasAssistantTurn := false
+				for _, et := range receivedEventTypes {
+					if et == "thinking" || et == "turn_end" {
+						hasAssistantTurn = true
+						break
+					}
+				}
+				if hasAssistantTurn {
+					closeOnce.Do(func() { close(ingesterReceivedAll) })
+				}
+				receivedFramesMu.Unlock()
+
+				lastSeq := msg.Frames[len(msg.Frames)-1].Seq
+				ack := types.IIngesterMessage{
+					Type: "ack",
+					UpTo: lastSeq,
+				}
+				ackBytes, _ := json.Marshal(ack)
+				_ = conn.Write(r.Context(), websocket.MessageText, ackBytes)
+			}
+		}
+	}))
+	defer mockIngester.Close()
+
+	opts := observerOptions{
+		ingesterURL:       "ws" + strings.TrimPrefix(mockIngester.URL, "http") + "/ws/ingest",
+		cursorPath:        cursorPath,
+		claudeSessionsDir: claudeDir,
+		piSessionsDir:     piSessionsDir,
+		codexSessionsDir:  codexDir,
+		opencodeDBPath:    opencodeDb,
+		scanInterval:      50 * time.Millisecond,
+		envFlag:           "test-env",
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runObserverContext(ctx, opts)
+	}()
+
+	select {
+	case <-ingesterReceivedAll:
+		// Succeeded: frames beyond thinking_level_change were received!
+	case <-time.After(3 * time.Second):
+		receivedFramesMu.Lock()
+		got := append([]string{}, receivedEventTypes...)
+		receivedFramesMu.Unlock()
+		cancel()
+		<-errCh
+		t.Fatalf("timed out waiting for frames beyond thinking_level_change, got event types: %v", got)
+	}
+
+	// Simulate session exit by removing transcript so scanner detects termination
+	_ = os.Remove(transcriptPath)
+
+	select {
+	case <-ingesterReceivedExit:
+		// Succeeded: run_exited was emitted and tailer was cleaned up!
+	case <-time.After(2 * time.Second):
+		t.Logf("note: run_exited not received before timeout (ok if test completes)")
+	}
+
+	cancel()
+	<-errCh
+
+	receivedFramesMu.Lock()
+	defer receivedFramesMu.Unlock()
+
+	hasThinking := false
+	hasTurnEnd := false
+	for _, et := range receivedEventTypes {
+		if et == "thinking" {
+			hasThinking = true
+		}
+		if et == "turn_end" {
+			hasTurnEnd = true
+		}
+	}
+	if !hasThinking || !hasTurnEnd {
+		t.Errorf("expected thinking and turn_end events to be ingested, got: %v", receivedEventTypes)
+	}
+}
+

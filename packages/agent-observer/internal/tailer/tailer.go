@@ -30,6 +30,7 @@ type Tailer struct {
 	stopCh          chan struct{}
 	once            sync.Once
 	mu              sync.Mutex
+	readMu          sync.Mutex
 	offset          int64
 	committedOffset int64
 	autoCommit      bool
@@ -148,15 +149,18 @@ func (t *Tailer) CommittedOffset() int64 {
 // Commit updates the cursor store to the confirmed offset and persists it to disk.
 func (t *Tailer) Commit(offset int64) error {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-
 	if offset <= t.committedOffset {
+		t.mu.Unlock()
 		return nil
 	}
 	t.committedOffset = offset
+	key := t.key
+	store := t.store
+	filePath := t.filePath
+	t.mu.Unlock()
 
-	if t.store != nil && t.key != "" {
-		fi, err := os.Stat(t.filePath)
+	if store != nil && key != "" {
+		fi, err := os.Stat(filePath)
 		size := int64(0)
 		var ino uint64
 		var dev uint64
@@ -164,23 +168,23 @@ func (t *Tailer) Commit(offset int64) error {
 			size = fi.Size()
 			dev, ino, _ = getFileInfoStat(fi)
 		}
-		t.store.Set(&Cursor{
-			Key:       t.key,
-			Path:      t.filePath,
+		store.Set(&Cursor{
+			Key:       key,
+			Path:      filePath,
 			Offset:    offset,
 			Size:      size,
 			Inode:     ino,
 			Device:    dev,
 			UpdatedAt: time.Now().UnixMilli(),
 		})
-		return t.store.Save()
+		return store.Save()
 	}
 	return nil
 }
 
 func (t *Tailer) readAvailable() error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.readMu.Lock()
+	defer t.readMu.Unlock()
 
 	f, err := os.Open(t.filePath)
 	if err != nil {
@@ -200,9 +204,11 @@ func (t *Tailer) readAvailable() error {
 	if dev == 0 && ino == 0 {
 		key = t.filePath
 	}
-	t.key = key
 
 	prefixHash, _ := ComputePrefixHash(f, fi.Size())
+
+	t.mu.Lock()
+	t.key = key
 
 	// Initialize offset from cursor store on first run
 	if t.offset == 0 && t.committedOffset == 0 {
@@ -222,12 +228,15 @@ func (t *Tailer) readAvailable() error {
 		t.committedOffset = 0
 	}
 
-	if _, err := f.Seek(t.offset, io.SeekStart); err != nil {
-		return fmt.Errorf("seeking to offset %d: %w", t.offset, err)
+	startOffset := t.offset
+	t.mu.Unlock()
+
+	if _, err := f.Seek(startOffset, io.SeekStart); err != nil {
+		return fmt.Errorf("seeking to offset %d: %w", startOffset, err)
 	}
 
-	reader := bufio.NewReaderSize(f, 16*1024*1024)
-	bytesReadTotal := t.offset
+	reader := bufio.NewReaderSize(f, 64*1024)
+	bytesReadTotal := startOffset
 
 	for {
 		line, err := reader.ReadBytes('\n')
@@ -251,7 +260,9 @@ func (t *Tailer) readAvailable() error {
 					}
 				}
 				bytesReadTotal += lineBytes
+				t.mu.Lock()
 				t.offset = bytesReadTotal
+				t.mu.Unlock()
 			} else {
 				// Partial line, stop reading for now, wait for newline
 				break
@@ -267,19 +278,30 @@ func (t *Tailer) readAvailable() error {
 	}
 
 	// In autoCommit mode, update CursorStore upon reading
-	if t.autoCommit && bytesReadTotal > t.committedOffset {
-		t.committedOffset = bytesReadTotal
-		t.store.Set(&Cursor{
-			Key:        t.key,
-			Path:       t.filePath,
-			Offset:     bytesReadTotal,
-			Size:       fi.Size(),
-			Inode:      ino,
-			Device:     dev,
-			PrefixHash: prefixHash,
-			UpdatedAt:  time.Now().UnixMilli(),
-		})
-		_ = t.store.Save()
+	if t.autoCommit {
+		t.mu.Lock()
+		shouldSave := bytesReadTotal > t.committedOffset
+		if shouldSave {
+			t.committedOffset = bytesReadTotal
+		}
+		key := t.key
+		store := t.store
+		filePath := t.filePath
+		t.mu.Unlock()
+
+		if shouldSave && store != nil && key != "" {
+			store.Set(&Cursor{
+				Key:        key,
+				Path:       filePath,
+				Offset:     bytesReadTotal,
+				Size:       fi.Size(),
+				Inode:      ino,
+				Device:     dev,
+				PrefixHash: prefixHash,
+				UpdatedAt:  time.Now().UnixMilli(),
+			})
+			_ = store.Save()
+		}
 	}
 
 	return nil
