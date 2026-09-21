@@ -232,8 +232,16 @@ func (s *Summarizer) IsNoSummarize() bool {
 	return s.noSummarize || len(s.providers) == 0
 }
 
-// Allow checks the per-agent rate limiter for the 12-second debounce window.
+// Allow checks the per-agent rate limiter for the 12-second debounce window using the current time.
 func (s *Summarizer) Allow(agentID string) bool {
+	return s.AllowAt(agentID, time.Now())
+}
+
+// AllowAt checks the per-agent rate limiter for the debounce window at a specific event time.
+func (s *Summarizer) AllowAt(agentID string, eventTime time.Time) bool {
+	if s == nil {
+		return false
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -243,7 +251,7 @@ func (s *Summarizer) Allow(agentID string) bool {
 		s.limiters[agentID] = lim
 	}
 
-	return lim.Allow()
+	return lim.AllowN(eventTime, 1)
 }
 
 // Summarize generates a structured action summary using configured LLM providers with automatic fallback.
