@@ -2,9 +2,11 @@ package classifier
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -478,7 +480,13 @@ func TestClassifier_WithLiveLLMSummarizer(t *testing.T) {
 		t.Fatalf("summarizer.New() failed: %v", err)
 	}
 
-	c, _ := newTestClassifier(t, sum)
+	c, s := newTestClassifier(t, sum)
+	defer func() { _ = c.Close() }()
+
+	var updatedAgent *types.IAgentState
+	c.SetOnUpdate(func(a *types.IAgentState) {
+		updatedAgent = a
+	})
 
 	env := types.IEnvironmentInfo{
 		ID:              "env-test",
@@ -523,22 +531,39 @@ func TestClassifier_WithLiveLLMSummarizer(t *testing.T) {
 		},
 	}
 
+	// 1. ProcessFrame returns immediately with non-blocking deterministic fallback summary
 	agent, err := c.ProcessFrame(f)
 	if err != nil {
 		t.Fatalf("ProcessFrame() failed: %v", err)
 	}
+	if agent.Activity.Action != "Editing packages/registry-cli/src/commands/buildCommand.ts" {
+		t.Errorf("got initial immediate Action %q, want 'Editing packages/registry-cli/src/commands/buildCommand.ts'", agent.Activity.Action)
+	}
 
-	if agent.Activity.Action != "Fixing TypeScript compilation errors in build.ts" {
-		t.Errorf("got Action %q, want 'Fixing TypeScript compilation errors in build.ts'", agent.Activity.Action)
+	// 2. Wait for async queue to finish
+	c.Flush(agent.ID)
+
+	// 3. Verify updated state in store and onUpdate notification
+	reloaded, err := s.GetAgent(agent.ID)
+	if err != nil || reloaded == nil {
+		t.Fatalf("s.GetAgent() failed: %v", err)
 	}
-	if agent.Activity.Phase == nil || *agent.Activity.Phase != types.PhaseDebugging {
-		t.Errorf("got Phase %v, want debugging", agent.Activity.Phase)
+
+	if reloaded.Activity.Action != "Fixing TypeScript compilation errors in build.ts" {
+		t.Errorf("got Action %q, want 'Fixing TypeScript compilation errors in build.ts'", reloaded.Activity.Action)
 	}
-	if agent.Activity.ActiveTarget == nil || *agent.Activity.ActiveTarget != "packages/registry-cli/src/commands/buildCommand.ts" {
-		t.Errorf("got ActiveTarget %v, want 'packages/registry-cli/src/commands/buildCommand.ts'", agent.Activity.ActiveTarget)
+	if reloaded.Activity.Phase == nil || *reloaded.Activity.Phase != types.PhaseDebugging {
+		t.Errorf("got Phase %v, want debugging", reloaded.Activity.Phase)
 	}
-	if agent.Activity.ActionStale {
+	if reloaded.Activity.ActiveTarget == nil || *reloaded.Activity.ActiveTarget != "packages/registry-cli/src/commands/buildCommand.ts" {
+		t.Errorf("got ActiveTarget %v, want 'packages/registry-cli/src/commands/buildCommand.ts'", reloaded.Activity.ActiveTarget)
+	}
+	if reloaded.Activity.ActionStale {
 		t.Errorf("expected ActionStale = false after successful summarization")
+	}
+
+	if updatedAgent == nil || updatedAgent.Activity.Action != "Fixing TypeScript compilation errors in build.ts" {
+		t.Errorf("expected onUpdate callback to receive updated agent, got %+v", updatedAgent)
 	}
 }
 
@@ -587,9 +612,10 @@ func TestClassifier_ContinuousActivityDebounceAndStaleness(t *testing.T) {
 	}
 
 	c, _ := newTestClassifier(t, sum)
+	c.SetSyncMode(true)
+	defer func() { _ = c.Close() }()
 
 	env := types.IEnvironmentInfo{
-		ID:              "env-debounce",
 		Label:           "devbox",
 		Hostname:        "devbox",
 		Platform:        "linux",
@@ -1079,6 +1105,8 @@ func TestClassifier_ConversationalAssistantResponses(t *testing.T) {
 		}
 
 		c, _ := newTestClassifier(t, sum)
+		c.SetSyncMode(true)
+		defer func() { _ = c.Close() }()
 
 		env := types.IEnvironmentInfo{
 			ID:              "env-llm-chat",
@@ -1132,4 +1160,347 @@ func TestClassifier_ConversationalAssistantResponses(t *testing.T) {
 			t.Errorf("got Phase %v, want investigating", agent.Activity.Phase)
 		}
 	})
+}
+
+func TestClassifier_AsyncQueueSerializedPerAgent(t *testing.T) {
+	var mu sync.Mutex
+	callCount := 0
+	var processedActions []string
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		callCount++
+		idx := callCount
+		mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]interface{}{
+			"id":     fmt.Sprintf("chatcmpl-%d", idx),
+			"object": "chat.completion",
+			"choices": []map[string]interface{}{
+				{
+					"index": 0,
+					"message": map[string]interface{}{
+						"role":    "assistant",
+						"content": fmt.Sprintf(`{"action":"Step %d completed","phase":"editing","activeTarget":"file%d.go"}`, idx, idx),
+					},
+					"finish_reason": "stop",
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(mockServer.Close)
+
+	p, err := openai.New(
+		anyllm.WithBaseURL(mockServer.URL+"/v1"),
+		anyllm.WithAPIKey("test-key"),
+	)
+	if err != nil {
+		t.Fatalf("openai.New() failed: %v", err)
+	}
+
+	sum, err := summarizer.New(summarizer.Config{
+		Providers: []summarizer.ProviderConfig{
+			{
+				Name:     "mock-openai",
+				Provider: p,
+				Model:    "gpt-4o-mini",
+			},
+		},
+		DebounceWindow: 1 * time.Millisecond,
+		Timeout:        2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+
+	c, s := newTestClassifier(t, sum)
+	defer func() { _ = c.Close() }()
+
+	c.SetOnUpdate(func(a *types.IAgentState) {
+		mu.Lock()
+		processedActions = append(processedActions, a.Activity.Action)
+		mu.Unlock()
+	})
+
+	env := types.IEnvironmentInfo{
+		ID:              "env-async-order",
+		Label:           "testbox",
+		Hostname:        "testbox",
+		Platform:        "linux",
+		User:            "tester",
+		LastHeartbeatAt: time.Now().UnixMilli(),
+	}
+	proj := types.IProjectInfo{
+		ID:            "github.com/org/repo",
+		Name:          "repo",
+		CanonicalRoot: "/workspace",
+	}
+	ws := types.IWorkspaceInfo{Branch: "main", CWD: "/workspace"}
+
+	// Dispatch 3 sequential tool calls for same agent
+	for i := 1; i <= 3; i++ {
+		toolName := "Edit"
+		f := types.ITelemetryFrame{
+			Version:        "1.0",
+			Seq:            int64(i),
+			EnvID:          "env-async-order",
+			Environment:    env,
+			AgentID:        "env-async-order:claude:sess-order",
+			SessionID:      "sess-order",
+			PID:            100,
+			Harness:        types.HarnessClaudeCode,
+			HarnessVersion: "2.0.0",
+			Project:        proj,
+			Workspace:      ws,
+			Timestamp:      int64(1000 + i*100),
+			EventType:      "tool_call",
+			Data: types.TelemetryFrameData{
+				ToolName: &toolName,
+				ToolInput: map[string]interface{}{
+					"file_path": fmt.Sprintf("file%d.go", i),
+				},
+			},
+		}
+		agent, err := c.ProcessFrame(f)
+		if err != nil {
+			t.Fatalf("ProcessFrame(%d) failed: %v", i, err)
+		}
+		if agent.Activity.Action == "" {
+			t.Errorf("immediate Action should not be empty on frame %d", i)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	// Flush the queue
+	c.Flush("env-async-order:claude:sess-order")
+
+	// Verify the latest summary is applied
+	agent, err := s.GetAgent("env-async-order:claude:sess-order")
+	if err != nil || agent == nil {
+		t.Fatalf("failed to retrieve agent: %v", err)
+	}
+	if !strings.HasPrefix(agent.Activity.Action, "Step") {
+		t.Errorf("expected final Action to start with 'Step', got %q", agent.Activity.Action)
+	}
+	if agent.Activity.Phase == nil || *agent.Activity.Phase != types.PhaseEditing {
+		t.Errorf("expected Phase editing, got %v", agent.Activity.Phase)
+	}
+}
+
+func TestClassifier_SemanticDeduplication(t *testing.T) {
+	var mu sync.Mutex
+	updateCount := 0
+	currentResponse := `{"action":"Refactoring JWT authentication flow","phase":"editing","activeTarget":"auth.go"}`
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		respJSON := currentResponse
+		mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]interface{}{
+			"id":     "chatcmpl-dedup",
+			"object": "chat.completion",
+			"choices": []map[string]interface{}{
+				{
+					"index": 0,
+					"message": map[string]interface{}{
+						"role":    "assistant",
+						"content": respJSON,
+					},
+					"finish_reason": "stop",
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(mockServer.Close)
+
+	p, err := openai.New(
+		anyllm.WithBaseURL(mockServer.URL+"/v1"),
+		anyllm.WithAPIKey("test-key"),
+	)
+	if err != nil {
+		t.Fatalf("openai.New() failed: %v", err)
+	}
+
+	sum, err := summarizer.New(summarizer.Config{
+		Providers: []summarizer.ProviderConfig{
+			{
+				Name:     "mock-openai",
+				Provider: p,
+				Model:    "gpt-4o-mini",
+			},
+		},
+		DebounceWindow: 1 * time.Millisecond,
+		Timeout:        2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+
+	c, _ := newTestClassifier(t, sum)
+	defer func() { _ = c.Close() }()
+
+	c.SetOnUpdate(func(a *types.IAgentState) {
+		mu.Lock()
+		updateCount++
+		mu.Unlock()
+	})
+
+	env := types.IEnvironmentInfo{
+		ID:              "env-dedup",
+		Label:           "testbox",
+		Hostname:        "testbox",
+		Platform:        "linux",
+		User:            "tester",
+		LastHeartbeatAt: time.Now().UnixMilli(),
+	}
+	proj := types.IProjectInfo{
+		ID:            "github.com/org/repo",
+		Name:          "repo",
+		CanonicalRoot: "/workspace",
+	}
+	ws := types.IWorkspaceInfo{Branch: "main", CWD: "/workspace"}
+	toolName := "Edit"
+
+	// Frame 1: Initial distinct summary -> "Refactoring JWT authentication flow"
+	f1 := types.ITelemetryFrame{
+		Version:        "1.0",
+		Seq:            1,
+		EnvID:          "env-dedup",
+		Environment:    env,
+		AgentID:        "env-dedup:claude:sess-dedup",
+		SessionID:      "sess-dedup",
+		PID:            101,
+		Harness:        types.HarnessClaudeCode,
+		HarnessVersion: "2.0.0",
+		Project:        proj,
+		Workspace:      ws,
+		Timestamp:      1000,
+		EventType:      "tool_call",
+		Data: types.TelemetryFrameData{
+			ToolName: &toolName,
+			ToolInput: map[string]interface{}{
+				"file_path": "auth.go",
+			},
+		},
+	}
+	_, err = c.ProcessFrame(f1)
+	if err != nil {
+		t.Fatalf("ProcessFrame 1 failed: %v", err)
+	}
+	c.Flush("env-dedup:claude:sess-dedup")
+
+	mu.Lock()
+	firstCount := updateCount
+	mu.Unlock()
+	if firstCount != 1 {
+		t.Fatalf("expected updateCount=1 after first summary, got %d", firstCount)
+	}
+
+	// Frame 2: Near-duplicate summary -> "Refactoring JWT authentication flow in auth.go" (>= 60% overlap, same target & phase)
+	mu.Lock()
+	currentResponse = `{"action":"Refactoring JWT authentication flow in auth.go","phase":"editing","activeTarget":"auth.go"}`
+	mu.Unlock()
+	time.Sleep(5 * time.Millisecond)
+
+	f2 := types.ITelemetryFrame{
+		Version:        "1.0",
+		Seq:            2,
+		EnvID:          "env-dedup",
+		Environment:    env,
+		AgentID:        "env-dedup:claude:sess-dedup",
+		SessionID:      "sess-dedup",
+		PID:            101,
+		Harness:        types.HarnessClaudeCode,
+		HarnessVersion: "2.0.0",
+		Project:        proj,
+		Workspace:      ws,
+		Timestamp:      1100,
+		EventType:      "tool_call",
+		Data: types.TelemetryFrameData{
+			ToolName: &toolName,
+			ToolInput: map[string]interface{}{
+				"file_path": "auth.go",
+			},
+		},
+	}
+	_, err = c.ProcessFrame(f2)
+	if err != nil {
+		t.Fatalf("ProcessFrame 2 failed: %v", err)
+	}
+	c.Flush("env-dedup:claude:sess-dedup")
+
+	mu.Lock()
+	secondCount := updateCount
+	mu.Unlock()
+	if secondCount != 1 {
+		t.Errorf("expected near-duplicate summary to be deduplicated without triggering onUpdate (count=%d, want 1)", secondCount)
+	}
+
+	// Frame 3: Distinct action / target -> "Running JWT authentication unit tests" (target: "auth_test.go", phase: "testing")
+	mu.Lock()
+	currentResponse = `{"action":"Running JWT authentication unit tests","phase":"testing","activeTarget":"auth_test.go"}`
+	mu.Unlock()
+	time.Sleep(5 * time.Millisecond)
+
+	f3 := types.ITelemetryFrame{
+		Version:        "1.0",
+		Seq:            3,
+		EnvID:          "env-dedup",
+		Environment:    env,
+		AgentID:        "env-dedup:claude:sess-dedup",
+		SessionID:      "sess-dedup",
+		PID:            101,
+		Harness:        types.HarnessClaudeCode,
+		HarnessVersion: "2.0.0",
+		Project:        proj,
+		Workspace:      ws,
+		Timestamp:      1200,
+		EventType:      "tool_call",
+		Data: types.TelemetryFrameData{
+			ToolName: &toolName,
+			ToolInput: map[string]interface{}{
+				"file_path": "auth_test.go",
+			},
+		},
+	}
+	_, err = c.ProcessFrame(f3)
+	if err != nil {
+		t.Fatalf("ProcessFrame 3 failed: %v", err)
+	}
+	c.Flush("env-dedup:claude:sess-dedup")
+
+	mu.Lock()
+	thirdCount := updateCount
+	mu.Unlock()
+	if thirdCount != 2 {
+		t.Errorf("expected distinct summary to update onUpdate (count=%d, want 2)", thirdCount)
+	}
+}
+
+func TestClassifier_CloseAndFlush(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+
+	c, _ := newTestClassifier(t, sum)
+
+	// Flush non-existent agent should return cleanly
+	c.Flush("non-existent-agent")
+	c.FlushAll()
+
+	// Close cleanly
+	if err := c.Close(); err != nil {
+		t.Errorf("c.Close() returned error: %v", err)
+	}
+
+	// Second close should be idempotent
+	if err := c.Close(); err != nil {
+		t.Errorf("second c.Close() returned error: %v", err)
+	}
 }
