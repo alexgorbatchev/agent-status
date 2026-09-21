@@ -237,10 +237,16 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 		}
 
 		tailCtx, tailCancel := context.WithCancel(ctx)
-		t, err := tailer.NewTailer(path, cursorStore, func(line []byte) error {
+		var t *tailer.Tailer
+		t, err := tailer.NewTailerWithOffsetHandler(path, cursorStore, func(line []byte, offset int64) error {
 			events, pErr := parseLineForHarness(harness, line, cwd)
 			if pErr != nil {
 				return pErr
+			}
+
+			if len(events) == 0 {
+				_ = t.Commit(offset)
+				return nil
 			}
 
 			for _, ev := range events {
@@ -269,7 +275,12 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 					EventType:      ev.EventType,
 					Data:           ev.Data,
 				}
-				ship.Enqueue(frame)
+				err := ship.EnqueueWithAck(tailCtx, frame, func() {
+					_ = t.Commit(offset)
+				})
+				if err != nil {
+					return err
+				}
 			}
 			return nil
 		})

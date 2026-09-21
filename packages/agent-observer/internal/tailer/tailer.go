@@ -18,19 +18,25 @@ var tailerPollInterval = 1 * time.Second
 
 type LineHandler func(line []byte) error
 
+type LineOffsetHandler func(line []byte, offset int64) error
+
 type Tailer struct {
 	filePath string
 	store    *CursorStore
 	onLine   LineHandler
+	onOffset LineOffsetHandler
 
-	watcher *fsnotify.Watcher
-	stopCh  chan struct{}
-	once    sync.Once
-	mu      sync.Mutex
-	offset  int64
-	key     string
+	watcher         *fsnotify.Watcher
+	stopCh          chan struct{}
+	once            sync.Once
+	mu              sync.Mutex
+	offset          int64
+	committedOffset int64
+	autoCommit      bool
+	key             string
 }
 
+// NewTailer creates a tailer using the classic LineHandler (auto-commits read offsets to cursor store).
 func NewTailer(filePath string, store *CursorStore, onLine LineHandler) (*Tailer, error) {
 	absPath, err := filepath.Abs(filePath)
 	if err != nil {
@@ -43,11 +49,34 @@ func NewTailer(filePath string, store *CursorStore, onLine LineHandler) (*Tailer
 	}
 
 	return &Tailer{
-		filePath: absPath,
-		store:    store,
-		onLine:   onLine,
-		watcher:  watcher,
-		stopCh:   make(chan struct{}),
+		filePath:   absPath,
+		store:      store,
+		onLine:     onLine,
+		watcher:    watcher,
+		stopCh:     make(chan struct{}),
+		autoCommit: true,
+	}, nil
+}
+
+// NewTailerWithOffsetHandler creates a tailer using LineOffsetHandler with explicit ACK-committed delivery.
+func NewTailerWithOffsetHandler(filePath string, store *CursorStore, onOffset LineOffsetHandler) (*Tailer, error) {
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("resolving absolute path for %q: %w", filePath, err)
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, fmt.Errorf("creating fsnotify watcher: %w", err)
+	}
+
+	return &Tailer{
+		filePath:   absPath,
+		store:      store,
+		onOffset:   onOffset,
+		watcher:    watcher,
+		stopCh:     make(chan struct{}),
+		autoCommit: false,
 	}, nil
 }
 
@@ -102,10 +131,51 @@ func (t *Tailer) Stop() {
 	})
 }
 
+// CurrentOffset returns the in-memory read position of the tailer.
 func (t *Tailer) CurrentOffset() int64 {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.offset
+}
+
+// CommittedOffset returns the highest confirmed/ACKed offset persisted to CursorStore.
+func (t *Tailer) CommittedOffset() int64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.committedOffset
+}
+
+// Commit updates the cursor store to the confirmed offset and persists it to disk.
+func (t *Tailer) Commit(offset int64) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if offset <= t.committedOffset {
+		return nil
+	}
+	t.committedOffset = offset
+
+	if t.store != nil && t.key != "" {
+		fi, err := os.Stat(t.filePath)
+		size := int64(0)
+		var ino uint64
+		var dev uint64
+		if err == nil {
+			size = fi.Size()
+			dev, ino, _ = getFileInfoStat(fi)
+		}
+		t.store.Set(&Cursor{
+			Key:       t.key,
+			Path:      t.filePath,
+			Offset:    offset,
+			Size:      size,
+			Inode:     ino,
+			Device:    dev,
+			UpdatedAt: time.Now().UnixMilli(),
+		})
+		return t.store.Save()
+	}
+	return nil
 }
 
 func (t *Tailer) readAvailable() error {
@@ -134,36 +204,54 @@ func (t *Tailer) readAvailable() error {
 
 	prefixHash, _ := ComputePrefixHash(f, fi.Size())
 
-	offset := int64(0)
-	if c, ok := t.store.Get(key); ok {
-		if ShouldResetCursor(c, ino, fi.Size(), prefixHash) {
-			offset = 0
-		} else {
-			offset = c.Offset
+	// Initialize offset from cursor store on first run
+	if t.offset == 0 && t.committedOffset == 0 {
+		if c, ok := t.store.Get(key); ok {
+			if ShouldResetCursor(c, ino, fi.Size(), prefixHash) {
+				t.offset = 0
+				t.committedOffset = 0
+			} else {
+				t.offset = c.Offset
+				t.committedOffset = c.Offset
+			}
 		}
 	}
 
-	if offset > fi.Size() {
-		offset = 0
+	if t.offset > fi.Size() {
+		t.offset = 0
+		t.committedOffset = 0
 	}
 
-	if _, err := f.Seek(offset, io.SeekStart); err != nil {
-		return fmt.Errorf("seeking to offset %d: %w", offset, err)
+	if _, err := f.Seek(t.offset, io.SeekStart); err != nil {
+		return fmt.Errorf("seeking to offset %d: %w", t.offset, err)
 	}
 
-	reader := bufio.NewReaderSize(f, 64*1024)
-	bytesReadTotal := offset
+	reader := bufio.NewReaderSize(f, 16*1024*1024)
+	bytesReadTotal := t.offset
 
 	for {
 		line, err := reader.ReadBytes('\n')
 		if len(line) > 0 {
-			// Only process complete lines (ending with '\n')
 			if line[len(line)-1] == '\n' {
-				bytesReadTotal += int64(len(line))
+				lineBytes := int64(len(line))
 				cleanLine := bytes.TrimRight(line, "\r\n")
-				if len(cleanLine) > 0 && t.onLine != nil {
-					_ = t.onLine(cleanLine)
+				if len(cleanLine) > 0 {
+					newLineOffset := bytesReadTotal + lineBytes
+					var hErr error
+					if t.onOffset != nil {
+						hErr = t.onOffset(cleanLine, newLineOffset)
+					} else if t.onLine != nil {
+						hErr = t.onLine(cleanLine)
+					}
+
+					if hErr != nil {
+						// Handler signaled backpressure or error; stop reading immediately
+						// without advancing read offset past this unhandled line.
+						break
+					}
 				}
+				bytesReadTotal += lineBytes
+				t.offset = bytesReadTotal
 			} else {
 				// Partial line, stop reading for now, wait for newline
 				break
@@ -178,17 +266,21 @@ func (t *Tailer) readAvailable() error {
 		}
 	}
 
-	t.offset = bytesReadTotal
-	t.store.Set(&Cursor{
-		Key:        t.key,
-		Path:       t.filePath,
-		Offset:     bytesReadTotal,
-		Size:       fi.Size(),
-		Inode:      ino,
-		Device:     dev,
-		PrefixHash: prefixHash,
-		UpdatedAt:  time.Now().UnixMilli(),
-	})
+	// In autoCommit mode, update CursorStore upon reading
+	if t.autoCommit && bytesReadTotal > t.committedOffset {
+		t.committedOffset = bytesReadTotal
+		t.store.Set(&Cursor{
+			Key:        t.key,
+			Path:       t.filePath,
+			Offset:     bytesReadTotal,
+			Size:       fi.Size(),
+			Inode:      ino,
+			Device:     dev,
+			PrefixHash: prefixHash,
+			UpdatedAt:  time.Now().UnixMilli(),
+		})
+		_ = t.store.Save()
+	}
 
 	return nil
 }

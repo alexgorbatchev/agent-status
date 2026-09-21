@@ -3,6 +3,7 @@ package shipper
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -12,76 +13,112 @@ import (
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/cenkalti/backoff/v4"
 	"github.com/coder/websocket"
-	"github.com/gammazero/deque"
 )
 
-const MaxRingBufferSize = 1000
+const (
+	DefaultDispatchBufferSize = 100
+)
 
 var (
+	ErrShipperStopped       = errors.New("shipper stopped")
 	heartbeatInterval       = 10 * time.Second
 	initialBackoff          = 500 * time.Millisecond
 	sustainedHealthDuration = 5 * time.Second
 	backoffRandomization    = 0.5
 )
 
+type AckCallback func()
+
+type inFlightItem struct {
+	frame *types.ITelemetryFrame
+	onAck AckCallback
+}
+
 type Config struct {
 	IngesterURL string
 	BearerToken string
 	Environment types.IEnvironmentInfo
+	BufferSize  int
 }
 
 type Shipper struct {
 	cfg Config
 
 	mu           sync.Mutex
-	ringBuffer   deque.Deque[*types.ITelemetryFrame]
 	lastSeq      int64
 	lastAckedSeq int64
-	droppedCount int64
+	ackCallbacks map[int64]AckCallback
 
-	incomingCh chan *types.ITelemetryFrame
+	incomingCh chan inFlightItem
 	stopCh     chan struct{}
 	once       sync.Once
 }
 
 func NewShipper(cfg Config) *Shipper {
+	bufSize := cfg.BufferSize
+	if bufSize <= 0 {
+		bufSize = DefaultDispatchBufferSize
+	}
 	return &Shipper{
-		cfg:        cfg,
-		incomingCh: make(chan *types.ITelemetryFrame, 500),
-		stopCh:     make(chan struct{}),
+		cfg:          cfg,
+		ackCallbacks: make(map[int64]AckCallback),
+		incomingCh:   make(chan inFlightItem, bufSize),
+		stopCh:       make(chan struct{}),
 	}
 }
 
-func (s *Shipper) Enqueue(frame types.ITelemetryFrame) {
+// EnqueueWithAck enqueues a frame for delivery, applying backpressure if the dispatch channel is full.
+// When an ACK from the ingester covering frame.Seq is received, onAck is invoked.
+func (s *Shipper) EnqueueWithAck(ctx context.Context, frame types.ITelemetryFrame, onAck AckCallback) error {
 	s.mu.Lock()
 	s.lastSeq++
 	frame.Seq = s.lastSeq
-	frameCopy := frame
-
-	if s.ringBuffer.Len() >= MaxRingBufferSize {
-		s.ringBuffer.PopFront()
-		s.droppedCount++
+	if onAck != nil {
+		s.ackCallbacks[frame.Seq] = onAck
 	}
-	s.ringBuffer.PushBack(&frameCopy)
+	frameCopy := frame
 	s.mu.Unlock()
 
+	item := inFlightItem{
+		frame: &frameCopy,
+		onAck: onAck,
+	}
+
 	select {
-	case s.incomingCh <- &frameCopy:
+	case s.incomingCh <- item:
+		return nil
+	case <-ctx.Done():
+		if onAck != nil {
+			s.mu.Lock()
+			delete(s.ackCallbacks, frame.Seq)
+			s.mu.Unlock()
+		}
+		return ctx.Err()
 	case <-s.stopCh:
-	default:
+		if onAck != nil {
+			s.mu.Lock()
+			delete(s.ackCallbacks, frame.Seq)
+			s.mu.Unlock()
+		}
+		return ErrShipperStopped
 	}
 }
 
+// EnqueueContext enqueues a frame with context cancellation support.
+func (s *Shipper) EnqueueContext(ctx context.Context, frame types.ITelemetryFrame) error {
+	return s.EnqueueWithAck(ctx, frame, nil)
+}
+
+// Enqueue enqueues a frame without blocking on context cancellation.
+func (s *Shipper) Enqueue(frame types.ITelemetryFrame) {
+	_ = s.EnqueueWithAck(context.Background(), frame, nil)
+}
+
+// UnackedCount returns the number of frames currently in-flight awaiting ACK.
 func (s *Shipper) UnackedCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.ringBuffer.Len()
-}
-
-func (s *Shipper) DroppedCount() int64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.droppedCount
+	return len(s.ackCallbacks)
 }
 
 func (s *Shipper) Start(ctx context.Context) error {
@@ -150,13 +187,6 @@ func (s *Shipper) connectAndStream(ctx context.Context, onConnected func()) erro
 	connCtx, connCancel := context.WithCancel(ctx)
 	defer connCancel()
 
-	var resetOnce sync.Once
-	markHealthy := func() {
-		if onConnected != nil {
-			resetOnce.Do(onConnected)
-		}
-	}
-
 	opts := &websocket.DialOptions{}
 	if s.cfg.BearerToken != "" {
 		opts.HTTPHeader = http.Header{
@@ -172,6 +202,13 @@ func (s *Shipper) connectAndStream(ctx context.Context, onConnected func()) erro
 		_ = conn.Close(websocket.StatusNormalClosure, "shutdown")
 	}()
 
+	var resetOnce sync.Once
+	markHealthy := func() {
+		if onConnected != nil {
+			resetOnce.Do(onConnected)
+		}
+	}
+
 	// 1. Send Hello Frame
 	s.mu.Lock()
 	envCopy := s.cfg.Environment
@@ -180,7 +217,7 @@ func (s *Shipper) connectAndStream(ctx context.Context, onConnected func()) erro
 		EnvID:       envCopy.ID,
 		Environment: &envCopy,
 		Since:       s.lastAckedSeq,
-		Dropped:     s.droppedCount,
+		Dropped:     0,
 	}
 	s.mu.Unlock()
 
@@ -195,28 +232,7 @@ func (s *Shipper) connectAndStream(ctx context.Context, onConnected func()) erro
 
 	logging.Info("ingester_connected", "ingesterUrl", s.cfg.IngesterURL)
 
-	// 2. Replay unacknowledged frames
-	s.mu.Lock()
-	var unackedFrames []types.ITelemetryFrame
-	for i := 0; i < s.ringBuffer.Len(); i++ {
-		f := s.ringBuffer.At(i)
-		if f != nil {
-			unackedFrames = append(unackedFrames, *f)
-		}
-	}
-	s.mu.Unlock()
-
-	if len(unackedFrames) > 0 {
-		replayMsg := types.IObserverMessage{
-			Type:   "frames",
-			Frames: unackedFrames,
-		}
-		if data, err := json.Marshal(replayMsg); err == nil {
-			_ = conn.Write(connCtx, websocket.MessageText, data)
-		}
-	}
-
-	// 3. Start reader goroutine for acks
+	// 2. Start reader goroutine for acks and invoke callbacks
 	errCh := make(chan error, 2)
 	go func() {
 		for {
@@ -232,15 +248,20 @@ func (s *Shipper) connectAndStream(ctx context.Context, onConnected func()) erro
 				if ack.UpTo > 0 {
 					s.mu.Lock()
 					s.lastAckedSeq = max(s.lastAckedSeq, ack.UpTo)
-					for s.ringBuffer.Len() > 0 {
-						front := s.ringBuffer.Front()
-						if front != nil && front.Seq <= ack.UpTo {
-							s.ringBuffer.PopFront()
-						} else {
-							break
+					var toInvoke []AckCallback
+					for seq, cb := range s.ackCallbacks {
+						if seq <= ack.UpTo {
+							if cb != nil {
+								toInvoke = append(toInvoke, cb)
+							}
+							delete(s.ackCallbacks, seq)
 						}
 					}
 					s.mu.Unlock()
+
+					for _, cb := range toInvoke {
+						cb()
+					}
 				}
 			}
 		}
@@ -258,7 +279,7 @@ func (s *Shipper) connectAndStream(ctx context.Context, onConnected func()) erro
 		markHealthy()
 	}
 
-	// 4. Stream incoming frames and heartbeats
+	// 3. Stream incoming frames and heartbeats
 	for {
 		select {
 		case <-connCtx.Done():
@@ -269,10 +290,10 @@ func (s *Shipper) connectAndStream(ctx context.Context, onConnected func()) erro
 			return err
 		case <-healthTimerCh:
 			markHealthy()
-		case frame := <-s.incomingCh:
+		case item := <-s.incomingCh:
 			msg := types.IObserverMessage{
 				Type:   "frames",
-				Frames: []types.ITelemetryFrame{*frame},
+				Frames: []types.ITelemetryFrame{*item.frame},
 			}
 			data, err := json.Marshal(msg)
 			if err != nil {
@@ -291,7 +312,7 @@ func (s *Shipper) connectAndStream(ctx context.Context, onConnected func()) erro
 				EnvID:       envInfo.ID,
 				Environment: &envInfo,
 				Since:       s.lastAckedSeq,
-				Dropped:     s.droppedCount,
+				Dropped:     0,
 			}
 			s.mu.Unlock()
 
