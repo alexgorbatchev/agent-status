@@ -3,8 +3,8 @@ import assert from "node:assert";
 import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { jsx } from "react/jsx-runtime";
-import { useEventStream, type IEventStreamState } from "../useEventStream";
-import type { ServerEvent } from "../../types";
+import { useEventStream } from "../useEventStream";
+import type { IEventStreamState, ServerEvent } from "../../types";
 import {
   fixture_eventStreamEnvironment1,
   fixture_eventStreamEnvironment2,
@@ -22,6 +22,17 @@ interface IEventSourceMessage {
 }
 
 type EventSourceMessageFn = (msg: IEventSourceMessage) => void;
+
+type TimeoutAction = () => void;
+
+interface IScheduledTimeout {
+  fn: TimeoutAction;
+  delay: number;
+  id: number;
+}
+
+type TimeoutSetter = (fn: TimeoutAction, delay?: number) => ReturnType<typeof setTimeout>;
+type TimeoutClearer = (id: number) => void;
 
 interface ICustomDispatchEvent {
   type: string;
@@ -518,5 +529,246 @@ describe("useEventStream Hook", () => {
     assert(latestState !== null);
     expect(latestState.agents.length).toBe(1);
     expect(latestState.agents[0]?.id).toBe("env-2:pi:session-2");
+  });
+
+  describe("exponential backoff and jitter reconnection behavior", () => {
+    let originalSetTimeout: typeof setTimeout;
+    let originalClearTimeout: typeof clearTimeout;
+    let scheduledTimeouts: IScheduledTimeout[];
+    let clearedTimeoutIds: number[];
+    let nextTimeoutId: number;
+
+    beforeEach(() => {
+      scheduledTimeouts = [];
+      clearedTimeoutIds = [];
+      nextTimeoutId = 1;
+      originalSetTimeout = globalThis.setTimeout;
+      originalClearTimeout = globalThis.clearTimeout;
+
+      const mockSetTimeout: TimeoutSetter = (fn: TimeoutAction, delay?: number) => {
+        const id = nextTimeoutId++;
+        scheduledTimeouts.push({ fn, delay: delay ?? 0, id });
+        return id as unknown as ReturnType<typeof setTimeout>;
+      };
+      globalThis.setTimeout = mockSetTimeout as typeof setTimeout;
+
+      const mockClearTimeout: TimeoutClearer = (id: number) => {
+        clearedTimeoutIds.push(id);
+      };
+      globalThis.clearTimeout = mockClearTimeout as unknown as typeof clearTimeout;
+    });
+
+    afterEach(() => {
+      globalThis.setTimeout = originalSetTimeout;
+      globalThis.clearTimeout = originalClearTimeout;
+    });
+
+    it("schedules reconnection with increasing backoff delays on repeated errors", async () => {
+      await act(async () => {
+        root.render(jsx(HookHarness, { apiBaseUrl: "http://localhost:4502", onUpdate: handleUpdate }));
+      });
+
+      expect(MockEventSource.instances.length).toBe(1);
+      const firstEs = MockEventSource.instances[0];
+      assert(firstEs !== undefined);
+
+      // First error -> attempt 0 (1000 - 1999 ms)
+      await act(async () => {
+        firstEs.onerror?.();
+      });
+
+      expect(scheduledTimeouts.length).toBe(1);
+      const firstTimeout = scheduledTimeouts[0];
+      assert(firstTimeout !== undefined);
+      expect(firstTimeout.delay).toBeGreaterThanOrEqual(1000);
+      expect(firstTimeout.delay).toBeLessThan(2000);
+
+      // Trigger reconnect timeout to create second EventSource
+      await act(async () => {
+        firstTimeout.fn();
+      });
+
+      expect(MockEventSource.instances.length).toBe(2);
+      const secondEs = MockEventSource.instances[1];
+      assert(secondEs !== undefined);
+
+      // Second error -> attempt 1 (2000 - 2999 ms)
+      await act(async () => {
+        secondEs.onerror?.();
+      });
+
+      expect(scheduledTimeouts.length).toBe(2);
+      const secondTimeout = scheduledTimeouts[1];
+      assert(secondTimeout !== undefined);
+      expect(secondTimeout.delay).toBeGreaterThanOrEqual(2000);
+      expect(secondTimeout.delay).toBeLessThan(3000);
+
+      // Trigger reconnect timeout to create third EventSource
+      await act(async () => {
+        secondTimeout.fn();
+      });
+
+      expect(MockEventSource.instances.length).toBe(3);
+      const thirdEs = MockEventSource.instances[2];
+      assert(thirdEs !== undefined);
+
+      // Third error -> attempt 2 (4000 - 4999 ms)
+      await act(async () => {
+        thirdEs.onerror?.();
+      });
+
+      expect(scheduledTimeouts.length).toBe(3);
+      const thirdTimeout = scheduledTimeouts[2];
+      assert(thirdTimeout !== undefined);
+      expect(thirdTimeout.delay).toBeGreaterThanOrEqual(4000);
+      expect(thirdTimeout.delay).toBeLessThan(5000);
+    });
+
+    it("resets backoff attempt counter to 0 upon successful connection", async () => {
+      await act(async () => {
+        root.render(jsx(HookHarness, { apiBaseUrl: "http://localhost:4502", onUpdate: handleUpdate }));
+      });
+
+      const firstEs = MockEventSource.instances[0];
+      assert(firstEs !== undefined);
+
+      // Error on first connection -> attempt 0 scheduled
+      await act(async () => {
+        firstEs.onerror?.();
+      });
+      expect(scheduledTimeouts.length).toBe(1);
+      const firstTimeout = scheduledTimeouts[0];
+      assert(firstTimeout !== undefined);
+
+      // Reconnect
+      await act(async () => {
+        firstTimeout.fn();
+      });
+      expect(MockEventSource.instances.length).toBe(2);
+      const secondEs = MockEventSource.instances[1];
+      assert(secondEs !== undefined);
+
+      // Second error -> attempt 1 scheduled (2000 - 2999 ms)
+      await act(async () => {
+        secondEs.onerror?.();
+      });
+      expect(scheduledTimeouts.length).toBe(2);
+      const secondTimeout = scheduledTimeouts[1];
+      assert(secondTimeout !== undefined);
+      expect(secondTimeout.delay).toBeGreaterThanOrEqual(2000);
+
+      // Reconnect
+      await act(async () => {
+        secondTimeout.fn();
+      });
+      expect(MockEventSource.instances.length).toBe(3);
+      const thirdEs = MockEventSource.instances[2];
+      assert(thirdEs !== undefined);
+
+      // Now successful open on third connection!
+      await act(async () => {
+        thirdEs.onopen?.();
+      });
+
+      // Subsequent error should reset to attempt 0 (1000 - 1999 ms) instead of attempt 2
+      await act(async () => {
+        thirdEs.onerror?.();
+      });
+
+      expect(scheduledTimeouts.length).toBe(3);
+      const postOpenTimeout = scheduledTimeouts[2];
+      assert(postOpenTimeout !== undefined);
+      expect(postOpenTimeout.delay).toBeGreaterThanOrEqual(1000);
+      expect(postOpenTimeout.delay).toBeLessThan(2000);
+    });
+
+    it("clears pending retry timeout and closes EventSource when unmounted", async () => {
+      await act(async () => {
+        root.render(jsx(HookHarness, { apiBaseUrl: "http://localhost:4502", onUpdate: handleUpdate }));
+      });
+
+      const esInstance = MockEventSource.instances[0];
+      assert(esInstance !== undefined);
+
+      // Trigger error so retryTimeout is set
+      await act(async () => {
+        esInstance.onerror?.();
+      });
+
+      expect(scheduledTimeouts.length).toBe(1);
+      const scheduledId = scheduledTimeouts[0]?.id;
+      assert(scheduledId !== undefined);
+
+      // Unmount the component
+      await act(async () => {
+        root.unmount();
+      });
+
+      expect(clearedTimeoutIds).toContain(scheduledId);
+      expect(esInstance.closed).toBe(true);
+    });
+
+    it("schedules reconnect with backoff when connect throws an exception", async () => {
+      await act(async () => {
+        root.render(
+          jsx(HookHarness, {
+            apiBaseUrl: "http://localhost:4502",
+            token: "\uD800",
+            onUpdate: handleUpdate,
+          }),
+        );
+      });
+
+      assert(latestState !== null);
+      expect(latestState.error).toContain("URIError");
+      expect(scheduledTimeouts.length).toBe(1);
+      const scheduledTimeout = scheduledTimeouts[0];
+      assert(scheduledTimeout !== undefined);
+      expect(scheduledTimeout.delay).toBeGreaterThanOrEqual(1000);
+      expect(scheduledTimeout.delay).toBeLessThan(2000);
+    });
+
+    it("handles mock-sse-error window event by dispatching to es.onerror", async () => {
+      await act(async () => {
+        root.render(jsx(HookHarness, { apiBaseUrl: "http://localhost:4502", onUpdate: handleUpdate }));
+      });
+
+      expect(MockEventSource.instances.length).toBe(1);
+      const esInstance = MockEventSource.instances[0];
+      assert(esInstance !== undefined);
+
+      await act(async () => {
+        globalThis.dispatchEvent(new MockCustomEvent("mock-sse-error") as unknown as Event);
+      });
+
+      expect(esInstance.closed).toBe(true);
+      expect(scheduledTimeouts.length).toBe(1);
+      expect(latestState?.error).toBe("Disconnected from agent-server stream. Reconnecting...");
+    });
+
+    it("catches and logs JSON parsing errors on malformed onmessage payloads without crashing", async () => {
+      const originalConsoleError = console.error;
+      let loggedError: unknown = null;
+      console.error = (...args: unknown[]) => {
+        loggedError = args[0];
+      };
+
+      try {
+        await act(async () => {
+          root.render(jsx(HookHarness, { apiBaseUrl: "http://localhost:4502", onUpdate: handleUpdate }));
+        });
+
+        const esInstance = MockEventSource.instances[0];
+        assert(esInstance !== undefined);
+
+        await act(async () => {
+          esInstance.onmessage?.({ data: "invalid-json-{" } as MessageEvent);
+        });
+
+        expect(loggedError).toBe("Failed to parse SSE event:");
+      } finally {
+        console.error = originalConsoleError;
+      }
+    });
   });
 });

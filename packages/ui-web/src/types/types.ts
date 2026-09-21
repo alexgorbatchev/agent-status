@@ -162,3 +162,10 @@ export type ServerEvent =
   | { type: "agent_removed"; at: number; agentId: string }
   | { type: "environment_upsert"; at: number; environment: IEnvironmentInfo }
   | { type: "log_append"; at: number; agentId: string; event: ITelemetryFrame };
+
+export interface IEventStreamState {
+  agents: IAgentState[];
+  environments: IEnvironmentInfo[];
+  isConnected: boolean;
+  error: string | null;
+}
