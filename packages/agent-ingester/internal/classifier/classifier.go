@@ -33,27 +33,42 @@ type agentWorker struct {
 	stop chan struct{}
 }
 
+const (
+	DefaultIdleGracePeriod = 5 * time.Second
+)
+
 type Classifier struct {
-	store      *store.Store
-	pricing    *pricing.Engine
-	summarizer *summarizer.Summarizer
-	agentCtx   map[string]*agentContext
-	workers    map[string]*agentWorker
-	onUpdate   func(agent *types.IAgentState)
-	mu         sync.Mutex
-	wg         sync.WaitGroup
-	closed     bool
-	syncMode   bool
+	store           *store.Store
+	pricing         *pricing.Engine
+	summarizer      *summarizer.Summarizer
+	agentCtx        map[string]*agentContext
+	workers         map[string]*agentWorker
+	idleTimers      map[string]*time.Timer
+	idleGracePeriod time.Duration
+	onUpdate        func(agent *types.IAgentState)
+	mu              sync.Mutex
+	wg              sync.WaitGroup
+	closed          bool
+	syncMode        bool
 }
 
 func New(s *store.Store, p *pricing.Engine, sum *summarizer.Summarizer) *Classifier {
 	return &Classifier{
-		store:      s,
-		pricing:    p,
-		summarizer: sum,
-		agentCtx:   make(map[string]*agentContext),
-		workers:    make(map[string]*agentWorker),
+		store:           s,
+		pricing:         p,
+		summarizer:      sum,
+		agentCtx:        make(map[string]*agentContext),
+		workers:         make(map[string]*agentWorker),
+		idleTimers:      make(map[string]*time.Timer),
+		idleGracePeriod: DefaultIdleGracePeriod,
 	}
+}
+
+// SetIdleGracePeriod sets the debounce window before transitioning from BUSY to IDLE on turn_end.
+func (c *Classifier) SetIdleGracePeriod(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.idleGracePeriod = d
 }
 
 // SetOnUpdate registers a callback invoked when background summarization updates an agent state.
@@ -81,10 +96,21 @@ func (c *Classifier) Close() error {
 	for _, w := range c.workers {
 		close(w.stop)
 	}
+	for id, t := range c.idleTimers {
+		t.Stop()
+		delete(c.idleTimers, id)
+	}
 	c.mu.Unlock()
 
 	c.wg.Wait()
 	return nil
+}
+
+func (c *Classifier) cancelIdleTimerLocked(agentID string) {
+	if t, exists := c.idleTimers[agentID]; exists {
+		t.Stop()
+		delete(c.idleTimers, agentID)
+	}
 }
 
 // Flush blocks until all pending jobs in the queue for a specific agent have completed.
@@ -231,6 +257,9 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 	if !isSubagent {
 		switch frame.EventType {
 		case "run_started":
+			c.mu.Lock()
+			c.cancelIdleTimerLocked(agent.ID)
+			c.mu.Unlock()
 			agent.Activity.Lifecycle = types.LifecycleRunning
 			agent.Activity.Activity = types.ActivityIdle
 			runID := fmt.Sprintf("%s:%d:%d", agent.ID, frame.PID, now)
@@ -244,6 +273,10 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			pendingJob = c.ensureAction(agent)
 
 		case "run_exited":
+			c.mu.Lock()
+			c.cancelIdleTimerLocked(agent.ID)
+			c.mu.Unlock()
+
 			agent.Activity.Lifecycle = types.LifecycleExited
 			if err := c.store.EndCurrentRun(agent.ID, now); err != nil {
 				return nil, fmt.Errorf("ending current run: %w", err)
@@ -251,6 +284,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			if agent.Activity.CurrentRun != nil {
 				agent.Activity.CurrentRun.EndedAt = &now
 			}
+
 			c.mu.Lock()
 			if w, ok := c.workers[agent.ID]; ok {
 				close(w.stop)
@@ -260,6 +294,9 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			c.mu.Unlock()
 
 		case "question_prompt":
+			c.mu.Lock()
+			c.cancelIdleTimerLocked(agent.ID)
+			c.mu.Unlock()
 			agent.Activity.Activity = types.ActivityWaitingQuestion
 			agent.Activity.ActiveTool = nil
 			agent.Activity.ActiveTarget = nil
@@ -269,6 +306,9 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			pendingJob = c.updateSummarization(agent, true)
 
 		case "error":
+			c.mu.Lock()
+			c.cancelIdleTimerLocked(agent.ID)
+			c.mu.Unlock()
 			agent.Activity.Activity = types.ActivityError
 			agent.Activity.ActiveTool = nil
 			agent.Activity.ActiveTarget = nil
@@ -282,23 +322,23 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			pendingJob = c.updateSummarization(agent, true)
 
 		case "tool_result":
-			if frame.Data.IsError != nil && *frame.Data.IsError {
-				agent.Activity.Activity = types.ActivityError
-				if frame.Data.ToolOutput != nil {
-					out := *frame.Data.ToolOutput
-					if len(out) > 2000 {
-						out = out[:2000]
-					}
-					agent.Activity.LastError = &out
-				}
-				pendingJob = c.updateSummarization(agent, true)
-			} else {
-				// Normal tool result
-				agent.Activity.Activity = types.ActivityBusy
-			}
+			c.mu.Lock()
+			c.cancelIdleTimerLocked(agent.ID)
+			c.mu.Unlock()
+			// Tool results (even non-zero exits) are a normal part of shell/agent workflows;
+			// the agent remains busy processing the result, not in an error state.
+			agent.Activity.Activity = types.ActivityBusy
+			agent.Activity.LastError = nil
+			agent.Activity.ActiveTool = nil
+			agent.Activity.ActiveTarget = nil
+			pendingJob = c.updateSummarization(agent, false)
 
 		case "tool_call":
+			c.mu.Lock()
+			c.cancelIdleTimerLocked(agent.ID)
+			c.mu.Unlock()
 			agent.Activity.Activity = types.ActivityBusy
+			agent.Activity.LastError = nil
 			if frame.Data.ToolName != nil {
 				toolName := *frame.Data.ToolName
 				agent.Activity.ActiveTool = &toolName
@@ -334,7 +374,11 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			}
 
 		case "turn_start":
+			c.mu.Lock()
+			c.cancelIdleTimerLocked(agent.ID)
+			c.mu.Unlock()
 			agent.Activity.Activity = types.ActivityBusy
+			agent.Activity.LastError = nil
 			agent.Activity.ActiveTool = nil
 			agent.Activity.ActiveTarget = nil
 			c.mu.Lock()
@@ -344,7 +388,11 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			c.mu.Unlock()
 
 		case "thinking":
+			c.mu.Lock()
+			c.cancelIdleTimerLocked(agent.ID)
+			c.mu.Unlock()
 			agent.Activity.Activity = types.ActivityBusy
+			agent.Activity.LastError = nil
 			if frame.Data.Content != nil {
 				agent.Activity.LastThinkingExcerpt = frame.Data.Content
 			}
@@ -355,16 +403,75 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				actx.lastAssistantResponse = strings.TrimSpace(*frame.Data.Content)
 				c.mu.Unlock()
 			}
-			if frame.Data.StopReason == nil || *frame.Data.StopReason != "tool_use" {
-				agent.Activity.Activity = types.ActivityIdle
+			isToolUse := false
+			if frame.Data.StopReason != nil {
+				reason := *frame.Data.StopReason
+				if reason == "tool_use" || reason == "toolUse" || reason == "tool_calls" {
+					isToolUse = true
+				}
+			}
+			if agent.Activity.ActiveTool != nil {
+				isToolUse = true
+			}
+
+			if isToolUse {
+				c.mu.Lock()
+				c.cancelIdleTimerLocked(agent.ID)
+				c.mu.Unlock()
+				if agent.Activity.Activity != types.ActivityWaitingQuestion {
+					agent.Activity.Activity = types.ActivityBusy
+				}
+				pendingJob = c.updateSummarization(agent, true)
+			} else if agent.Activity.Activity == types.ActivityWaitingQuestion {
+				// Do not overwrite WAITING_QUESTION or clear Question prompt on turn_end
+				c.mu.Lock()
+				c.cancelIdleTimerLocked(agent.ID)
+				c.mu.Unlock()
+				pendingJob = c.updateSummarization(agent, true)
+			} else if agent.Activity.Activity == types.ActivityError {
+				// Do not overwrite ERROR state on turn_end
+				c.mu.Lock()
+				c.cancelIdleTimerLocked(agent.ID)
+				c.mu.Unlock()
+				pendingJob = c.updateSummarization(agent, true)
+			} else {
+				// Turn ended without tool use.
+				// If the agent is BUSY and an idle grace period is configured, debounce the transition
+				// so pauses between API calls do not cause BUSY/IDLE flipping.
 				agent.Activity.ActiveTool = nil
 				agent.Activity.ActiveTarget = nil
 				agent.Activity.Question = nil
+
+				c.mu.Lock()
+				gracePeriod := c.idleGracePeriod
+				isSync := c.syncMode
+				c.mu.Unlock()
+
+				if gracePeriod <= 0 || isSync || agent.Activity.Activity != types.ActivityBusy {
+					c.mu.Lock()
+					c.cancelIdleTimerLocked(agent.ID)
+					c.mu.Unlock()
+					agent.Activity.Activity = types.ActivityIdle
+					pendingJob = c.updateSummarization(agent, true)
+				} else {
+					// Keep agent BUSY during grace period and schedule transition to IDLE if no new events arrive.
+					c.mu.Lock()
+					c.cancelIdleTimerLocked(agent.ID)
+					targetAgentID := agent.ID
+					scheduledUpdatedAt := agent.Activity.UpdatedAt
+					c.idleTimers[targetAgentID] = time.AfterFunc(gracePeriod, func() {
+						c.handleIdleTransition(targetAgentID, scheduledUpdatedAt)
+					})
+					c.mu.Unlock()
+					pendingJob = c.updateSummarization(agent, false)
+				}
 			}
-			pendingJob = c.updateSummarization(agent, true)
 		}
 	} else {
-		// Subagent event: increment subagent count
+		// Subagent event: cancel parent idle timer and increment subagent count
+		c.mu.Lock()
+		c.cancelIdleTimerLocked(agent.ID)
+		c.mu.Unlock()
 		agent.Activity.SubagentCount++
 	}
 
@@ -599,6 +706,49 @@ func (c *Classifier) processSummaryJob(agentID string, job summaryJob) {
 	cb := c.onUpdate
 	c.mu.Unlock()
 
+	if cb != nil {
+		cb(agent)
+	}
+}
+
+func (c *Classifier) handleIdleTransition(agentID string, scheduledUpdatedAt int64) {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return
+	}
+	delete(c.idleTimers, agentID)
+	c.mu.Unlock()
+
+	agent, err := c.store.GetAgent(agentID)
+	if err != nil || agent == nil {
+		return
+	}
+
+	// Only transition to IDLE if agent is still running, busy, and has not received newer events since the timer was scheduled
+	if agent.Activity.Lifecycle != types.LifecycleRunning || agent.Activity.Activity != types.ActivityBusy || agent.Activity.UpdatedAt != scheduledUpdatedAt {
+		return
+	}
+
+	agent.Activity.Activity = types.ActivityIdle
+	agent.Activity.ActiveTool = nil
+	agent.Activity.ActiveTarget = nil
+	agent.Activity.Question = nil
+	agent.Activity.UpdatedAt = time.Now().UnixMilli()
+
+	job := c.updateSummarization(agent, true)
+	if err := c.store.SaveAgentState(*agent); err != nil {
+		logging.Error("saving_idle_agent_failed", "err", err, "agentId", agentID)
+		return
+	}
+
+	if job != nil {
+		c.enqueueJob(agent.ID, job.input, job.timestamp, job.force)
+	}
+
+	c.mu.Lock()
+	cb := c.onUpdate
+	c.mu.Unlock()
 	if cb != nil {
 		cb(agent)
 	}

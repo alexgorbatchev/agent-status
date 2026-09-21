@@ -31,7 +31,9 @@ func newTestClassifier(t *testing.T, sum *summarizer.Summarizer) (*Classifier, *
 		t.Fatalf("pricing.NewPricingEngine() failed: %v", err)
 	}
 
-	return New(s, p, sum), s
+	c := New(s, p, sum)
+	c.SetIdleGracePeriod(0)
+	return c, s
 }
 
 func TestClassifier_LifecycleAndActivityTransitions(t *testing.T) {
@@ -193,7 +195,7 @@ func TestClassifier_LifecycleAndActivityTransitions(t *testing.T) {
 		t.Errorf("got Action %q, want 'Waiting for user input'", agent.Activity.Action)
 	}
 
-	// 7. tool_result with isError = true -> ERROR
+	// 7. tool_result with isError = true -> Remains Busy (non-zero exits are normal shell workflow, not an error)
 	errMsg := "permission denied: /etc/hosts"
 	isErr := true
 	f3 := baseFrame
@@ -207,11 +209,11 @@ func TestClassifier_LifecycleAndActivityTransitions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProcessFrame(tool_result error) error = %v", err)
 	}
-	if agent.Activity.Activity != types.ActivityError {
-		t.Errorf("got activity %s, want %s", agent.Activity.Activity, types.ActivityError)
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Errorf("got activity %s, want %s (non-zero tool exits must not flip activity to ERROR)", agent.Activity.Activity, types.ActivityBusy)
 	}
-	if agent.Activity.LastError == nil || *agent.Activity.LastError != errMsg {
-		t.Errorf("got lastError %v, want %s", agent.Activity.LastError, errMsg)
+	if agent.Activity.LastError != nil {
+		t.Errorf("got lastError %v, want nil (tool error output must not be recorded as LastError)", *agent.Activity.LastError)
 	}
 
 	// 8. tool_result with isError = false -> Busy
@@ -1784,3 +1786,255 @@ func TestClassifier_DiscardStaleSummaryOnStateTransition(t *testing.T) {
 		t.Errorf("expected ActiveTarget to be nil, got %v", *agent.Activity.ActiveTarget)
 	}
 }
+
+func TestClassifier_IdleDebounceDuringAPIPauses(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+
+	c, s := newTestClassifier(t, sum)
+	// Enable async worker and set a 100ms idle grace period for testing
+	c.syncMode = false
+	c.SetIdleGracePeriod(100 * time.Millisecond)
+	defer func() { _ = c.Close() }()
+
+	proj := types.IProjectInfo{
+		ID:            "proj-1",
+		Name:          "repo",
+		CanonicalRoot: "/repo",
+	}
+	ws := types.IWorkspaceInfo{
+		Branch:     "main",
+		IsDetached: false,
+		IsWorktree: false,
+		CWD:        "/repo",
+	}
+	env := types.IEnvironmentInfo{
+		ID:       "env-1",
+		Hostname: "my-macbook",
+		Label:    "my-macbook",
+		Platform: "darwin",
+	}
+
+	agentID := "env-1:pi:sess-debounce"
+	baseFrame := types.ITelemetryFrame{
+		Version:        "1.0",
+		EnvID:          env.ID,
+		Environment:    env,
+		AgentID:        agentID,
+		SessionID:      "sess-debounce",
+		PID:            200,
+		Harness:        types.HarnessPi,
+		HarnessVersion: "1.0.0",
+		Project:        proj,
+		Workspace:      ws,
+		Timestamp:      1000,
+	}
+
+	// 1. Session start -> Idle
+	fStart := baseFrame
+	fStart.Seq = 1
+	fStart.EventType = "run_started"
+	agent, err := c.ProcessFrame(fStart)
+	if err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityIdle {
+		t.Fatalf("expected initial Activity to be IDLE, got %v", agent.Activity.Activity)
+	}
+
+	// 2. User prompt -> Busy
+	promptText := "Refactor auth middleware"
+	fPrompt := baseFrame
+	fPrompt.Seq = 2
+	fPrompt.Timestamp = 1010
+	fPrompt.EventType = "turn_start"
+	fPrompt.Data = types.TelemetryFrameData{
+		Title:   &promptText,
+		Content: &promptText,
+	}
+	agent, err = c.ProcessFrame(fPrompt)
+	if err != nil {
+		t.Fatalf("turn_start failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Fatalf("expected Activity to be BUSY after user prompt, got %v", agent.Activity.Activity)
+	}
+
+	// 3. Model intermediate explanation without tool call -> turn_end with stopReason "stop"
+	// Under idle grace period, the agent must REMAIN BUSY to absorb the API pause
+	stopReason := "stop"
+	explanation := "I will first search for auth middleware files."
+	fEnd1 := baseFrame
+	fEnd1.Seq = 3
+	fEnd1.Timestamp = 1050
+	fEnd1.EventType = "turn_end"
+	fEnd1.Data = types.TelemetryFrameData{
+		StopReason: &stopReason,
+		Content:    &explanation,
+	}
+	agent, err = c.ProcessFrame(fEnd1)
+	if err != nil {
+		t.Fatalf("turn_end 1 failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Errorf("expected Activity to REMAIN BUSY during API pause within grace period, got %v", agent.Activity.Activity)
+	}
+
+	// 4. Before grace period expires (at 40ms into 100ms grace period), next API call returns with tool_call
+	time.Sleep(40 * time.Millisecond)
+	toolName := "Read"
+	fTool := baseFrame
+	fTool.Seq = 4
+	fTool.Timestamp = 1090
+	fTool.EventType = "tool_call"
+	fTool.Data = types.TelemetryFrameData{
+		ToolName: &toolName,
+	}
+	agent, err = c.ProcessFrame(fTool)
+	if err != nil {
+		t.Fatalf("tool_call failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Errorf("expected Activity to be BUSY on tool_call, got %v", agent.Activity.Activity)
+	}
+
+	// 5. Tool execution finishes with non-zero exit code -> must REMAIN BUSY
+	isErr := true
+	toolOutput := "exit status 1: pattern not found"
+	fToolRes := baseFrame
+	fToolRes.Seq = 5
+	fToolRes.Timestamp = 1120
+	fToolRes.EventType = "tool_result"
+	fToolRes.Data = types.TelemetryFrameData{
+		IsError:    &isErr,
+		ToolOutput: &toolOutput,
+	}
+	agent, err = c.ProcessFrame(fToolRes)
+	if err != nil {
+		t.Fatalf("tool_result failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Errorf("expected Activity to remain BUSY on non-zero tool exit, got %v", agent.Activity.Activity)
+	}
+	if agent.Activity.LastError != nil {
+		t.Errorf("expected LastError to be nil on non-zero tool exit, got %v", *agent.Activity.LastError)
+	}
+
+	// 6. Final turn_end arrives (agent completes answer)
+	finalAnswer := "All refactoring complete."
+	fEnd2 := baseFrame
+	fEnd2.Seq = 6
+	fEnd2.Timestamp = 1200
+	fEnd2.EventType = "turn_end"
+	fEnd2.Data = types.TelemetryFrameData{
+		StopReason: &stopReason,
+		Content:    &finalAnswer,
+	}
+	agent, err = c.ProcessFrame(fEnd2)
+	if err != nil {
+		t.Fatalf("turn_end 2 failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Errorf("expected Activity to remain BUSY initially on final turn_end, got %v", agent.Activity.Activity)
+	}
+
+	// 7. Wait for idle grace period (100ms) to expire with no further events
+	time.Sleep(150 * time.Millisecond)
+
+	// Verify agent has now smoothly transitioned to IDLE in store
+	reloaded, err := s.GetAgent(agentID)
+	if err != nil || reloaded == nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if reloaded.Activity.Activity != types.ActivityIdle {
+		t.Errorf("expected Activity to transition to IDLE after grace period elapsed, got %v", reloaded.Activity.Activity)
+	}
+}
+
+func TestClassifier_QuestionPromptPreservedAcrossTurnEnd(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+
+	c, _ := newTestClassifier(t, sum)
+	defer func() { _ = c.Close() }()
+
+	proj := types.IProjectInfo{
+		ID:            "proj-1",
+		Name:          "repo",
+		CanonicalRoot: "/repo",
+	}
+	ws := types.IWorkspaceInfo{
+		Branch:     "main",
+		IsDetached: false,
+		IsWorktree: false,
+		CWD:        "/repo",
+	}
+	env := types.IEnvironmentInfo{
+		ID:       "env-1",
+		Hostname: "my-macbook",
+		Label:    "my-macbook",
+		Platform: "darwin",
+	}
+
+	agentID := "env-1:pi:sess-question"
+	baseFrame := types.ITelemetryFrame{
+		Version:        "1.0",
+		EnvID:          env.ID,
+		Environment:    env,
+		AgentID:        agentID,
+		SessionID:      "sess-question",
+		PID:            300,
+		Harness:        types.HarnessPi,
+		HarnessVersion: "1.0.0",
+		Project:        proj,
+		Workspace:      ws,
+		Timestamp:      1000,
+	}
+
+	// 1. Session start
+	fStart := baseFrame
+	fStart.Seq = 1
+	fStart.EventType = "run_started"
+	_, _ = c.ProcessFrame(fStart)
+
+	// 2. Question prompt arrives
+	qText := "Should we proceed with database migration?"
+	fQ := baseFrame
+	fQ.Seq = 2
+	fQ.EventType = "question_prompt"
+	fQ.Data = types.TelemetryFrameData{
+		Question: &qText,
+	}
+	agent, err := c.ProcessFrame(fQ)
+	if err != nil {
+		t.Fatalf("question_prompt failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityWaitingQuestion {
+		t.Fatalf("expected Activity to be WAITING_QUESTION, got %v", agent.Activity.Activity)
+	}
+	if agent.Activity.Question == nil || *agent.Activity.Question != qText {
+		t.Fatalf("expected Question to be %q, got %v", qText, agent.Activity.Question)
+	}
+
+	// 3. Subsequent turn_end arrives (without tool use, e.g. stopReason "stop" or nil)
+	fEnd := baseFrame
+	fEnd.Seq = 3
+	fEnd.EventType = "turn_end"
+	agent, err = c.ProcessFrame(fEnd)
+	if err != nil {
+		t.Fatalf("turn_end failed: %v", err)
+	}
+	// Must NOT be overwritten to IDLE or have Question wiped out!
+	if agent.Activity.Activity != types.ActivityWaitingQuestion {
+		t.Errorf("turn_end must NOT overwrite WAITING_QUESTION, got %v", agent.Activity.Activity)
+	}
+	if agent.Activity.Question == nil || *agent.Activity.Question != qText {
+		t.Errorf("turn_end must NOT erase Question prompt, got %v", agent.Activity.Question)
+	}
+}
+
+
