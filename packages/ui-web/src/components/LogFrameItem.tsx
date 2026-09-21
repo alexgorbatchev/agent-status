@@ -157,6 +157,9 @@ export function LogFrameItem({ frame }: ILogFrameItemProps): React.JSX.Element {
           toolName={frame.data.toolName}
           toolInput={frame.data.toolInput}
           toolOutput={frame.data.toolOutput}
+          exitCode={frame.data.exitCode}
+          isError={frame.data.isError}
+          toolCallId={frame.data.toolCallId}
         />
       )}
 

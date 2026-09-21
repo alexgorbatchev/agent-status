@@ -108,6 +108,9 @@ export interface IToolExecutionBlockProps {
   toolName?: string | null;
   toolInput?: Record<string, unknown> | null;
   toolOutput?: string | null;
+  exitCode?: number | null;
+  isError?: boolean | null;
+  toolCallId?: string | null;
 }
 
 export interface IAnsiTextProps {
