@@ -129,7 +129,7 @@ function buildHunkFromStrings(oldStr: string, newStr: string, header?: string): 
 }
 
 function parseUnifiedPatch(patchText: string, fallbackPath: string): IFileModificationPayload {
-  const lines = patchText.split("\n");
+  const lines = splitLines(patchText);
   let filePath = fallbackPath;
   const hunks: IDiffHunk[] = [];
   let currentHunk: IDiffHunk | null = null;
@@ -261,7 +261,9 @@ export function isFileModification(toolName?: string | null, toolInput?: Record<
     return true;
   }
 
-  if (hasPatch && (toolInput.patch as string).includes("@@")) {
+  const patchStr =
+    typeof toolInput.patch === "string" ? toolInput.patch : typeof toolInput.diff === "string" ? toolInput.diff : null;
+  if (patchStr && patchStr.includes("@@")) {
     return true;
   }
 
@@ -310,13 +312,15 @@ export function parseFileModification(
   // 3. Pi edits array format: edits: Array<{ oldText: string, newText: string }>
   if (Array.isArray(toolInput.edits) && toolInput.edits.length > 0) {
     const hunks: IDiffHunk[] = [];
-    const edits = toolInput.edits as Array<Record<string, unknown>>;
+    const edits = toolInput.edits;
     for (let idx = 0; idx < edits.length; idx++) {
       const edit = edits[idx];
-      const oldText = typeof edit.oldText === "string" ? edit.oldText : "";
-      const newText = typeof edit.newText === "string" ? edit.newText : "";
-      const header = edits.length > 1 ? `Hunk ${idx + 1} of ${edits.length}` : undefined;
-      hunks.push(buildHunkFromStrings(oldText, newText, header));
+      if (typeof edit === "object" && edit !== null) {
+        const oldText = "oldText" in edit && typeof edit.oldText === "string" ? edit.oldText : "";
+        const newText = "newText" in edit && typeof edit.newText === "string" ? edit.newText : "";
+        const header = edits.length > 1 ? `Hunk ${idx + 1} of ${edits.length}` : undefined;
+        hunks.push(buildHunkFromStrings(oldText, newText, header));
+      }
     }
     return {
       action: "EDIT",

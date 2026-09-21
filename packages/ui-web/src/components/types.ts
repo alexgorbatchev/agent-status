@@ -1,4 +1,5 @@
 import type React from "react";
+import type { IFileModificationPayload } from "../utils/diffUtils";
 import type {
   IAgentState,
   IEnvironmentInfo,
@@ -116,4 +117,8 @@ export interface IAnsiTextProps {
 
 export interface ITokenUsageBarProps {
   usage: ITokenUsage;
+}
+
+export interface IDiffViewerProps {
+  payload: IFileModificationPayload;
 }

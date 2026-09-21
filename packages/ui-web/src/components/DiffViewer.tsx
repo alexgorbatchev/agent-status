@@ -1,11 +1,9 @@
 import React, { useState } from "react";
 import { Copy, Check, FileCode } from "lucide-react";
 import { IconWrapper } from "./IconWrapper";
-import type { IFileModificationPayload } from "../utils/diffUtils";
+import type { IDiffViewerProps } from "./types";
 
-export interface IDiffViewerProps {
-  payload: IFileModificationPayload;
-}
+export type { IDiffViewerProps };
 
 export function DiffViewer({ payload }: IDiffViewerProps): React.JSX.Element {
   const [hasCopied, setHasCopied] = useState<boolean>(false);
