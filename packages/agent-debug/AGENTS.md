@@ -15,6 +15,7 @@ Offline replay and validation CLI tool for agent session transcripts through the
 - Replay OpenCode database session: `air-debug session replay --session-id ses_123 opencode.db`
 - List sessions in OpenCode database: `air-debug session list opencode.db`
 - Validate session offline: `air-debug session validate session-abc.jsonl`
+- View terminal UI card representation: `air-debug session view session-abc.jsonl`
 - Foreign path remapping: `air-debug session replay --cwd /local/repo session-abc.jsonl`
 - Export populated SQLite DB: `air-debug session replay --export-db .tmp/debug.db session-abc.jsonl`
 - Inspect persisted SQLite state: `air-debug db inspect <session-id>`
@@ -37,3 +38,4 @@ Offline replay and validation CLI tool for agent session transcripts through the
 - Replay runner: `internal/replay/runner.go`
 - Read verification: `internal/replay/verify.go`
 - Formatting & dual-mode: `internal/output/format.go`
+- Terminal card view: `internal/output/view.go`

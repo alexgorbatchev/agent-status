@@ -66,6 +66,9 @@ air-debug process list
 # Validate session transcript against parser, classifier, and query assertions
 air-debug session validate session-abc.jsonl
 
+# View terminal UI card representation of agent session state
+air-debug session view session-abc.jsonl
+
 # List sessions inside an OpenCode SQLite database
 air-debug session list ~/.local/share/opencode/opencode.db
 
@@ -123,6 +126,18 @@ Session Replay Summary (pi)
 | `--db <path>` | (none) | `""` | Path to `agent-status.db` for discrepancy comparison (or `auto`) |
 | `--json` | (none) | `false` | Output validation report as JSON |
 | `--env <label>` | (none) | `debug` | Environment label override |
+
+### `air-debug session view`
+
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--harness <name>` | (none) | `""` | Explicit harness override (`claude-code`, `pi`, `codex`, `opencode`) |
+| `--session-id <id>` | (none) | `""` | OpenCode session ID to view |
+| `--cwd <path>` | (none) | `""` | Override transcript working directory for local Git resolution |
+| `--env <label>` | (none) | `debug` | Environment label override |
+| `--until-line <N>` | (none) | `0` | Halt replay after processing source line N |
+| `--until-event <type>` | (none) | `""` | Halt replay after encountering event type |
+| `--json` | (none) | `false` | Output final agent state as JSON |
 
 ### `air-debug db inspect`
 

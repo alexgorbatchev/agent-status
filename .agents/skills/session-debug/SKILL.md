@@ -82,6 +82,17 @@ Executes assertions against the transcript:
 
 Exits with `0` on success, `1` on validation failure.
 
+### C. Terminal UI Card Visualization (`session view`)
+```bash
+just debug session view <path-to-transcript.jsonl | session_id>
+```
+Renders a terminal representation of what the agent session card looks like in the UI:
+- **Canonical UI Specification**: Serves as the upstream specification reference for UI components. Update `session view` first when modifying UI representations.
+- **Semantic Element Notation**: Uses `[buttons]` and `(badges)` notation for UI elements.
+- **Dual-Mode Output**:
+  - `AGENT=0` (or unset): Formatted box card with terminal-width dividers, styled badge tags, highlighted question/error blocks, cost, and usage metrics.
+  - `AGENT=1`: Single-line structured token-conservative key-value representation.
+
 ### D. Live Process Scanner Audit & Pairing Inspection
 Diagnose observer harness process discovery, clock pairing deltas, and detect orphaned processes or sessions without running the observer daemon:
 ```bash
@@ -98,7 +109,7 @@ air-debug process list
 air-debug scanner audit --json
 ```
 
-### D. Ingested Telemetry Event Inspection (`events`)
+### E. Ingested Telemetry Event Inspection (`events`)
 Inspect the raw sequence of telemetry events persisted to SQLite `agent-status.db`:
 
 ```bash
