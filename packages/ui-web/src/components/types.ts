@@ -62,6 +62,7 @@ export interface IAttentionBannerProps {
 export interface IAgentCardProps {
   agent: IAgentState;
   onOpenDrawer?: (agent: IAgentState) => void;
+  onToggleHide?: (agent: IAgentState) => void;
 }
 
 export interface IProjectGroupProps {
@@ -69,12 +70,14 @@ export interface IProjectGroupProps {
   projectId: string;
   agents: IAgentState[];
   onSelectAgent: (agent: IAgentState) => void;
+  onToggleHide?: (agent: IAgentState) => void;
 }
 
 export interface IEnvironmentGroupProps {
   environment: IEnvironmentInfo;
   agents: IAgentState[];
   onSelectAgent: (agent: IAgentState) => void;
+  onToggleHide?: (agent: IAgentState) => void;
 }
 
 export interface IAgentGroupSectionProps {
@@ -86,6 +89,7 @@ export interface IAgentGroupSectionProps {
   badges?: React.ReactNode;
   agents: IAgentState[];
   onSelectAgent: (agent: IAgentState) => void;
+  onToggleHide?: (agent: IAgentState) => void;
 }
 
 export interface ILogDrawerProps {

@@ -18,7 +18,8 @@ interface ICustomDispatchEvent {
 interface ITextNode {
   nodeType: number;
   nodeValue: string;
-  ownerDocument: MockDocument;
+  ownerDocument: MockDocument | null;
+  parentNode?: MockElement | null;
 }
 
 interface ICommentNode {
@@ -27,12 +28,14 @@ interface ICommentNode {
   ownerDocument: MockDocument;
 }
 
+type MockDomNode = MockElement | ITextNode;
+
 export class MockElement {
   nodeType = 1;
   nodeName = "DIV";
   tagName = "DIV";
   children: MockElement[] = [];
-  childNodes: MockElement[] = [];
+  childNodes: MockDomNode[] = [];
   style: Record<string, string> = {};
   ownerDocument: MockDocument | null = null;
   parentNode: MockElement | null = null;
@@ -65,21 +68,25 @@ export class MockElement {
     return true;
   }
 
-  appendChild(child: MockElement): MockElement {
-    this.children.push(child);
+  appendChild(child: MockDomNode): MockDomNode {
     this.childNodes.push(child);
+    if ("tagName" in child) {
+      this.children.push(child);
+    }
     child.parentNode = this;
     return child;
   }
 
-  removeChild(child: MockElement): MockElement {
-    this.children = this.children.filter((c) => c !== child);
+  removeChild(child: MockDomNode): MockDomNode {
+    if ("tagName" in child) {
+      this.children = this.children.filter((c) => c !== child);
+    }
     this.childNodes = this.childNodes.filter((c) => c !== child);
     child.parentNode = null;
     return child;
   }
 
-  insertBefore(child: MockElement, _ref: MockElement): MockElement {
+  insertBefore(child: MockDomNode, _ref: MockDomNode | null): MockDomNode {
     return this.appendChild(child);
   }
 
@@ -99,6 +106,31 @@ export class MockElement {
     this.dispatchEvent({ type: "click" });
   }
 
+  get textContent(): string {
+    let text = "";
+    for (const child of this.childNodes) {
+      if ("nodeValue" in child && typeof child.nodeValue === "string") {
+        text += child.nodeValue;
+      } else if ("textContent" in child && typeof child.textContent === "string") {
+        text += child.textContent;
+      }
+    }
+    return text;
+  }
+
+  set textContent(value: string) {
+    this.childNodes = [];
+    this.children = [];
+    if (value !== "") {
+      const textNode: ITextNode = {
+        nodeType: 3,
+        nodeValue: value,
+        ownerDocument: this.ownerDocument,
+      };
+      this.appendChild(textNode);
+    }
+  }
+
   querySelector(selector: string): MockElement | null {
     const testIdMatch = selector.match(/\[data-testid="([^"]+)"\]/);
     if (testIdMatch && testIdMatch[1]) {
@@ -107,8 +139,10 @@ export class MockElement {
         return this;
       }
       for (const child of this.children) {
-        const found = child.querySelector(selector);
-        if (found) return found;
+        if ("querySelector" in child && typeof child.querySelector === "function") {
+          const found = child.querySelector(selector);
+          if (found) return found;
+        }
       }
     }
     return null;

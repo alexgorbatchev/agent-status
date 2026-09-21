@@ -4,7 +4,18 @@ import type { IAgentCardProps } from "./types";
 import type { HarnessType } from "../types";
 import { StatusBadge } from "./StatusBadge";
 import { IconWrapper } from "./IconWrapper";
-import { GitBranch, FolderGit2, Bot, Layers, DollarSign, HelpCircle, AlertTriangle, Clock } from "lucide-react";
+import {
+  GitBranch,
+  FolderGit2,
+  Bot,
+  Layers,
+  DollarSign,
+  HelpCircle,
+  AlertTriangle,
+  Clock,
+  Eye,
+  EyeOff,
+} from "lucide-react";
 import { useRelativeTime } from "../hooks/useRelativeTime";
 import { formatExactTime } from "../utils/agentUtils";
 
@@ -15,7 +26,7 @@ const HARNESS_LABELS: Record<HarnessType, string> = {
   opencode: "OpenCode",
 };
 
-export function AgentCard({ agent, onOpenDrawer }: IAgentCardProps): React.JSX.Element {
+export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps): React.JSX.Element {
   const { activity, environment, workspace, harness } = agent;
 
   const formattedCost = activity.cost ? `$${activity.cost.total.toFixed(4)}` : "—";
@@ -42,7 +53,8 @@ export function AgentCard({ agent, onOpenDrawer }: IAgentCardProps): React.JSX.E
       onKeyDown={handleKeyDown}
       className={clsx(
         "group relative flex flex-col justify-between p-4 rounded-xl bg-slate-900/80 border border-slate-800 hover:border-slate-700 transition-all cursor-pointer shadow-lg hover:shadow-slate-950/50",
-        isFinished && "opacity-60 hover:opacity-100",
+        agent.isHidden && "border-dashed border-slate-700/60 opacity-60 hover:opacity-100",
+        !agent.isHidden && isFinished && "opacity-60 hover:opacity-100",
       )}
     >
       <div data-testid="AgentCard--body">
@@ -58,7 +70,34 @@ export function AgentCard({ agent, onOpenDrawer }: IAgentCardProps): React.JSX.E
               {HARNESS_LABELS[harness] || harness}
             </span>
           </div>
-          <StatusBadge lifecycle={activity.lifecycle} activity={activity.activity} />
+          <div className="flex items-center gap-1.5">
+            {agent.isHidden && (
+              <span
+                data-testid="AgentCard--hidden-badge"
+                className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 text-[10px] font-medium border border-slate-700 font-mono"
+              >
+                Hidden
+              </span>
+            )}
+            <StatusBadge lifecycle={activity.lifecycle} activity={activity.activity} />
+            {onToggleHide && (
+              <button
+                type="button"
+                data-testid={agent.isHidden ? "AgentCard--unhide-button" : "AgentCard--hide-button"}
+                title={agent.isHidden ? "Unhide agent session" : "Hide agent session"}
+                aria-label={agent.isHidden ? `Unhide ${title}` : `Hide ${title}`}
+                onClick={(event: React.MouseEvent<HTMLButtonElement>) => {
+                  event.stopPropagation();
+                  onToggleHide(agent);
+                }}
+                className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors focus:outline-none focus:ring-1 focus:ring-slate-500"
+              >
+                <IconWrapper size="xs" tone="muted">
+                  {agent.isHidden ? <Eye size={13} /> : <EyeOff size={13} />}
+                </IconWrapper>
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Title */}

@@ -13,6 +13,10 @@ import {
   factory_agentState,
 } from "./fixtures";
 
+interface IAgentHolder {
+  toggledAgent?: IAgentState;
+}
+
 describe("AgentCard Component", () => {
   it("renders running agent card with all standard fields", () => {
     const html = renderToStaticMarkup(<AgentCard agent={fixture_agentStateRunning} />);
@@ -150,5 +154,66 @@ describe("AgentCard Component", () => {
 
     expect(html).toContain('data-testid="AgentCard--last-active"');
     expect(html).toContain('title="Last active: Never"');
+  });
+
+  it("renders hide button and calls onToggleHide without triggering onOpenDrawer", async () => {
+    const { mockDoc, cleanup } = setupMockDomEnvironment();
+    const holder: IAgentHolder = {};
+    let drawerOpened = false;
+
+    const onToggleHide = (agent: IAgentState) => {
+      holder.toggledAgent = agent;
+    };
+    const onOpenDrawer = () => {
+      drawerOpened = true;
+    };
+
+    const { container, unmount } = await mountComponent(
+      <AgentCard agent={fixture_agentStateRunning} onToggleHide={onToggleHide} onOpenDrawer={onOpenDrawer} />,
+      mockDoc,
+    );
+
+    const hideBtn = container.querySelector('[data-testid="AgentCard--hide-button"]');
+    assert(hideBtn, "hide button must exist when onToggleHide is provided");
+    hideBtn.click();
+
+    assert(holder.toggledAgent, "toggledAgent must be defined");
+    expect(holder.toggledAgent.id).toBe(fixture_agentStateRunning.id);
+    expect(drawerOpened).toBe(false);
+
+    await unmount();
+    cleanup();
+  });
+
+  it("renders hidden badge and unhide button for hidden agent", async () => {
+    const { mockDoc, cleanup } = setupMockDomEnvironment();
+    const holder: IAgentHolder = {};
+    const onToggleHide = (agent: IAgentState) => {
+      holder.toggledAgent = agent;
+    };
+
+    const hiddenAgent: IAgentState = {
+      ...fixture_agentStateRunning,
+      isHidden: true,
+      hiddenAt: Date.now(),
+    };
+
+    const { container, unmount } = await mountComponent(
+      <AgentCard agent={hiddenAgent} onToggleHide={onToggleHide} />,
+      mockDoc,
+    );
+
+    const badge = container.querySelector('[data-testid="AgentCard--hidden-badge"]');
+    assert(badge, "hidden badge must be displayed");
+
+    const unhideBtn = container.querySelector('[data-testid="AgentCard--unhide-button"]');
+    assert(unhideBtn, "unhide button must be displayed");
+    unhideBtn.click();
+
+    assert(holder.toggledAgent, "toggledAgent must be defined");
+    expect(holder.toggledAgent.id).toBe(hiddenAgent.id);
+
+    await unmount();
+    cleanup();
   });
 });

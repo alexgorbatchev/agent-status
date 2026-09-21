@@ -13,6 +13,7 @@ export function AgentGroupSection({
   badges,
   agents,
   onSelectAgent,
+  onToggleHide,
 }: IAgentGroupSectionProps): React.JSX.Element {
   const spend = calculateTotalSpend(agents);
   const activeCount = filterActiveAgents(agents).length;
@@ -55,7 +56,7 @@ export function AgentGroupSection({
       {/* Agents Grid */}
       <div data-testid={`${prefix}--grid`} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {agents.map((agent) => (
-          <AgentCard key={agent.id} agent={agent} onOpenDrawer={onSelectAgent} />
+          <AgentCard key={agent.id} agent={agent} onOpenDrawer={onSelectAgent} onToggleHide={onToggleHide} />
         ))}
       </div>
     </div>

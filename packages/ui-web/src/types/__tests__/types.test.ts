@@ -115,6 +115,8 @@ describe("TypeScript Shared Contracts", () => {
       project: proj,
       workspace: ws,
       activity,
+      isHidden: true,
+      hiddenAt: 1789850000000,
     };
 
     expect(agent.id).toBe("env-1234:claude-code:sess-abc");
@@ -123,6 +125,8 @@ describe("TypeScript Shared Contracts", () => {
     expect(agent.activity.usage.total).toBe(67800);
     expect(agent.activity.cost?.total).toBe(0.125);
     expect(agent.activity.subagentCount).toBe(3);
+    expect(agent.isHidden).toBe(true);
+    expect(agent.hiddenAt).toBe(1789850000000);
   });
 
   it("constructs ITelemetryFrame and transport messages", () => {

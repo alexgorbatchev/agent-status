@@ -83,6 +83,8 @@ export interface IAgentState {
   project: IProjectInfo;
   workspace: IWorkspaceInfo;
   activity: IAgentActivity;
+  isHidden?: boolean;
+  hiddenAt?: number | null;
 }
 
 export interface ITelemetryFrameData {

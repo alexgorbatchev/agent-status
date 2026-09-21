@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useCallback } from "react";
 import { useEventStream } from "../hooks/useEventStream";
 import type { IAgentState, GroupByOption } from "../types";
 import { Header } from "../components/Header";
@@ -9,16 +9,76 @@ import { LogDrawer } from "../components/LogDrawer";
 import { StateHelpDialog } from "../components/StateHelpDialog";
 import { groupAgentsByProject, groupAgentsByEnvironment } from "../utils/groupingUtils";
 import { ViewSwitcher } from "../components/ViewSwitcher";
-import { Layers, Server } from "lucide-react";
+import { Layers, Server, Eye, EyeOff } from "lucide-react";
+import { DEFAULT_DEV_TOKEN, resolveApiBaseUrl } from "../utils/config";
+import { clsx } from "clsx";
 
-export function App(): React.JSX.Element {
-  const { agents, environments, isConnected, error } = useEventStream();
+export interface IAppProps {
+  apiBaseUrl?: string;
+  token?: string;
+}
+
+export function App({ apiBaseUrl, token = DEFAULT_DEV_TOKEN }: IAppProps = {}): React.JSX.Element {
+  const resolvedBaseUrl = resolveApiBaseUrl(apiBaseUrl);
+  const { agents, environments, isConnected, error } = useEventStream(apiBaseUrl, token);
   const [groupBy, setGroupBy] = useState<GroupByOption>("project");
   const [selectedAgent, setSelectedAgent] = useState<IAgentState | null>(null);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [showHidden, setShowHidden] = useState<boolean>(false);
+  const [hiddenOverrides, setHiddenOverrides] = useState<Record<string, boolean>>({});
 
-  const projectGroups = useMemo(() => groupAgentsByProject(agents), [agents]);
-  const environmentGroups = useMemo(() => groupAgentsByEnvironment(agents, environments), [agents, environments]);
+  const effectiveAgents = useMemo(() => {
+    return agents.map((agent) => {
+      const override = hiddenOverrides[agent.id];
+      if (override !== undefined) {
+        return { ...agent, isHidden: override };
+      }
+      return agent;
+    });
+  }, [agents, hiddenOverrides]);
+
+  const hiddenCount = useMemo(() => {
+    return effectiveAgents.filter((a) => a.isHidden).length;
+  }, [effectiveAgents]);
+
+  const visibleAgents = useMemo(() => {
+    return effectiveAgents.filter((a) => showHidden || !a.isHidden);
+  }, [effectiveAgents, showHidden]);
+
+  const handleToggleHide = useCallback(
+    async (agent: IAgentState) => {
+      const nextHidden = !agent.isHidden;
+      setHiddenOverrides((prev) => ({ ...prev, [agent.id]: nextHidden }));
+
+      try {
+        const response = await fetch(`${resolvedBaseUrl}/api/v1/agents/${encodeURIComponent(agent.id)}`, {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ isHidden: nextHidden }),
+        });
+        if (!response.ok) {
+          throw new Error(`Failed to update visibility: ${response.statusText}`);
+        }
+      } catch (err) {
+        console.error("Failed to toggle agent visibility:", err);
+        setHiddenOverrides((prev) => {
+          const next = { ...prev };
+          delete next[agent.id];
+          return next;
+        });
+      }
+    },
+    [resolvedBaseUrl, token],
+  );
+
+  const projectGroups = useMemo(() => groupAgentsByProject(visibleAgents), [visibleAgents]);
+  const environmentGroups = useMemo(
+    () => groupAgentsByEnvironment(visibleAgents, environments),
+    [visibleAgents, environments],
+  );
 
   return (
     <div data-testid="App" className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
@@ -40,39 +100,59 @@ export function App(): React.JSX.Element {
         )}
 
         {/* Attention Banner */}
-        <AttentionBanner agents={agents} onSelectAgent={setSelectedAgent} />
+        <AttentionBanner agents={visibleAgents} onSelectAgent={setSelectedAgent} />
 
         {/* View Switcher Controls */}
         <div
           data-testid="App--controls"
           className="flex items-center justify-between mb-6 pb-2 border-b border-slate-800"
         >
-          <ViewSwitcher<GroupByOption>
-            options={[
-              {
-                id: "project",
-                label: "Group by Project",
-                icon: <Layers size={14} />,
-                testId: "App--group-by-project",
-              },
-              {
-                id: "environment",
-                label: "Group by Environment",
-                icon: <Server size={14} />,
-                testId: "App--group-by-environment",
-              },
-            ]}
-            value={groupBy}
-            onChange={setGroupBy}
-          />
+          <div className="flex items-center gap-3">
+            <ViewSwitcher<GroupByOption>
+              options={[
+                {
+                  id: "project",
+                  label: "Group by Project",
+                  icon: <Layers size={14} />,
+                  testId: "App--group-by-project",
+                },
+                {
+                  id: "environment",
+                  label: "Group by Environment",
+                  icon: <Server size={14} />,
+                  testId: "App--group-by-environment",
+                },
+              ]}
+              value={groupBy}
+              onChange={setGroupBy}
+            />
+
+            {hiddenCount > 0 && (
+              <button
+                type="button"
+                data-testid="App--toggle-show-hidden"
+                onClick={() => setShowHidden((prev) => !prev)}
+                className={clsx(
+                  "flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg border font-mono transition-colors",
+                  showHidden
+                    ? "bg-slate-800 text-slate-200 border-slate-700"
+                    : "bg-slate-900/60 text-slate-400 border-slate-800 hover:text-slate-200 hover:border-slate-700",
+                )}
+              >
+                {showHidden ? <Eye size={13} /> : <EyeOff size={13} />}
+                <span>{showHidden ? `Hide ${hiddenCount} hidden` : `Show ${hiddenCount} hidden`}</span>
+              </button>
+            )}
+          </div>
 
           <span data-testid="App--agent-count" className="text-xs text-slate-500 font-mono">
-            {agents.length} Total Agent{agents.length !== 1 ? "s" : ""}
+            {visibleAgents.length} Agent{visibleAgents.length !== 1 ? "s" : ""}
+            {hiddenCount > 0 && !showHidden ? ` (${hiddenCount} hidden)` : ""}
           </span>
         </div>
 
         {/* Content Listing */}
-        {agents.length === 0 ? (
+        {visibleAgents.length === 0 ? (
           <div
             data-testid="App--empty-state"
             className="text-center py-20 border border-dashed border-slate-800 rounded-2xl"
@@ -88,6 +168,7 @@ export function App(): React.JSX.Element {
               projectId={group.id}
               agents={group.agents}
               onSelectAgent={setSelectedAgent}
+              onToggleHide={handleToggleHide}
             />
           ))
         ) : (
@@ -97,6 +178,7 @@ export function App(): React.JSX.Element {
               environment={group.environment}
               agents={group.agents}
               onSelectAgent={setSelectedAgent}
+              onToggleHide={handleToggleHide}
             />
           ))
         )}

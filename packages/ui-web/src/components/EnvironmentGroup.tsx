@@ -3,7 +3,12 @@ import type { IEnvironmentGroupProps } from "./types";
 import { AgentGroupSection } from "./AgentGroupSection";
 import { Server } from "lucide-react";
 
-export function EnvironmentGroup({ environment, agents, onSelectAgent }: IEnvironmentGroupProps): React.JSX.Element {
+export function EnvironmentGroup({
+  environment,
+  agents,
+  onSelectAgent,
+  onToggleHide,
+}: IEnvironmentGroupProps): React.JSX.Element {
   const isStale = environment.isStale;
   const staleBadge = (
     <span
@@ -27,6 +32,7 @@ export function EnvironmentGroup({ environment, agents, onSelectAgent }: IEnviro
         badges={staleBadge}
         agents={agents}
         onSelectAgent={onSelectAgent}
+        onToggleHide={onToggleHide}
       />
     </div>
   );

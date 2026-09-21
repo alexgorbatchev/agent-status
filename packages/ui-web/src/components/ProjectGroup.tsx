@@ -3,7 +3,13 @@ import type { IProjectGroupProps } from "./types";
 import { AgentGroupSection } from "./AgentGroupSection";
 import { FolderGit2 } from "lucide-react";
 
-export function ProjectGroup({ projectName, projectId, agents, onSelectAgent }: IProjectGroupProps): React.JSX.Element {
+export function ProjectGroup({
+  projectName,
+  projectId,
+  agents,
+  onSelectAgent,
+  onToggleHide,
+}: IProjectGroupProps): React.JSX.Element {
   return (
     <div data-testid="ProjectGroup">
       <AgentGroupSection
@@ -13,6 +19,7 @@ export function ProjectGroup({ projectName, projectId, agents, onSelectAgent }: 
         subtitle={`(${projectId})`}
         agents={agents}
         onSelectAgent={onSelectAgent}
+        onToggleHide={onToggleHide}
       />
     </div>
   );
