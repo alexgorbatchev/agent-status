@@ -3,6 +3,7 @@ import type { ILogFrameItemProps } from "./types";
 import { Brain, Wrench, AlertTriangle, User, Play, CheckCircle2 } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
+import remarkGfm from "remark-gfm";
 import { ToolExecutionBlock } from "./ToolExecutionBlock";
 import { TokenUsageBar } from "./TokenUsageBar";
 import { rehypeAnsi } from "../utils/rehypeAnsi";
@@ -23,7 +24,7 @@ interface IMarkdownTableProps extends React.ComponentPropsWithoutRef<"table"> {
 const markdownComponents = {
   pre: ({ node: _node, className, ...props }: IMarkdownPreProps) => (
     <pre
-      className={`min-w-0 max-w-full overflow-x-auto [overflow-wrap:anywhere] break-all ${className ?? ""}`}
+      className={`min-w-0 max-w-full overflow-x-auto whitespace-pre-wrap [overflow-wrap:anywhere] break-all ${className ?? ""}`}
       {...props}
     />
   ),
@@ -92,7 +93,7 @@ export function LogFrameItem({ frame }: ILogFrameItemProps): React.JSX.Element {
       ? "bg-purple-950/20 border-purple-900/40 ml-4"
       : "bg-slate-900/80 border-slate-800";
 
-  const remarkPlugins = useMemo(() => [remarkBreaks], []);
+  const remarkPlugins = useMemo(() => [remarkBreaks, remarkGfm], []);
   const rehypePlugins = useMemo(() => [rehypeAnsi], []);
   const processedContent = useMemo(
     () => (frame.data.content ? preprocessMarkdownAnsi(frame.data.content) : null),

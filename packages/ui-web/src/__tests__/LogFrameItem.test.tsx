@@ -115,11 +115,28 @@ describe("LogFrameItem Component", () => {
     const html = renderToString(<LogFrameItem frame={markdownPayload} />);
 
     expect(html).toMatch(
-      /<pre[^>]*class="[^"]*min-w-0[^"]*max-w-full[^"]*\[overflow-wrap:anywhere\][^"]*break-all[^"]*"/,
+      /<pre[^>]*class="[^"]*min-w-0[^"]*max-w-full[^"]*whitespace-pre-wrap[^"]*\[overflow-wrap:anywhere\][^"]*break-all[^"]*"/,
     );
     expect(html).toMatch(
       /<code[^>]*class="[^"]*min-w-0[^"]*max-w-full[^"]*\[overflow-wrap:anywhere\][^"]*break-all[^"]*"/,
     );
+  });
+
+  it("renders markdown table in an overflow containment wrapper", () => {
+    const tableMarkdownPayload = {
+      ...fixture_telemetryFrame,
+      data: {
+        ...fixture_telemetryFrame.data,
+        content: "| Service | Status |\n|---|---|\n| API | Operational |\n| DB | Connected |",
+      },
+    };
+    const html = renderToString(<LogFrameItem frame={tableMarkdownPayload} />);
+
+    expect(html).toContain('class="min-w-0 max-w-full overflow-x-auto my-2"');
+    expect(html).toMatch(/<table[^>]*class="[^"]*min-w-0[^"]*max-w-full[^"]*\[overflow-wrap:anywhere\][^"]*"/);
+    expect(html).toContain("Service");
+    expect(html).toContain("Operational");
+    expect(html).toContain("Connected");
   });
 
   it("renders icons and styles for run_started, turn_end, and error event types", () => {

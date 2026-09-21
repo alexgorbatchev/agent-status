@@ -186,4 +186,66 @@ test.describe("LogDrawer & Live Tail", () => {
     const stream = page.getByTestId("LogDrawer--stream");
     await expect(stream.getByText("No telemetry log events recorded yet.")).toBeVisible();
   });
+
+  test("contains long 500-character unbroken strings without horizontal overflow", async ({ page }) => {
+    await setupMockSSERoute(page, [
+      {
+        type: "snapshot",
+        at: Date.now(),
+        agents: [fixture_agentStateRunning],
+        environments: [fixture_environmentInfo],
+      },
+    ]);
+
+    const longUnbrokenToken = "x".repeat(500);
+    const longStringFrame = {
+      ...fixture_telemetryFrame,
+      data: {
+        ...fixture_telemetryFrame.data,
+        content: `Markdown with long unbroken token: ${longUnbrokenToken}\n\n\`\`\`sh\n${longUnbrokenToken}\n\`\`\`\n\n| Column | Value |\n|---|---|\n| Data | ${longUnbrokenToken} |`,
+        toolName: "Bash",
+        toolInput: {
+          command: `echo ${longUnbrokenToken}`,
+        },
+        toolOutput: longUnbrokenToken,
+      },
+    };
+
+    await page.route("**/api/v1/agents/*/logs*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        },
+        body: JSON.stringify([longStringFrame]),
+      });
+    });
+
+    await page.route("**/api/v1/agents/*/live-tail*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+          "Access-Control-Allow-Origin": "*",
+        },
+        body: `data: ${JSON.stringify(longStringFrame)}\n\n`,
+      });
+    });
+
+    await page.goto("/");
+    await page.getByText("Build agent-status dashboard").click();
+
+    const drawer = page.getByTestId("LogDrawer");
+    await expect(drawer).toBeVisible();
+
+    const stream = page.getByTestId("LogDrawer--stream");
+    await expect(stream).toBeVisible();
+
+    // Verify stream scrollWidth does not exceed clientWidth (zero horizontal overflow)
+    const overflowDiff = await stream.evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(overflowDiff).toBeLessThanOrEqual(0);
+  });
 });

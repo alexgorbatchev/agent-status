@@ -3,6 +3,7 @@ import React from "react";
 import assert from "node:assert";
 import { renderToString } from "react-dom/server";
 import { LogDrawer } from "../components/LogDrawer";
+import { LogFrameItem } from "../components/LogFrameItem";
 import { setupMockDomEnvironment, mountComponent } from "./helpers";
 import { fixture_agentStateRunning, fixture_agentStateWaitingQuestion, fixture_telemetryFrame } from "./fixtures";
 import type { ITelemetryFrame } from "../types";
@@ -82,6 +83,30 @@ describe("LogDrawer Component", () => {
 
     // Header metadata must truncate long text
     expect(rendered).toMatch(/<p[^>]*class="[^"]*truncate[^"]*"[^>]*>.*main.*<\/p>/);
+  });
+
+  it("renders 500-character unbroken strings in log stream with overflow containment classes", () => {
+    const longToken = "y".repeat(500);
+    const longFrame: ITelemetryFrame = {
+      ...fixture_telemetryFrame,
+      data: {
+        ...fixture_telemetryFrame.data,
+        content: `Long text: ${longToken}\n\n\`\`\`sh\n${longToken}\n\`\`\`\n\n| H1 | H2 |\n|---|---|\n| ${longToken} | test |`,
+        toolName: "Bash",
+        toolInput: {
+          command: `echo ${longToken}`,
+        },
+        toolOutput: longToken,
+      },
+    };
+
+    const renderedDrawer = renderToString(<LogDrawer agent={fixture_agentStateRunning} onClose={() => {}} />);
+    expect(renderedDrawer).toContain("max-w-3xl");
+    expect(renderedDrawer).toContain("overflow-x-hidden min-w-0 w-full");
+
+    const renderedItem = renderToString(<LogFrameItem frame={longFrame} />);
+    expect(renderedItem).toContain("min-w-0 max-w-full overflow-hidden");
+    expect(renderedItem).toContain("[overflow-wrap:anywhere] break-all");
   });
 
   it("copies debug command to clipboard when debug button is clicked", async () => {
