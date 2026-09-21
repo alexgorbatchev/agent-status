@@ -107,6 +107,7 @@ type StateDiff struct {
 	LineNumber  int             `json:"lineNumber,omitempty"`
 	EventType   string          `json:"eventType"`
 	SubagentID  *string         `json:"subagentId,omitempty"`
+	IsSynthetic bool            `json:"isSynthetic,omitempty"`
 	Mutations   []FieldMutation `json:"mutations"`
 	InputDelta  int64           `json:"inputDelta,omitempty"`
 	OutputDelta int64           `json:"outputDelta,omitempty"`
@@ -124,12 +125,16 @@ func RenderDiff(w io.Writer, diff StateDiff, agentMode bool) {
 		if diff.SubagentID != nil && *diff.SubagentID != "" {
 			subStr = fmt.Sprintf(" subagent:%s", *diff.SubagentID)
 		}
+		syntheticStr := ""
+		if diff.IsSynthetic {
+			syntheticStr = " synthetic:true"
+		}
 		deltaStr := ""
 		if diff.InputDelta != 0 || diff.OutputDelta != 0 || diff.CostDelta != 0 {
 			deltaStr = fmt.Sprintf(" in:+%d out:+%d cost:+$%.4f", diff.InputDelta, diff.OutputDelta, diff.CostDelta)
 		}
-		_, _ = fmt.Fprintf(w, "diff step:%d event:%s line:%d%s mutations:[%s]%s\n",
-			diff.StepIndex, diff.EventType, diff.LineNumber, subStr, strings.Join(muts, ","), deltaStr)
+		_, _ = fmt.Fprintf(w, "diff step:%d event:%s%s line:%d%s mutations:[%s]%s\n",
+			diff.StepIndex, diff.EventType, syntheticStr, diff.LineNumber, subStr, strings.Join(muts, ","), deltaStr)
 		return
 	}
 
@@ -140,8 +145,12 @@ func RenderDiff(w io.Writer, diff StateDiff, agentMode bool) {
 	if diff.SubagentID != nil && *diff.SubagentID != "" {
 		loc += fmt.Sprintf(" [subagent: %s]", *diff.SubagentID)
 	}
+	synth := ""
+	if diff.IsSynthetic {
+		synth = " (synthetic)"
+	}
 
-	_, _ = fmt.Fprintf(w, "Step %d [%s]%s:\n", diff.StepIndex, diff.EventType, loc)
+	_, _ = fmt.Fprintf(w, "Step %d [%s]%s%s:\n", diff.StepIndex, diff.EventType, synth, loc)
 	for _, m := range diff.Mutations {
 		_, _ = fmt.Fprintf(w, "  %-14s %s -> %s\n", m.Field+":", m.From, m.To)
 	}
@@ -156,15 +165,16 @@ func RenderDiff(w io.Writer, diff StateDiff, agentMode bool) {
 
 // ReplaySummary contains high-level metrics from a completed replay.
 type ReplaySummary struct {
-	Harness          types.HarnessType   `json:"harness"`
-	SessionID        string              `json:"sessionId"`
-	AgentID          string              `json:"agentId"`
-	ProjectName      string              `json:"projectName"`
-	Branch           string              `json:"branch"`
-	CWD              string              `json:"cwd"`
-	Activity         types.ActivityState `json:"activity"`
-	Lifecycle        types.LifecycleState`json:"lifecycle"`
-	Title            string              `json:"title"`
+	Harness              types.HarnessType    `json:"harness"`
+	SessionID            string               `json:"sessionId"`
+	AgentID              string               `json:"agentId"`
+	ProjectName          string               `json:"projectName"`
+	Branch               string               `json:"branch"`
+	CWD                  string               `json:"cwd"`
+	Activity             types.ActivityState  `json:"activity"`
+	Lifecycle            types.LifecycleState `json:"lifecycle"`
+	IsLifecycleSynthetic bool                 `json:"isLifecycleSynthetic,omitempty"`
+	Title                string               `json:"title"`
 	Action           string              `json:"action"`
 	TokensInput      int64               `json:"tokensInput"`
 	TokensOutput     int64               `json:"tokensOutput"`
@@ -184,8 +194,16 @@ func RenderReplaySummary(w io.Writer, s ReplaySummary, agentMode bool) {
 		if !s.VerificationOK {
 			verStatus = "FAIL"
 		}
+		lifecycleStr := string(s.Lifecycle)
+		if s.Lifecycle == types.LifecycleExited {
+			if s.IsLifecycleSynthetic {
+				lifecycleStr = "EXITED(synthetic)"
+			} else {
+				lifecycleStr = "EXITED(native)"
+			}
+		}
 		_, _ = fmt.Fprintf(w, "harness:%s session_id:%s agent_id:%s project:%s branch:%s activity:%s lifecycle:%s tokens_in:%d tokens_out:%d tokens_total:%d cost_usd:%.4f subagents:%d frames:%d verification:%s ver_logs:%d duration_ms:%d\n",
-			s.Harness, s.SessionID, s.AgentID, s.ProjectName, s.Branch, s.Activity, s.Lifecycle,
+			s.Harness, s.SessionID, s.AgentID, s.ProjectName, s.Branch, s.Activity, lifecycleStr,
 			s.TokensInput, s.TokensOutput, s.TokensTotal, s.CostUSD, s.SubagentCount,
 			s.FramesProcessed, verStatus, s.VerificationLogs, s.DurationMs)
 		return
@@ -204,7 +222,15 @@ func RenderReplaySummary(w io.Writer, s ReplaySummary, agentMode bool) {
 	if s.Action != "" {
 		_, _ = fmt.Fprintf(w, "  Action:          %s\n", s.Action)
 	}
-	_, _ = fmt.Fprintf(w, "  Lifecycle:       %s\n", s.Lifecycle)
+	lifecycleStr := string(s.Lifecycle)
+	if s.Lifecycle == types.LifecycleExited {
+		if s.IsLifecycleSynthetic {
+			lifecycleStr += " (synthetic)"
+		} else {
+			lifecycleStr += " (native)"
+		}
+	}
+	_, _ = fmt.Fprintf(w, "  Lifecycle:       %s\n", lifecycleStr)
 	_, _ = fmt.Fprintf(w, "  Activity:        %s\n", s.Activity)
 	_, _ = fmt.Fprintf(w, "  Token Usage:     Input: %d | Output: %d | Total: %d\n",
 		s.TokensInput, s.TokensOutput, s.TokensTotal)

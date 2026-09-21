@@ -10,6 +10,12 @@ import (
 	serverstore "github.com/alexgorbatchev/agent-status/packages/agent-server/store"
 )
 
+// VerifyOptions configures read-side verification checks.
+type VerifyOptions struct {
+	StrictLifecycle bool
+	HasExplicitExit bool
+}
+
 // VerificationReport captures all read-side API assertions.
 type VerificationReport struct {
 	AgentID   string                   `json:"agentId"`
@@ -21,7 +27,7 @@ type VerificationReport struct {
 }
 
 // VerifyAgentState executes agent-server queries against the populated SQLite database.
-func VerifyAgentState(ctx context.Context, db *sql.DB, agentID string) (*VerificationReport, error) {
+func VerifyAgentState(ctx context.Context, db *sql.DB, agentID string, opts ...VerifyOptions) (*VerificationReport, error) {
 	report := &VerificationReport{
 		AgentID: agentID,
 		Passed:  true,
@@ -70,6 +76,14 @@ func VerifyAgentState(ctx context.Context, db *sql.DB, agentID string) (*Verific
 		addCheck("Lifecycle invariant", true, string(agent.Activity.Lifecycle))
 	} else {
 		addCheck("Lifecycle invariant", false, fmt.Sprintf("invalid lifecycle: %q", agent.Activity.Lifecycle))
+	}
+
+	if len(opts) > 0 && opts[0].StrictLifecycle {
+		if opts[0].HasExplicitExit {
+			addCheck("Transcript lifecycle termination", true, "terminated with explicit harness exit event")
+		} else {
+			addCheck("Transcript lifecycle termination", false, fmt.Sprintf("transcript is open-ended (lifecycle=%s, no explicit harness exit event)", agent.Activity.Lifecycle))
+		}
 	}
 
 	switch agent.Activity.Activity {

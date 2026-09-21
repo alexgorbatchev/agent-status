@@ -153,6 +153,24 @@ func TestRenderDiff(t *testing.T) {
 			t.Errorf("expected mutation, got: %s", out)
 		}
 	})
+
+	t.Run("synthetic diff annotation in human and agent mode", func(t *testing.T) {
+		synthDiff := diff
+		synthDiff.IsSynthetic = true
+		var buf bytes.Buffer
+		RenderDiff(&buf, synthDiff, false)
+		out := buf.String()
+		if !strings.Contains(out, "(synthetic)") {
+			t.Errorf("expected '(synthetic)' in diff header, got: %s", out)
+		}
+
+		buf.Reset()
+		RenderDiff(&buf, synthDiff, true)
+		agentOut := buf.String()
+		if !strings.Contains(agentOut, "synthetic:true") {
+			t.Errorf("expected 'synthetic:true' in agent diff, got: %s", agentOut)
+		}
+	})
 }
 
 func TestRenderReplaySummary(t *testing.T) {
@@ -214,6 +232,42 @@ func TestRenderReplaySummary(t *testing.T) {
 		}
 		if !strings.Contains(out, "verification:OK") {
 			t.Errorf("expected verification status, got: %s", out)
+		}
+	})
+
+	t.Run("synthetic lifecycle annotation in human and agent mode", func(t *testing.T) {
+		synthSummary := summary
+		synthSummary.IsLifecycleSynthetic = true
+		var buf bytes.Buffer
+		RenderReplaySummary(&buf, synthSummary, false)
+		out := buf.String()
+		if !strings.Contains(out, "Lifecycle:       EXITED (synthetic)") {
+			t.Errorf("expected 'Lifecycle:       EXITED (synthetic)', got: %s", out)
+		}
+
+		buf.Reset()
+		RenderReplaySummary(&buf, synthSummary, true)
+		agentOut := buf.String()
+		if !strings.Contains(agentOut, "lifecycle:EXITED(synthetic)") {
+			t.Errorf("expected 'lifecycle:EXITED(synthetic)', got: %s", agentOut)
+		}
+	})
+
+	t.Run("native lifecycle annotation in human and agent mode", func(t *testing.T) {
+		nativeSummary := summary
+		nativeSummary.IsLifecycleSynthetic = false
+		var buf bytes.Buffer
+		RenderReplaySummary(&buf, nativeSummary, false)
+		out := buf.String()
+		if !strings.Contains(out, "Lifecycle:       EXITED (native)") {
+			t.Errorf("expected 'Lifecycle:       EXITED (native)', got: %s", out)
+		}
+
+		buf.Reset()
+		RenderReplaySummary(&buf, nativeSummary, true)
+		agentOut := buf.String()
+		if !strings.Contains(agentOut, "lifecycle:EXITED(native)") {
+			t.Errorf("expected 'lifecycle:EXITED(native)', got: %s", agentOut)
 		}
 	})
 }

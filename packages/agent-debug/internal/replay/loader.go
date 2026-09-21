@@ -16,9 +16,10 @@ import (
 
 // ReplayEvent annotates a parsed telemetry event with source lineage and subagent context.
 type ReplayEvent struct {
-	Event      parser.ParsedEvent
-	SourceLine int
-	SubagentID *string
+	Event       parser.ParsedEvent
+	SourceLine  int
+	SubagentID  *string
+	IsSynthetic bool
 }
 
 // LoadedSession contains all normalized, timestamp-interleaved events for an offline replay.
@@ -32,7 +33,7 @@ type LoadedSession struct {
 }
 
 // LoadSession loads and prepares transcript events across all harnesses with full fidelity.
-func LoadSession(ctx context.Context, filePath string, harness types.HarnessType, sessionID string, cwdOverride string) (*LoadedSession, error) {
+func LoadSession(ctx context.Context, filePath string, harness types.HarnessType, sessionID string, cwdOverride string, strictLifecycle ...bool) (*LoadedSession, error) {
 	if harness == "" {
 		detected, err := DetectHarness(filePath)
 		if err != nil {
@@ -41,21 +42,23 @@ func LoadSession(ctx context.Context, filePath string, harness types.HarnessType
 		harness = detected
 	}
 
+	strict := len(strictLifecycle) > 0 && strictLifecycle[0]
+
 	switch harness {
 	case types.HarnessOpencode:
-		return loadOpencodeSession(ctx, filePath, sessionID, cwdOverride)
+		return loadOpencodeSession(ctx, filePath, sessionID, cwdOverride, strict)
 	case types.HarnessClaudeCode:
-		return loadClaudeCodeSession(filePath, sessionID, cwdOverride)
+		return loadClaudeCodeSession(filePath, sessionID, cwdOverride, strict)
 	case types.HarnessPi:
-		return loadPiSession(filePath, sessionID, cwdOverride)
+		return loadPiSession(filePath, sessionID, cwdOverride, strict)
 	case types.HarnessCodex:
-		return loadCodexSession(filePath, sessionID, cwdOverride)
+		return loadCodexSession(filePath, sessionID, cwdOverride, strict)
 	default:
 		return nil, fmt.Errorf("unsupported harness: %s", harness)
 	}
 }
 
-func loadOpencodeSession(ctx context.Context, dbPath string, sessionID string, cwdOverride string) (*LoadedSession, error) {
+func loadOpencodeSession(ctx context.Context, dbPath string, sessionID string, cwdOverride string, strictLifecycle ...bool) (*LoadedSession, error) {
 	db, err := parser.OpenOpencodeDB(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("opening opencode database %s: %w", dbPath, err)
@@ -118,7 +121,7 @@ func loadOpencodeSession(ctx context.Context, dbPath string, sessionID string, c
 		})
 	}
 
-	replayEvents = ensureSyntheticLifecycle(replayEvents, target.TimeCreated, target.TimeUpdated, effectiveCWD)
+	replayEvents = ensureSyntheticLifecycle(replayEvents, target.TimeCreated, target.TimeUpdated, effectiveCWD, strictLifecycle...)
 
 	return &LoadedSession{
 		Harness:        types.HarnessOpencode,
@@ -130,7 +133,7 @@ func loadOpencodeSession(ctx context.Context, dbPath string, sessionID string, c
 	}, nil
 }
 
-func loadClaudeCodeSession(filePath string, sessionIDOverride string, cwdOverride string) (*LoadedSession, error) {
+func loadClaudeCodeSession(filePath string, sessionIDOverride string, cwdOverride string, strictLifecycle ...bool) (*LoadedSession, error) {
 	sessID := sessionIDOverride
 	if sessID == "" {
 		base := filepath.Base(filePath)
@@ -223,7 +226,7 @@ func loadClaudeCodeSession(filePath string, sessionIDOverride string, cwdOverrid
 		startTS = allReplayEvents[0].Event.Timestamp
 		endTS = allReplayEvents[len(allReplayEvents)-1].Event.Timestamp
 	}
-	allReplayEvents = ensureSyntheticLifecycle(allReplayEvents, startTS, endTS, effectiveCWD)
+	allReplayEvents = ensureSyntheticLifecycle(allReplayEvents, startTS, endTS, effectiveCWD, strictLifecycle...)
 
 	return &LoadedSession{
 		Harness:        types.HarnessClaudeCode,
@@ -235,7 +238,7 @@ func loadClaudeCodeSession(filePath string, sessionIDOverride string, cwdOverrid
 	}, nil
 }
 
-func loadPiSession(filePath string, sessionIDOverride string, cwdOverride string) (*LoadedSession, error) {
+func loadPiSession(filePath string, sessionIDOverride string, cwdOverride string, strictLifecycle ...bool) (*LoadedSession, error) {
 	sessID := sessionIDOverride
 	if sessID == "" {
 		base := filepath.Base(filePath)
@@ -273,7 +276,7 @@ func loadPiSession(filePath string, sessionIDOverride string, cwdOverride string
 		startTS = allReplayEvents[0].Event.Timestamp
 		endTS = allReplayEvents[len(allReplayEvents)-1].Event.Timestamp
 	}
-	allReplayEvents = ensureSyntheticLifecycle(allReplayEvents, startTS, endTS, effectiveCWD)
+	allReplayEvents = ensureSyntheticLifecycle(allReplayEvents, startTS, endTS, effectiveCWD, strictLifecycle...)
 
 	return &LoadedSession{
 		Harness:        types.HarnessPi,
@@ -285,7 +288,7 @@ func loadPiSession(filePath string, sessionIDOverride string, cwdOverride string
 	}, nil
 }
 
-func loadCodexSession(filePath string, sessionIDOverride string, cwdOverride string) (*LoadedSession, error) {
+func loadCodexSession(filePath string, sessionIDOverride string, cwdOverride string, strictLifecycle ...bool) (*LoadedSession, error) {
 	sessID := sessionIDOverride
 	if sessID == "" {
 		if rolloutInfo, err := parser.ParseCodexRolloutPath(filePath); err == nil && rolloutInfo.SessionID != "" {
@@ -327,7 +330,7 @@ func loadCodexSession(filePath string, sessionIDOverride string, cwdOverride str
 		startTS = allReplayEvents[0].Event.Timestamp
 		endTS = allReplayEvents[len(allReplayEvents)-1].Event.Timestamp
 	}
-	allReplayEvents = ensureSyntheticLifecycle(allReplayEvents, startTS, endTS, effectiveCWD)
+	allReplayEvents = ensureSyntheticLifecycle(allReplayEvents, startTS, endTS, effectiveCWD, strictLifecycle...)
 
 	return &LoadedSession{
 		Harness:        types.HarnessCodex,
@@ -392,8 +395,11 @@ func readJSONLLines(filePath string, parseFn lineParseFunc) ([]parsedLineItem, s
 	return items, inferredCWD, nil
 }
 
-func ensureSyntheticLifecycle(events []ReplayEvent, fallbackStartTS, fallbackEndTS int64, cwd string) []ReplayEvent {
+func ensureSyntheticLifecycle(events []ReplayEvent, fallbackStartTS, fallbackEndTS int64, cwd string, strictLifecycle ...bool) []ReplayEvent {
 	if len(events) == 0 {
+		return events
+	}
+	if len(strictLifecycle) > 0 && strictLifecycle[0] {
 		return events
 	}
 
@@ -426,8 +432,9 @@ func ensureSyntheticLifecycle(events []ReplayEvent, fallbackStartTS, fallbackEnd
 				CWD:       cwd,
 				Data:      types.TelemetryFrameData{},
 			},
-			SourceLine: 0,
-			SubagentID: nil,
+			SourceLine:  0,
+			SubagentID:  nil,
+			IsSynthetic: true,
 		})
 	}
 
@@ -447,8 +454,9 @@ func ensureSyntheticLifecycle(events []ReplayEvent, fallbackStartTS, fallbackEnd
 				CWD:       cwd,
 				Data:      types.TelemetryFrameData{},
 			},
-			SourceLine: 0,
-			SubagentID: nil,
+			SourceLine:  0,
+			SubagentID:  nil,
+			IsSynthetic: true,
 		})
 	}
 
