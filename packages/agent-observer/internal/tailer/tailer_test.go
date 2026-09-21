@@ -674,4 +674,59 @@ func TestTailerCommitInsideOffsetCallback(t *testing.T) {
 	}
 }
 
+func TestTailerAtomicFileReplacementNewInode(t *testing.T) {
+	tmpDir := t.TempDir()
+	store, _ := NewCursorStore(filepath.Join(tmpDir, "cursors.json"))
+	targetFile := filepath.Join(tmpDir, "session.jsonl")
+
+	// Initial file: 22 bytes
+	_ = os.WriteFile(targetFile, []byte("old line 1\nold line 2\n"), 0600)
+
+	var mu sync.Mutex
+	var received []string
+
+	tail, err := NewTailer(targetFile, store, func(line []byte) error {
+		mu.Lock()
+		defer mu.Unlock()
+		received = append(received, string(line))
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := tail.readAvailable(); err != nil {
+		t.Fatalf("readAvailable error: %v", err)
+	}
+
+	mu.Lock()
+	if len(received) != 2 {
+		t.Fatalf("expected 2 lines initially, got %d", len(received))
+	}
+	mu.Unlock()
+
+	// Atomic replacement (new inode) with content larger than old offset
+	tmpFile := filepath.Join(tmpDir, "session.jsonl.tmp")
+	_ = os.WriteFile(tmpFile, []byte("compacted line 1\ncompacted line 2\ncompacted line 3\n"), 0600)
+	if err := os.Rename(tmpFile, targetFile); err != nil {
+		t.Fatalf("atomic rename failed: %v", err)
+	}
+
+	// Next readAvailable should detect inode change and reset offset to 0, reading from start of compacted file
+	if err := tail.readAvailable(); err != nil {
+		t.Fatalf("readAvailable after atomic replace error: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	// Total received should be 2 old lines + 3 compacted lines = 5
+	if len(received) != 5 {
+		t.Fatalf("expected 5 lines after atomic replace, got %d: %v", len(received), received)
+	}
+	if received[2] != "compacted line 1" {
+		t.Errorf("expected received[2] to be 'compacted line 1', got %q", received[2])
+	}
+}
+
+
 

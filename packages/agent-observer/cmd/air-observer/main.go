@@ -253,7 +253,9 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 		t, err := tailer.NewTailerWithOffsetHandler(path, cursorStore, func(line []byte, offset int64) error {
 			events, pErr := parseLineForHarness(harness, line, cwd)
 			if pErr != nil {
-				return pErr
+				logging.Warn("transcript_line_parse_failed", "harness", harness, "path", path, "err", pErr)
+				_ = t.Commit(offset)
+				return nil
 			}
 
 			if len(events) == 0 {
@@ -261,7 +263,7 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 				return nil
 			}
 
-			for _, ev := range events {
+			for i, ev := range events {
 				eventCWD := ev.CWD
 				if eventCWD == "" {
 					eventCWD = cwd
@@ -287,9 +289,13 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 					EventType:      ev.EventType,
 					Data:           ev.Data,
 				}
-				err := ship.EnqueueWithAck(tailCtx, frame, func() {
-					_ = t.Commit(offset)
-				})
+				var onAck shipper.AckCallback
+				if i == len(events)-1 {
+					onAck = func() {
+						_ = t.Commit(offset)
+					}
+				}
+				err := ship.EnqueueWithAck(tailCtx, frame, onAck)
 				if err != nil {
 					return err
 				}
@@ -321,7 +327,9 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 		// 1. Scan Claude Code
 		ccSessions, err := ccScanner.Scan()
 		newCCMap := make(map[string]bool)
-		if err == nil {
+		if err != nil {
+			logging.Warn("scan_failed", "harness", types.HarnessClaudeCode, "err", err)
+		} else {
 			for _, s := range ccSessions {
 				newCCMap[s.SessionID] = true
 
@@ -367,35 +375,37 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 					}
 				}
 			}
-		}
 
-		// Detect exited Claude Code sessions
-		mu.Lock()
-		for sessID := range activeClaudeSessions {
-			if !newCCMap[sessID] {
-				// Claude Code session exited
-				agentID := fmt.Sprintf("%s:%s:%s", env.ID, types.HarnessClaudeCode, sessID)
-				_ = ship.EnqueueContext(ctx, types.ITelemetryFrame{
-					Version:        "1.0",
-					EnvID:          env.ID,
-					Environment:    *env,
-					AgentID:        agentID,
-					SessionID:      sessID,
-					Harness:        types.HarnessClaudeCode,
-					Timestamp:      time.Now().UnixMilli(),
-					EventType:      "run_exited",
-					Data:           types.TelemetryFrameData{},
-				})
-				cleanupSessionTailsLocked(sessID)
+			// Detect exited Claude Code sessions
+			mu.Lock()
+			for sessID := range activeClaudeSessions {
+				if !newCCMap[sessID] {
+					// Claude Code session exited
+					agentID := fmt.Sprintf("%s:%s:%s", env.ID, types.HarnessClaudeCode, sessID)
+					_ = ship.EnqueueContext(ctx, types.ITelemetryFrame{
+						Version:        "1.0",
+						EnvID:          env.ID,
+						Environment:    *env,
+						AgentID:        agentID,
+						SessionID:      sessID,
+						Harness:        types.HarnessClaudeCode,
+						Timestamp:      time.Now().UnixMilli(),
+						EventType:      "run_exited",
+						Data:           types.TelemetryFrameData{},
+					})
+					cleanupSessionTailsLocked(sessID)
+				}
 			}
+			activeClaudeSessions = newCCMap
+			mu.Unlock()
 		}
-		activeClaudeSessions = newCCMap
-		mu.Unlock()
 
 		// 2. Scan Pi
 		piSessions, err := piScanner.Scan(ctx)
 		newPiMap := make(map[string]scanner.PiSessionDescriptor)
-		if err == nil {
+		if err != nil {
+			logging.Warn("scan_failed", "harness", types.HarnessPi, "err", err)
+		} else {
 			for _, s := range piSessions {
 				newPiMap[s.SessionID] = s
 
@@ -433,41 +443,43 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 					attachTailer(s.TranscriptPath, types.HarnessPi, s.HarnessVersion, s.SessionID, s.CWD, s.PID, nil)
 				}
 			}
-		}
 
-		// Detect exited Pi sessions
-		mu.Lock()
-		for sessID, oldDesc := range activePiSessions {
-			newDesc, exists := newPiMap[sessID]
-			if oldDesc.IsActive && (!exists || !newDesc.IsActive) {
-				// Pi process terminated or session ended
-				agentID := fmt.Sprintf("%s:%s:%s", env.ID, types.HarnessPi, sessID)
-				proj, ws, _ := gitResolver.Resolve(ctx, oldDesc.CWD, "")
-				_ = ship.EnqueueContext(ctx, types.ITelemetryFrame{
-					Version:        "1.0",
-					EnvID:          env.ID,
-					Environment:    *env,
-					AgentID:        agentID,
-					SessionID:      sessID,
-					PID:            oldDesc.PID,
-					Harness:        types.HarnessPi,
-					HarnessVersion: oldDesc.HarnessVersion,
-					Project:        proj,
-					Workspace:      ws,
-					Timestamp:      time.Now().UnixMilli(),
-					EventType:      "run_exited",
-					Data:           types.TelemetryFrameData{},
-				})
-				cleanupSessionTailsLocked(sessID)
+			// Detect exited Pi sessions
+			mu.Lock()
+			for sessID, oldDesc := range activePiSessions {
+				newDesc, exists := newPiMap[sessID]
+				if oldDesc.IsActive && (!exists || !newDesc.IsActive) {
+					// Pi process terminated or session ended
+					agentID := fmt.Sprintf("%s:%s:%s", env.ID, types.HarnessPi, sessID)
+					proj, ws, _ := gitResolver.Resolve(ctx, oldDesc.CWD, "")
+					_ = ship.EnqueueContext(ctx, types.ITelemetryFrame{
+						Version:        "1.0",
+						EnvID:          env.ID,
+						Environment:    *env,
+						AgentID:        agentID,
+						SessionID:      sessID,
+						PID:            oldDesc.PID,
+						Harness:        types.HarnessPi,
+						HarnessVersion: oldDesc.HarnessVersion,
+						Project:        proj,
+						Workspace:      ws,
+						Timestamp:      time.Now().UnixMilli(),
+						EventType:      "run_exited",
+						Data:           types.TelemetryFrameData{},
+					})
+					cleanupSessionTailsLocked(sessID)
+				}
 			}
+			activePiSessions = newPiMap
+			mu.Unlock()
 		}
-		activePiSessions = newPiMap
-		mu.Unlock()
 
 		// 3. Scan Codex
 		codexSessions, err := codexScanner.Scan(ctx)
 		newCodexMap := make(map[string]scanner.CodexSessionDescriptor)
-		if err == nil {
+		if err != nil {
+			logging.Warn("scan_failed", "harness", types.HarnessCodex, "err", err)
+		} else {
 			for _, s := range codexSessions {
 				newCodexMap[s.SessionID] = s
 
@@ -514,40 +526,42 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 					attachTailer(s.TranscriptPath, types.HarnessCodex, s.HarnessVersion, s.SessionID, s.CWD, s.PID, subID)
 				}
 			}
-		}
 
-		// Detect exited Codex sessions
-		mu.Lock()
-		for sessID, oldDesc := range activeCodexSessions {
-			newDesc, exists := newCodexMap[sessID]
-			if oldDesc.IsActive && (!exists || !newDesc.IsActive) {
-				agentID := fmt.Sprintf("%s:%s:%s", env.ID, types.HarnessCodex, sessID)
-				proj, ws, _ := gitResolver.Resolve(ctx, oldDesc.CWD, "")
-				_ = ship.EnqueueContext(ctx, types.ITelemetryFrame{
-					Version:        "1.0",
-					EnvID:          env.ID,
-					Environment:    *env,
-					AgentID:        agentID,
-					SessionID:      sessID,
-					PID:            oldDesc.PID,
-					Harness:        types.HarnessCodex,
-					HarnessVersion: oldDesc.HarnessVersion,
-					Project:        proj,
-					Workspace:      ws,
-					Timestamp:      time.Now().UnixMilli(),
-					EventType:      "run_exited",
-					Data:           types.TelemetryFrameData{},
-				})
-				cleanupSessionTailsLocked(sessID)
+			// Detect exited Codex sessions
+			mu.Lock()
+			for sessID, oldDesc := range activeCodexSessions {
+				newDesc, exists := newCodexMap[sessID]
+				if oldDesc.IsActive && (!exists || !newDesc.IsActive) {
+					agentID := fmt.Sprintf("%s:%s:%s", env.ID, types.HarnessCodex, sessID)
+					proj, ws, _ := gitResolver.Resolve(ctx, oldDesc.CWD, "")
+					_ = ship.EnqueueContext(ctx, types.ITelemetryFrame{
+						Version:        "1.0",
+						EnvID:          env.ID,
+						Environment:    *env,
+						AgentID:        agentID,
+						SessionID:      sessID,
+						PID:            oldDesc.PID,
+						Harness:        types.HarnessCodex,
+						HarnessVersion: oldDesc.HarnessVersion,
+						Project:        proj,
+						Workspace:      ws,
+						Timestamp:      time.Now().UnixMilli(),
+						EventType:      "run_exited",
+						Data:           types.TelemetryFrameData{},
+					})
+					cleanupSessionTailsLocked(sessID)
+				}
 			}
+			activeCodexSessions = newCodexMap
+			mu.Unlock()
 		}
-		activeCodexSessions = newCodexMap
-		mu.Unlock()
 
 		// 4. Scan OpenCode
 		opencodeSessions, err := opencodeScanner.Scan(ctx)
 		newOpencodeMap := make(map[string]scanner.OpencodeSessionDescriptor)
-		if err == nil {
+		if err != nil {
+			logging.Warn("scan_failed", "harness", types.HarnessOpencode, "err", err)
+		} else {
 			for _, s := range opencodeSessions {
 				newOpencodeMap[s.SessionID] = s
 
@@ -593,34 +607,34 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 					})
 				}
 			}
-		}
 
-		// Detect exited OpenCode sessions
-		mu.Lock()
-		for sessID, oldDesc := range activeOpencodeSessions {
-			newDesc, exists := newOpencodeMap[sessID]
-			if oldDesc.IsActive && (!exists || !newDesc.IsActive) {
-				agentID := fmt.Sprintf("%s:%s:%s", env.ID, types.HarnessOpencode, sessID)
-				proj, ws, _ := gitResolver.Resolve(ctx, oldDesc.CWD, "")
-				_ = ship.EnqueueContext(ctx, types.ITelemetryFrame{
-					Version:        "1.0",
-					EnvID:          env.ID,
-					Environment:    *env,
-					AgentID:        agentID,
-					SessionID:      sessID,
-					PID:            oldDesc.PID,
-					Harness:        types.HarnessOpencode,
-					HarnessVersion: oldDesc.HarnessVersion,
-					Project:        proj,
-					Workspace:      ws,
-					Timestamp:      time.Now().UnixMilli(),
-					EventType:      "run_exited",
-					Data:           types.TelemetryFrameData{},
-				})
+			// Detect exited OpenCode sessions
+			mu.Lock()
+			for sessID, oldDesc := range activeOpencodeSessions {
+				newDesc, exists := newOpencodeMap[sessID]
+				if oldDesc.IsActive && (!exists || !newDesc.IsActive) {
+					agentID := fmt.Sprintf("%s:%s:%s", env.ID, types.HarnessOpencode, sessID)
+					proj, ws, _ := gitResolver.Resolve(ctx, oldDesc.CWD, "")
+					_ = ship.EnqueueContext(ctx, types.ITelemetryFrame{
+						Version:        "1.0",
+						EnvID:          env.ID,
+						Environment:    *env,
+						AgentID:        agentID,
+						SessionID:      sessID,
+						PID:            oldDesc.PID,
+						Harness:        types.HarnessOpencode,
+						HarnessVersion: oldDesc.HarnessVersion,
+						Project:        proj,
+						Workspace:      ws,
+						Timestamp:      time.Now().UnixMilli(),
+						EventType:      "run_exited",
+						Data:           types.TelemetryFrameData{},
+					})
+				}
 			}
+			activeOpencodeSessions = newOpencodeMap
+			mu.Unlock()
 		}
-		activeOpencodeSessions = newOpencodeMap
-		mu.Unlock()
 	}
 
 	// Perform initial scan

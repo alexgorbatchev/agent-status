@@ -25,6 +25,7 @@ type Cursor struct {
 
 type CursorStore struct {
 	mu       sync.RWMutex
+	saveMu   sync.Mutex
 	filePath string
 	cursors  map[string]*Cursor
 }
@@ -104,6 +105,9 @@ func (cs *CursorStore) Set(c *Cursor) {
 }
 
 func (cs *CursorStore) Save() error {
+	cs.saveMu.Lock()
+	defer cs.saveMu.Unlock()
+
 	cs.mu.RLock()
 	data, err := json.MarshalIndent(cs.cursors, "", "  ")
 	cs.mu.RUnlock()

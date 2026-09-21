@@ -35,6 +35,10 @@ type Tailer struct {
 	committedOffset int64
 	autoCommit      bool
 	key             string
+	prefixHash      string
+	fileSize        int64
+	inode           uint64
+	device          uint64
 }
 
 // NewTailer creates a tailer using the classic LineHandler (auto-commits read offsets to cursor store).
@@ -155,27 +159,30 @@ func (t *Tailer) Commit(offset int64) error {
 	}
 	t.committedOffset = offset
 	key := t.key
+	prefixHash := t.prefixHash
+	size := t.fileSize
+	ino := t.inode
+	dev := t.device
 	store := t.store
 	filePath := t.filePath
 	t.mu.Unlock()
 
 	if store != nil && key != "" {
-		fi, err := os.Stat(filePath)
-		size := int64(0)
-		var ino uint64
-		var dev uint64
-		if err == nil {
-			size = fi.Size()
-			dev, ino, _ = getFileInfoStat(fi)
+		if size == 0 && ino == 0 {
+			if fi, err := os.Stat(filePath); err == nil {
+				size = fi.Size()
+				dev, ino, _ = getFileInfoStat(fi)
+			}
 		}
 		store.Set(&Cursor{
-			Key:       key,
-			Path:      filePath,
-			Offset:    offset,
-			Size:      size,
-			Inode:     ino,
-			Device:    dev,
-			UpdatedAt: time.Now().UnixMilli(),
+			Key:        key,
+			Path:       filePath,
+			Offset:     offset,
+			Size:       size,
+			Inode:      ino,
+			Device:     dev,
+			PrefixHash: prefixHash,
+			UpdatedAt:  time.Now().UnixMilli(),
 		})
 		return store.Save()
 	}
@@ -208,7 +215,15 @@ func (t *Tailer) readAvailable() error {
 	prefixHash, _ := ComputePrefixHash(f, fi.Size())
 
 	t.mu.Lock()
+	if t.key != "" && t.key != key {
+		t.offset = 0
+		t.committedOffset = 0
+	}
 	t.key = key
+	t.prefixHash = prefixHash
+	t.fileSize = fi.Size()
+	t.device = dev
+	t.inode = ino
 
 	// Initialize offset from cursor store on first run
 	if t.offset == 0 && t.committedOffset == 0 {

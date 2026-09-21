@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestCursorStore(t *testing.T) {
@@ -306,3 +309,39 @@ func TestDefaultCursorPath(t *testing.T) {
 		}
 	})
 }
+
+func TestCursorStoreConcurrentSave(t *testing.T) {
+	tmpDir := t.TempDir()
+	cursorPath := filepath.Join(tmpDir, "observer-cursors.json")
+	store, err := NewCursorStore(cursorPath)
+	if err != nil {
+		t.Fatalf("NewCursorStore error: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			store.Set(&Cursor{
+				Key:       fmt.Sprintf("key-%d", idx),
+				Path:      fmt.Sprintf("/path/%d.jsonl", idx),
+				Offset:    int64(idx * 100),
+				UpdatedAt: time.Now().UnixMilli(),
+			})
+			_ = store.Save()
+		}(i)
+	}
+	wg.Wait()
+
+	storeReloaded, err := NewCursorStore(cursorPath)
+	if err != nil {
+		t.Fatalf("reloading cursor store: %v", err)
+	}
+	for i := 0; i < 20; i++ {
+		if _, ok := storeReloaded.Get(fmt.Sprintf("key-%d", i)); !ok {
+			t.Errorf("missing key-%d in reloaded cursor store", i)
+		}
+	}
+}
+
