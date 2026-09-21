@@ -82,4 +82,65 @@ describe("ToolExecutionBlock Component", () => {
     expect(html).toMatch(/data-testid="ToolExecutionBlock--output"[^>]*class="[^"]*max-w-full[^"]*"/);
     expect(html).not.toMatch(/data-testid="ToolExecutionBlock--output"[^>]*class="[^"]*break-words[^"]*"/);
   });
+
+  it("renders DiffViewer instead of raw JSON pre for Claude Code FileEdit", () => {
+    const html = renderToString(
+      <ToolExecutionBlock
+        toolName="FileEdit"
+        toolInput={{
+          path: "src/utils/math.ts",
+          old_string: "export const add = (a, b) => a - b;",
+          new_string: "export const add = (a, b) => a + b;",
+        }}
+      />,
+    );
+
+    expect(html).toContain('data-testid="DiffViewer"');
+    expect(html).toContain('data-testid="DiffViewer--path"');
+    expect(html).toContain("src/utils/math.ts");
+    expect(html).toContain('data-testid="DiffViewer--badge"');
+    expect(html).toContain("EDIT");
+    expect(html).not.toContain('data-testid="ToolExecutionBlock--input"');
+  });
+
+  it("renders DiffViewer instead of raw JSON pre for Pi edit tool", () => {
+    const html = renderToString(
+      <ToolExecutionBlock
+        toolName="edit"
+        toolInput={{
+          path: "packages/ui-web/App.tsx",
+          edits: [
+            {
+              oldText: "const a = 1;",
+              newText: "const a = 2;",
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(html).toContain('data-testid="DiffViewer"');
+    expect(html).toContain('data-testid="DiffViewer--path"');
+    expect(html).toContain("packages/ui-web/App.tsx");
+    expect(html).not.toContain('data-testid="ToolExecutionBlock--input"');
+  });
+
+  it("renders DiffViewer instead of raw JSON pre for FileWrite", () => {
+    const html = renderToString(
+      <ToolExecutionBlock
+        toolName="FileWrite"
+        toolInput={{
+          path: "README.md",
+          content: "# Project\n\nWelcome to our project.",
+        }}
+      />,
+    );
+
+    expect(html).toContain('data-testid="DiffViewer"');
+    expect(html).toContain('data-testid="DiffViewer--badge"');
+    expect(html).toContain("WRITE");
+    expect(html).toContain('data-testid="DiffViewer--path"');
+    expect(html).toContain("README.md");
+    expect(html).not.toContain('data-testid="ToolExecutionBlock--input"');
+  });
 });
