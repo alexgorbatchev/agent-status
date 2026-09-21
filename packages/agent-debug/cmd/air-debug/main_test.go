@@ -790,3 +790,46 @@ func TestCLI_Events(t *testing.T) {
 		}
 	})
 }
+
+func TestCLI_ScannerAudit(t *testing.T) {
+	// Test human mode
+	cmd := newRootCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"scanner", "audit", "--harness", "nonexistent"})
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("scanner audit failed: %v", err)
+	}
+	if !strings.Contains(buf.String(), "No processes or sessions found") &&
+		!strings.Contains(buf.String(), "Process Discovery") &&
+		!strings.Contains(buf.String(), "scanner_audit") {
+		t.Errorf("unexpected output: %s", buf.String())
+	}
+
+	// Test JSON mode
+	var jsonBuf bytes.Buffer
+	cmdJSON := newRootCmd()
+	cmdJSON.SetOut(&jsonBuf)
+	cmdJSON.SetErr(&jsonBuf)
+	cmdJSON.SetArgs([]string{"scanner", "audit", "--json", "--harness", "nonexistent"})
+	if err := cmdJSON.Execute(); err != nil {
+		t.Fatalf("scanner audit --json failed: %v", err)
+	}
+	if !strings.Contains(jsonBuf.String(), "[]") && !strings.Contains(jsonBuf.String(), "null") {
+		t.Errorf("expected json array, got %s", jsonBuf.String())
+	}
+}
+
+func TestCLI_ProcessList(t *testing.T) {
+	cmd := newRootCmd()
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"process", "list", "--harness", "nonexistent"})
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("process list failed: %v", err)
+	}
+}

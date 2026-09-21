@@ -54,6 +54,15 @@ air-debug session replay --db ~/.local/share/agent-status/agent-status.db sessio
 # Directly inspect persisted agent state in SQLite database
 air-debug db inspect 01a0bd5b-0024-7222-9709-194e2fa6a892
 
+# Audit harness process discovery and session pairing across all harnesses
+air-debug scanner audit
+
+# Audit process pairing filtered by harness and working directory
+air-debug scanner audit --harness pi --cwd /Users/dev/agent-status
+
+# List running harness processes and pairing status
+air-debug process list
+
 # Validate session transcript against parser, classifier, and query assertions
 air-debug session validate session-abc.jsonl
 
@@ -135,3 +144,11 @@ Session Replay Summary (pi)
 | `--desc` | (none) | `true` | Order events by ID descending (newest first) |
 | `--asc` | (none) | `false` | Order events by ID ascending (oldest first) |
 | `--id <id>` | (none) | `0` | Inspect specific telemetry event by ID |
+
+### `air-debug scanner audit` / `air-debug process list`
+
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--harness <name>` | (none) | `""` | Filter audit by harness (`claude`, `pi`, `codex`, `opencode`) |
+| `--cwd <path>` | (none) | `""` | Filter audit by working directory |
+| `--json` | (none) | `false` | Output audit results as JSON |

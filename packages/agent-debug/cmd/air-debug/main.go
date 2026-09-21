@@ -12,6 +12,7 @@ import (
 	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/db"
 	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/output"
 	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/replay"
+	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/scanner"
 	"github.com/alexgorbatchev/agent-status/packages/agent-parser"
 	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree"
 	"github.com/spf13/cobra"
@@ -546,6 +547,81 @@ func newRootCmd() *cobra.Command {
 	inspectFlags.BoolVar(&dbInspectJSON, "json", false, "Output inspection result as JSON")
 	dbCmd.AddCommand(inspectCmd)
 	rootCmd.AddCommand(dbCmd)
+
+	// 5. scanner
+	scannerCmd := &cobra.Command{
+		Use:   "scanner",
+		Short: "Audit live harness process discovery and session pairing",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmd.Help()
+		},
+	}
+
+	var sHarness, sCWD string
+	var sJSON bool
+
+	runAudit := func(cmd *cobra.Command, args []string) error {
+		ctx := cmd.Context()
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		auditor := scanner.NewAuditor()
+		records, err := auditor.Audit(ctx, scanner.AuditFilter{
+			Harness: sHarness,
+			CWD:     sCWD,
+		})
+		if err != nil {
+			return err
+		}
+		if sJSON {
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
+			return enc.Encode(records)
+		}
+		output.RenderScannerAudit(cmd.OutOrStdout(), records, output.IsAgentMode())
+		return nil
+	}
+
+	auditCmd := &cobra.Command{
+		Use:   "audit",
+		Short: "Audit harness process discovery, pairing deltas, and orphan sessions",
+		RunE:  runAudit,
+	}
+	auditCmd.Flags().StringVar(&sHarness, "harness", "", "Filter audit by harness (claude, pi, codex, opencode)")
+	auditCmd.Flags().StringVar(&sCWD, "cwd", "", "Filter audit by working directory")
+	auditCmd.Flags().BoolVar(&sJSON, "json", false, "Output audit results as JSON")
+
+	scannerListCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List harness processes and pairing status (alias for scanner audit)",
+		RunE:  runAudit,
+	}
+	scannerListCmd.Flags().StringVar(&sHarness, "harness", "", "Filter audit by harness (claude, pi, codex, opencode)")
+	scannerListCmd.Flags().StringVar(&sCWD, "cwd", "", "Filter audit by working directory")
+	scannerListCmd.Flags().BoolVar(&sJSON, "json", false, "Output audit results as JSON")
+
+	scannerCmd.AddCommand(auditCmd)
+	scannerCmd.AddCommand(scannerListCmd)
+	rootCmd.AddCommand(scannerCmd)
+
+	// 6. process
+	processCmd := &cobra.Command{
+		Use:   "process",
+		Short: "Inspect running agent harness processes and pairing status",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmd.Help()
+		},
+	}
+	processListCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List running harness processes and pairing status",
+		RunE:  runAudit,
+	}
+	processListCmd.Flags().StringVar(&sHarness, "harness", "", "Filter audit by harness (claude, pi, codex, opencode)")
+	processListCmd.Flags().StringVar(&sCWD, "cwd", "", "Filter audit by working directory")
+	processListCmd.Flags().BoolVar(&sJSON, "json", false, "Output audit results as JSON")
+	processCmd.AddCommand(processListCmd)
+	rootCmd.AddCommand(processCmd)
 
 	cobrahelptree.Setup(rootCmd)
 	return rootCmd

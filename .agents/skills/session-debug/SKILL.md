@@ -82,13 +82,20 @@ Executes assertions against the transcript:
 
 Exits with `0` on success, `1` on validation failure.
 
-### C. OpenCode Multi-Session Inspection
+### D. Live Process Scanner Audit & Pairing Inspection
+Diagnose observer harness process discovery, clock pairing deltas, and detect orphaned processes or sessions without running the observer daemon:
 ```bash
-# List all sessions in database
-just debug session list ~/.local/share/opencode/opencode.db
+# Audit process pairing across all harnesses
+air-debug scanner audit
 
-# Replay specific session by ID
-just debug session replay --session-id ses_123 opencode.db
+# Filter by harness or workspace directory
+air-debug scanner audit --harness pi --cwd /path/to/repo
+
+# List running processes (alias)
+air-debug process list
+
+# Structured JSON output
+air-debug scanner audit --json
 ```
 
 ### D. Ingested Telemetry Event Inspection (`events`)

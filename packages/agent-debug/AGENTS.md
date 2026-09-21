@@ -17,6 +17,8 @@ Offline replay and validation CLI tool for agent session transcripts through the
 - Validate session offline: `air-debug session validate session-abc.jsonl`
 - Foreign path remapping: `air-debug session replay --cwd /local/repo session-abc.jsonl`
 - Export populated SQLite DB: `air-debug session replay --export-db .tmp/debug.db session-abc.jsonl`
+- Inspect persisted SQLite state: `air-debug db inspect <session-id>`
+- Audit process discovery & pairing: `air-debug scanner audit` (or `air-debug process list`)
 
 ## Local conventions
 - Follow subject-first CLI hierarchy (`air-debug session <verb>`).
