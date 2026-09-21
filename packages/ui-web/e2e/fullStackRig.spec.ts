@@ -170,10 +170,29 @@ test.describe.serial("Full-Stack Rigged Ingestion E2E", () => {
       timestamp: Date.now(),
     });
 
+    // Realistic intermediate lines that produce 0 events (ensuring no tailer deadlocks)
+    await stack.appendPiTranscript(piTranscriptPath, {
+      type: "thinking_level_change",
+      id: "pi-tl-1",
+      parentId: null,
+      timestamp: Date.now(),
+      thinkingLevel: "medium",
+    });
+
+    await stack.appendPiTranscript(piTranscriptPath, {
+      type: "custom_message",
+      customType: "@alexgorbatchev/pi-env",
+      content: "global settings",
+      display: true,
+      id: "pi-cm-1",
+      parentId: "pi-tl-1",
+      timestamp: Date.now(),
+    });
+
     await stack.appendPiTranscript(piTranscriptPath, {
       type: "message",
       id: "pi-msg-1",
-      parentId: null,
+      parentId: "pi-cm-1",
       timestamp: Date.now(),
       message: {
         role: "user",
@@ -188,6 +207,7 @@ test.describe.serial("Full-Stack Rigged Ingestion E2E", () => {
       timestamp: Date.now(),
       message: {
         role: "assistant",
+        stopReason: "toolUse",
         content: [
           {
             type: "toolCall",
@@ -205,8 +225,9 @@ test.describe.serial("Full-Stack Rigged Ingestion E2E", () => {
       },
     });
 
-    // 2. Verify Pi Agent appears in UI
+    // 2. Verify Pi Agent appears in UI with extracted title and tool execution
     await expect(page.getByText("Pi").first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole("heading", { name: "Refactor API server router" })).toBeVisible({ timeout: 5_000 });
     await expect(page.getByText("Reading src/router.ts")).toBeVisible({ timeout: 5_000 });
   });
 });

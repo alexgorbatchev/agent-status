@@ -118,7 +118,7 @@ export async function createTestStack(testId: string): Promise<ITestStack> {
         "--token",
         token,
         "--cors-origin",
-        `*`,
+        `http://localhost:${uiPort}`,
         "--log-level",
         "error",
       ],

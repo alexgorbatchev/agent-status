@@ -40,8 +40,9 @@ test.describe("Live Stream & Fleet Hydration", () => {
       agent: fixture_agentStateWaitingQuestion,
     });
 
-    // Verify dynamic update in active counter
-    await expect(page.getByTestId("Header--active-agents")).toContainText("Active:2");
+    // Verify dynamic update in attention counter and total agent count
+    await expect(page.getByTestId("Header--active-agents")).toContainText("Active:1");
+    await expect(page.getByTestId("Header--attention-agents")).toContainText("Needs Attention:1");
     await expect(page.getByTestId("App--agent-count")).toContainText("3 Total Agents");
     // Verify card rendered
     await expect(page.getByRole("heading", { name: "Implement user authentication flow" })).toBeVisible();
@@ -53,8 +54,28 @@ test.describe("Live Stream & Fleet Hydration", () => {
       agent: fixture_agentStateError,
     });
 
-    await expect(page.getByTestId("Header--active-agents")).toContainText("Active:3");
+    await expect(page.getByTestId("Header--active-agents")).toContainText("Active:1");
     await expect(page.getByTestId("Header--attention-agents")).toContainText("Needs Attention:2");
+    await expect(page.getByTestId("App--agent-count")).toContainText("4 Total Agents");
+
+    // Send a live upsert with a new BUSY agent to verify active counter increment
+    const secondBusyAgent = {
+      ...fixture_agentStateRunning,
+      id: "agent-running-2",
+      activity: {
+        ...fixture_agentStateRunning.activity,
+        title: "Optimize image compression pipeline",
+      },
+    };
+    await sseServer.sendEvent({
+      type: "agent_upsert",
+      at: Date.now(),
+      agent: secondBusyAgent,
+    });
+
+    await expect(page.getByTestId("Header--active-agents")).toContainText("Active:2");
+    await expect(page.getByTestId("App--agent-count")).toContainText("5 Total Agents");
+    await expect(page.getByRole("heading", { name: "Optimize image compression pipeline" })).toBeVisible();
   });
 
   test("handles agent_removed SSE event by removing agent cards and updating fleet counts", async ({ page }) => {
