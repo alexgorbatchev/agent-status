@@ -69,6 +69,21 @@ describe("LogDrawer Component", () => {
     expect(rendered).toContain('aria-label="Copy debug command to clipboard"');
   });
 
+  it("renders drawer with max-w-3xl width constraint and overflow containment on stream and header", () => {
+    const rendered = renderToString(<LogDrawer agent={fixture_agentStateRunning} onClose={() => {}} />);
+    expect(rendered).toContain("max-w-3xl");
+    expect(rendered).not.toContain("max-w-2xl");
+
+    // Stream container must constrain horizontal overflow
+    expect(rendered).toContain('data-testid="LogDrawer--stream"');
+    expect(rendered).toMatch(/data-testid="LogDrawer--stream"[^>]*class="[^"]*overflow-x-hidden[^"]*"/);
+    expect(rendered).toMatch(/data-testid="LogDrawer--stream"[^>]*class="[^"]*min-w-0[^"]*"/);
+    expect(rendered).toMatch(/data-testid="LogDrawer--stream"[^>]*class="[^"]*w-full[^"]*"/);
+
+    // Header metadata must truncate long text
+    expect(rendered).toMatch(/<p[^>]*class="[^"]*truncate[^"]*"[^>]*>.*main.*<\/p>/);
+  });
+
   it("copies debug command to clipboard when debug button is clicked", async () => {
     let copiedText = "";
     const originalClipboard = navigator.clipboard;

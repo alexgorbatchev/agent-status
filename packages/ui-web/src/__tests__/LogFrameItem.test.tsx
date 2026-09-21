@@ -2,6 +2,7 @@ import { describe, it, expect } from "bun:test";
 import React from "react";
 import { renderToString } from "react-dom/server";
 import { LogFrameItem } from "../components/LogFrameItem";
+import type { ITelemetryFrame } from "../types/types";
 import {
   fixture_telemetryFrame,
   fixture_telemetryFrameSubagent,
@@ -93,5 +94,81 @@ describe("LogFrameItem Component", () => {
     expect(html).toContain("Second line of log");
     expect(html).toContain("Third line of log");
     expect(html).toContain("<br/>");
+  });
+
+  it("applies min-w-0, max-w-full, and overflow-hidden to frame container", () => {
+    const html = renderToString(<LogFrameItem frame={fixture_telemetryFrame} />);
+
+    expect(html).toMatch(/data-testid="LogFrameItem"[^>]*class="[^"]*min-w-0[^"]*"/);
+    expect(html).toMatch(/data-testid="LogFrameItem"[^>]*class="[^"]*max-w-full[^"]*"/);
+    expect(html).toMatch(/data-testid="LogFrameItem"[^>]*class="[^"]*overflow-hidden[^"]*"/);
+  });
+
+  it("configures markdown code components with min-w-0, max-w-full, and overflow-wrap", () => {
+    const markdownPayload = {
+      ...fixture_telemetryFrame,
+      data: {
+        ...fixture_telemetryFrame.data,
+        content: "```sh\necho 'very_long_unbroken_code_string_testing_containment'\n```",
+      },
+    };
+    const html = renderToString(<LogFrameItem frame={markdownPayload} />);
+
+    expect(html).toMatch(
+      /<pre[^>]*class="[^"]*min-w-0[^"]*max-w-full[^"]*\[overflow-wrap:anywhere\][^"]*break-all[^"]*"/,
+    );
+    expect(html).toMatch(
+      /<code[^>]*class="[^"]*min-w-0[^"]*max-w-full[^"]*\[overflow-wrap:anywhere\][^"]*break-all[^"]*"/,
+    );
+  });
+
+  it("renders icons and styles for run_started, turn_end, and error event types", () => {
+    const runStartedFrame: ITelemetryFrame = {
+      ...fixture_telemetryFrame,
+      eventType: "run_started",
+    };
+    const turnEndFrame: ITelemetryFrame = {
+      ...fixture_telemetryFrame,
+      eventType: "turn_end",
+    };
+    const errorFrame: ITelemetryFrame = {
+      ...fixture_telemetryFrame,
+      eventType: "error",
+    };
+
+    const runStartedHtml = renderToString(<LogFrameItem frame={runStartedFrame} />);
+    expect(runStartedHtml).toContain("run_started");
+
+    const turnEndHtml = renderToString(<LogFrameItem frame={turnEndFrame} />);
+    expect(turnEndHtml).toContain("turn_end");
+
+    const errorHtml = renderToString(<LogFrameItem frame={errorFrame} />);
+    expect(errorHtml).toContain("error");
+
+    const runExitedFrame: ITelemetryFrame = {
+      ...fixture_telemetryFrame,
+      eventType: "run_exited",
+    };
+    const runExitedHtml = renderToString(<LogFrameItem frame={runExitedFrame} />);
+    expect(runExitedHtml).toContain("run_exited");
+  });
+
+  it("renders question prompt with min-w-0 and max-w-full containment", () => {
+    const questionFrame = {
+      ...fixture_telemetryFrame,
+      data: {
+        ...fixture_telemetryFrame.data,
+        content: null,
+        question: "```sh\necho 'unbroken_question_code_block'\n```",
+      },
+    };
+    const html = renderToString(<LogFrameItem frame={questionFrame} />);
+
+    expect(html).toContain('data-testid="LogFrameItem--question"');
+    expect(html).toMatch(/data-testid="LogFrameItem--question"[^>]*class="[^"]*min-w-0[^"]*"/);
+    expect(html).toMatch(/data-testid="LogFrameItem--question"[^>]*class="[^"]*max-w-full[^"]*"/);
+    expect(html).toMatch(
+      /<pre[^>]*class="[^"]*min-w-0[^"]*max-w-full[^"]*\[overflow-wrap:anywhere\][^"]*break-all[^"]*"/,
+    );
   });
 });

@@ -80,26 +80,26 @@ export function LogDrawer({
   return (
     <div
       data-testid="LogDrawer"
-      className="fixed inset-y-0 right-0 w-full max-w-2xl bg-slate-950 border-l border-slate-800 shadow-2xl z-50 flex flex-col font-sans"
+      className="fixed inset-y-0 right-0 w-full max-w-3xl bg-slate-950 border-l border-slate-800 shadow-2xl z-50 flex flex-col font-sans"
     >
       {/* Header */}
       <div
         data-testid="LogDrawer--header"
-        className="flex items-center justify-between p-4 border-b border-slate-800 bg-slate-900/60"
+        className="flex items-center justify-between p-4 border-b border-slate-800 bg-slate-900/60 gap-3"
       >
-        <div>
+        <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 mb-1">
             <h2 data-testid="LogDrawer--title" className="text-sm font-bold text-slate-100 line-clamp-1">
               {agent.activity.title || "Agent Execution Log"}
             </h2>
             <StatusBadge lifecycle={agent.activity.lifecycle} activity={agent.activity.activity} />
           </div>
-          <p className="text-xs text-slate-400 font-mono">
+          <p className="text-xs text-slate-400 font-mono truncate">
             {agent.environment.label} • {agent.project.name} • {agent.workspace.branch}
           </p>
         </div>
 
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 shrink-0">
           <button
             type="button"
             aria-label={hasCopied ? "Debug command copied" : "Copy debug command to clipboard"}
@@ -166,7 +166,10 @@ export function LogDrawer({
       )}
 
       {/* Live Log Stream */}
-      <div data-testid="LogDrawer--stream" className="flex-1 overflow-y-auto p-4 space-y-3 text-xs">
+      <div
+        data-testid="LogDrawer--stream"
+        className="flex-1 overflow-y-auto overflow-x-hidden min-w-0 w-full p-4 space-y-3 text-xs"
+      >
         {logs.length === 0 ? (
           <div className="text-center py-12 text-slate-500 font-mono">
             {isFetchingHistory ? "Loading telemetry log events..." : "No telemetry log events recorded yet."}

@@ -60,4 +60,26 @@ describe("ToolExecutionBlock Component", () => {
     expect(html).not.toContain("32m");
     expect(html).not.toContain("31m");
   });
+
+  it("applies overflow-wrap, break-all, min-w-0, and max-w-full to pre elements on unbroken payloads", () => {
+    const unbrokenInput = { payload: "a".repeat(500) };
+    const unbrokenOutput = "x".repeat(500);
+    const html = renderToString(
+      <ToolExecutionBlock toolName="RunCommand" toolInput={unbrokenInput} toolOutput={unbrokenOutput} />,
+    );
+
+    // Input pre element must have overflow breaking styles and containment
+    expect(html).toMatch(/data-testid="ToolExecutionBlock--input"[^>]*class="[^"]*break-all[^"]*"/);
+    expect(html).toMatch(/data-testid="ToolExecutionBlock--input"[^>]*class="[^"]*\[overflow-wrap:anywhere\][^"]*"/);
+    expect(html).toMatch(/data-testid="ToolExecutionBlock--input"[^>]*class="[^"]*min-w-0[^"]*"/);
+    expect(html).toMatch(/data-testid="ToolExecutionBlock--input"[^>]*class="[^"]*max-w-full[^"]*"/);
+    expect(html).not.toMatch(/data-testid="ToolExecutionBlock--input"[^>]*class="[^"]*break-words[^"]*"/);
+
+    // Output pre element must have overflow breaking styles and containment
+    expect(html).toMatch(/data-testid="ToolExecutionBlock--output"[^>]*class="[^"]*break-all[^"]*"/);
+    expect(html).toMatch(/data-testid="ToolExecutionBlock--output"[^>]*class="[^"]*\[overflow-wrap:anywhere\][^"]*"/);
+    expect(html).toMatch(/data-testid="ToolExecutionBlock--output"[^>]*class="[^"]*min-w-0[^"]*"/);
+    expect(html).toMatch(/data-testid="ToolExecutionBlock--output"[^>]*class="[^"]*max-w-full[^"]*"/);
+    expect(html).not.toMatch(/data-testid="ToolExecutionBlock--output"[^>]*class="[^"]*break-words[^"]*"/);
+  });
 });
