@@ -59,6 +59,9 @@ air-debug session validate session-abc.jsonl
 
 # List sessions inside an OpenCode SQLite database
 air-debug session list ~/.local/share/opencode/opencode.db
+
+# Inspect ingested telemetry event stream from live database
+air-debug events 01a0b64b-b517-7569-9c97-dac1d07ce4dd --limit 10
 ```
 
 Sample Output:
@@ -118,3 +121,17 @@ Session Replay Summary (pi)
 | :--- | :--- | :--- | :--- |
 | `--db <path>` | (none) | `auto` | Path to `agent-status.db` (auto-detects if omitted) |
 | `--json` | (none) | `false` | Output persisted session record as JSON |
+
+### `air-debug events`
+
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--db <path>` | (none) | `auto` | Path to `agent-status.db` (or auto-detect) |
+| `--limit <N>` | (none) | `20` | Maximum number of telemetry events to retrieve |
+| `--type <types>` | (none) | `""` | Filter by comma-separated event types (e.g. `run_started,run_exited`) |
+| `--subagent-id <id>` | (none) | `""` | Filter by specific subagent ID |
+| `--include-subagents` | (none) | `true` | Include events from subagents |
+| `--json` | (none) | `false` | Output events as JSON |
+| `--desc` | (none) | `true` | Order events by ID descending (newest first) |
+| `--asc` | (none) | `false` | Order events by ID ascending (oldest first) |
+| `--id <id>` | (none) | `0` | Inspect specific telemetry event by ID |

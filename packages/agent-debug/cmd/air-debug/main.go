@@ -409,10 +409,100 @@ func newRootCmd() *cobra.Command {
 	vflags.BoolVar(&vFlags.strictLifecycle, "no-synthetic-lifecycle", false, "Disable automatic synthesis of run_started and run_exited boundary frames (alias)")
 	vflags.StringVar(&vFlags.dbPath, "db", "", "Path to agent-status.db for discrepancy comparison (or 'auto' for auto-detection)")
 
+	// 4. events command
+	type eventsFlags struct {
+		dbPath           string
+		limit            int
+		eventType        string
+		subagentID       string
+		includeSubagents bool
+		jsonOut          bool
+		desc             bool
+		asc              bool
+		eventID          int64
+	}
+
+	eFlags := eventsFlags{}
+	eventsCmd := &cobra.Command{
+		Use:   "events [session-id]",
+		Short: "Inspect the raw stream of ingested telemetry events from SQLite database",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			if ctx == nil {
+				ctx = context.Background()
+			}
+
+			var sessionID string
+			if len(args) > 0 {
+				sessionID = args[0]
+			}
+
+			if sessionID == "" && eFlags.eventID == 0 {
+				return fmt.Errorf("session ID argument or --id flag is required")
+			}
+
+			dbPath, err := db.ResolveDatabasePath(eFlags.dbPath)
+			if err != nil {
+				return err
+			}
+
+			desc := true
+			if cmd.Flags().Changed("asc") && eFlags.asc {
+				desc = false
+			} else if cmd.Flags().Changed("desc") {
+				desc = eFlags.desc
+			}
+
+			includeSubs := eFlags.includeSubagents
+			opts := db.EventQueryOptions{
+				Limit:            eFlags.limit,
+				EventType:        eFlags.eventType,
+				SubagentID:       eFlags.subagentID,
+				IncludeSubagents: &includeSubs,
+				Desc:             desc,
+				EventID:          eFlags.eventID,
+			}
+
+			events, err := db.GetTelemetryEvents(ctx, dbPath, sessionID, opts)
+			if err != nil {
+				return err
+			}
+
+			if eFlags.eventID > 0 {
+				if len(events) == 0 {
+					return fmt.Errorf("telemetry event with ID %d not found", eFlags.eventID)
+				}
+				if eFlags.jsonOut {
+					return output.RenderEventJSON(cmd.OutOrStdout(), events[0])
+				}
+				return output.RenderEventDetail(cmd.OutOrStdout(), events[0], output.IsAgentMode())
+			}
+
+			if eFlags.jsonOut {
+				return output.RenderEventsJSON(cmd.OutOrStdout(), events)
+			}
+
+			return output.RenderEventsTable(cmd.OutOrStdout(), events, output.IsAgentMode())
+		},
+	}
+
+	eflags := eventsCmd.Flags()
+	eflags.StringVar(&eFlags.dbPath, "db", "auto", "Path to agent-status.db (or auto-detect)")
+	eflags.IntVar(&eFlags.limit, "limit", 20, "Maximum number of telemetry events to retrieve")
+	eflags.StringVar(&eFlags.eventType, "type", "", "Filter by comma-separated event types (e.g. run_started,run_exited)")
+	eflags.StringVar(&eFlags.subagentID, "subagent-id", "", "Filter by specific subagent ID")
+	eflags.BoolVar(&eFlags.includeSubagents, "include-subagents", true, "Include events from subagents")
+	eflags.BoolVar(&eFlags.jsonOut, "json", false, "Output events as JSON")
+	eflags.BoolVar(&eFlags.desc, "desc", true, "Order events by ID descending (newest first)")
+	eflags.BoolVar(&eFlags.asc, "asc", false, "Order events by ID ascending (oldest first)")
+	eflags.Int64Var(&eFlags.eventID, "id", 0, "Inspect specific telemetry event by ID")
+
 	sessionCmd.AddCommand(listCmd)
 	sessionCmd.AddCommand(replayCmd)
 	sessionCmd.AddCommand(validateCmd)
 	rootCmd.AddCommand(sessionCmd)
+	rootCmd.AddCommand(eventsCmd)
 
 	// 4. db
 	dbCmd := &cobra.Command{

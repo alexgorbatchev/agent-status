@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -608,4 +609,184 @@ func createTestStatusDB(t *testing.T, dir string) string {
 	_, _ = db.Exec(`INSERT INTO runs VALUES ('run-1', ?, 5555, '1.0', ?, NULL)`, agentID, now-5000)
 	_, _ = db.Exec(`INSERT INTO telemetry_events (agent_id, event_type, timestamp, data_json) VALUES (?, 'run_started', ?, '{}')`, agentID, now-5000)
 	return p
+}
+
+func createTestEventsDB(t *testing.T, dir string) string {
+	t.Helper()
+	p := filepath.Join(dir, "test-agent-status.db")
+	db, err := sql.Open("sqlite3", "file:"+p)
+	if err != nil {
+		t.Fatalf("opening sqlite: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	schema := `
+		CREATE TABLE environments (
+			id TEXT PRIMARY KEY, label TEXT NOT NULL, hostname TEXT NOT NULL,
+			platform TEXT NOT NULL, user TEXT NOT NULL, dropped_frames INTEGER DEFAULT 0,
+			last_heartbeat_at INTEGER NOT NULL
+		);
+		CREATE TABLE runs (
+			id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, pid INTEGER NOT NULL,
+			harness_version TEXT NOT NULL, started_at INTEGER NOT NULL, ended_at INTEGER
+		);
+		CREATE TABLE agents (
+			id TEXT PRIMARY KEY, session_id TEXT NOT NULL, environment_id TEXT NOT NULL,
+			harness TEXT NOT NULL, project_id TEXT NOT NULL, project_name TEXT NOT NULL,
+			canonical_root TEXT NOT NULL, branch TEXT NOT NULL, cwd TEXT NOT NULL,
+			current_run_id TEXT, activity TEXT NOT NULL, title TEXT NOT NULL DEFAULT '',
+			action TEXT NOT NULL DEFAULT '', updated_at INTEGER NOT NULL
+		);
+		CREATE TABLE telemetry_events (
+			id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id TEXT NOT NULL, subagent_id TEXT,
+			event_type TEXT NOT NULL, timestamp INTEGER NOT NULL, data_json TEXT NOT NULL
+		);
+	`
+	if _, err := db.Exec(schema); err != nil {
+		t.Fatalf("creating test events schema: %v", err)
+	}
+
+	_, _ = db.Exec(`INSERT INTO environments (id, label, hostname, platform, user, last_heartbeat_at)
+		VALUES ('env-1', 'local-dev', 'host', 'darwin', 'user', 1000)`)
+	_, _ = db.Exec(`INSERT INTO runs (id, agent_id, pid, harness_version, started_at)
+		VALUES ('run-1', 'env-1:pi:ses-1', 27680, '1.0.0', 1000)`)
+	_, _ = db.Exec(`INSERT INTO agents (id, session_id, environment_id, harness, project_id, project_name, canonical_root, branch, cwd, current_run_id, activity, updated_at)
+		VALUES ('env-1:pi:ses-1', 'ses-1', 'env-1', 'pi', 'p1', 'proj1', '/root', 'main', '/cwd', 'run-1', 'IDLE', 6000)`)
+	_, _ = db.Exec(`INSERT INTO telemetry_events (id, agent_id, subagent_id, event_type, timestamp, data_json)
+		VALUES (1, 'env-1:pi:ses-1', NULL, 'run_started', 1000, '{"title":"Test Session"}')`)
+	_, _ = db.Exec(`INSERT INTO telemetry_events (id, agent_id, subagent_id, event_type, timestamp, data_json)
+		VALUES (2, 'env-1:pi:ses-1', NULL, 'run_exited', 2000, '{}')`)
+
+	return p
+}
+
+func TestCLI_Events(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := createTestEventsDB(t, tmpDir)
+
+	t.Run("events command human table", func(t *testing.T) {
+		orig := os.Getenv("AGENT")
+		defer func() { _ = os.Setenv("AGENT", orig) }()
+		_ = os.Setenv("AGENT", "0")
+
+		cmd := newRootCmd()
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetArgs([]string{"events", "ses-1", "--db", dbPath})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("events command failed: %v", err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, "run_started") || !strings.Contains(out, "run_exited") {
+			t.Errorf("expected events in table output, got: %s", out)
+		}
+	})
+
+	t.Run("events command agent mode", func(t *testing.T) {
+		orig := os.Getenv("AGENT")
+		defer func() { _ = os.Setenv("AGENT", orig) }()
+		_ = os.Setenv("AGENT", "1")
+
+		cmd := newRootCmd()
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetArgs([]string{"events", "ses-1", "--db", dbPath})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("events command failed: %v", err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, "type:run_started") || strings.Contains(out, "|") {
+			t.Errorf("expected agent mode format, got: %s", out)
+		}
+	})
+
+	t.Run("events command json array", func(t *testing.T) {
+		cmd := newRootCmd()
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetArgs([]string{"events", "ses-1", "--db", dbPath, "--json"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("events command failed: %v", err)
+		}
+		var list []map[string]interface{}
+		if err := json.Unmarshal(buf.Bytes(), &list); err != nil {
+			t.Fatalf("failed to unmarshal JSON: %v", err)
+		}
+		if len(list) != 2 {
+			t.Errorf("expected 2 events in json list, got %d", len(list))
+		}
+	})
+
+	t.Run("events command single id", func(t *testing.T) {
+		orig := os.Getenv("AGENT")
+		defer func() { _ = os.Setenv("AGENT", orig) }()
+		_ = os.Setenv("AGENT", "0")
+
+		cmd := newRootCmd()
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetArgs([]string{"events", "--db", dbPath, "--id", "1"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("events command with --id failed: %v", err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, "Event ID:") || !strings.Contains(out, "1") {
+			t.Errorf("expected event detail for id 1, got: %s", out)
+		}
+	})
+
+	t.Run("events command single id json", func(t *testing.T) {
+		cmd := newRootCmd()
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetArgs([]string{"events", "--db", dbPath, "--id", "1", "--json"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("events command with --id --json failed: %v", err)
+		}
+		var item map[string]interface{}
+		if err := json.Unmarshal(buf.Bytes(), &item); err != nil {
+			t.Fatalf("failed to unmarshal JSON item: %v", err)
+		}
+		if item["id"] != float64(1) {
+			t.Errorf("expected id 1, got %v", item["id"])
+		}
+	})
+
+	t.Run("events command missing session and id returns error", func(t *testing.T) {
+		cmd := newRootCmd()
+		cmd.SetArgs([]string{"events"})
+		if err := cmd.Execute(); err == nil {
+			t.Errorf("expected error when neither session ID nor --id is provided")
+		}
+	})
+
+	t.Run("events command with asc and filters", func(t *testing.T) {
+		cmd := newRootCmd()
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetArgs([]string{"events", "ses-1", "--db", dbPath, "--asc", "--type", "run_started", "--limit", "5"})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("events command failed: %v", err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, "run_started") || strings.Contains(out, "run_exited") {
+			t.Errorf("expected only run_started events, got: %s", out)
+		}
+	})
+
+	t.Run("events command single id not found", func(t *testing.T) {
+		cmd := newRootCmd()
+		cmd.SetArgs([]string{"events", "--db", dbPath, "--id", "99999"})
+		if err := cmd.Execute(); err == nil {
+			t.Errorf("expected error for non-existent event ID")
+		}
+	})
+
+	t.Run("events command invalid db path", func(t *testing.T) {
+		cmd := newRootCmd()
+		cmd.SetArgs([]string{"events", "ses-1", "--db", filepath.Join(tmpDir, "missing-file.db")})
+		if err := cmd.Execute(); err == nil {
+			t.Errorf("expected error for non-existent db path")
+		}
+	})
 }
