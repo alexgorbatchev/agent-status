@@ -58,6 +58,11 @@ test.describe("LogDrawer & Live Tail", () => {
 
     // Verify drawer header details
     await expect(page.getByTestId("LogDrawer--title")).toContainText("Build agent-status dashboard");
+    await expect(page.getByTestId("LogDrawer--debug-button")).toBeVisible();
+    await expect(page.getByTestId("LogDrawer--debug-button")).toHaveAttribute(
+      "aria-label",
+      "Copy debug command to clipboard",
+    );
 
     // Verify log frame content rendered in drawer stream
     await expect(

@@ -208,6 +208,14 @@ describe("Accessibility & ARIA semantics", () => {
       expect(html).toContain('aria-label="Close log drawer"');
       expect(html).toContain('data-testid="LogDrawer--close-button"');
     });
+
+    it("renders debug button with type='button' and aria-label='Copy debug command to clipboard'", () => {
+      const html = renderToStaticMarkup(<LogDrawer agent={fixture_agentStateRunning} onClose={() => {}} />);
+
+      expect(html).toContain('type="button"');
+      expect(html).toContain('aria-label="Copy debug command to clipboard"');
+      expect(html).toContain('data-testid="LogDrawer--debug-button"');
+    });
   });
 
   describe("StateHelpDialog", () => {

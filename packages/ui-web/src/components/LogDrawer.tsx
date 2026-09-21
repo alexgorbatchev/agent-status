@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useSyncExternalStore } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useMachine } from "@xstate/react";
 import type { ILogDrawerProps } from "./types";
 import { StatusBadge } from "./StatusBadge";
@@ -6,8 +6,9 @@ import { LogFrameItem } from "./LogFrameItem";
 import { IconWrapper } from "./IconWrapper";
 import { DEFAULT_DEV_TOKEN } from "../utils/config";
 import { LogBuffer } from "../utils/LogBuffer";
+import { getAgentDebugCommand } from "../utils/agentUtils";
 import { logDrawerMachine } from "../machines/logDrawerMachine";
-import { X, RefreshCw, AlertCircle } from "lucide-react";
+import { X, RefreshCw, AlertCircle, Terminal, Check } from "lucide-react";
 
 export function LogDrawer({
   agent,
@@ -27,6 +28,10 @@ export function LogDrawer({
 
   const logs = useSyncExternalStore(logBuffer.subscribe, logBuffer.getSnapshot, logBuffer.getSnapshot);
 
+  const [copiedAgentId, setCopiedAgentId] = useState<string | null>(null);
+  const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasCopied = agent !== null && copiedAgentId === agent.id;
+
   useEffect(() => {
     if (agent) {
       send({ type: "SELECT_AGENT", agent, apiBaseUrl, token });
@@ -34,6 +39,35 @@ export function LogDrawer({
       send({ type: "CLOSE" });
     }
   }, [agent, apiBaseUrl, token, send]);
+
+  useEffect(() => {
+    return () => {
+      if (copiedTimeoutRef.current) {
+        clearTimeout(copiedTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleCopyDebugCommand = useCallback(async (): Promise<void> => {
+    if (!agent) {
+      return;
+    }
+    const command = getAgentDebugCommand(agent);
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(command);
+        setCopiedAgentId(agent.id);
+        if (copiedTimeoutRef.current) {
+          clearTimeout(copiedTimeoutRef.current);
+        }
+        copiedTimeoutRef.current = setTimeout(() => {
+          setCopiedAgentId(null);
+        }, 2000);
+      } catch {
+        // Fallback gracefully if clipboard access fails
+      }
+    }
+  }, [agent]);
 
   if (!agent) {
     return null;
@@ -65,17 +99,32 @@ export function LogDrawer({
           </p>
         </div>
 
-        <button
-          type="button"
-          aria-label="Close log drawer"
-          data-testid="LogDrawer--close-button"
-          onClick={onClose}
-          className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
-        >
-          <IconWrapper size="lg">
-            <X size={20} />
-          </IconWrapper>
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            aria-label={hasCopied ? "Debug command copied" : "Copy debug command to clipboard"}
+            title={hasCopied ? "Copied to clipboard!" : "Copy debug command to clipboard"}
+            data-testid="LogDrawer--debug-button"
+            onClick={handleCopyDebugCommand}
+            className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
+          >
+            <IconWrapper size="lg" tone={hasCopied ? "success" : undefined}>
+              {hasCopied ? <Check size={20} /> : <Terminal size={20} />}
+            </IconWrapper>
+          </button>
+
+          <button
+            type="button"
+            aria-label="Close log drawer"
+            data-testid="LogDrawer--close-button"
+            onClick={onClose}
+            className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
+          >
+            <IconWrapper size="lg">
+              <X size={20} />
+            </IconWrapper>
+          </button>
+        </div>
       </div>
 
       {/* Error / Reconnect Banner */}

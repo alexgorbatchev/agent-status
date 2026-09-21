@@ -1,7 +1,9 @@
 import { describe, it, expect, mock, beforeEach, afterEach } from "bun:test";
 import React from "react";
+import assert from "node:assert";
 import { renderToString } from "react-dom/server";
 import { LogDrawer } from "../components/LogDrawer";
+import { setupMockDomEnvironment, mountComponent } from "./helpers";
 import { fixture_agentStateRunning, fixture_agentStateWaitingQuestion, fixture_telemetryFrame } from "./fixtures";
 import type { ITelemetryFrame } from "../types";
 
@@ -63,6 +65,38 @@ describe("LogDrawer Component", () => {
     expect(rendered).toContain("agent-status");
     expect(rendered).toContain("main");
     expect(rendered).toContain("No telemetry log events recorded yet.");
+    expect(rendered).toContain('data-testid="LogDrawer--debug-button"');
+    expect(rendered).toContain('aria-label="Copy debug command to clipboard"');
+  });
+
+  it("copies debug command to clipboard when debug button is clicked", async () => {
+    let copiedText = "";
+    const originalClipboard = navigator.clipboard;
+    Object.assign(navigator, {
+      clipboard: {
+        writeText: mock(async (text: string) => {
+          copiedText = text;
+        }),
+      },
+    });
+
+    const { mockDoc, cleanup } = setupMockDomEnvironment();
+    try {
+      const { container, unmount } = await mountComponent(
+        <LogDrawer agent={fixture_agentStateRunning} onClose={() => {}} />,
+        mockDoc,
+      );
+
+      const debugBtn = container.querySelector('[data-testid="LogDrawer--debug-button"]');
+      assert(debugBtn);
+      debugBtn.click();
+
+      expect(copiedText).toBe("just debug session replay --harness claude-code session-1");
+      await unmount();
+    } finally {
+      cleanup();
+      Object.assign(navigator, { clipboard: originalClipboard });
+    }
   });
 
   it("renders fallback title when agent activity title is missing", () => {

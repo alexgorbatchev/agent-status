@@ -7,6 +7,7 @@ import {
   isAgentRequiringAttention,
   formatRelativeTime,
   formatExactTime,
+  getAgentDebugCommand,
 } from "../agentUtils";
 import { factory_createAgent, fixture_testEnvironment, fixture_testStaleEnvironment } from "./fixtures";
 import type { IAgentState } from "../../types";
@@ -281,6 +282,40 @@ describe("agentUtils", () => {
     it("formats valid timestamp as locale date time string", () => {
       const ts = 1789850000000;
       expect(formatExactTime(ts)).toBe(new Date(ts).toLocaleString());
+    });
+  });
+
+  describe("getAgentDebugCommand", () => {
+    it("builds the correct CLI command for claude-code", () => {
+      const agent = factory_createAgent({
+        harness: "claude-code",
+        sessionId: "sess-claude-123",
+      });
+      expect(getAgentDebugCommand(agent)).toBe("just debug session replay --harness claude-code sess-claude-123");
+    });
+
+    it("builds the correct CLI command for pi", () => {
+      const agent = factory_createAgent({
+        harness: "pi",
+        sessionId: "sess-pi-456",
+      });
+      expect(getAgentDebugCommand(agent)).toBe("just debug session replay --harness pi sess-pi-456");
+    });
+
+    it("builds the correct CLI command for codex", () => {
+      const agent = factory_createAgent({
+        harness: "codex",
+        sessionId: "sess-codex-789",
+      });
+      expect(getAgentDebugCommand(agent)).toBe("just debug session replay --harness codex sess-codex-789");
+    });
+
+    it("builds the correct CLI command for opencode", () => {
+      const agent = factory_createAgent({
+        harness: "opencode",
+        sessionId: "sess-opencode-012",
+      });
+      expect(getAgentDebugCommand(agent)).toBe("just debug session replay --harness opencode sess-opencode-012");
     });
   });
 });

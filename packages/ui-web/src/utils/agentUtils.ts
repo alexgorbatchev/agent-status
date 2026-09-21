@@ -59,3 +59,7 @@ export function formatExactTime(timestamp: number): string {
   }
   return new Date(timestamp).toLocaleString();
 }
+
+export function getAgentDebugCommand(agent: IAgentState): string {
+  return `just debug session replay --harness ${agent.harness} ${agent.sessionId}`;
+}

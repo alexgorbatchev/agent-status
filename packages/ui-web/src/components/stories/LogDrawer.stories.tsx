@@ -23,6 +23,12 @@ const Default: Story = {
     await expect(drawer).toBeInTheDocument();
     await expect(canvas.getByTestId("LogDrawer--title")).toHaveTextContent("Build agent-status dashboard");
 
+    // Exercise clicking debug button on drawer
+    const debugBtn = canvas.getByTestId("LogDrawer--debug-button");
+    await expect(debugBtn).toHaveAttribute("type", "button");
+    await expect(debugBtn).toHaveAttribute("aria-label", "Copy debug command to clipboard");
+    await userEvent.click(debugBtn);
+
     // Exercise clicking close button on drawer
     const closeBtn = canvas.getByTestId("LogDrawer--close-button");
     await expect(closeBtn).toHaveAttribute("type", "button");
