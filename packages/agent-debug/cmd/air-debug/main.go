@@ -409,7 +409,70 @@ func newRootCmd() *cobra.Command {
 	vflags.BoolVar(&vFlags.strictLifecycle, "no-synthetic-lifecycle", false, "Disable automatic synthesis of run_started and run_exited boundary frames (alias)")
 	vflags.StringVar(&vFlags.dbPath, "db", "", "Path to agent-status.db for discrepancy comparison (or 'auto' for auto-detection)")
 
-	// 4. events command
+	// 4. session view
+	viewFlags := replayFlags{}
+	viewCmd := &cobra.Command{
+		Use:   "view <file-or-session-id>",
+		Short: "Render terminal UI card representation of agent session state",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			if ctx == nil {
+				ctx = context.Background()
+			}
+
+			resolved, err := replay.ResolveSessionTarget(ctx, args[0], types.HarnessType(viewFlags.harnessFlag))
+			if err != nil {
+				return err
+			}
+
+			sessID := viewFlags.sessionID
+			if sessID == "" {
+				sessID = resolved.SessionID
+			}
+
+			opts := replay.ReplayOptions{
+				FilePath:    resolved.FilePath,
+				Harness:     resolved.Harness,
+				SessionID:   sessID,
+				CWD:         viewFlags.cwd,
+				EnvLabel:    viewFlags.envFlag,
+				UntilLine:   viewFlags.untilLine,
+				UntilEvent:  viewFlags.untilEvent,
+				StopOnError: false,
+				AgentMode:   output.IsAgentMode(),
+			}
+
+			res, err := replay.RunReplay(ctx, opts)
+			if err != nil {
+				return err
+			}
+
+			if res.Agent == nil {
+				return fmt.Errorf("no agent state produced from session")
+			}
+
+			if viewFlags.jsonOut {
+				enc := json.NewEncoder(cmd.OutOrStdout())
+				enc.SetIndent("", "  ")
+				return enc.Encode(res.Agent)
+			}
+
+			output.RenderAgentView(cmd.OutOrStdout(), *res.Agent, output.IsAgentMode())
+			return nil
+		},
+	}
+
+	viewCmdFlags := viewCmd.Flags()
+	viewCmdFlags.StringVar(&viewFlags.sessionID, "session-id", "", "OpenCode session ID to replay")
+	viewCmdFlags.StringVar(&viewFlags.cwd, "cwd", "", "Override transcript working directory for local Git resolution")
+	viewCmdFlags.StringVar(&viewFlags.envFlag, "env", "debug", "Environment label override")
+	viewCmdFlags.StringVar(&viewFlags.harnessFlag, "harness", "", "Explicit harness override (claude-code, pi, codex, opencode)")
+	viewCmdFlags.IntVar(&viewFlags.untilLine, "until-line", 0, "Halt replay after processing source line N")
+	viewCmdFlags.StringVar(&viewFlags.untilEvent, "until-event", "", "Halt replay after encountering event type")
+	viewCmdFlags.BoolVar(&viewFlags.jsonOut, "json", false, "Output final agent state as JSON")
+
+	// 5. events command
 	type eventsFlags struct {
 		dbPath           string
 		limit            int
@@ -501,6 +564,7 @@ func newRootCmd() *cobra.Command {
 	sessionCmd.AddCommand(listCmd)
 	sessionCmd.AddCommand(replayCmd)
 	sessionCmd.AddCommand(validateCmd)
+	sessionCmd.AddCommand(viewCmd)
 	rootCmd.AddCommand(sessionCmd)
 	rootCmd.AddCommand(eventsCmd)
 

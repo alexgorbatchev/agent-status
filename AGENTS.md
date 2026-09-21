@@ -34,6 +34,7 @@ Centralized monitoring dashboard and telemetry aggregation pipeline for AI codin
 
 ## Shared boundaries
 - Always: automatically record all new instructions in the most appropriate `AGENTS.md` file immediately upon receipt (check with user if existing instructions conflict)
+- Always: when designing or modifying UI presentation cards, update `air-debug session view` first as the canonical reference specification, and ensure frontend implementations sync to that output (#50, #51)
 - Always: use structured logging via `packages/agent-common/logging` with concise snake_case actions (e.g. `action=hello_received`, no prose, no emojis) and support dual-mode output via `AGENT=1` (prefer human names over opaque IDs in human mode)
 - Always (code-based projects only): any time code is changed such that results from running that code are changed, a test file must be changed as well; 90% code coverage is required (scripts/ folder is excluded from this rule)
 - Always: run `just test-all` and `just lint-all` before committing changes

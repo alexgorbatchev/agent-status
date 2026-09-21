@@ -236,6 +236,98 @@ func TestCLI_SessionValidate(t *testing.T) {
 	})
 }
 
+func TestCLI_SessionView(t *testing.T) {
+	tmpDir := t.TempDir()
+	transcriptPath := createTestClaudeTranscript(t, tmpDir)
+
+	t.Run("human output", func(t *testing.T) {
+		t.Setenv("AGENT", "0")
+		cmd := newRootCmd()
+		cmd.SetContext(context.Background())
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetArgs([]string{"session", "view", transcriptPath})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("session view failed: %v", err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, "(Claude Code)") {
+			t.Errorf("expected Claude Code badge, got:\n%s", out)
+		}
+		if !strings.Contains(out, "[Hide]") {
+			t.Errorf("expected [Hide] button, got:\n%s", out)
+		}
+		if !strings.Contains(out, "CLI Test Title") {
+			t.Errorf("expected title, got:\n%s", out)
+		}
+		if !strings.Contains(out, "(branch:") {
+			t.Errorf("expected branch badge, got:\n%s", out)
+		}
+	})
+
+	t.Run("agent mode output", func(t *testing.T) {
+		t.Setenv("AGENT", "1")
+		cmd := newRootCmd()
+		cmd.SetContext(context.Background())
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetArgs([]string{"session", "view", transcriptPath})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("session view agent mode failed: %v", err)
+		}
+		out := strings.TrimSpace(buf.String())
+		if !strings.Contains(out, "harness:claude-code") {
+			t.Errorf("expected harness:claude-code, got:\n%s", out)
+		}
+		if !strings.Contains(out, `title:"CLI Test Title"`) {
+			t.Errorf("expected title, got:\n%s", out)
+		}
+		if !strings.Contains(out, "lifecycle:EXITED") {
+			t.Errorf("expected lifecycle:EXITED, got:\n%s", out)
+		}
+	})
+
+	t.Run("json output", func(t *testing.T) {
+		cmd := newRootCmd()
+		cmd.SetContext(context.Background())
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetArgs([]string{"session", "view", "--json", transcriptPath})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("session view --json failed: %v", err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, `"harness": "claude-code"`) {
+			t.Errorf("expected json output with harness, got:\n%s", out)
+		}
+	})
+
+	t.Run("until flags and custom env", func(t *testing.T) {
+		t.Setenv("AGENT", "0")
+		cmd := newRootCmd()
+		cmd.SetContext(context.Background())
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetArgs([]string{"session", "view", "--until-line", "2", "--until-event", "user", "--env", "staging-box", transcriptPath})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("session view with until flags failed: %v", err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, "(staging-box)") {
+			t.Errorf("expected custom env label staging-box, got:\n%s", out)
+		}
+	})
+
+	t.Run("error missing file", func(t *testing.T) {
+		cmd := newRootCmd()
+		cmd.SetContext(context.Background())
+		cmd.SetArgs([]string{"session", "view", filepath.Join(tmpDir, "nonexistent.jsonl")})
+		if err := cmd.Execute(); err == nil {
+			t.Errorf("expected error for nonexistent transcript")
+		}
+	})
+}
+
 func TestCLI_ErrorPaths(t *testing.T) {
 	tmpDir := t.TempDir()
 

@@ -82,7 +82,18 @@ Executes assertions against the transcript:
 
 Exits with `0` on success, `1` on validation failure.
 
-### C. OpenCode Multi-Session Inspection
+### C. Terminal UI Card Visualization (`session view`)
+```bash
+just debug session view <path-to-transcript.jsonl | session_id>
+```
+Renders a terminal representation of what the agent session card looks like in the UI:
+- **Canonical UI Specification**: Serves as the upstream specification reference for UI components. Update `session view` first when modifying UI representations.
+- **Semantic Element Notation**: Uses `[buttons]` and `(badges)` notation for UI elements.
+- **Dual-Mode Output**:
+  - `AGENT=0` (or unset): Formatted box card with terminal-width dividers, styled badge tags, highlighted question/error blocks, cost, and usage metrics.
+  - `AGENT=1`: Single-line structured token-conservative key-value representation.
+
+### D. OpenCode Multi-Session Inspection
 ```bash
 # List all sessions in database
 just debug session list ~/.local/share/opencode/opencode.db
@@ -91,7 +102,7 @@ just debug session list ~/.local/share/opencode/opencode.db
 just debug session replay --session-id ses_123 opencode.db
 ```
 
-### D. Ingested Telemetry Event Inspection (`events`)
+### E. Ingested Telemetry Event Inspection (`events`)
 Inspect the raw sequence of telemetry events persisted to SQLite `agent-status.db`:
 
 ```bash
