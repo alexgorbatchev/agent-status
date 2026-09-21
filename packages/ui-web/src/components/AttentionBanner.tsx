@@ -59,12 +59,18 @@ export function AttentionBanner({ agents, onSelectAgent }: IAttentionBannerProps
                 )}
                 <div>
                   <div className="flex items-center gap-2 text-xs font-semibold text-slate-200 group-hover:text-amber-300 transition-colors">
-                    <span>{title}</span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">
+                    <span data-testid="AttentionBanner--agent-title">{title}</span>
+                    <span
+                      data-testid="AttentionBanner--agent-env"
+                      className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-mono"
+                    >
                       {agent.environment.label}
                     </span>
                   </div>
-                  <p className="text-xs text-slate-400 line-clamp-1 mt-0.5 font-mono">
+                  <p
+                    data-testid="AttentionBanner--agent-message"
+                    className="text-xs text-slate-400 line-clamp-1 mt-0.5 font-mono"
+                  >
                     {isQuestion
                       ? agent.activity.question || "Waiting on user question input"
                       : agent.activity.lastError || "Agent encountered an execution error"}

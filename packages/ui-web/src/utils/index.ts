@@ -1,3 +1,4 @@
+export * from "./a11ySnapshot";
 export * from "./agentUtils";
 export * from "./ansiUtils";
 export * from "./config";

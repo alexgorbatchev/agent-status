@@ -64,9 +64,14 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
         {/* Header Row: Harness / Env & Status */}
         <div data-testid="AgentCard--header" className="flex items-center justify-between gap-2 mb-2">
           <div className="flex items-center gap-2 text-xs text-slate-400">
-            <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono">{environment.label}</span>
+            <span
+              data-testid="AgentCard--env-badge"
+              className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono"
+            >
+              {environment.label}
+            </span>
             <span className="text-slate-600">•</span>
-            <span className="flex items-center gap-1 font-medium text-slate-300">
+            <span data-testid="AgentCard--harness-badge" className="flex items-center gap-1 font-medium text-slate-300">
               <IconWrapper size="sm">
                 <Bot size={14} />
               </IconWrapper>
@@ -146,7 +151,11 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
 
         {/* Metadata Badges */}
         <div data-testid="AgentCard--badges" className="flex flex-wrap items-center gap-2 text-xs text-slate-400 mb-3">
-          <div className="flex items-center gap-1 bg-slate-800/50 px-2 py-0.5 rounded border border-slate-700/50">
+          <div
+            data-testid="AgentCard--branch-badge"
+            data-badge-type="branch"
+            className="flex items-center gap-1 bg-slate-800/50 px-2 py-0.5 rounded border border-slate-700/50"
+          >
             <IconWrapper size="xs" tone="muted">
               <GitBranch size={12} />
             </IconWrapper>
@@ -154,7 +163,11 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
           </div>
 
           {workspace.isWorktree && workspace.relPath && (
-            <div className="flex items-center gap-1 bg-slate-800/50 px-2 py-0.5 rounded border border-slate-700/50">
+            <div
+              data-testid="AgentCard--worktree-badge"
+              data-badge-type="worktree"
+              className="flex items-center gap-1 bg-slate-800/50 px-2 py-0.5 rounded border border-slate-700/50"
+            >
               <IconWrapper size="xs" tone="muted">
                 <FolderGit2 size={12} />
               </IconWrapper>
@@ -163,7 +176,11 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
           )}
 
           {activity.subagentCount > 0 && (
-            <div className="flex items-center gap-1 bg-purple-950/40 border border-purple-800/50 text-purple-300 px-2 py-0.5 rounded text-[11px]">
+            <div
+              data-testid="AgentCard--subagents-badge"
+              data-badge-type="subagents"
+              className="flex items-center gap-1 bg-purple-950/40 border border-purple-800/50 text-purple-300 px-2 py-0.5 rounded text-[11px]"
+            >
               <IconWrapper size="xs" tone="purple">
                 <Layers size={12} />
               </IconWrapper>
@@ -191,14 +208,16 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
         data-testid="AgentCard--footer"
         className="flex items-center justify-between pt-2 border-t border-slate-800 text-xs text-slate-400"
       >
-        <div className="flex items-center gap-1 font-mono text-emerald-400">
+        <div data-testid="AgentCard--cost" className="flex items-center gap-1 font-mono text-emerald-400">
           <IconWrapper size="sm">
             <DollarSign size={14} />
           </IconWrapper>
           <span>{formattedCost}</span>
         </div>
 
-        <div className="text-[11px] text-slate-500 font-mono">{activity.usage.total.toLocaleString()} tokens</div>
+        <div data-testid="AgentCard--usage" className="text-[11px] text-slate-500 font-mono">
+          {activity.usage.total.toLocaleString()} tokens
+        </div>
       </div>
     </div>
   );
