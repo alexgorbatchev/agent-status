@@ -18,10 +18,10 @@ A centralized monitoring dashboard and telemetry aggregation pipeline for AI cod
 
 # How it Really Works
 
-- `air-observer` tails JSONL logs and SQLite databases without holding file locks, persisting byte read offsets in `$XDG_CACHE_HOME/ai-registry/tailer-cursors.json` so restarted observers resume without duplicate telemetry.
-- `air-ingester` receives WebSocket connections at `:4501/ws/ingest`, computes token costs using a static model price registry, derives concise action descriptions, and writes structured records into `$XDG_DATA_HOME/agent-status/agent-status.db` using WAL mode.
+- `air-observer` tails JSONL logs and SQLite databases without holding file locks, applying tailer backpressure over a bounded dispatch queue and advancing persistent byte read offsets in `$XDG_CACHE_HOME/ai-registry/tailer-cursors.json` only after frame batches are acknowledged by `air-ingester`, with cursors flushed to disk on shutdown.
+- `air-ingester` receives WebSocket connections at `:4501/ws/ingest` with a 64 MiB read limit, computes token costs using a static model price registry, derives concise action descriptions via asynchronous per-agent queues and specialized prompt templates with Jaccard deduplication, and writes structured records into `$XDG_DATA_HOME/agent-status/agent-status.db` using WAL mode.
 - `air-server` opens the SQLite database strictly in read-only mode, listens for change signals on `$XDG_RUNTIME_DIR/agent-status/notify.sock`, and fans out events to browser clients over Server-Sent Events (`/api/v1/events/stream`) at `:4502`.
-- `ui-web` serves a React 19 dashboard on port `3000`, grouping agents by upstream git project repository and observing environment rather than machine-local folder paths.
+- `ui-web` serves a React 19 dashboard on port `3000`, grouping agents by upstream git project repository and observing environment rather than machine-local folder paths, reconnecting to the SSE stream using exponential backoff with jitter to prevent reconnect storms.
 - Inactive agents and old event streams are automatically pruned every hour from SQLite according to a 48-hour event and 30-day exited session retention policy.
 - Running with `AGENT=1` enables token-conservative, agent-facing CLI output across dev stack orchestration.
 

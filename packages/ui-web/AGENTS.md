@@ -21,7 +21,7 @@ Web frontend dashboard for agent-status built with React 19, Tailwind CSS v4, Lu
 ## Local gotchas
 
 - Tailwind v4 uses `@tailwindcss/vite` and CSS `@theme`; there is no `tailwind.config.js`.
-- Real-time SSE updates are consumed via `src/hooks/useEventStream.ts`.
+- Real-time SSE updates are consumed via `src/hooks/useEventStream.ts` with exponential backoff and random jitter (`src/utils/calculateReconnectDelay.ts`), resetting attempt count on successful open.
 - LogDrawer uses `logDrawerMachine` with external `LogBuffer` store consumed via `useSyncExternalStore`.
 
 ## Boundaries
