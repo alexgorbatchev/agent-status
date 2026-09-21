@@ -24,7 +24,7 @@ lint:
 # Run policy checks followed by unit test suite
 test:
     bun run check
-    bun test src
+    NODE_ENV=test bun test src
 
 # Run Playwright E2E test suite
 test-e2e:

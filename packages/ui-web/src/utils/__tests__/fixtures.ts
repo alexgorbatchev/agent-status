@@ -1,4 +1,4 @@
-import type { IAgentState, IEnvironmentInfo } from "../../types";
+import type { IAgentState, IEnvironmentInfo, ITelemetryFrame } from "../../types";
 
 export const fixture_testEnvironment: IEnvironmentInfo = {
   id: "env-test-1",
@@ -18,6 +18,56 @@ export const fixture_testStaleEnvironment: IEnvironmentInfo = {
   user: "ubuntu",
   isStale: true,
   lastHeartbeatAt: 1789840000000,
+};
+
+export const fixture_telemetryFrame: ITelemetryFrame = {
+  version: "1.0",
+  seq: 1,
+  envId: "env-test-1",
+  environment: fixture_testEnvironment,
+  agentId: "env-test-1:claude-code:sess-1",
+  sessionId: "sess-1",
+  subagentId: null,
+  pid: 1234,
+  harness: "claude-code",
+  harnessVersion: "1.0.0",
+  project: {
+    id: "github.com/alexgorbatchev/agent-status",
+    name: "agent-status",
+    canonicalRoot: "/test/agent-status",
+  },
+  workspace: {
+    isWorktree: false,
+    branch: "main",
+    isDetached: false,
+    relPath: null,
+    cwd: "/test/agent-status",
+  },
+  timestamp: 1789850000000,
+  eventType: "tool_call",
+  data: {
+    role: "assistant",
+    content: "Running test",
+    title: "Active Task",
+    lastPrompt: "run tests",
+    model: "claude-3-7-sonnet",
+    toolName: "Bash",
+    toolCallId: "call-1",
+    toolInput: { command: "bun test" },
+    toolOutput: "ok",
+    isError: false,
+    exitCode: 0,
+    question: null,
+    stopReason: null,
+    usage: null,
+    rawHarnessCost: null,
+  },
+};
+
+export const fixture_telemetryFrameSubagent: ITelemetryFrame = {
+  ...fixture_telemetryFrame,
+  seq: 2,
+  subagentId: "subagent-1",
 };
 
 export function factory_createAgent(overrides: Partial<IAgentState> = {}): IAgentState {
