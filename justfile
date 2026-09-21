@@ -28,13 +28,22 @@ run *args:
 run-ai *args:
     AGENT=1 just start
 
+# Run air-debug CLI utility via go run
+debug *args:
+    go run ./packages/agent-debug/cmd/air-debug {{args}}
+
+# Alias for debug
+run-debug *args:
+    @just debug {{args}}
+
 # Build all Go binaries and bundle ui-web
 build-all:
-    @mkdir -p packages/agent-observer/bin packages/agent-ingester/bin packages/agent-server/bin
+    @mkdir -p packages/agent-observer/bin packages/agent-ingester/bin packages/agent-server/bin packages/agent-debug/bin
     cd packages/agent-parser && just test
     cd packages/agent-observer && just build
     cd packages/agent-ingester && just build
     cd packages/agent-server && just build
+    cd packages/agent-debug && just build
     cd packages/ui-web && just build
 
 # Run all test suites across Go and Bun
@@ -44,6 +53,7 @@ test-all:
     cd packages/agent-observer && just test
     cd packages/agent-ingester && just test
     cd packages/agent-server && just test
+    cd packages/agent-debug && just test
     cd packages/ui-web && just test
 
 # Run Playwright E2E test suite
@@ -61,6 +71,7 @@ lint-all:
     cd packages/agent-observer && just lint
     cd packages/agent-ingester && just lint
     cd packages/agent-server && just lint
+    cd packages/agent-debug && just lint
     cd packages/ui-web && just lint
 
 # Typecheck and lint
@@ -71,3 +82,24 @@ lint:
 clean:
     @just stop
     rm -rf packages/*/bin packages/ui-web/dist .tmp/test-* .tmp/dev-stack
+
+# Replay a Claude Code session by session ID or file path
+session-replay-claude session_id *args:
+    just debug session replay --harness claude-code {{session_id}} {{args}}
+
+# Alias for session-replay-claude
+session-replay-claude-code session_id *args:
+    just session-replay-claude {{session_id}} {{args}}
+
+# Replay a Pi session by session ID or file path
+session-replay-pi session_id *args:
+    just debug session replay --harness pi {{session_id}} {{args}}
+
+# Replay an OpenAI Codex session by session ID or file path
+session-replay-codex session_id *args:
+    just debug session replay --harness codex {{session_id}} {{args}}
+
+# Replay an OpenCode session by session ID or database path
+session-replay-opencode session_id *args:
+    just debug session replay --harness opencode {{session_id}} {{args}}
+

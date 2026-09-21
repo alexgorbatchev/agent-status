@@ -1,0 +1,32 @@
+# Task automation for air-debug CLI
+
+# Default recipe: list available tasks
+default:
+    @just --list
+
+# Build compiled binary into bin/
+build:
+    @mkdir -p bin
+    go build -o bin/air-debug ./cmd/air-debug
+
+# Run all unit tests with race detector
+test:
+    go test -race ./...
+
+# Check module hygiene and run vet + linter
+lint:
+    go mod tidy -diff
+    go vet ./...
+    golangci-lint run
+
+# Run in human-facing interactive mode
+run *args:
+    go run ./cmd/air-debug {{args}}
+
+# Run in agent-facing token-conservative mode
+run-ai *args:
+    AGENT=1 go run ./cmd/air-debug {{args}}
+
+# Clean build artifacts
+clean:
+    rm -rf bin/

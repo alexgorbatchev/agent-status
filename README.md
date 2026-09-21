@@ -21,6 +21,7 @@ A centralized monitoring dashboard and telemetry aggregation pipeline for AI cod
 - `air-observer` tails JSONL logs and SQLite databases without holding file locks, applying tailer backpressure over a bounded dispatch queue and advancing persistent byte read offsets in `$XDG_CACHE_HOME/ai-registry/tailer-cursors.json` only after frame batches are acknowledged by `air-ingester`, with cursors flushed to disk on shutdown.
 - `air-ingester` receives WebSocket connections at `:4501/ws/ingest` with a 64 MiB read limit, computes token costs using a static model price registry, derives concise action descriptions via asynchronous per-agent queues and specialized prompt templates with Jaccard deduplication, and writes structured records into `$XDG_DATA_HOME/agent-status/agent-status.db` using WAL mode.
 - `air-server` opens the SQLite database strictly in read-only mode, listens for change signals on `$XDG_RUNTIME_DIR/agent-status/notify.sock`, and fans out events to browser clients over Server-Sent Events (`/api/v1/events/stream`) at `:4502`.
+- `air-debug` replays and validates agent session transcripts across Claude Code, Pi, OpenAI Codex, and OpenCode through the ingestion and query pipeline offline, running in-process against an ephemeral in-memory SQLite database without modifying active daemon logs or databases.
 - `ui-web` serves a React 19 dashboard on port `3000`, grouping agents by upstream git project repository and observing environment rather than machine-local folder paths, reconnecting to the SSE stream using exponential backoff with jitter to prevent reconnect storms.
 - Inactive agents and old event streams are automatically pruned every hour from SQLite according to a 48-hour event and 30-day exited session retention policy.
 - Running with `AGENT=1` enables token-conservative, agent-facing CLI output across dev stack orchestration.
@@ -52,6 +53,10 @@ just status
 
 # Stop the stack and release ports
 just stop
+
+# Replay an agent session transcript or session ID offline
+just session-replay-pi <session-id>
+just debug session replay <path-to-transcript.jsonl>
 ```
 
 Sample Output:
@@ -121,6 +126,24 @@ Sample Output:
 | `--token <token>` | (none) | `""` | Bearer authentication token |
 | `--log-level <level>` | (none) | `info` | Log level (`debug`, `info`, `warn`, `error`) |
 | `--version` | `-V` | `false` | Print version information and exit |
+| `--help` | `-h` | `false` | Print command line help |
+
+### `air-debug` / `just debug`
+
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--harness <name>` | (none) | `""` | Explicit harness override (`claude-code`, `pi`, `codex`, `opencode`) |
+| `--session-id <id>` | (none) | `""` | OpenCode session ID to replay |
+| `--cwd <path>` | (none) | `""` | Override transcript working directory for local Git resolution |
+| `--diff` | (none) | `false` | Display turn-by-turn state mutations during replay |
+| `--until-line <N>` | (none) | `0` | Halt replay after processing source line N |
+| `--until-event <type>` | (none) | `""` | Halt replay after encountering event type |
+| `--stop-on-error` | (none) | `false` | Halt immediately on first parse or state machine error |
+| `--json` | (none) | `false` | Output final state and verification results as JSON |
+| `--export-db <path>` | (none) | `""` | Path to save populated SQLite database on disk |
+| `--summarize` | (none) | `false` | Enable live LLM summarizer provider verification |
+| `--env <label>` | (none) | `debug` | Environment label override |
+| `--version` | `-v` | `false` | Print version information and exit |
 | `--help` | `-h` | `false` | Print command line help |
 
 # License

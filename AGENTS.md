@@ -8,6 +8,8 @@ Centralized monitoring dashboard and telemetry aggregation pipeline for AI codin
 - Stop dev stack: `just stop`
 - Check status: `just status`
 - Tail daemon logs: `just logs` (or `tail -f ~/.local/state/agent-status/logs/*.log`)
+- Run debug CLI: `just debug <args>`
+- Replay session offline: `just session-replay-[claude|pi|codex|opencode] <session-id>`
 - Build all: `just build-all`
 - Test all: `just test-all`
 - Lint all: `just lint-all`
@@ -19,6 +21,7 @@ Centralized monitoring dashboard and telemetry aggregation pipeline for AI codin
 - `packages/agent-observer/` -> `packages/agent-observer/AGENTS.md`
 - `packages/agent-ingester/` -> `packages/agent-ingester/AGENTS.md`
 - `packages/agent-server/` -> `packages/agent-server/AGENTS.md`
+- `packages/agent-debug/` -> `packages/agent-debug/AGENTS.md`
 - `packages/ui-web/` -> `packages/ui-web/AGENTS.md`
 - `docs/harness-logs/` -> `docs/harness-logs/AGENTS.md`
 
