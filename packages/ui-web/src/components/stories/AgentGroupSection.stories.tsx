@@ -2,7 +2,12 @@ import React from "react";
 import type { Meta, StoryObj } from "@storybook/react";
 import { fn, userEvent, expect, within } from "@storybook/test";
 import { AgentGroupSection } from "../AgentGroupSection";
-import { fixture_agentStateRunning, fixture_agentStateWaitingQuestion } from "./fixtures";
+import {
+  fixture_agentStateRunning,
+  fixture_agentStateWaitingQuestion,
+  fixture_agentStateIdle,
+  fixture_agentStateExited,
+} from "./fixtures";
 import { FolderGit2 } from "lucide-react";
 
 const meta: Meta<typeof AgentGroupSection> = {
@@ -14,7 +19,7 @@ type Story = StoryObj<typeof AgentGroupSection>;
 
 const onSelectAgent = fn();
 
-const Default: Story = {
+export const Default: Story = {
   args: {
     testId: "AgentGroupSection",
     icon: <FolderGit2 size={16} />,
@@ -39,5 +44,25 @@ const Default: Story = {
   },
 };
 
+export const MixedCategories: Story = {
+  args: {
+    testId: "AgentGroupSection",
+    icon: <FolderGit2 size={16} />,
+    iconColorClass: "text-blue-400",
+    title: "mixed-project",
+    subtitle: "(github.com/alexgorbatchev/mixed-project)",
+    agents: [fixture_agentStateRunning, fixture_agentStateIdle, fixture_agentStateExited],
+    onSelectAgent,
+  },
+  async play({ canvasElement }) {
+    const canvas = within(canvasElement);
+    const busyGrid = canvas.getByTestId("AgentGroupSection--grid-busy");
+    const idleGrid = canvas.getByTestId("AgentGroupSection--grid-idle");
+    const finishedGrid = canvas.getByTestId("AgentGroupSection--grid-finished");
+    await expect(busyGrid).toBeInTheDocument();
+    await expect(idleGrid).toBeInTheDocument();
+    await expect(finishedGrid).toBeInTheDocument();
+  },
+};
+
 export default meta;
-export { Default as AgentGroupSection };

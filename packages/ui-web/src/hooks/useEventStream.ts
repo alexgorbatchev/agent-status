@@ -3,6 +3,10 @@ import type { IAgentState, IEnvironmentInfo, IEventStreamState, ServerEvent } fr
 import { calculateReconnectDelay } from "../utils/calculateReconnectDelay";
 import { DEFAULT_DEV_TOKEN, resolveApiBaseUrl } from "../utils/config";
 
+function isCustomEvent<T>(event: Event): event is CustomEvent<T> {
+  return "detail" in event;
+}
+
 export function useEventStream(apiBaseUrl?: string, token: string = DEFAULT_DEV_TOKEN): IEventStreamState {
   const resolvedBaseUrl = resolveApiBaseUrl(apiBaseUrl);
   const [agents, setAgents] = useState<IAgentState[]>([]);
@@ -71,9 +75,8 @@ export function useEventStream(apiBaseUrl?: string, token: string = DEFAULT_DEV_
     let retryAttempt = 0;
 
     const handleMockEvent = (e: Event) => {
-      const customEvent = e as CustomEvent<ServerEvent>;
-      if (customEvent.detail) {
-        handleServerEvent(customEvent.detail);
+      if (isCustomEvent<ServerEvent>(e) && e.detail) {
+        handleServerEvent(e.detail);
       }
     };
 
