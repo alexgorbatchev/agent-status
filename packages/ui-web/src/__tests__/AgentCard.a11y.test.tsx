@@ -32,12 +32,12 @@ describe("AgentCard Semantic Accessibility Snapshots", () => {
       expect(tree).toBe(
         [
           'Card: "Build agent-status dashboard"',
-          "  ├─ Badge: (work-macbook)",
           "  ├─ Badge: (Claude Code)",
-          "  ├─ Status: (RUNNING)",
           "  ├─ Button: [Hide agent session]",
+          "  ├─ Status: (RUNNING)",
           '  ├─ Heading: "Build agent-status dashboard"',
           '  ├─ Action: "Compiling typescript and verifying bundles"',
+          "  ├─ Badge: (work-macbook)",
           "  ├─ Badge: (branch: main)",
           "  ├─ Badge: (2 subagents)",
           "  ├─ Badge: (active: 2m ago)",
@@ -68,13 +68,13 @@ describe("AgentCard Semantic Accessibility Snapshots", () => {
       expect(tree).toBe(
         [
           'Card: "Implement user authentication flow"',
-          "  ├─ Badge: (work-macbook)",
           "  ├─ Badge: (Claude Code)",
-          "  ├─ Status: (RUNNING)",
           "  ├─ Button: [Hide agent session]",
+          "  ├─ Status: (RUNNING)",
           '  ├─ Heading: "Implement user authentication flow"',
           '  ├─ Action: "Waiting for user input on database choice"',
           '  ├─ Callout (warning): "Should we use SQLite or PostgreSQL for auth tokens?"',
+          "  ├─ Badge: (work-macbook)",
           "  ├─ Badge: (branch: feat/auth)",
           "  ├─ Badge: (worktree: .workspaces/feat-auth)",
           "  ├─ Badge: (active: 2m ago)",
@@ -105,13 +105,13 @@ describe("AgentCard Semantic Accessibility Snapshots", () => {
       expect(tree).toBe(
         [
           'Card: "Database schema migration"',
-          "  ├─ Badge: (work-macbook)",
           "  ├─ Badge: (Claude Code)",
-          "  ├─ Status: (RUNNING)",
           "  ├─ Button: [Hide agent session]",
+          "  ├─ Status: (RUNNING)",
           '  ├─ Heading: "Database schema migration"',
           "  ├─ Action: \"Failed to apply migration: syntax error near 'INDEX'\"",
           "  ├─ Callout (error): \"Database migration returned exit code 1: syntax error near 'INDEX'\"",
+          "  ├─ Badge: (work-macbook)",
           "  ├─ Badge: (branch: main)",
           "  ├─ Badge: (1 subagent)",
           "  ├─ Badge: (active: 2m ago)",
@@ -149,12 +149,12 @@ describe("AgentCard Semantic Accessibility Snapshots", () => {
       expect(tree).toBe(
         [
           'Card: "Code review agent"',
-          "  ├─ Badge: (work-macbook)",
           "  ├─ Badge: (Claude Code)",
-          "  ├─ Status: (RUNNING)",
           "  ├─ Button: [Hide agent session]",
+          "  ├─ Status: (RUNNING)",
           '  ├─ Heading: "Code review agent"',
           '  ├─ Action: "Idle"',
+          "  ├─ Badge: (work-macbook)",
           "  ├─ Badge: (branch: main)",
           "  ├─ Badge: (active: 2m ago)",
           '  ├─ Cost: "$0.0030"',
@@ -195,13 +195,13 @@ describe("AgentCard Semantic Accessibility Snapshots", () => {
       expect(tree).toBe(
         [
           'Card: "Background worker"',
-          "  ├─ Badge: (work-macbook)",
           "  ├─ Badge: (Claude Code)",
+          "  ├─ Button: [Unhide agent session]",
           "  ├─ Badge: (Hidden)",
           "  ├─ Status: (RUNNING)",
-          "  ├─ Button: [Unhide agent session]",
           '  ├─ Heading: "Background worker"',
           '  ├─ Action: "Running tests"',
+          "  ├─ Badge: (work-macbook)",
           "  ├─ Badge: (branch: main)",
           "  ├─ Badge: (active: 2m ago)",
           '  ├─ Cost: "$0.0050"',
@@ -234,12 +234,12 @@ describe("AgentCard Semantic Accessibility Snapshots", () => {
       expect(tree).toBe(
         [
           'Card: "Refactor telemetry pipeline"',
-          "  ├─ Badge: (work-macbook)",
           "  ├─ Badge: (Pi)",
-          "  ├─ Status: (EXITED)",
           "  ├─ Button: [Hide agent session]",
+          "  ├─ Status: (EXITED)",
           '  ├─ Heading: "Refactor telemetry pipeline"',
           '  ├─ Action: "Completed task successfully"',
+          "  ├─ Badge: (work-macbook)",
           "  ├─ Badge: (branch: main)",
           "  ├─ Badge: (active: 2m ago)",
           '  ├─ Cost: "$0.0920"',
