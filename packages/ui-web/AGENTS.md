@@ -19,6 +19,7 @@ Web frontend dashboard for agent-status built with React 19, Tailwind CSS v4, Lu
 - Spec-first UI workflow: when modifying or designing UI components (`AgentCard`, `AttentionBanner`, `LogDrawer`), follow the upstream specification established by `air-debug session view` (#50) using `[buttons]` and `(badges)` notation.
 - Accessibility tree snapshot testing: write semantic accessibility role-tree snapshot tests in `src/__tests__/*.a11y.test.tsx` using `formatA11yTree` (`src/utils/a11ySnapshot.ts`) to verify component accessible hierarchies, accessible names, headings, badges, and buttons.
 - Sessions can be hidden/unhidden via `PATCH /api/v1/agents/{id}`, filtered out by default with a UI toggle to inspect and unhide them.
+- ToolExecutionBlock multiline output container must constrain height (`max-h-64`) and handle overflow (`overflow-auto`) on the flex scroll container wrapping the line gutter and pre output, ensuring line numbers and output content scroll together without empty space.
 - Custom scrollbars matching page colors (standard `scrollbar-width: thin`, `scrollbar-color: #334155 transparent` and WebKit `#334155` slate-700 thumb on transparent track) must be defined in `src/theme.css` across all scrollable elements.
 - Enforce strict TypeScript: no `any`, no type assertions (`as Type`), explicit return types on public functions.
 

@@ -121,3 +121,18 @@ export const StructuredParameters: Story = {
     await expect(params).toHaveTextContent("TODO");
   },
 };
+
+export const FiftySevenLinesOutput: Story = {
+  args: {
+    toolName: "bash",
+    toolInput: { command: "git status" },
+    toolOutput: Array.from({ length: 57 }, (_, i) => `Line ${i + 1}: telemetry event processing item`).join("\n"),
+    exitCode: 0,
+  },
+  async play({ canvasElement }) {
+    const canvas = within(canvasElement);
+    const scrollContainer = canvas.getByTestId("ToolExecutionBlock--output-scroll-container");
+    await expect(scrollContainer).toBeInTheDocument();
+    await expect(canvas.getByTestId("ToolExecutionBlock--line-count")).toHaveTextContent("57 lines");
+  },
+};

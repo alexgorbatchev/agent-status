@@ -85,6 +85,19 @@ describe("ToolExecutionBlock Component", () => {
     expect(html).not.toMatch(/data-testid="ToolExecutionBlock--output"[^>]*class="[^"]*break-words[^"]*"/);
   });
 
+  it("constrains scroll container with max-h-64 and overflow-auto so gutter and output scroll together without empty space", () => {
+    const multilineOutput = Array.from({ length: 57 }, (_, i) => `Line ${i + 1}`).join("\n");
+    const html = renderToString(<ToolExecutionBlock toolName="bash" toolOutput={multilineOutput} />);
+
+    expect(html).toContain('data-testid="ToolExecutionBlock--output-scroll-container"');
+    expect(html).toMatch(/data-testid="ToolExecutionBlock--output-scroll-container"[^>]*class="[^"]*max-h-64[^"]*"/);
+    expect(html).toMatch(
+      /data-testid="ToolExecutionBlock--output-scroll-container"[^>]*class="[^"]*overflow-auto[^"]*"/,
+    );
+    // pre element must not independently cap max-h-64 causing empty space next to a taller gutter
+    expect(html).not.toMatch(/data-testid="ToolExecutionBlock--output"[^>]*class="[^"]*max-h-64[^"]*"/);
+  });
+
   it("renders DiffViewer instead of raw JSON pre for Claude Code FileEdit", () => {
     const html = renderToString(
       <ToolExecutionBlock
@@ -278,6 +291,20 @@ describe("ToolExecutionBlock Component", () => {
       cleanup();
       Object.assign(navigator, { clipboard: originalClipboard });
     }
+  });
+
+  it("renders duration badge formatted as milliseconds, seconds, or minutes", () => {
+    const htmlMs = renderToString(<ToolExecutionBlock toolName="bash" durationMs={450} />);
+    expect(htmlMs).toContain('data-testid="ToolExecutionBlock--duration"');
+    expect(htmlMs).toContain("450ms");
+
+    const htmlSecs = renderToString(<ToolExecutionBlock toolName="bash" durationMs={2500} />);
+    expect(htmlSecs).toContain('data-testid="ToolExecutionBlock--duration"');
+    expect(htmlSecs).toContain("2.5s");
+
+    const htmlMins = renderToString(<ToolExecutionBlock toolName="bash" durationMs={65000} />);
+    expect(htmlMins).toContain('data-testid="ToolExecutionBlock--duration"');
+    expect(htmlMins).toContain("1m 5s");
   });
 
   it("extracts command from cmd and script fields for shell tools", () => {

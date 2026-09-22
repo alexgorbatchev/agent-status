@@ -286,12 +286,15 @@ export function ToolExecutionBlock({
             </button>
           </div>
 
-          <div className="flex min-w-0 max-w-full">
+          <div
+            data-testid="ToolExecutionBlock--output-scroll-container"
+            className="flex min-w-0 max-w-full overflow-auto max-h-64"
+          >
             {lineCount > 1 && (
               <div
                 data-testid="ToolExecutionBlock--line-gutter"
                 aria-hidden="true"
-                className="select-none py-2 pl-2.5 pr-2 text-right text-slate-600 bg-slate-950/90 border-r border-slate-800/80 shrink-0 font-mono text-[10px] leading-relaxed"
+                className="select-none py-2 pl-2.5 pr-2 text-right text-slate-600 bg-slate-950 border-r border-slate-800/80 shrink-0 font-mono text-[10px] leading-relaxed sticky left-0 z-10"
               >
                 {outputLines.map((_, idx) => (
                   <div key={idx}>{idx + 1}</div>
@@ -300,7 +303,7 @@ export function ToolExecutionBlock({
             )}
             <pre
               data-testid="ToolExecutionBlock--output"
-              className="flex-1 p-2 rounded-r bg-slate-950/80 text-slate-300 font-mono text-[10px] overflow-x-auto max-h-64 whitespace-pre-wrap break-all [overflow-wrap:anywhere] min-w-0 max-w-full leading-relaxed"
+              className="flex-1 p-2 rounded-r bg-slate-950/80 text-slate-300 font-mono text-[10px] whitespace-pre-wrap break-all [overflow-wrap:anywhere] min-w-0 max-w-full leading-relaxed"
             >
               <AnsiText text={toolOutput} />
             </pre>
