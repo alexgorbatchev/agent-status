@@ -8,8 +8,16 @@ import {
   isAgentRequiringAttention,
 } from "../utils/agentUtils";
 import { Bot, AlertCircle, DollarSign, Activity, Server, HelpCircle } from "lucide-react";
+import { clsx } from "clsx";
 
-export function Header({ agents, environments, isConnected, onOpenHelp }: IHeaderProps): React.JSX.Element {
+export function Header({
+  agents,
+  environments,
+  isConnected,
+  isActiveFilter,
+  onToggleActiveFilter,
+  onOpenHelp,
+}: IHeaderProps): React.JSX.Element {
   const activeAgents = filterActiveAgents(agents);
   const attentionAgents = agents.filter((a) => isAgentRequiringAttention(a));
 
@@ -36,16 +44,27 @@ export function Header({ agents, environments, isConnected, onOpenHelp }: IHeade
 
       <div data-testid="Header--stats" className="flex flex-wrap items-center gap-4 text-xs">
         {/* Active Agents */}
-        <div
+        <button
+          type="button"
           data-testid="Header--active-agents"
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800"
+          aria-pressed={Boolean(isActiveFilter)}
+          aria-label={isActiveFilter ? "Disable active agents filter" : "Filter by active agents"}
+          onClick={onToggleActiveFilter}
+          className={clsx(
+            "flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500",
+            isActiveFilter
+              ? "bg-blue-950/70 border-blue-500/70 text-blue-300 ring-1 ring-blue-500/40"
+              : "bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700",
+          )}
         >
           <IconWrapper size="md" tone="primary">
             <Activity size={16} />
           </IconWrapper>
-          <span className="text-slate-400">Active:</span>
-          <span className="font-semibold text-slate-200">{activeAgents.length}</span>
-        </div>
+          <span className={isActiveFilter ? "text-blue-300" : "text-slate-400"}>Active:</span>
+          <span className={`font-semibold ${isActiveFilter ? "text-blue-200" : "text-slate-200"}`}>
+            {activeAgents.length}
+          </span>
+        </button>
 
         {/* Attention Needed */}
         {attentionAgents.length > 0 && (

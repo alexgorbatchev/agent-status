@@ -242,4 +242,138 @@ describe("App Layout & Session Visibility", () => {
 
     await unmount();
   });
+
+  it("toggles active agents filter when clicking Header--active-agents button", async () => {
+    const { mockDoc, cleanup } = setupMockDomEnvironment();
+    envCleanup = cleanup;
+
+    const activeAgent: IAgentState = {
+      ...fixture_agentStateRunning,
+      id: "agent-active-1",
+      activity: {
+        ...fixture_agentStateRunning.activity,
+        lifecycle: "RUNNING",
+        activity: "BUSY",
+      },
+    };
+    const idleAgent: IAgentState = {
+      ...fixture_agentStateRunning,
+      id: "agent-idle-1",
+      activity: {
+        ...fixture_agentStateRunning.activity,
+        lifecycle: "RUNNING",
+        activity: "IDLE",
+        activeTool: null,
+      },
+    };
+
+    const { container, unmount } = await mountComponent(<App />, mockDoc);
+
+    await act(async () => {
+      const snapshotEvent = new CustomEvent<ServerEvent>("mock-sse-event", {
+        detail: {
+          type: "snapshot",
+          at: Date.now(),
+          agents: [activeAgent, idleAgent],
+          environments: [activeAgent.environment],
+        },
+      });
+      window.dispatchEvent(snapshotEvent);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    const agentCountEl = container.querySelector('[data-testid="App--agent-count"]');
+    assert(agentCountEl);
+    expect(agentCountEl.textContent).toBe("2 Agents");
+
+    // Both cards rendered
+    expect(container.querySelectorAll('[data-testid="AgentCard"]').length).toBe(2);
+
+    // Header active agents button
+    const activeBtn = container.querySelector('[data-testid="Header--active-agents"]');
+    assert(activeBtn, "Header--active-agents button must exist");
+
+    // Click active filter button inside act
+    await act(async () => {
+      activeBtn.click();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    expect(String(activeBtn.getAttribute("aria-pressed"))).toBe("true");
+    expect(agentCountEl.textContent).toBe("1 Active of 2 Agents");
+    expect(container.querySelectorAll('[data-testid="AgentCard"]').length).toBe(1);
+
+    // Toggle off
+    await act(async () => {
+      activeBtn.click();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    expect(String(activeBtn.getAttribute("aria-pressed"))).toBe("false");
+    expect(agentCountEl.textContent).toBe("2 Agents");
+    expect(container.querySelectorAll('[data-testid="AgentCard"]').length).toBe(2);
+
+    await unmount();
+  });
+
+  it("displays App--no-active-empty-state when active filter is enabled and no active agents match", async () => {
+    const { mockDoc, cleanup } = setupMockDomEnvironment();
+    envCleanup = cleanup;
+
+    const idleAgent: IAgentState = {
+      ...fixture_agentStateRunning,
+      id: "agent-idle-only",
+      activity: {
+        ...fixture_agentStateRunning.activity,
+        lifecycle: "RUNNING",
+        activity: "IDLE",
+        activeTool: null,
+      },
+    };
+
+    const { container, unmount } = await mountComponent(<App />, mockDoc);
+
+    await act(async () => {
+      const snapshotEvent = new CustomEvent<ServerEvent>("mock-sse-event", {
+        detail: {
+          type: "snapshot",
+          at: Date.now(),
+          agents: [idleAgent],
+          environments: [idleAgent.environment],
+        },
+      });
+      window.dispatchEvent(snapshotEvent);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    const activeBtn = container.querySelector('[data-testid="Header--active-agents"]');
+    assert(activeBtn);
+
+    // Click active filter
+    await act(async () => {
+      activeBtn.click();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    const noActiveEmptyState = container.querySelector('[data-testid="App--no-active-empty-state"]');
+    assert(noActiveEmptyState, "App--no-active-empty-state must be rendered when active filter yields 0 agents");
+    expect(noActiveEmptyState.textContent).toContain("Nothing to see here");
+    expect(noActiveEmptyState.textContent).toContain("No agents are currently active in your fleet.");
+
+    // Reset button
+    const resetBtn = container.querySelector('[data-testid="App--reset-active-filter"]');
+    assert(resetBtn, "App--reset-active-filter must exist inside empty state");
+    expect(resetBtn.textContent).toContain("Show all agents");
+
+    // Click reset button
+    await act(async () => {
+      resetBtn.click();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    expect(container.querySelector('[data-testid="App--no-active-empty-state"]')).toBeNull();
+    expect(container.querySelectorAll('[data-testid="AgentCard"]').length).toBe(1);
+
+    await unmount();
+  });
 });
