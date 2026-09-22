@@ -10,12 +10,13 @@ description: >-
 author: alexgorbatchev
 metadata:
   created_on: 2026-09-22 14:38
-  last_modified: 2026-09-22 15:28
+  last_modified: 2026-09-22 15:35
   status: current
 ---
 
 ## Concurrency & Worktree Topology
 
+- **HARD PROHIBITION**: The coordinator agent is strictly prohibited from invoking `edit` or `write` on any files inside issue worktrees or package directories. Any file modification to implementation or test code MUST be performed by a delegated child subagent. If the coordinator edits code directly, the turn is an automatic failure.
 - **Coordinator Boundary**: The parent/main agent manages queue ordering, provisions worktrees, receives clean review notifications from subagents, merges verified worktrees into `issues-dev`, tears down worktrees, and closes GitHub issues. The main agent does NOT micromanage the review loop.
 - **Main Agent Rebase Before Provisioning**: The main agent MUST rebase `issues-dev` onto `main` before starting any new subagent or provisioning a new issue worktree.
 - **Subagent Rebase Before Review**: Subagents working in worktrees MUST rebase their branch on `issues-dev` before entering the review pairing loop to eliminate integration conflicts for the main agent.
