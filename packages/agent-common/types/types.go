@@ -91,6 +91,7 @@ type IAgentActivity struct {
 	Phase               *AgentPhase    `json:"phase"`
 	ActiveTool          *string        `json:"activeTool"`
 	ActiveTarget        *string        `json:"activeTarget"`
+	ActiveToolStartedAt *int64         `json:"activeToolStartedAt,omitempty"`
 	Question            *string        `json:"question"`
 	LastThinkingExcerpt *string        `json:"lastThinkingExcerpt"`
 	LastError           *string        `json:"lastError"`

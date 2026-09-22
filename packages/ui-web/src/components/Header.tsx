@@ -11,7 +11,7 @@ import { Bot, AlertCircle, DollarSign, Activity, Server, HelpCircle } from "luci
 
 export function Header({ agents, environments, isConnected, onOpenHelp }: IHeaderProps): React.JSX.Element {
   const activeAgents = filterActiveAgents(agents);
-  const attentionAgents = agents.filter(isAgentRequiringAttention);
+  const attentionAgents = agents.filter((a) => isAgentRequiringAttention(a));
 
   const totalSpend = calculateTotalSpend(agents);
   const liveEnvs = environments.filter((e) => !e.isStale).length;

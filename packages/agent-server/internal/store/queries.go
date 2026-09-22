@@ -95,14 +95,19 @@ func (s *Store) GetStatus(ctx context.Context) (*types.StatusResponse, error) {
 	var requiresAttentionCount int
 	var totalSpend sql.NullFloat64
 
+	nowMs := time.Now().UnixMilli()
 	query := `
 		SELECT
 			COALESCE(SUM(CASE WHEN current_run_id IS NOT NULL THEN 1 ELSE 0 END), 0) AS active_count,
-			COALESCE(SUM(CASE WHEN current_run_id IS NOT NULL AND activity IN ('WAITING_QUESTION', 'ERROR') THEN 1 ELSE 0 END), 0) AS attention_count,
+			COALESCE(SUM(CASE 
+				WHEN current_run_id IS NOT NULL AND (
+					activity IN ('WAITING_QUESTION', 'ERROR') OR
+					(active_tool_started_at IS NOT NULL AND (? - active_tool_started_at) >= 180000)
+				) THEN 1 ELSE 0 END), 0) AS attention_count,
 			SUM(cost_usd) AS total_spend
 		FROM agents
 	`
-	err = s.db.QueryRowContext(ctx, query).Scan(&activeAgentCount, &requiresAttentionCount, &totalSpend)
+	err = s.db.QueryRowContext(ctx, query, nowMs).Scan(&activeAgentCount, &requiresAttentionCount, &totalSpend)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("querying status aggregates: %w", err)
 	}
@@ -127,7 +132,7 @@ const selectAgentBaseQuery = `
 		a.project_id, a.project_name, a.canonical_root,
 		a.branch, a.is_detached, a.is_worktree, a.worktree_rel_path, a.cwd,
 		a.current_run_id, a.activity, a.title, a.action, a.action_stale,
-		a.phase, a.active_tool, a.active_target, a.question,
+		a.phase, a.active_tool, a.active_target, a.active_tool_started_at, a.question,
 		a.last_thinking_excerpt, a.last_error,
 		a.tokens_input, a.tokens_output, a.tokens_cache_read, a.tokens_cache_write,
 		a.tokens_reasoning, a.tokens_total,
@@ -157,6 +162,7 @@ func scanAgent(s agentRowScanner, nowMs int64) (*types.IAgentState, error) {
 		title, action                                                 string
 		actionStale                                                   int
 		phase, activeTool, activeTarget, question                     sql.NullString
+		activeToolStartedAt                                           sql.NullInt64
 		lastThinkingExcerpt, lastError                                sql.NullString
 		tokensInput, tokensOutput, tokensCacheRead, tokensCacheWrite  int64
 		tokensReasoning, tokensTotal                                  int64
@@ -177,7 +183,7 @@ func scanAgent(s agentRowScanner, nowMs int64) (*types.IAgentState, error) {
 		&projectID, &projectName, &canonicalRoot,
 		&branch, &isDetached, &isWorktree, &worktreeRelPath, &cwd,
 		&currentRunID, &activity, &title, &action, &actionStale,
-		&phase, &activeTool, &activeTarget, &question,
+		&phase, &activeTool, &activeTarget, &activeToolStartedAt, &question,
 		&lastThinkingExcerpt, &lastError,
 		&tokensInput, &tokensOutput, &tokensCacheRead, &tokensCacheWrite,
 		&tokensReasoning, &tokensTotal,
@@ -238,6 +244,12 @@ func scanAgent(s agentRowScanner, nowMs int64) (*types.IAgentState, error) {
 		activeTargetPtr = &activeTarget.String
 	}
 
+	var activeToolStartedAtPtr *int64
+	if activeToolStartedAt.Valid {
+		v := activeToolStartedAt.Int64
+		activeToolStartedAtPtr = &v
+	}
+
 	var questionPtr *string
 	if question.Valid && question.String != "" {
 		questionPtr = &question.String
@@ -295,6 +307,7 @@ func scanAgent(s agentRowScanner, nowMs int64) (*types.IAgentState, error) {
 			Phase:               phasePtr,
 			ActiveTool:          activeToolPtr,
 			ActiveTarget:        activeTargetPtr,
+			ActiveToolStartedAt: activeToolStartedAtPtr,
 			Question:            questionPtr,
 			LastThinkingExcerpt: lastThinkingExcerptPtr,
 			LastError:           lastErrorPtr,

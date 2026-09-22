@@ -143,6 +143,29 @@ func Migrate(db *sql.DB) error {
 		if _, err := db.Exec("PRAGMA user_version = 2;"); err != nil {
 			return fmt.Errorf("updating user_version to 2: %w", err)
 		}
+		version = 2
+	}
+
+	if version < 3 {
+		tx, err := db.Begin()
+		if err != nil {
+			return fmt.Errorf("beginning migration v3 transaction: %w", err)
+		}
+		defer func() {
+			_ = tx.Rollback()
+		}()
+
+		if _, err := tx.Exec("ALTER TABLE agents ADD COLUMN active_tool_started_at INTEGER;"); err != nil {
+			return fmt.Errorf("executing migration v3 active_tool_started_at: %w", err)
+		}
+
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("committing migration v3: %w", err)
+		}
+
+		if _, err := db.Exec("PRAGMA user_version = 3;"); err != nil {
+			return fmt.Errorf("updating user_version to 3: %w", err)
+		}
 	}
 
 	return nil

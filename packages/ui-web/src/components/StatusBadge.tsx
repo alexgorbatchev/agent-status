@@ -1,6 +1,8 @@
 import React from "react";
 import type { IStatusBadgeProps, IStatusBadgeConfig } from "./types";
 import type { LifecycleState, ActivityState } from "../types";
+import { IconWrapper } from "./IconWrapper";
+import { AlertTriangle } from "lucide-react";
 
 const STATUS_CONFIGS: Record<LifecycleState, Record<ActivityState, IStatusBadgeConfig>> = {
   RUNNING: {
@@ -49,7 +51,28 @@ const STATUS_CONFIGS: Record<LifecycleState, Record<ActivityState, IStatusBadgeC
   },
 };
 
-export function StatusBadge({ lifecycle, activity }: IStatusBadgeProps): React.JSX.Element {
+export function StatusBadge({ lifecycle, activity, stallTier, toolDuration }: IStatusBadgeProps): React.JSX.Element {
+  const isStalledOrWarning =
+    lifecycle === "RUNNING" && activity === "BUSY" && (stallTier === "warning" || stallTier === "stalled");
+
+  if (isStalledOrWarning) {
+    const durationLabel = toolDuration ? ` • ${toolDuration}` : "";
+    return (
+      <span
+        data-testid="StatusBadge"
+        role="status"
+        data-lifecycle={lifecycle}
+        data-stall-tier={stallTier}
+        className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-950/60 text-amber-300 border border-amber-600/80 animate-pulse"
+      >
+        <IconWrapper size="xs" tone="warning">
+          <AlertTriangle size={12} />
+        </IconWrapper>
+        <span data-testid="StatusBadge--label">Busy{durationLabel}</span>
+      </span>
+    );
+  }
+
   const config = STATUS_CONFIGS[lifecycle]?.[activity] ?? STATUS_CONFIGS.RUNNING.IDLE;
   return (
     <span

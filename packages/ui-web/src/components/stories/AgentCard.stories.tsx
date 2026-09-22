@@ -49,3 +49,73 @@ export const Exited: Story = {
     await expect(card).toHaveClass("opacity-60");
   },
 };
+
+export const StallNotice: Story = {
+  args: {
+    agent: {
+      ...fixture_agentStateRunning,
+      activity: {
+        ...fixture_agentStateRunning.activity,
+        lifecycle: "RUNNING",
+        activity: "BUSY",
+        activeTool: "bash",
+        activeToolStartedAt: Date.now() - 75000,
+      },
+    },
+    onOpenDrawer,
+  },
+  async play({ canvasElement }) {
+    const canvas = within(canvasElement);
+    const card = canvas.getByTestId("AgentCard");
+    await expect(card).toBeInTheDocument();
+    await expect(canvas.getByTestId("AgentCard--stall-notice")).toBeInTheDocument();
+  },
+};
+
+export const StallWarning: Story = {
+  args: {
+    agent: {
+      ...fixture_agentStateRunning,
+      activity: {
+        ...fixture_agentStateRunning.activity,
+        lifecycle: "RUNNING",
+        activity: "BUSY",
+        activeTool: "bash",
+        action: "git rebase main",
+        activeToolStartedAt: Date.now() - 135000,
+      },
+    },
+    onOpenDrawer,
+  },
+  async play({ canvasElement }) {
+    const canvas = within(canvasElement);
+    const card = canvas.getByTestId("AgentCard");
+    await expect(card).toBeInTheDocument();
+    await expect(canvas.getByTestId("AgentCard--stall-warning")).toBeInTheDocument();
+    await expect(canvas.getByTestId("AgentCard--stall-duration")).toBeInTheDocument();
+  },
+};
+
+export const StallAttention: Story = {
+  args: {
+    agent: {
+      ...fixture_agentStateRunning,
+      activity: {
+        ...fixture_agentStateRunning.activity,
+        lifecycle: "RUNNING",
+        activity: "BUSY",
+        activeTool: "bash",
+        action: "npm test",
+        activeToolStartedAt: Date.now() - 200000,
+      },
+    },
+    onOpenDrawer,
+  },
+  async play({ canvasElement }) {
+    const canvas = within(canvasElement);
+    const card = canvas.getByTestId("AgentCard");
+    await expect(card).toBeInTheDocument();
+    await expect(card).toHaveClass("border-amber-500/80");
+    await expect(canvas.getByTestId("AgentCard--stall-warning")).toBeInTheDocument();
+  },
+};

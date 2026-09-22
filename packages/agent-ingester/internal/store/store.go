@@ -197,7 +197,7 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 			project_id, project_name, canonical_root,
 			branch, is_detached, is_worktree, worktree_rel_path, cwd,
 			current_run_id, activity, title, action, action_stale,
-			phase, active_tool, active_target, question, last_thinking_excerpt, last_error,
+			phase, active_tool, active_target, active_tool_started_at, question, last_thinking_excerpt, last_error,
 			tokens_input, tokens_output, tokens_cache_read, tokens_cache_write, tokens_reasoning, tokens_total,
 			cost_usd, subagent_count, first_started_at, updated_at,
 			is_hidden, hidden_at
@@ -206,7 +206,7 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 			?, ?, ?,
 			?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?,
 			?, ?
@@ -228,6 +228,7 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 			phase = excluded.phase,
 			active_tool = excluded.active_tool,
 			active_target = excluded.active_target,
+			active_tool_started_at = excluded.active_tool_started_at,
 			question = excluded.question,
 			last_thinking_excerpt = excluded.last_thinking_excerpt,
 			last_error = excluded.last_error,
@@ -247,7 +248,7 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 		agent.Project.ID, agent.Project.Name, agent.Project.CanonicalRoot,
 		agent.Workspace.Branch, isDetached, isWorktree, agent.Workspace.RelPath, agent.Workspace.CWD,
 		currentRunID, string(agent.Activity.Activity), agent.Activity.Title, agent.Activity.Action, actionStale,
-		phaseStr, agent.Activity.ActiveTool, agent.Activity.ActiveTarget, agent.Activity.Question, agent.Activity.LastThinkingExcerpt, agent.Activity.LastError,
+		phaseStr, agent.Activity.ActiveTool, agent.Activity.ActiveTarget, agent.Activity.ActiveToolStartedAt, agent.Activity.Question, agent.Activity.LastThinkingExcerpt, agent.Activity.LastError,
 		agent.Activity.Usage.Input, agent.Activity.Usage.Output, agent.Activity.Usage.CacheRead, agent.Activity.Usage.CacheWrite, agent.Activity.Usage.Reasoning, agent.Activity.Usage.Total,
 		costUSD, agent.Activity.SubagentCount, agent.Activity.FirstStartedAt, agent.Activity.UpdatedAt,
 		isHidden, hiddenAt,
@@ -265,7 +266,7 @@ func (s *Store) GetAgent(id string) (*types.IAgentState, error) {
 			a.id, a.session_id, a.harness, a.project_id, a.project_name, a.canonical_root,
 			a.branch, a.is_detached, a.is_worktree, a.worktree_rel_path, a.cwd,
 			a.current_run_id, a.activity, a.title, a.action, a.action_stale,
-			a.phase, a.active_tool, a.active_target, a.question, a.last_thinking_excerpt, a.last_error,
+			a.phase, a.active_tool, a.active_target, a.active_tool_started_at, a.question, a.last_thinking_excerpt, a.last_error,
 			a.tokens_input, a.tokens_output, a.tokens_cache_read, a.tokens_cache_write, a.tokens_reasoning, a.tokens_total,
 			a.cost_usd, a.subagent_count, a.first_started_at, a.updated_at,
 			e.id, e.label, e.hostname, e.platform, e.user, e.last_heartbeat_at,
@@ -285,6 +286,7 @@ func (s *Store) GetAgent(id string) (*types.IAgentState, error) {
 		hiddenAt                                           sql.NullInt64
 		phaseStr                                           sql.NullString
 		activeTool, activeTarget, question, thinking, lErr sql.NullString
+		activeToolStartedAt                                sql.NullInt64
 		worktreeRel                                        sql.NullString
 		costUSD                                            sql.NullFloat64
 		currentRunID                                       sql.NullString
@@ -299,7 +301,7 @@ func (s *Store) GetAgent(id string) (*types.IAgentState, error) {
 		&agent.ID, &agent.SessionID, &harnessStr, &agent.Project.ID, &agent.Project.Name, &agent.Project.CanonicalRoot,
 		&agent.Workspace.Branch, &isDetached, &isWorktree, &worktreeRel, &agent.Workspace.CWD,
 		&currentRunID, &activityStr, &agent.Activity.Title, &agent.Activity.Action, &actionStale,
-		&phaseStr, &activeTool, &activeTarget, &question, &thinking, &lErr,
+		&phaseStr, &activeTool, &activeTarget, &activeToolStartedAt, &question, &thinking, &lErr,
 		&agent.Activity.Usage.Input, &agent.Activity.Usage.Output, &agent.Activity.Usage.CacheRead, &agent.Activity.Usage.CacheWrite, &agent.Activity.Usage.Reasoning, &agent.Activity.Usage.Total,
 		&costUSD, &agent.Activity.SubagentCount, &agent.Activity.FirstStartedAt, &agent.Activity.UpdatedAt,
 		&agent.Environment.ID, &agent.Environment.Label, &agent.Environment.Hostname, &envPlatform, &agent.Environment.User, &agent.Environment.LastHeartbeatAt,
@@ -323,6 +325,10 @@ func (s *Store) GetAgent(id string) (*types.IAgentState, error) {
 	if hiddenAt.Valid {
 		v := hiddenAt.Int64
 		agent.HiddenAt = &v
+	}
+	if activeToolStartedAt.Valid {
+		v := activeToolStartedAt.Int64
+		agent.Activity.ActiveToolStartedAt = &v
 	}
 
 	if worktreeRel.Valid {
@@ -531,7 +537,7 @@ func (s *Store) EndCurrentRun(agentID string, endedAt int64) error {
 		}
 	}
 
-	_, err = tx.Exec("UPDATE agents SET current_run_id = NULL WHERE id = ?", agentID)
+	_, err = tx.Exec("UPDATE agents SET current_run_id = NULL, active_tool_started_at = NULL WHERE id = ?", agentID)
 	if err != nil {
 		return err
 	}

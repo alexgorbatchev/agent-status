@@ -79,6 +79,29 @@ describe("AttentionBanner Component", () => {
     expect(html).toContain("Database migration returned exit code 1: syntax error near &#x27;INDEX&#x27;");
   });
 
+  it("renders single agent card requiring attention for stalled tool execution (>=180s)", () => {
+    const now = Date.now();
+    const stalledAgent = factory_agentState({
+      activity: {
+        ...fixture_agentStateRunning.activity,
+        lifecycle: "RUNNING",
+        activity: "BUSY",
+        title: "Rebase onto main",
+        activeTool: "bash",
+        action: "git rebase main",
+        activeToolStartedAt: now - 202000,
+      } as unknown as IAgentState["activity"],
+    });
+
+    const html = renderToStaticMarkup(<AttentionBanner agents={[stalledAgent]} onSelectAgent={() => {}} />);
+
+    expect(html).toContain('data-testid="AttentionBanner"');
+    expect(html).toContain("Act Now — 1 Agent Requires Attention");
+    expect(html).toContain("Rebase onto main");
+    expect(html).toContain("Tool call running for 3m 22s without return: git rebase main");
+    expect(html).toContain('data-callout-type="warning"');
+  });
+
   it("renders multiple cards and plural heading when multiple agents require attention", () => {
     const html = renderToStaticMarkup(
       <AttentionBanner
