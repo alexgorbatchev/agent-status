@@ -9,17 +9,47 @@ import type { IAgentState, ServerEvent } from "../types";
 type CleanupFn = () => void;
 type FetchTarget = Parameters<typeof fetch>[0];
 type FetchInit = Parameters<typeof fetch>[1];
+type EventSourceVoidFn = () => void;
+
+class MockEventSource {
+  static instances: MockEventSource[] = [];
+  public url: string;
+  public onopen: EventSourceVoidFn | null = null;
+  public onerror: EventSourceVoidFn | null = null;
+
+  constructor(url: string) {
+    this.url = url;
+    MockEventSource.instances.push(this);
+  }
+
+  close(): void {}
+}
+
+interface IGlobalEventSourceScope {
+  EventSource?: typeof MockEventSource;
+}
 
 describe("App Layout & Session Visibility", () => {
   let envCleanup: CleanupFn | null = null;
   let originalFetch: typeof globalThis.fetch;
+  let originalEventSource: typeof EventSource | undefined;
+  const globalScope = globalThis as unknown as IGlobalEventSourceScope;
 
   beforeEach(() => {
     originalFetch = globalThis.fetch;
+    originalEventSource = globalThis.EventSource;
+    MockEventSource.instances = [];
+    globalScope.EventSource = MockEventSource;
   });
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    if (originalEventSource !== undefined) {
+      globalScope.EventSource = originalEventSource as unknown as typeof MockEventSource;
+    } else {
+      delete globalScope.EventSource;
+    }
+    MockEventSource.instances = [];
     envCleanup?.();
     envCleanup = null;
   });
@@ -239,6 +269,33 @@ describe("App Layout & Session Visibility", () => {
     expect(agentCountEl.textContent).toBe("1 Agent");
     const visibleCard = container.querySelector('[data-testid="AgentCard"]');
     assert(visibleCard, "agent must reappear automatically on real-time auto-unhide event");
+
+    await unmount();
+  });
+
+  it("renders error banner with red background and white text when stream disconnected", async () => {
+    const { mockDoc, cleanup } = setupMockDomEnvironment();
+    envCleanup = cleanup;
+
+    const { container, unmount } = await mountComponent(<App />, mockDoc);
+
+    const esInstance = MockEventSource.instances[0];
+    assert(esInstance, "EventSource instance must be initialized");
+
+    // Initially connected or no error
+    expect(container.querySelector('[data-testid="App--error"]')).toBeNull();
+
+    // Trigger stream error inside act
+    await act(async () => {
+      esInstance.onerror?.();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    const errorEl = container.querySelector('[data-testid="App--error"]');
+    assert(errorEl, "error banner must be displayed when stream is disconnected");
+    expect(errorEl.textContent).toContain("Disconnected from agent-server stream. Reconnecting...");
+    expect(errorEl.getAttribute("class")).toContain("bg-red-600");
+    expect(errorEl.getAttribute("class")).toContain("text-white");
 
     await unmount();
   });

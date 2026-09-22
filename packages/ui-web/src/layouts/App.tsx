@@ -77,10 +77,7 @@ export function App({ apiBaseUrl, token = DEFAULT_DEV_TOKEN }: IAppProps = {}): 
 
       <main data-testid="App--main" className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6">
         {error && (
-          <div
-            data-testid="App--error"
-            className="mb-4 p-3 rounded-lg bg-red-950/50 border border-red-800/80 text-xs text-red-300 font-mono"
-          >
+          <div data-testid="App--error" className="mb-4 p-3 rounded-lg bg-red-600 text-white text-xs font-mono">
             {error}
           </div>
         )}
