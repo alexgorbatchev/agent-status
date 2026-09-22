@@ -96,6 +96,11 @@ describe("ToolExecutionBlock Component", () => {
     );
     // pre element must not independently cap max-h-64 causing empty space next to a taller gutter
     expect(html).not.toMatch(/data-testid="ToolExecutionBlock--output"[^>]*class="[^"]*max-h-64[^"]*"/);
+    // pre element must not retain independent horizontal scrollbar that detaches from outer container
+    expect(html).not.toMatch(/data-testid="ToolExecutionBlock--output"[^>]*class="[^"]*overflow-x-auto[^"]*"/);
+    // line gutter must be sticky with solid opaque background to prevent text bleed-through
+    expect(html).toMatch(/data-testid="ToolExecutionBlock--line-gutter"[^>]*class="[^"]*sticky left-0[^"]*"/);
+    expect(html).toMatch(/data-testid="ToolExecutionBlock--line-gutter"[^>]*class="[^"]*bg-slate-950[^"]*"/);
   });
 
   it("renders DiffViewer instead of raw JSON pre for Claude Code FileEdit", () => {
