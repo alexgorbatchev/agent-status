@@ -72,17 +72,9 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
       )}
     >
       <div data-testid="AgentCard--body">
-        {/* Header Row: Harness / Env & Status */}
+        {/* Header Row: Harness & Status */}
         <div data-testid="AgentCard--header" className="flex items-center justify-between gap-2 mb-2">
           <div className="flex items-center gap-2 text-xs text-slate-400">
-            <span
-              data-testid="AgentCard--env-badge"
-              role="status"
-              className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono"
-            >
-              {environment.label}
-            </span>
-            <span className="text-slate-600">•</span>
             <span
               data-testid="AgentCard--harness-badge"
               role="status"
@@ -94,23 +86,6 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
               </IconWrapper>
               {HARNESS_LABELS[harness] || harness}
             </span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            {agent.isHidden && (
-              <span
-                data-testid="AgentCard--hidden-badge"
-                role="status"
-                className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 text-[10px] font-medium border border-slate-700 font-mono"
-              >
-                Hidden
-              </span>
-            )}
-            <StatusBadge
-              lifecycle={activity.lifecycle}
-              activity={activity.activity}
-              stallTier={stallTier}
-              toolDuration={formattedDuration ?? undefined}
-            />
             {onToggleHide && (
               <button
                 type="button"
@@ -131,6 +106,23 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
                 </IconWrapper>
               </button>
             )}
+          </div>
+          <div className="flex items-center gap-1.5">
+            {agent.isHidden && (
+              <span
+                data-testid="AgentCard--hidden-badge"
+                role="status"
+                className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 text-[10px] font-medium border border-slate-700 font-mono"
+              >
+                Hidden
+              </span>
+            )}
+            <StatusBadge
+              lifecycle={activity.lifecycle}
+              activity={activity.activity}
+              stallTier={stallTier}
+              toolDuration={formattedDuration ?? undefined}
+            />
           </div>
         </div>
 
@@ -202,6 +194,16 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
         {/* Metadata Badges */}
         <div data-testid="AgentCard--badges" className="flex flex-wrap items-center gap-2 text-xs text-slate-400 mb-3">
           <div
+            data-testid="AgentCard--env-badge"
+            data-badge-type="env"
+            role="status"
+            aria-label={environment.label}
+            className="flex items-center gap-1 bg-slate-800/50 px-2 py-0.5 rounded border border-slate-700/50"
+          >
+            <span className="font-mono text-[11px] text-slate-300">{environment.label}</span>
+          </div>
+
+          <div
             data-testid="AgentCard--branch-badge"
             data-badge-type="branch"
             role="status"
@@ -226,38 +228,6 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
                 <FolderGit2 size={12} />
               </IconWrapper>
               <span className="font-mono text-[11px] text-slate-300">{workspace.relPath}</span>
-            </div>
-          )}
-
-          {stallTier === "notice" && formattedDuration && (
-            <div
-              data-testid="AgentCard--stall-notice"
-              data-badge-type="stall-notice"
-              role="status"
-              aria-label={`${activity.activeTool} running for ${formattedDuration}`}
-              className="flex items-center gap-1 bg-amber-950/40 border border-amber-800/50 text-amber-300 px-2 py-0.5 rounded text-[11px]"
-            >
-              <IconWrapper size="xs" tone="warning">
-                <Clock size={12} />
-              </IconWrapper>
-              <span>
-                ⏱️ {activity.activeTool} running for {formattedDuration}
-              </span>
-            </div>
-          )}
-
-          {(stallTier === "warning" || stallTier === "stalled") && formattedDuration && (
-            <div
-              data-testid="AgentCard--stall-duration"
-              data-badge-type="stall-duration"
-              role="status"
-              aria-label={`${formattedDuration} on tool`}
-              className="flex items-center gap-1 bg-amber-950/40 border border-amber-800/50 text-amber-300 px-2 py-0.5 rounded text-[11px]"
-            >
-              <IconWrapper size="xs" tone="warning">
-                <Clock size={12} />
-              </IconWrapper>
-              <span>⏱️ {formattedDuration} on tool</span>
             </div>
           )}
 
@@ -290,6 +260,38 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
             </IconWrapper>
             <span className="font-mono text-[11px] text-slate-300">{relativeTime}</span>
           </div>
+
+          {stallTier === "notice" && formattedDuration && (
+            <div
+              data-testid="AgentCard--stall-notice"
+              data-badge-type="stall-notice"
+              role="status"
+              aria-label={`${activity.activeTool} running for ${formattedDuration}`}
+              className="flex items-center gap-1 bg-amber-950/40 border border-amber-800/50 text-amber-300 px-2 py-0.5 rounded text-[11px]"
+            >
+              <IconWrapper size="xs" tone="warning">
+                <Clock size={12} />
+              </IconWrapper>
+              <span>
+                {activity.activeTool} running for {formattedDuration}
+              </span>
+            </div>
+          )}
+
+          {(stallTier === "warning" || stallTier === "stalled") && formattedDuration && (
+            <div
+              data-testid="AgentCard--stall-duration"
+              data-badge-type="stall-duration"
+              role="status"
+              aria-label={`${formattedDuration} on tool`}
+              className="flex items-center gap-1 bg-amber-950/40 border border-amber-800/50 text-amber-300 px-2 py-0.5 rounded text-[11px]"
+            >
+              <IconWrapper size="xs" tone="warning">
+                <Clock size={12} />
+              </IconWrapper>
+              <span>{formattedDuration} on tool</span>
+            </div>
+          )}
         </div>
       </div>
 

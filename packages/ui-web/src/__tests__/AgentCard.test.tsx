@@ -303,7 +303,13 @@ describe("AgentCard Component", () => {
       const html = renderToStaticMarkup(<AgentCard agent={noticeAgent} />);
       expect(html).toContain('data-testid="AgentCard--stall-notice"');
       expect(html).toContain("bash running for 1m 15s");
+      expect(html).not.toContain("⏱️");
       expect(html).not.toContain('data-testid="AgentCard--stall-warning"');
+
+      const lastActiveIndex = html.indexOf('data-testid="AgentCard--last-active"');
+      const stallNoticeIndex = html.indexOf('data-testid="AgentCard--stall-notice"');
+      expect(lastActiveIndex).toBeGreaterThan(-1);
+      expect(stallNoticeIndex).toBeGreaterThan(lastActiveIndex);
     });
 
     it("renders warning tier (120s - 179s) with diagnostic callout and duration badge", () => {
@@ -325,7 +331,13 @@ describe("AgentCard Component", () => {
       expect(html).toContain("Command: git rebase main");
       expect(html).toContain('data-testid="AgentCard--stall-duration"');
       expect(html).toContain("2m 15s on tool");
+      expect(html).not.toContain("⏱️");
       expect(html).toContain('data-stall-tier="warning"');
+
+      const lastActiveIndex = html.indexOf('data-testid="AgentCard--last-active"');
+      const stallDurationIndex = html.indexOf('data-testid="AgentCard--stall-duration"');
+      expect(lastActiveIndex).toBeGreaterThan(-1);
+      expect(stallDurationIndex).toBeGreaterThan(lastActiveIndex);
     });
 
     it("renders stalled tier (>=180s) with amber glow border and diagnostic callout", () => {
