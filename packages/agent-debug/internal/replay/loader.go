@@ -149,6 +149,23 @@ func loadClaudeCodeSession(filePath string, sessionIDOverride string, cwdOverrid
 		return nil, fmt.Errorf("reading claude transcript %s: %w", filePath, err)
 	}
 
+	// Normalize leading events that got time.Now() before the first explicit timestamp in the transcript.
+	var firstExplicitTS int64
+	for _, me := range mainEvents {
+		if me.Event.Timestamp > 0 && (firstExplicitTS == 0 || me.Event.Timestamp < firstExplicitTS) {
+			firstExplicitTS = me.Event.Timestamp
+		}
+	}
+	if firstExplicitTS > 0 {
+		for i := range mainEvents {
+			if mainEvents[i].Event.Timestamp > firstExplicitTS {
+				mainEvents[i].Event.Timestamp = firstExplicitTS
+			} else {
+				break
+			}
+		}
+	}
+
 	effectiveCWD := inferredCWD
 	if cwdOverride != "" {
 		effectiveCWD = filepath.Clean(cwdOverride)
@@ -200,6 +217,23 @@ func loadClaudeCodeSession(filePath string, sessionIDOverride string, cwdOverrid
 			})
 			if sErr != nil {
 				continue
+			}
+
+			// Normalize leading subagent events that got time.Now() before the first explicit timestamp.
+			var firstExplicitSubTS int64
+			for _, se := range subEvents {
+				if se.Event.Timestamp > 0 && (firstExplicitSubTS == 0 || se.Event.Timestamp < firstExplicitSubTS) {
+					firstExplicitSubTS = se.Event.Timestamp
+				}
+			}
+			if firstExplicitSubTS > 0 {
+				for i := range subEvents {
+					if subEvents[i].Event.Timestamp > firstExplicitSubTS {
+						subEvents[i].Event.Timestamp = firstExplicitSubTS
+					} else {
+						break
+					}
+				}
 			}
 
 			subIDCopy := subID

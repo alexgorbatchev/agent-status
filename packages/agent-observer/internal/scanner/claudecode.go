@@ -16,6 +16,8 @@ type SessionDescriptor struct {
 	TranscriptPath string `json:"transcriptPath"`
 	StartedAt      int64  `json:"startedAt"`
 	HarnessVersion string `json:"version"`
+	Name           string `json:"name,omitempty"`
+	NameSource     string `json:"nameSource,omitempty"`
 }
 
 type SubagentTranscript struct {

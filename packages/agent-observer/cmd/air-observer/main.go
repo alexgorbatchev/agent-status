@@ -440,6 +440,10 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 					if s.StartedAt > 0 {
 						now = s.StartedAt
 					}
+					var titlePtr *string
+					if s.NameSource == "custom" && s.Name != "" {
+						titlePtr = &s.Name
+					}
 					_ = ship.EnqueueContext(ctx, types.ITelemetryFrame{
 						Version:        "1.0",
 						EnvID:          env.ID,
@@ -453,7 +457,9 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 						Workspace:      ws,
 						Timestamp:      now,
 						EventType:      "run_started",
-						Data:           types.TelemetryFrameData{},
+						Data: types.TelemetryFrameData{
+							Title: titlePtr,
+						},
 					})
 				}
 

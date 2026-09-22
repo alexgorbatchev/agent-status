@@ -1155,6 +1155,10 @@ export function isClaudeAiTitleRecord(entry: IClaudeLogEntry): entry is IClaudeA
   return entry.type === "ai-title";
 }
 
+export function isClaudeCustomTitleRecord(entry: IClaudeLogEntry): entry is IClaudeCustomTitleRecord {
+  return entry.type === "custom-title";
+}
+
 export function isClaudeLastPromptRecord(entry: IClaudeLogEntry): entry is IClaudeLastPromptRecord {
   return entry.type === "last-prompt";
 }

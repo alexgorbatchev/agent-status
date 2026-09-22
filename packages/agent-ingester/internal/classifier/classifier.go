@@ -382,8 +382,8 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		}
 	}
 
-	// Update Title if provided
-	if frame.Data.Title != nil && strings.TrimSpace(*frame.Data.Title) != "" {
+	// Update Title if provided on root agent frames
+	if !isSubagent && frame.Data.Title != nil && strings.TrimSpace(*frame.Data.Title) != "" {
 		agent.Activity.Title = strings.TrimSpace(*frame.Data.Title)
 	}
 

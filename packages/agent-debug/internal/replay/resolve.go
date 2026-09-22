@@ -71,9 +71,20 @@ func ResolveSessionTarget(ctx context.Context, target string, harnessHint types.
 		claudeDirs := []string{
 			filepath.Join(home, ".claude", "projects"),
 			filepath.Join(home, ".claude", "sessions"),
+			filepath.Join(home, ".local", "share", "ai-registry", "claude-code", "projects"),
+			filepath.Join(home, ".local", "share", "ai-registry", "claude-code", "sessions"),
 		}
 		if xdgData := os.Getenv("XDG_DATA_HOME"); xdgData != "" {
-			claudeDirs = append(claudeDirs, filepath.Join(xdgData, "ai-registry", "claude-code", "sessions"))
+			claudeDirs = append(claudeDirs,
+				filepath.Join(xdgData, "ai-registry", "claude-code", "projects"),
+				filepath.Join(xdgData, "ai-registry", "claude-code", "sessions"),
+			)
+		}
+		if custom := os.Getenv("CLAUDE_PROJECTS_DIR"); custom != "" {
+			claudeDirs = append([]string{custom}, claudeDirs...)
+		}
+		if custom := os.Getenv("CLAUDE_SESSIONS_DIR"); custom != "" {
+			claudeDirs = append([]string{custom}, claudeDirs...)
 		}
 		for _, dir := range claudeDirs {
 			if match := findTranscriptMatching(dir, target); match != "" {

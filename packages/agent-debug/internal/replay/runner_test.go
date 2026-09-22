@@ -146,6 +146,49 @@ func TestReplay_ClaudeCode(t *testing.T) {
 		}
 	})
 
+	t.Run("session without ai-title extracts title from prompt and preserves it through subagent", func(t *testing.T) {
+		noAiSessID := "f9c8fea8-a808-4887-9018-121c5d354d59"
+		noAiFile := filepath.Join(tmpDir, fmt.Sprintf("%s.jsonl", noAiSessID))
+		noAiContent := `{"type":"mode","mode":"default","sessionId":"` + noAiSessID + `"}
+{"type":"permission-mode","permissionMode":"bypassPermissions","sessionId":"` + noAiSessID + `"}
+{"type":"system","content":"System prompt","timestamp":"2026-09-22T19:55:16.976Z","sessionId":"` + noAiSessID + `"}
+{"type":"user","message":{"role":"user","content":"<local-command-caveat>Caveat...</local-command-caveat>"},"timestamp":"2026-09-22T19:55:37.203Z","sessionId":"` + noAiSessID + `"}
+{"type":"user","message":{"role":"user","content":"/code-review"},"timestamp":"2026-09-22T19:56:00.385Z","sessionId":"` + noAiSessID + `"}
+{"type":"last-prompt","lastPrompt":"/code-review","sessionId":"` + noAiSessID + `"}
+`
+		if err := os.WriteFile(noAiFile, []byte(noAiContent), 0644); err != nil {
+			t.Fatalf("writing no-ai transcript: %v", err)
+		}
+
+		// Create subagent dir
+		noAiSubDir := filepath.Join(tmpDir, noAiSessID, "subagents")
+		if err := os.MkdirAll(noAiSubDir, 0755); err != nil {
+			t.Fatalf("creating subagents dir: %v", err)
+		}
+		noAiSubFile := filepath.Join(noAiSubDir, "agent-a2945b5234405c174.jsonl")
+		noAiSubContent := `{"parentUuid":"p1","isSidechain":true,"agentId":"a2945b5234405c174","type":"user","message":{"role":"user","content":"start review"},"timestamp":"2026-09-22T19:56:04.755Z","sessionId":"` + noAiSessID + `"}
+{"parentUuid":"p2","isSidechain":true,"agentId":"a2945b5234405c174","type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Review complete"}]},"usage":{"input_tokens":500,"output_tokens":100},"costUSD":0.001,"timestamp":"2026-09-22T19:56:10.000Z","sessionId":"` + noAiSessID + `"}
+`
+		if err := os.WriteFile(noAiSubFile, []byte(noAiSubContent), 0644); err != nil {
+			t.Fatalf("writing subagent file: %v", err)
+		}
+
+		res, err := RunReplay(ctx, ReplayOptions{
+			FilePath: noAiFile,
+			Harness:  types.HarnessClaudeCode,
+		})
+		if err != nil {
+			t.Fatalf("RunReplay failed: %v", err)
+		}
+
+		if res.Agent == nil {
+			t.Fatalf("expected non-nil Agent")
+		}
+		if res.Agent.Activity.Title != "/code-review" {
+			t.Errorf("Agent Title = %q, want '/code-review'", res.Agent.Activity.Title)
+		}
+	})
+
 	t.Run("breakpoints: until-line and until-event", func(t *testing.T) {
 		resLine, err := RunReplay(ctx, ReplayOptions{
 			FilePath:  mainFile,

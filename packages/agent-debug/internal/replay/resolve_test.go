@@ -148,6 +148,44 @@ func TestResolveSessionTarget(t *testing.T) {
 		}
 	})
 
+	t.Run("resolve session ID in Claude XDG projects dir", func(t *testing.T) {
+		xdgDir := filepath.Join(tmpDir, "xdg_data")
+		claudeProjDir := filepath.Join(xdgDir, "ai-registry", "claude-code", "projects", "-repo")
+		_ = os.MkdirAll(claudeProjDir, 0755)
+		sessFile := filepath.Join(claudeProjDir, "claude-xdg-12345.jsonl")
+		_ = os.WriteFile(sessFile, []byte(`{"type":"session","sessionId":"claude-xdg-12345"}`+"\n"), 0644)
+
+		t.Setenv("XDG_DATA_HOME", xdgDir)
+
+		res, err := ResolveSessionTarget(ctx, "claude-xdg-12345", types.HarnessClaudeCode)
+		if err != nil {
+			t.Fatalf("resolve failed: %v", err)
+		}
+		if res.FilePath != sessFile {
+			t.Errorf("expected %s, got %s", sessFile, res.FilePath)
+		}
+		if res.SessionID != "claude-xdg-12345" {
+			t.Errorf("expected session ID claude-xdg-12345, got %s", res.SessionID)
+		}
+	})
+
+	t.Run("resolve session ID in CLAUDE_PROJECTS_DIR", func(t *testing.T) {
+		customDir := filepath.Join(tmpDir, "custom-claude-projects", "my-slug")
+		_ = os.MkdirAll(customDir, 0755)
+		sessFile := filepath.Join(customDir, "claude-custom-67890.jsonl")
+		_ = os.WriteFile(sessFile, []byte(`{"type":"session","sessionId":"claude-custom-67890"}`+"\n"), 0644)
+
+		t.Setenv("CLAUDE_PROJECTS_DIR", filepath.Dir(customDir))
+
+		res, err := ResolveSessionTarget(ctx, "claude-custom-67890", types.HarnessClaudeCode)
+		if err != nil {
+			t.Fatalf("resolve failed: %v", err)
+		}
+		if res.FilePath != sessFile {
+			t.Errorf("expected %s, got %s", sessFile, res.FilePath)
+		}
+	})
+
 	t.Run("not found with harness hint", func(t *testing.T) {
 		_, err := ResolveSessionTarget(ctx, "nonexistent-id", types.HarnessPi)
 		if err == nil {

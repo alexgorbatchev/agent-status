@@ -352,3 +352,18 @@ func TestProcessHelpers(t *testing.T) {
 		}
 	})
 }
+
+func TestClaudeCodeDescriptor_NameAndNameSource(t *testing.T) {
+	raw := `{"pid":1234,"sessionId":"ses-custom","cwd":"/repo","status":"idle","startedAt":1000,"version":"2.1.280","name":"custom-name","nameSource":"custom"}`
+	var desc SessionDescriptor
+	if err := json.Unmarshal([]byte(raw), &desc); err != nil {
+		t.Fatalf("unmarshaling descriptor: %v", err)
+	}
+	if desc.Name != "custom-name" {
+		t.Errorf("Name = %q, want 'custom-name'", desc.Name)
+	}
+	if desc.NameSource != "custom" {
+		t.Errorf("NameSource = %q, want 'custom'", desc.NameSource)
+	}
+}
+

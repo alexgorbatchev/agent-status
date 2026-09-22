@@ -60,11 +60,13 @@ type rawJSONLine struct {
 	UUID              string      `json:"uuid"`
 	ParentUUID        *string     `json:"parentUuid"`
 	SessionID         string      `json:"sessionId"`
+	AgentID           string      `json:"agentId,omitempty"`
 	Timestamp         interface{} `json:"timestamp"`
 	CWD               string      `json:"cwd"`
 	GitBranch         string      `json:"gitBranch"`
 	IsSidechain       bool        `json:"isSidechain"`
 	Title             string      `json:"title"`
+	CustomTitle       string      `json:"customTitle,omitempty"`
 	AITitle           string      `json:"aiTitle"`
 	AITitleSnake      string      `json:"ai_title,omitempty"`
 	AgentName         string      `json:"agentName,omitempty"`
@@ -109,6 +111,59 @@ func stringPtr(s string) *string {
 
 func boolPtr(b bool) *bool {
 	return &b
+}
+
+// CleanClaudeCodePrompt cleans synthetic XML blocks and caveat wrappers from Claude Code prompt text.
+func CleanClaudeCodePrompt(promptText string) string {
+	trimmed := strings.TrimSpace(promptText)
+	syntheticTags := []string{
+		"local-command-caveat",
+		"command-name",
+		"command-message",
+		"command-args",
+		"local-command-stdout",
+		"task-notification",
+		"system-reminder",
+		"fork-boilerplate",
+		"environment_context",
+		"session_context",
+	}
+
+	for {
+		changed := false
+		for _, tag := range syntheticTags {
+			openTag := "<" + tag + ">"
+			closeTag := "</" + tag + ">"
+			if strings.HasPrefix(trimmed, openTag) {
+				if idx := strings.Index(trimmed, closeTag); idx != -1 {
+					trimmed = strings.TrimSpace(trimmed[idx+len(closeTag):])
+					changed = true
+				} else {
+					return ""
+				}
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+
+	return strings.TrimSpace(trimmed)
+}
+
+// ExtractClaudeCodeTitleFromPrompt extracts a session title from prompt text, ignoring synthetic context blocks.
+func ExtractClaudeCodeTitleFromPrompt(promptText string) (string, bool) {
+	cleanPrompt := CleanClaudeCodePrompt(promptText)
+	if cleanPrompt == "" {
+		return "", false
+	}
+	firstLine := strings.Split(cleanPrompt, "\n")[0]
+	firstLine = strings.TrimSpace(firstLine)
+	runes := []rune(firstLine)
+	if len(runes) > 100 {
+		firstLine = string(runes[:100])
+	}
+	return firstLine, firstLine != ""
 }
 
 func extractContentString(c interface{}) string {
@@ -172,17 +227,26 @@ func parseClaudeContentBlocks(content interface{}) []rawContentBlock {
 
 func makeClaudeCodeRunStartedEvent(raw rawJSONLine, ts int64) ParsedEvent {
 	var titlePtr *string
+	isSub := raw.IsSidechain || raw.AgentID != ""
 	if raw.AITitle != "" {
 		titlePtr = stringPtr(raw.AITitle)
 	} else if raw.AITitleSnake != "" {
 		titlePtr = stringPtr(raw.AITitleSnake)
+	} else if raw.CustomTitle != "" {
+		titlePtr = stringPtr(raw.CustomTitle)
 	} else if raw.Title != "" {
 		titlePtr = stringPtr(raw.Title)
 	} else if raw.AgentName != "" {
 		titlePtr = stringPtr(raw.AgentName)
 	} else if raw.Name != "" {
 		titlePtr = stringPtr(raw.Name)
-	} else if raw.SessionID != "" {
+	} else if !isSub && raw.LastPrompt != "" {
+		if title, ok := ExtractClaudeCodeTitleFromPrompt(raw.LastPrompt); ok {
+			titlePtr = stringPtr(title)
+		}
+	} else if isSub && raw.AgentID != "" {
+		titlePtr = stringPtr("Claude Code Subagent: " + raw.AgentID)
+	} else if !isSub && raw.SessionID != "" {
 		titlePtr = stringPtr("Claude Code Session " + raw.SessionID)
 	}
 
@@ -205,15 +269,20 @@ func makeClaudeCodeRunStartedEvent(raw rawJSONLine, ts int64) ParsedEvent {
 
 // ClaudeCodeParser maintains session stream state when parsing Claude Code transcripts.
 type ClaudeCodeParser struct {
-	mu           sync.Mutex
-	hasStarted   bool
-	seenSessions map[string]bool
+	mu             sync.Mutex
+	hasStarted     bool
+	seenSessions   map[string]bool
+	explicitTitles map[string]bool
+	sessionTitles  map[string]string
+	lastTimestamp  int64
 }
 
 // NewClaudeCodeParser creates a new stateful parser stream for Claude Code transcripts.
 func NewClaudeCodeParser() *ClaudeCodeParser {
 	return &ClaudeCodeParser{
-		seenSessions: make(map[string]bool),
+		seenSessions:   make(map[string]bool),
+		explicitTitles: make(map[string]bool),
+		sessionTitles:  make(map[string]string),
 	}
 }
 
@@ -223,6 +292,9 @@ func (p *ClaudeCodeParser) Reset() {
 	defer p.mu.Unlock()
 	p.hasStarted = false
 	p.seenSessions = make(map[string]bool)
+	p.explicitTitles = make(map[string]bool)
+	p.sessionTitles = make(map[string]string)
+	p.lastTimestamp = 0
 }
 
 // ParseLine parses a single line of Claude Code JSONL log output in a session stream.
@@ -237,10 +309,18 @@ func (p *ClaudeCodeParser) ParseLine(line []byte) ([]ParsedEvent, error) {
 		return nil, fmt.Errorf("unmarshaling jsonl line: %w", err)
 	}
 
-	ts := parseTimestamp(raw.Timestamp)
-	events := parseClaudeCodeLineEvents(raw, ts)
-
 	p.mu.Lock()
+	var ts int64
+	if raw.Timestamp == nil && p.lastTimestamp > 0 {
+		ts = p.lastTimestamp
+	} else {
+		ts = parseTimestamp(raw.Timestamp)
+		if raw.Timestamp != nil && ts > 0 {
+			p.lastTimestamp = ts
+		}
+	}
+
+	events := parseClaudeCodeLineEvents(raw, ts, p.explicitTitles, p.sessionTitles)
 	emitRunStarted := false
 	if raw.SessionID != "" {
 		if !p.seenSessions[raw.SessionID] {
@@ -263,8 +343,11 @@ func (p *ClaudeCodeParser) ParseLine(line []byte) ([]ParsedEvent, error) {
 }
 
 var (
-	defaultClaudeMu       sync.Mutex
-	defaultClaudeSessions = make(map[string]bool)
+	defaultClaudeMu             sync.Mutex
+	defaultClaudeSessions       = make(map[string]bool)
+	defaultClaudeExplicitTitles = make(map[string]bool)
+	defaultClaudeTitles         = make(map[string]string)
+	defaultClaudeLastTS         int64
 )
 
 // ResetClaudeCodeSessions clears tracked sessions for the package-level ParseClaudeCodeLine.
@@ -272,6 +355,9 @@ func ResetClaudeCodeSessions() {
 	defaultClaudeMu.Lock()
 	defer defaultClaudeMu.Unlock()
 	defaultClaudeSessions = make(map[string]bool)
+	defaultClaudeExplicitTitles = make(map[string]bool)
+	defaultClaudeTitles = make(map[string]string)
+	defaultClaudeLastTS = 0
 }
 
 // ResetClaudeCodeSession clears a specific tracked session ID.
@@ -279,6 +365,8 @@ func ResetClaudeCodeSession(sessionID string) {
 	defaultClaudeMu.Lock()
 	defer defaultClaudeMu.Unlock()
 	delete(defaultClaudeSessions, sessionID)
+	delete(defaultClaudeExplicitTitles, sessionID)
+	delete(defaultClaudeTitles, sessionID)
 }
 
 // ParseClaudeCodeLine parses a single line of Claude Code JSONL log output into ParsedEvent structs.
@@ -294,18 +382,26 @@ func ParseClaudeCodeLine(line []byte) ([]ParsedEvent, error) {
 		return nil, fmt.Errorf("unmarshaling jsonl line: %w", err)
 	}
 
-	ts := parseTimestamp(raw.Timestamp)
-	events := parseClaudeCodeLineEvents(raw, ts)
+	defaultClaudeMu.Lock()
+	var ts int64
+	if raw.Timestamp == nil && defaultClaudeLastTS > 0 {
+		ts = defaultClaudeLastTS
+	} else {
+		ts = parseTimestamp(raw.Timestamp)
+		if raw.Timestamp != nil && ts > 0 {
+			defaultClaudeLastTS = ts
+		}
+	}
 
+	events := parseClaudeCodeLineEvents(raw, ts, defaultClaudeExplicitTitles, defaultClaudeTitles)
 	emitRunStarted := false
 	if raw.SessionID != "" {
-		defaultClaudeMu.Lock()
 		if !defaultClaudeSessions[raw.SessionID] {
 			defaultClaudeSessions[raw.SessionID] = true
 			emitRunStarted = true
 		}
-		defaultClaudeMu.Unlock()
 	}
+	defaultClaudeMu.Unlock()
 
 	if emitRunStarted {
 		runStarted := makeClaudeCodeRunStartedEvent(raw, ts)
@@ -315,8 +411,18 @@ func ParseClaudeCodeLine(line []byte) ([]ParsedEvent, error) {
 	return events, nil
 }
 
-func parseClaudeCodeLineEvents(raw rawJSONLine, ts int64) []ParsedEvent {
+func parseClaudeCodeLineEvents(
+	raw rawJSONLine,
+	ts int64,
+	explicitTitles map[string]bool,
+	sessionTitles map[string]string,
+) []ParsedEvent {
 	var events []ParsedEvent
+	isSubagent := raw.IsSidechain || raw.AgentID != ""
+	sessKey := raw.SessionID
+	if sessKey == "" {
+		sessKey = "__default__"
+	}
 
 	switch raw.Type {
 	case "ai-title", "title":
@@ -331,6 +437,38 @@ func parseClaudeCodeLineEvents(raw rawJSONLine, ts int64) []ParsedEvent {
 			titleVal = extractContentString(raw.Content)
 		}
 		if titleVal != "" {
+			if !isSubagent && explicitTitles != nil {
+				explicitTitles[sessKey] = true
+				if sessionTitles != nil {
+					sessionTitles[sessKey] = titleVal
+				}
+			}
+			events = append(events, ParsedEvent{
+				EventType: "title_change",
+				Timestamp: ts,
+				CWD:       raw.CWD,
+				GitBranch: raw.GitBranch,
+				Data: types.TelemetryFrameData{
+					Title: stringPtr(titleVal),
+				},
+			})
+		}
+
+	case "custom-title":
+		titleVal := raw.CustomTitle
+		if titleVal == "" {
+			titleVal = raw.Title
+		}
+		if titleVal == "" && raw.Content != nil {
+			titleVal = extractContentString(raw.Content)
+		}
+		if titleVal != "" {
+			if !isSubagent && explicitTitles != nil {
+				explicitTitles[sessKey] = true
+				if sessionTitles != nil {
+					sessionTitles[sessKey] = titleVal
+				}
+			}
 			events = append(events, ParsedEvent{
 				EventType: "title_change",
 				Timestamp: ts,
@@ -365,6 +503,16 @@ func parseClaudeCodeLineEvents(raw rawJSONLine, ts int64) []ParsedEvent {
 			promptVal = extractContentString(raw.Content)
 		}
 		if promptVal != "" {
+			var titlePtr *string
+			shouldSetTitle := !isSubagent && (explicitTitles == nil || (!explicitTitles[sessKey] && sessionTitles[sessKey] == ""))
+			if shouldSetTitle {
+				if title, ok := ExtractClaudeCodeTitleFromPrompt(promptVal); ok {
+					if sessionTitles != nil {
+						sessionTitles[sessKey] = title
+					}
+					titlePtr = stringPtr(title)
+				}
+			}
 			events = append(events, ParsedEvent{
 				EventType: "turn_start",
 				Timestamp: ts,
@@ -372,6 +520,7 @@ func parseClaudeCodeLineEvents(raw rawJSONLine, ts int64) []ParsedEvent {
 				GitBranch: raw.GitBranch,
 				Data: types.TelemetryFrameData{
 					LastPrompt: stringPtr(promptVal),
+					Title:      titlePtr,
 				},
 			})
 		}
@@ -423,6 +572,16 @@ func parseClaudeCodeLineEvents(raw rawJSONLine, ts int64) []ParsedEvent {
 
 			if len(textParts) > 0 && !hasToolResult {
 				fullPrompt := strings.Join(textParts, "\n")
+				var titlePtr *string
+				shouldSetTitle := !isSubagent && (explicitTitles == nil || (!explicitTitles[sessKey] && sessionTitles[sessKey] == ""))
+				if shouldSetTitle {
+					if title, ok := ExtractClaudeCodeTitleFromPrompt(fullPrompt); ok {
+						if sessionTitles != nil {
+							sessionTitles[sessKey] = title
+						}
+						titlePtr = stringPtr(title)
+					}
+				}
 				events = append(events, ParsedEvent{
 					EventType: "turn_start",
 					Timestamp: ts,
@@ -432,6 +591,7 @@ func parseClaudeCodeLineEvents(raw rawJSONLine, ts int64) []ParsedEvent {
 						Role:       stringPtr("user"),
 						Content:    stringPtr(fullPrompt),
 						LastPrompt: stringPtr(fullPrompt),
+						Title:      titlePtr,
 					},
 				})
 			}
