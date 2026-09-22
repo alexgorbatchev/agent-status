@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -193,8 +194,13 @@ func (s *PiScanner) Scan(ctx context.Context) ([]PiSessionDescriptor, error) {
 		procsByCWD[cleanCWD] = append(procsByCWD[cleanCWD], proc)
 	}
 
-	var descriptors []PiSessionDescriptor
-	usedPIDs := make(map[int]bool)
+	type piCandidate struct {
+		desc       PiSessionDescriptor
+		headerTime int64
+		modTime    int64
+		cleanCWD   string
+	}
+	var candidates []piCandidate
 
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -218,6 +224,11 @@ func (s *PiScanner) Scan(ctx context.Context) ([]PiSessionDescriptor, error) {
 				continue
 			}
 
+			modTime := int64(0)
+			if info, sErr := f.Info(); sErr == nil {
+				modTime = info.ModTime().UnixMilli()
+			}
+
 			headerTime := int64(0)
 			if header.Timestamp != nil {
 				switch ts := header.Timestamp.(type) {
@@ -234,9 +245,10 @@ func (s *PiScanner) Scan(ctx context.Context) ([]PiSessionDescriptor, error) {
 				}
 			}
 			if headerTime == 0 {
-				if info, sErr := f.Info(); sErr == nil {
-					headerTime = info.ModTime().UnixMilli()
-				}
+				headerTime = modTime
+			}
+			if modTime == 0 {
+				modTime = headerTime
 			}
 
 			cleanCWD := filepath.Clean(header.CWD)
@@ -250,46 +262,69 @@ func (s *PiScanner) Scan(ctx context.Context) ([]PiSessionDescriptor, error) {
 				IsActive:       false,
 			}
 
-			// Pair with active process if available
-			candidateProcs := procsByCWD[cleanCWD]
-			var bestProc *PiProcessInfo
-			var minDiff int64 = 1<<62 - 1
-
-			for _, proc := range candidateProcs {
-				if usedPIDs[proc.PID] {
-					continue
-				}
-
-				// Check if process started at or before the session was created / written
-				// with a clock tolerance of 5000ms
-				diff := headerTime - proc.CreateTime
-				if diff >= -5000 {
-					absDiff := diff
-					if absDiff < 0 {
-						absDiff = -absDiff
-					}
-					if absDiff < minDiff {
-						minDiff = absDiff
-						procCopy := proc
-						bestProc = &procCopy
-					}
-				}
-			}
-
-			if bestProc != nil {
-				desc.PID = bestProc.PID
-				desc.IsActive = true
-				if bestProc.CreateTime > 0 {
-					desc.StartedAt = bestProc.CreateTime
-				}
-				usedPIDs[bestProc.PID] = true
-			} else if os.Getenv("AGENT_STATUS_TEST_MOCK_PROC") == "1" {
-				desc.PID = 99992
-				desc.IsActive = true
-			}
-
-			descriptors = append(descriptors, desc)
+			candidates = append(candidates, piCandidate{
+				desc:       desc,
+				headerTime: headerTime,
+				modTime:    modTime,
+				cleanCWD:   cleanCWD,
+			})
 		}
+	}
+
+	// Sort candidates by modification time descending so newest and resumed sessions take precedence.
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].modTime != candidates[j].modTime {
+			return candidates[i].modTime > candidates[j].modTime
+		}
+		return candidates[i].headerTime > candidates[j].headerTime
+	})
+
+	var descriptors []PiSessionDescriptor
+	usedPIDs := make(map[int]bool)
+
+	for i := range candidates {
+		cand := &candidates[i]
+		candidateProcs := procsByCWD[cand.cleanCWD]
+		var bestProc *PiProcessInfo
+		var minDiff int64 = 1<<62 - 1
+
+		for _, proc := range candidateProcs {
+			if usedPIDs[proc.PID] {
+				continue
+			}
+
+			// Check if process started at or before the session was created or modified,
+			// allowing resumed sessions (where headerTime is in the past, but modTime reflects recent activity).
+			diff := cand.headerTime - proc.CreateTime
+			if diff < -5000 && cand.modTime-proc.CreateTime >= -5000 {
+				diff = cand.modTime - proc.CreateTime
+			}
+			if diff >= -5000 {
+				absDiff := diff
+				if absDiff < 0 {
+					absDiff = -absDiff
+				}
+				if absDiff < minDiff {
+					minDiff = absDiff
+					procCopy := proc
+					bestProc = &procCopy
+				}
+			}
+		}
+
+		if bestProc != nil {
+			cand.desc.PID = bestProc.PID
+			cand.desc.IsActive = true
+			if bestProc.CreateTime > 0 {
+				cand.desc.StartedAt = bestProc.CreateTime
+			}
+			usedPIDs[bestProc.PID] = true
+		} else if os.Getenv("AGENT_STATUS_TEST_MOCK_PROC") == "1" {
+			cand.desc.PID = 99992
+			cand.desc.IsActive = true
+		}
+
+		descriptors = append(descriptors, cand.desc)
 	}
 
 	return descriptors, nil
