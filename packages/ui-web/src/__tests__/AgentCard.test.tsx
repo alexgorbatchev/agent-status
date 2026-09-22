@@ -1,5 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import assert from "node:assert";
+import { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AgentCard } from "../components/AgentCard";
 import type { IAgentState } from "../types";
@@ -432,6 +433,44 @@ describe("AgentCard Component", () => {
       expect(html).toContain('data-testid="AgentCard--subagent-chip-sub-2"');
       expect(html).toContain("sub-1");
       expect(html).toContain("sub-2");
+    });
+  });
+
+  describe("Focus in Herdr button", () => {
+    it("renders Focus in Herdr button enabled for running agent and disabled for exited agent", () => {
+      const runningHtml = renderToStaticMarkup(<AgentCard agent={fixture_agentStateRunning} />);
+      expect(runningHtml).toContain('data-testid="AgentCard--focus-button"');
+      expect(runningHtml).toContain('aria-label="Focus in Herdr"');
+      expect(runningHtml).not.toContain('disabled=""');
+
+      const exitedHtml = renderToStaticMarkup(<AgentCard agent={fixture_agentStateExited} />);
+      expect(exitedHtml).toContain('data-testid="AgentCard--focus-button"');
+      expect(exitedHtml).toContain("disabled");
+    });
+
+    it("prevents propagation to card on click", async () => {
+      const { mockDoc, cleanup } = setupMockDomEnvironment();
+      let openedDrawer = false;
+      const { container, unmount } = await mountComponent(
+        <AgentCard
+          agent={fixture_agentStateRunning}
+          onOpenDrawer={() => {
+            openedDrawer = true;
+          }}
+        />,
+        mockDoc,
+      );
+
+      const focusBtn = container.querySelector('[data-testid="AgentCard--focus-button"]');
+      assert(focusBtn, "Focus button must be present");
+
+      await act(async () => {
+        focusBtn.click();
+      });
+      expect(openedDrawer).toBe(false);
+
+      await unmount();
+      cleanup();
     });
   });
 });

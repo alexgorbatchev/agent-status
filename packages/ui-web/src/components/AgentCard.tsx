@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import clsx from "clsx";
 import type { IAgentCardProps } from "./types";
 import type { HarnessType } from "../types";
@@ -15,6 +15,7 @@ import {
   Clock,
   Eye,
   EyeOff,
+  SquareTerminal,
 } from "lucide-react";
 import { useRelativeTime } from "../hooks/useRelativeTime";
 import {
@@ -24,6 +25,7 @@ import {
   formatDuration,
   isSessionStalled,
 } from "../utils/agentUtils";
+import { focusAgent } from "../services/api";
 
 const HARNESS_LABELS: Record<HarnessType, string> = {
   "claude-code": "Claude Code",
@@ -37,6 +39,7 @@ function resolveCurrentTime(): number {
 }
 
 export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps): React.JSX.Element {
+  const [isFocusing, setIsFocusing] = useState<boolean>(false);
   const { activity, environment, workspace, harness } = agent;
 
   const formattedCost = activity.cost ? `$${activity.cost.total.toFixed(4)}` : "—";
@@ -120,6 +123,33 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
                 </IconWrapper>
               </button>
             )}
+            <button
+              type="button"
+              data-testid="AgentCard--focus-button"
+              aria-label="Focus in Herdr"
+              title={activity.lifecycle === "RUNNING" ? "Focus in Herdr" : "Agent session is not running"}
+              disabled={activity.lifecycle !== "RUNNING" || isFocusing}
+              onClick={async (event: React.MouseEvent<HTMLButtonElement>) => {
+                event.stopPropagation();
+                if (activity.lifecycle !== "RUNNING" || isFocusing) {
+                  return;
+                }
+                setIsFocusing(true);
+                try {
+                  await focusAgent(agent.id);
+                } finally {
+                  setIsFocusing(false);
+                }
+              }}
+              onKeyDown={(event: React.KeyboardEvent<HTMLButtonElement>) => {
+                event.stopPropagation();
+              }}
+              className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors focus:outline-none focus:ring-1 focus:ring-slate-500 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+            >
+              <IconWrapper size="xs" tone="muted">
+                <SquareTerminal size={13} />
+              </IconWrapper>
+            </button>
           </div>
           <div className="flex items-center gap-1.5">
             {agent.isHidden && (

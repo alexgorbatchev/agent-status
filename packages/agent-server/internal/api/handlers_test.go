@@ -1161,3 +1161,87 @@ func TestAgentLiveTailSSE(t *testing.T) {
 		}
 	})
 }
+
+func TestHandlers_FocusAgentProxy(t *testing.T) {
+	mockIngester := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/api/v1/internal/agents/") || !strings.HasSuffix(r.URL.Path, "/focus") {
+			http.NotFound(w, r)
+			return
+		}
+
+		if r.Header.Get("Authorization") != "Bearer secret-token" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "exited") {
+			w.WriteHeader(http.StatusConflict)
+			_, _ = w.Write([]byte(`{"error":"agent is exited"}`))
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true,"paneId":"w1:p1"}`))
+	}))
+	defer mockIngester.Close()
+
+	srv := NewServer(ServerConfig{
+		Store:       &mockStore{},
+		Hub:         stream.NewHub(),
+		IngesterURL: mockIngester.URL,
+		AuthToken:   "secret-token",
+		CORSOrigins: []string{"*"},
+	})
+
+	// 1. Successful proxy
+	req := httptest.NewRequest("POST", "/api/v1/agents/agent-1/focus", nil)
+	req.Header.Set("Authorization", "Bearer secret-token")
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d (body: %s)", w.Code, w.Body.String())
+	}
+	var res map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if res["ok"] != true || res["paneId"] != "w1:p1" {
+		t.Errorf("unexpected response payload: %+v", res)
+	}
+
+	// 2. Conflict status forwarded from ingester
+	req = httptest.NewRequest("POST", "/api/v1/agents/agent-exited/focus", nil)
+	req.Header.Set("Authorization", "Bearer secret-token")
+	w = httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected status 409, got %d", w.Code)
+	}
+
+	// 3. Ingester connection failure returns 502 Bad Gateway
+	badSrv := NewServer(ServerConfig{
+		Store:       &mockStore{},
+		Hub:         stream.NewHub(),
+		IngesterURL: "http://127.0.0.1:59999", // Unreachable port
+		AuthToken:   "secret-token",
+		CORSOrigins: []string{"*"},
+	})
+	req = httptest.NewRequest("POST", "/api/v1/agents/agent-1/focus", nil)
+	req.Header.Set("Authorization", "Bearer secret-token")
+	w = httptest.NewRecorder()
+	badSrv.Router().ServeHTTP(w, req)
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("expected status 502, got %d", w.Code)
+	}
+
+	// 5. Direct invocation with missing id returns 400 Bad Request
+	req = httptest.NewRequest("POST", "/api/v1/agents//focus", nil)
+	w = httptest.NewRecorder()
+	srv.handleFocusAgent(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400 for empty id, got %d", w.Code)
+	}
+}

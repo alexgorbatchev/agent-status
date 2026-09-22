@@ -9,7 +9,8 @@ import { LogBuffer } from "../utils/LogBuffer";
 import { correlateTelemetryFrames } from "../utils/correlateTelemetryFrames";
 import { getAgentDebugCommand } from "../utils/agentUtils";
 import { logDrawerMachine } from "../machines/logDrawerMachine";
-import { X, RefreshCw, AlertCircle, Terminal, Check } from "lucide-react";
+import { X, RefreshCw, AlertCircle, Terminal, Check, SquareTerminal } from "lucide-react";
+import { focusAgent } from "../services/api";
 
 import { getLogFrameKey } from "../utils";
 
@@ -35,6 +36,7 @@ export function LogDrawer({
   const correlatedLogs = useMemo(() => correlateTelemetryFrames(logs), [logs]);
 
   const [copiedAgentId, setCopiedAgentId] = useState<string | null>(null);
+  const [isFocusing, setIsFocusing] = useState<boolean>(false);
   const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasCopied = agent !== null && copiedAgentId === agent.id;
 
@@ -121,6 +123,18 @@ export function LogDrawer({
     }
   }, [agent]);
 
+  const handleFocus = useCallback(async (): Promise<void> => {
+    if (!agent || agent.activity.lifecycle !== "RUNNING" || isFocusing) {
+      return;
+    }
+    setIsFocusing(true);
+    try {
+      await focusAgent(agent.id, apiBaseUrl, token);
+    } finally {
+      setIsFocusing(false);
+    }
+  }, [agent, apiBaseUrl, token, isFocusing]);
+
   if (!agent) {
     return null;
   }
@@ -152,6 +166,20 @@ export function LogDrawer({
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            aria-label="Focus in Herdr"
+            title={agent.activity.lifecycle === "RUNNING" ? "Focus in Herdr" : "Agent session is not running"}
+            data-testid="LogDrawer--focus-button"
+            disabled={agent.activity.lifecycle !== "RUNNING" || isFocusing}
+            onClick={handleFocus}
+            className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+          >
+            <IconWrapper size="lg" tone="muted">
+              <SquareTerminal size={20} />
+            </IconWrapper>
+          </button>
+
           <button
             type="button"
             aria-label={hasCopied ? "Debug command copied" : "Copy debug command to clipboard"}

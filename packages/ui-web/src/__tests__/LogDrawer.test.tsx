@@ -528,4 +528,40 @@ describe("LogDrawer Component", () => {
       cleanup();
     }
   });
+
+  it("renders Focus in Herdr button in drawer header", async () => {
+    const { mockDoc, cleanup } = setupMockDomEnvironment();
+    try {
+      const { container, unmount } = await mountComponent(
+        <LogDrawer agent={fixture_agentStateRunning} onClose={() => {}} />,
+        mockDoc,
+      );
+
+      const focusBtn = container.querySelector('[data-testid="LogDrawer--focus-button"]');
+      assert(focusBtn, "LogDrawer--focus-button must be present in header");
+      expect(focusBtn.getAttribute("aria-label")).toBe("Focus in Herdr");
+      expect(focusBtn.getAttribute("disabled")).toBeNull();
+
+      await unmount();
+
+      const exitedAgent = {
+        ...fixture_agentStateRunning,
+        activity: {
+          ...fixture_agentStateRunning.activity,
+          lifecycle: "EXITED" as const,
+        },
+      };
+      const { container: exitedContainer, unmount: unmountExited } = await mountComponent(
+        <LogDrawer agent={exitedAgent} onClose={() => {}} />,
+        mockDoc,
+      );
+      const exitedBtn = exitedContainer.querySelector('[data-testid="LogDrawer--focus-button"]');
+      assert(exitedBtn);
+      expect(exitedBtn.getAttribute("disabled")).not.toBeNull();
+
+      await unmountExited();
+    } finally {
+      cleanup();
+    }
+  });
 });
