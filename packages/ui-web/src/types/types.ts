@@ -88,6 +88,31 @@ export interface IAgentState {
   hiddenAt?: number | null;
 }
 
+export interface IWordToken {
+  type: "add" | "del" | "same";
+  value: string;
+}
+
+export interface IDiffLine {
+  type: "add" | "del" | "ctx";
+  oldLineNumber?: number;
+  newLineNumber?: number;
+  content: string;
+  wordTokens?: IWordToken[];
+}
+
+export interface IDiffHunk {
+  header?: string;
+  lines: IDiffLine[];
+}
+
+export interface IFileModification {
+  action: "EDIT" | "WRITE";
+  filePath: string;
+  hunks?: IDiffHunk[];
+  content?: string;
+}
+
 export interface ITelemetryFrameData {
   role: "user" | "assistant" | "system" | null;
   content: string | null;
@@ -97,6 +122,7 @@ export interface ITelemetryFrameData {
   toolName: string | null;
   toolCallId: string | null;
   toolInput: Record<string, unknown> | null;
+  fileModification?: IFileModification | null;
   toolOutput: string | null;
   isError: boolean | null;
   exitCode: number | null;

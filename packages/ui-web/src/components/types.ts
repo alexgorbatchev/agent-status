@@ -8,6 +8,7 @@ import type {
   ITokenUsage,
   LifecycleState,
   ActivityState,
+  IFileModification,
 } from "../types";
 
 export interface IStatusBadgeConfig {
@@ -117,6 +118,7 @@ export interface ILogFrameItemProps {
 export interface IToolExecutionBlockProps {
   toolName?: string | null;
   toolInput?: Record<string, unknown> | null;
+  fileModification?: IFileModification | null;
   toolOutput?: string | null;
   exitCode?: number | null;
   isError?: boolean | null;

@@ -540,26 +540,30 @@ func ParseCodexLine(line []byte) ([]ParsedEvent, error) {
 						qText = p
 					}
 				}
+				fileMod := NormalizeFileModification(resp.Name, inputMap)
 				events = append(events, ParsedEvent{
 					EventType: "question_prompt",
 					Timestamp: ts,
 					Data: types.TelemetryFrameData{
-						Role:       stringPtr("assistant"),
-						ToolName:   stringPtr(resp.Name),
-						ToolCallID: callIDPtr,
-						ToolInput:  inputMap,
-						Question:   stringPtr(qText),
+						Role:             stringPtr("assistant"),
+						ToolName:         stringPtr(resp.Name),
+						ToolCallID:       callIDPtr,
+						ToolInput:        inputMap,
+						FileModification: fileMod,
+						Question:         stringPtr(qText),
 					},
 				})
 			} else {
+				fileMod := NormalizeFileModification(resp.Name, inputMap)
 				events = append(events, ParsedEvent{
 					EventType: "tool_call",
 					Timestamp: ts,
 					Data: types.TelemetryFrameData{
-						Role:       stringPtr("assistant"),
-						ToolName:   stringPtr(resp.Name),
-						ToolCallID: callIDPtr,
-						ToolInput:  inputMap,
+						Role:             stringPtr("assistant"),
+						ToolName:         stringPtr(resp.Name),
+						ToolCallID:       callIDPtr,
+						ToolInput:        inputMap,
+						FileModification: fileMod,
 					},
 				})
 			}

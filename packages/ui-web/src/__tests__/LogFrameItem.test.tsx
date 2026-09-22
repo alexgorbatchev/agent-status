@@ -207,4 +207,25 @@ describe("LogFrameItem Component", () => {
     expect(html).toContain('data-testid="ToolExecutionBlock--stream-type"');
     expect(html).toContain("STDERR");
   });
+
+  it("passes fileModification from frame.data to ToolExecutionBlock and renders DiffViewer", () => {
+    const modFrame: ITelemetryFrame = {
+      ...fixture_telemetryFrame,
+      data: {
+        ...fixture_telemetryFrame.data,
+        toolName: null,
+        toolInput: null,
+        fileModification: {
+          action: "WRITE",
+          filePath: "test.md",
+          content: "Sample content\n",
+        },
+      },
+    };
+    const html = renderToString(<LogFrameItem frame={modFrame} />);
+    expect(html).toContain('data-testid="ToolExecutionBlock"');
+    expect(html).toContain('data-testid="DiffViewer"');
+    expect(html).toContain("test.md");
+    expect(html).toContain("WRITE");
+  });
 });

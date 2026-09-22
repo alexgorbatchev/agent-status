@@ -130,22 +130,42 @@ type ProjectGroup struct {
 	ActiveAgentCount int           `json:"activeAgentCount"`
 }
 
+type DiffLine struct {
+	Type          string `json:"type"` // "add" | "del" | "ctx"
+	OldLineNumber *int   `json:"oldLineNumber,omitempty"`
+	NewLineNumber *int   `json:"newLineNumber,omitempty"`
+	Content       string `json:"content"`
+}
+
+type DiffHunk struct {
+	Header string     `json:"header,omitempty"`
+	Lines  []DiffLine `json:"lines"`
+}
+
+type FileModification struct {
+	Action   string     `json:"action"` // "EDIT" | "WRITE"
+	FilePath string     `json:"filePath"`
+	Hunks    []DiffHunk `json:"hunks,omitempty"`
+	Content  *string    `json:"content,omitempty"`
+}
+
 type TelemetryFrameData struct {
-	Role           *string                `json:"role,omitempty"`
-	Content        *string                `json:"content,omitempty"`
-	Title          *string                `json:"title,omitempty"`
-	LastPrompt     *string                `json:"lastPrompt,omitempty"`
-	Model          *string                `json:"model,omitempty"`
-	ToolName       *string                `json:"toolName,omitempty"`
-	ToolCallID     *string                `json:"toolCallId,omitempty"`
-	ToolInput      map[string]interface{} `json:"toolInput,omitempty"`
-	ToolOutput     *string                `json:"toolOutput,omitempty"`
-	IsError        *bool                  `json:"isError,omitempty"`
-	ExitCode       *int                   `json:"exitCode,omitempty"`
-	Question       *string                `json:"question,omitempty"`
-	StopReason     *string                `json:"stopReason,omitempty"`
-	Usage          *ITokenUsage           `json:"usage,omitempty"`
-	RawHarnessCost *float64               `json:"rawHarnessCost,omitempty"`
+	Role             *string                `json:"role,omitempty"`
+	Content          *string                `json:"content,omitempty"`
+	Title            *string                `json:"title,omitempty"`
+	LastPrompt       *string                `json:"lastPrompt,omitempty"`
+	Model            *string                `json:"model,omitempty"`
+	ToolName         *string                `json:"toolName,omitempty"`
+	ToolCallID       *string                `json:"toolCallId,omitempty"`
+	ToolInput        map[string]interface{} `json:"toolInput,omitempty"`
+	FileModification *FileModification      `json:"fileModification,omitempty"`
+	ToolOutput       *string                `json:"toolOutput,omitempty"`
+	IsError          *bool                  `json:"isError,omitempty"`
+	ExitCode         *int                   `json:"exitCode,omitempty"`
+	Question         *string                `json:"question,omitempty"`
+	StopReason       *string                `json:"stopReason,omitempty"`
+	Usage            *ITokenUsage           `json:"usage,omitempty"`
+	RawHarnessCost   *float64               `json:"rawHarnessCost,omitempty"`
 }
 
 type ITelemetryFrame struct {

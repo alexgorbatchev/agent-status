@@ -612,3 +612,117 @@ func TestOpencodeDB_OpenAndGetPartsByMessage(t *testing.T) {
 	}
 }
 
+func TestOpencodeParser_NormalizedFileModification(t *testing.T) {
+	session := &OpencodeSession{
+		ID:          "ses_oc_norm",
+		Directory:   "/workspace",
+		Title:       "OpenCode Test",
+		TimeCreated: 1700000000000,
+	}
+	messages := []OpencodeMessage{
+		{
+			ID:          "msg_1",
+			SessionID:   "ses_oc_norm",
+			TimeCreated: 1700000000000,
+			Data: OpencodeMessageData{
+				Role: "assistant",
+			},
+		},
+	}
+
+	t.Run("edit part produces normalized FileModification", func(t *testing.T) {
+		parts := []OpencodePart{
+			{
+				ID:          "part_edit_1",
+				MessageID:   "msg_1",
+				SessionID:   "ses_oc_norm",
+				TimeCreated: 1700000001000,
+				Data: OpencodePartData{
+					Type:   "tool",
+					Tool:   "edit",
+					CallID: "call_oc_1",
+					State: &OpencodeToolPartState{
+						Status: "running",
+						Input: map[string]interface{}{
+							"filePath": "src/server.go",
+							"oldText":  "port := 8080",
+							"newText":  "port := 9090",
+						},
+					},
+				},
+			},
+		}
+		evs := ReconstructSessionEvents(session, messages, parts)
+		var toolCall *ParsedEvent
+		for i := range evs {
+			if evs[i].EventType == "tool_use" {
+				toolCall = &evs[i]
+				break
+			}
+		}
+		if toolCall == nil {
+			t.Fatal("expected tool_use event")
+		}
+		fm := toolCall.Data.FileModification
+		if fm == nil {
+			t.Fatal("expected non-nil FileModification for OpenCode edit tool")
+		}
+		if fm.Action != "EDIT" {
+			t.Errorf("Action = %q, want 'EDIT'", fm.Action)
+		}
+		if fm.FilePath != "src/server.go" {
+			t.Errorf("FilePath = %q, want 'src/server.go'", fm.FilePath)
+		}
+		if len(fm.Hunks) != 1 {
+			t.Fatalf("expected 1 hunk, got %d", len(fm.Hunks))
+		}
+	})
+
+	t.Run("write part produces normalized FileModification", func(t *testing.T) {
+		parts := []OpencodePart{
+			{
+				ID:          "part_write_1",
+				MessageID:   "msg_1",
+				SessionID:   "ses_oc_norm",
+				TimeCreated: 1700000002000,
+				Data: OpencodePartData{
+					Type:   "tool",
+					Tool:   "write",
+					CallID: "call_oc_2",
+					State: &OpencodeToolPartState{
+						Status: "running",
+						Input: map[string]interface{}{
+							"filePath": "notes.txt",
+							"content":  "some notes\n",
+						},
+					},
+				},
+			},
+		}
+		evs := ReconstructSessionEvents(session, messages, parts)
+		var toolCall *ParsedEvent
+		for i := range evs {
+			if evs[i].EventType == "tool_use" {
+				toolCall = &evs[i]
+				break
+			}
+		}
+		if toolCall == nil {
+			t.Fatal("expected tool_use event")
+		}
+		fm := toolCall.Data.FileModification
+		if fm == nil {
+			t.Fatal("expected non-nil FileModification for OpenCode write tool")
+		}
+		if fm.Action != "WRITE" {
+			t.Errorf("Action = %q, want 'WRITE'", fm.Action)
+		}
+		if fm.FilePath != "notes.txt" {
+			t.Errorf("FilePath = %q, want 'notes.txt'", fm.FilePath)
+		}
+		if fm.Content == nil || *fm.Content != "some notes\n" {
+			t.Errorf("Content = %v, want 'some notes\\n'", fm.Content)
+		}
+	})
+}
+

@@ -45,6 +45,7 @@ function formatDuration(ms: number): string {
 export function ToolExecutionBlock({
   toolName,
   toolInput,
+  fileModification,
   toolOutput,
   exitCode,
   isError,
@@ -54,7 +55,9 @@ export function ToolExecutionBlock({
   const [hasCopiedCommand, setHasCopiedCommand] = useState<boolean>(false);
   const [hasCopiedOutput, setHasCopiedOutput] = useState<boolean>(false);
 
-  const fileDiffPayload = isFileModification(toolName, toolInput) ? parseFileModification(toolName, toolInput) : null;
+  const fileDiffPayload = isFileModification(toolName, toolInput, fileModification)
+    ? parseFileModification(toolName, toolInput, fileModification)
+    : null;
   const shellCommand = getShellCommand(toolName, toolInput);
   const isParamTool = Boolean(toolName && PARAM_TOOLS.has(toolName.toLowerCase()));
 
