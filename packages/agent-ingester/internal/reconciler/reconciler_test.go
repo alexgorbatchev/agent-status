@@ -1,14 +1,17 @@
 package reconciler
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/store"
 )
@@ -549,4 +552,108 @@ func TestOSProcessChecker(t *testing.T) {
 		t.Errorf("expected current process to be detected as recycled PID with ancient startedAt")
 	}
 }
+
+func TestReconciler_LogLevel_DebugForIndividualExits(t *testing.T) {
+	origLogger := logging.Default()
+	t.Cleanup(func() {
+		logging.SetDefault(origLogger)
+	})
+
+	dbPath := filepath.Join(t.TempDir(), "reconcile_log_level_test.db")
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("store.Open failed: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	checker := &mockProcessChecker{
+		alivePIDs: map[int]bool{
+			7001: false, // dead
+		},
+	}
+
+	localHost := "macbook.local"
+	rec := New(
+		st,
+		nil,
+		WithProcessChecker(checker),
+		WithLocalHostname(localHost),
+	)
+
+	now := time.Now().UnixMilli()
+	deadAgent := types.IAgentState{
+		ID:        "agent-dead-for-log-test",
+		SessionID: "sess-dead-log",
+		Harness:   types.HarnessPi,
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-local",
+			Hostname: localHost,
+			Platform: "darwin",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle:      types.LifecycleRunning,
+			Activity:       types.ActivityBusy,
+			FirstStartedAt: now - 3600000,
+			UpdatedAt:      now - 1800000,
+			CurrentRun: &types.IRunInfo{
+				ID:        "run-dead-log",
+				PID:       7001,
+				StartedAt: now - 3600000,
+			},
+		},
+	}
+	if err := st.SaveAgentState(deadAgent); err != nil {
+		t.Fatalf("SaveAgentState(deadAgent) failed: %v", err)
+	}
+
+	// 1. With INFO log level: run_reconciled_exited MUST NOT be logged
+	infoBuf := &bytes.Buffer{}
+	infoLogger := logging.NewWithMode(infoBuf, "test-ingester", "info", true)
+	logging.SetDefault(infoLogger)
+
+	count, err := rec.Reconcile(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Reconcile failed: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected 1 reconciled agent, got %d", count)
+	}
+
+	infoOutput := infoBuf.String()
+	if strings.Contains(infoOutput, "run_reconciled_exited") {
+		t.Errorf("at INFO level, run_reconciled_exited should not be logged, but found: %q", infoOutput)
+	}
+
+	// 2. Re-create dead agent and reconcile with DEBUG log level: run_reconciled_exited MUST be logged
+	deadAgent2 := deadAgent
+	deadAgent2.ID = "agent-dead-for-debug-log-test"
+	deadAgent2.SessionID = "sess-dead-debug-log"
+	deadAgent2.Activity.Lifecycle = types.LifecycleRunning
+	deadAgent2.Activity.CurrentRun = &types.IRunInfo{
+		ID:        "run-dead-debug-log",
+		PID:       7001,
+		StartedAt: now - 3600000,
+	}
+	if err := st.SaveAgentState(deadAgent2); err != nil {
+		t.Fatalf("SaveAgentState(deadAgent2) failed: %v", err)
+	}
+
+	debugBuf := &bytes.Buffer{}
+	debugLogger := logging.NewWithMode(debugBuf, "test-ingester", "debug", true)
+	logging.SetDefault(debugLogger)
+
+	count2, err := rec.Reconcile(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Reconcile failed: %v", err)
+	}
+	if count2 != 1 {
+		t.Fatalf("expected 1 reconciled agent, got %d", count2)
+	}
+
+	debugOutput := debugBuf.String()
+	if !strings.Contains(debugOutput, "run_reconciled_exited") {
+		t.Errorf("at DEBUG level, run_reconciled_exited MUST be logged, but output was: %q", debugOutput)
+	}
+}
+
 

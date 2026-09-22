@@ -171,7 +171,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, envID string) (int, error) {
 			}
 
 			reconciledCount++
-			logging.Info("run_reconciled_exited", "agentId", agent.ID, "pid", pid, "reason", reason)
+			logging.Debug("run_reconciled_exited", "agentId", agent.ID, "pid", pid, "reason", reason)
 		}
 	}
 
