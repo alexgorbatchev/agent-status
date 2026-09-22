@@ -832,4 +832,176 @@ func TestObserverTranscriptMalformedLineAdvance(t *testing.T) {
 	<-errCh
 }
 
+func TestObserverClaudeSubagentRunStartedEmission(t *testing.T) {
+	t.Setenv("AGENT_STATUS_TEST_MOCK_PROC", "1")
+
+	buf := &testSyncBuffer{}
+	logger := logging.NewWithMode(buf, "observer", "info", false)
+	logging.SetDefault(logger)
+
+	tmpDir := t.TempDir()
+	cursorPath := filepath.Join(tmpDir, "cursors.json")
+	claudeDir := filepath.Join(tmpDir, "claude-sessions")
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		t.Fatalf("creating claudeDir: %v", err)
+	}
+
+	transcriptPath := filepath.Join(tmpDir, "root-session.jsonl")
+	transcriptData := []byte("{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"start root\"}]}}\n")
+	if err := os.WriteFile(transcriptPath, transcriptData, 0644); err != nil {
+		t.Fatalf("writing transcript: %v", err)
+	}
+
+	subagentsDir := filepath.Join(tmpDir, "subagents")
+	if err := os.MkdirAll(subagentsDir, 0755); err != nil {
+		t.Fatalf("creating subagentsDir: %v", err)
+	}
+	subagentPath := filepath.Join(subagentsDir, "agent-sub-123.jsonl")
+	subagentData := []byte("{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"subagent response\"}]}}\n")
+	if err := os.WriteFile(subagentPath, subagentData, 0644); err != nil {
+		t.Fatalf("writing subagent transcript: %v", err)
+	}
+
+	sessionID := "claude-sub-sess-1"
+	metaPath := filepath.Join(claudeDir, "session-1.json")
+	metaData := []byte(`{"pid":99998,"sessionId":"` + sessionID + `","cwd":"` + tmpDir + `","transcriptPath":"` + transcriptPath + `"}`)
+	if err := os.WriteFile(metaPath, metaData, 0644); err != nil {
+		t.Fatalf("writing session metadata: %v", err)
+	}
+
+	piSessionsDir := filepath.Join(tmpDir, "pi-sessions")
+	_ = os.MkdirAll(piSessionsDir, 0755)
+	codexDir := filepath.Join(tmpDir, "codex-sessions")
+	_ = os.MkdirAll(codexDir, 0755)
+	opencodeDb := filepath.Join(tmpDir, "opencode.db")
+
+	var receivedFramesMu sync.Mutex
+	var receivedFrames []types.ITelemetryFrame
+	receivedSubagentRunStarted := make(chan struct{})
+	var subagentStartedOnce sync.Once
+
+	mockIngester := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close(websocket.StatusNormalClosure, "done") }()
+		for {
+			_, data, err := conn.Read(r.Context())
+			if err != nil {
+				return
+			}
+			var msg types.IObserverMessage
+			if err := json.Unmarshal(data, &msg); err == nil && msg.Type == "frames" && len(msg.Frames) > 0 {
+				receivedFramesMu.Lock()
+				for _, f := range msg.Frames {
+					receivedFrames = append(receivedFrames, f)
+					if f.EventType == "run_started" && f.SubagentID != nil && *f.SubagentID == "agent-sub-123" {
+						subagentStartedOnce.Do(func() { close(receivedSubagentRunStarted) })
+					}
+				}
+				receivedFramesMu.Unlock()
+
+				lastSeq := msg.Frames[len(msg.Frames)-1].Seq
+				ack := types.IIngesterMessage{
+					Type: "ack",
+					UpTo: lastSeq,
+				}
+				ackBytes, _ := json.Marshal(ack)
+				_ = conn.Write(r.Context(), websocket.MessageText, ackBytes)
+			}
+		}
+	}))
+	defer mockIngester.Close()
+
+	opts := observerOptions{
+		ingesterURL:       "ws" + strings.TrimPrefix(mockIngester.URL, "http") + "/ws/ingest",
+		cursorPath:        cursorPath,
+		claudeSessionsDir: claudeDir,
+		piSessionsDir:     piSessionsDir,
+		codexSessionsDir:  codexDir,
+		opencodeDBPath:    opencodeDb,
+		scanInterval:      50 * time.Millisecond,
+		envFlag:           "test-env",
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runObserverContext(ctx, opts)
+	}()
+
+	select {
+	case <-receivedSubagentRunStarted:
+		// Success!
+	case <-time.After(2 * time.Second):
+		receivedFramesMu.Lock()
+		t.Fatalf("timed out waiting for subagent run_started event, got %d frames", len(receivedFrames))
+		receivedFramesMu.Unlock()
+	}
+
+	// Also verify that when another subagent is discovered dynamically during session, run_started is emitted for it too
+	lateSubagentPath := filepath.Join(subagentsDir, "agent-sub-late.jsonl")
+	lateSubagentData := []byte("{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"late subagent\"}]}}\n")
+	if err := os.WriteFile(lateSubagentPath, lateSubagentData, 0644); err != nil {
+		t.Fatalf("writing late subagent transcript: %v", err)
+	}
+
+	// Wait for late subagent to be discovered
+	var foundLateStarted bool
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		receivedFramesMu.Lock()
+		for _, f := range receivedFrames {
+			if f.EventType == "run_started" && f.SubagentID != nil && *f.SubagentID == "agent-sub-late" {
+				foundLateStarted = true
+				break
+			}
+		}
+		receivedFramesMu.Unlock()
+		if foundLateStarted {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !foundLateStarted {
+		t.Errorf("expected run_started for dynamically discovered subagent 'agent-sub-late', but none was received")
+	}
+
+	// Verify run_started frames for subagent are not duplicated across scan ticks
+	time.Sleep(150 * time.Millisecond)
+	receivedFramesMu.Lock()
+	var sub123Starts int
+	var rootStarts int
+	for _, f := range receivedFrames {
+		if f.EventType == "run_started" {
+			if f.SubagentID == nil {
+				rootStarts++
+			} else if *f.SubagentID == "agent-sub-123" {
+				sub123Starts++
+			}
+		}
+	}
+	receivedFramesMu.Unlock()
+
+	if rootStarts != 1 {
+		t.Errorf("expected exactly 1 root run_started, got %d", rootStarts)
+	}
+	if sub123Starts != 1 {
+		t.Errorf("expected exactly 1 subagent run_started for agent-sub-123, got %d", sub123Starts)
+	}
+
+	// Trigger session exit by deleting metadata
+	_ = os.Remove(metaPath)
+	time.Sleep(100 * time.Millisecond)
+
+	cancel()
+	<-errCh
+}
+
+
+
+
 
