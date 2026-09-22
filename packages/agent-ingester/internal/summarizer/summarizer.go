@@ -772,6 +772,82 @@ func normalizePhase(raw string) *types.AgentPhase {
 	}
 }
 
+func resolveToolSummary(tool, target string) (string, *types.AgentPhase) {
+	normalized := strings.ToLower(strings.TrimSpace(tool))
+	var phase *types.AgentPhase
+	var action string
+
+	switch normalized {
+	case "edit", "notebookedit", "notebook_edit", "multiedit", "multi_edit":
+		p := types.PhaseEditing
+		phase = &p
+		if target != "" {
+			action = fmt.Sprintf("Editing %s", target)
+		} else {
+			action = "Editing code"
+		}
+
+	case "write", "writefile", "write_file":
+		p := types.PhaseEditing
+		phase = &p
+		if target != "" {
+			action = fmt.Sprintf("Writing %s", target)
+		} else {
+			action = "Writing file"
+		}
+
+	case "read", "readfile", "read_file":
+		p := types.PhaseInvestigating
+		phase = &p
+		if target != "" {
+			action = fmt.Sprintf("Reading %s", target)
+		} else {
+			action = "Reading file"
+		}
+
+	case "bash", "sh", "zsh", "exec", "exec_command":
+		lowerTarget := strings.ToLower(target)
+		if strings.Contains(lowerTarget, "test") || strings.Contains(lowerTarget, "jest") || strings.Contains(lowerTarget, "pytest") {
+			p := types.PhaseTesting
+			phase = &p
+			action = "Running tests"
+		} else if target != "" {
+			p := types.PhaseEditing
+			phase = &p
+			action = fmt.Sprintf("Running %s", target)
+		} else {
+			p := types.PhaseEditing
+			phase = &p
+			action = "Running shell command"
+		}
+
+	case "askuserquestion", "ask_user_question":
+		p := types.PhasePlanning
+		phase = &p
+		action = "Waiting for user input"
+
+	case "websearch", "web_search", "webfetch", "web_fetch", "ast-grep", "codegraph", "grep", "find", "glob":
+		p := types.PhaseInvestigating
+		phase = &p
+		if target != "" {
+			action = fmt.Sprintf("Searching %s", target)
+		} else {
+			action = "Investigating codebase"
+		}
+
+	default:
+		p := types.PhaseEditing
+		phase = &p
+		if target != "" {
+			action = fmt.Sprintf("Using %s on %s", tool, target)
+		} else {
+			action = fmt.Sprintf("Using %s", tool)
+		}
+	}
+
+	return action, phase
+}
+
 // FallbackSummary produces deterministic tool and activity descriptions.
 func FallbackSummary(input SummaryInput) SummaryResult {
 	var (
@@ -790,73 +866,7 @@ func FallbackSummary(input SummaryInput) SummaryResult {
 		if activeTarget != nil {
 			target = *activeTarget
 		}
-
-		switch tool {
-		case "Edit", "NotebookEdit":
-			p := types.PhaseEditing
-			phase = &p
-			if target != "" {
-				action = fmt.Sprintf("Editing %s", target)
-			} else {
-				action = "Editing code"
-			}
-
-		case "Write":
-			p := types.PhaseEditing
-			phase = &p
-			if target != "" {
-				action = fmt.Sprintf("Writing %s", target)
-			} else {
-				action = "Writing file"
-			}
-
-		case "Read", "readFile", "read_file":
-			p := types.PhaseInvestigating
-			phase = &p
-			if target != "" {
-				action = fmt.Sprintf("Reading %s", target)
-			} else {
-				action = "Reading file"
-			}
-
-		case "Bash":
-			if strings.Contains(strings.ToLower(target), "test") || strings.Contains(strings.ToLower(target), "jest") || strings.Contains(strings.ToLower(target), "pytest") {
-				p := types.PhaseTesting
-				phase = &p
-				action = "Running tests"
-			} else if target != "" {
-				p := types.PhaseEditing
-				phase = &p
-				action = fmt.Sprintf("Running %s", target)
-			} else {
-				p := types.PhaseEditing
-				phase = &p
-				action = "Running shell command"
-			}
-
-		case "AskUserQuestion":
-			p := types.PhasePlanning
-			phase = &p
-			action = "Waiting for user input"
-
-		case "WebSearch", "WebFetch", "ast-grep", "codegraph", "grep", "Grep", "find":
-			p := types.PhaseInvestigating
-			phase = &p
-			if target != "" {
-				action = fmt.Sprintf("Searching %s", target)
-			} else {
-				action = "Investigating codebase"
-			}
-
-		default:
-			p := types.PhaseEditing
-			phase = &p
-			if target != "" {
-				action = fmt.Sprintf("Using %s on %s", tool, target)
-			} else {
-				action = fmt.Sprintf("Using %s", tool)
-			}
-		}
+		action, phase = resolveToolSummary(tool, target)
 	} else {
 		switch input.Activity {
 		case types.ActivityWaitingQuestion:
@@ -891,64 +901,7 @@ func FallbackSummary(input SummaryInput) SummaryResult {
 				action = input.CurrentAction
 			} else if len(input.RecentTools) > 0 {
 				last := input.RecentTools[len(input.RecentTools)-1]
-				tool := last.ToolName
-				target := last.Target
-				switch tool {
-				case "Edit", "NotebookEdit":
-					p := types.PhaseEditing
-					phase = &p
-					if target != "" {
-						action = fmt.Sprintf("Editing %s", target)
-					} else {
-						action = "Editing code"
-					}
-				case "Write":
-					p := types.PhaseEditing
-					phase = &p
-					if target != "" {
-						action = fmt.Sprintf("Writing %s", target)
-					} else {
-						action = "Writing file"
-					}
-				case "Read", "readFile", "read_file":
-					p := types.PhaseInvestigating
-					phase = &p
-					if target != "" {
-						action = fmt.Sprintf("Reading %s", target)
-					} else {
-						action = "Reading file"
-					}
-				case "Bash":
-					if strings.Contains(strings.ToLower(target), "test") || strings.Contains(strings.ToLower(target), "jest") || strings.Contains(strings.ToLower(target), "pytest") {
-						p := types.PhaseTesting
-						phase = &p
-						action = "Running tests"
-					} else if target != "" {
-						p := types.PhaseEditing
-						phase = &p
-						action = fmt.Sprintf("Running %s", target)
-					} else {
-						p := types.PhaseEditing
-						phase = &p
-						action = "Running shell command"
-					}
-				case "WebSearch", "WebFetch", "ast-grep", "codegraph", "grep", "Grep", "find":
-					p := types.PhaseInvestigating
-					phase = &p
-					if target != "" {
-						action = fmt.Sprintf("Searching %s", target)
-					} else {
-						action = "Investigating codebase"
-					}
-				default:
-					p := types.PhaseEditing
-					phase = &p
-					if target != "" {
-						action = fmt.Sprintf("Using %s on %s", tool, target)
-					} else {
-						action = fmt.Sprintf("Using %s", tool)
-					}
-				}
+				action, phase = resolveToolSummary(last.ToolName, last.Target)
 			} else if input.LastThinkingExcerpt != "" {
 				p := types.PhasePlanning
 				phase = &p

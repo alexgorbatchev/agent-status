@@ -793,6 +793,18 @@ func TestFallbackSummary_RecentToolsBranches(t *testing.T) {
 		{"ast-grep without target", "ast-grep", "", "Investigating codebase", types.PhaseInvestigating},
 		{"custom tool with target", "custom_tool", "param", "Using custom_tool on param", types.PhaseEditing},
 		{"custom tool without target", "custom_tool", "", "Using custom_tool", types.PhaseEditing},
+		{"lowercase bash running tests", "bash", "pytest", "Running tests", types.PhaseTesting},
+		{"lowercase bash general with target", "bash", "ls -la", "Running ls -la", types.PhaseEditing},
+		{"lowercase bash without target", "bash", "", "Running shell command", types.PhaseEditing},
+		{"lowercase edit with target", "edit", "main.go", "Editing main.go", types.PhaseEditing},
+		{"lowercase edit without target", "edit", "", "Editing code", types.PhaseEditing},
+		{"lowercase write with target", "write", "output.txt", "Writing output.txt", types.PhaseEditing},
+		{"lowercase write without target", "write", "", "Writing file", types.PhaseEditing},
+		{"lowercase read with target", "read", "data.json", "Reading data.json", types.PhaseInvestigating},
+		{"lowercase read without target", "read", "", "Reading file", types.PhaseInvestigating},
+		{"lowercase grep with target", "grep", "pattern", "Searching pattern", types.PhaseInvestigating},
+		{"lowercase find with target", "find", "*.go", "Searching *.go", types.PhaseInvestigating},
+		{"lowercase glob with target", "glob", "**/*.ts", "Searching **/*.ts", types.PhaseInvestigating},
 	}
 
 	for _, tt := range tests {
@@ -803,6 +815,57 @@ func TestFallbackSummary_RecentToolsBranches(t *testing.T) {
 					{ToolName: tt.tool, Target: tt.target},
 				},
 				LastThinkingExcerpt: "some thinking",
+			}
+			res := FallbackSummary(input)
+			if res.Action != tt.wantAction {
+				t.Errorf("got Action %q, want %q", res.Action, tt.wantAction)
+			}
+			if res.Phase == nil || *res.Phase != tt.wantPhase {
+				t.Errorf("got Phase %v, want %v", res.Phase, tt.wantPhase)
+			}
+		})
+	}
+}
+
+func TestFallbackSummary_LowercaseToolNames(t *testing.T) {
+	tests := []struct {
+		name       string
+		tool       string
+		target     string
+		wantAction string
+		wantPhase  types.AgentPhase
+	}{
+		{"bash test command", "bash", "go test ./...", "Running tests", types.PhaseTesting},
+		{"bash general command", "bash", "git status", "Running git status", types.PhaseEditing},
+		{"bash without target", "bash", "", "Running shell command", types.PhaseEditing},
+		{"sh without target", "sh", "", "Running shell command", types.PhaseEditing},
+		{"zsh with target", "zsh", "echo hi", "Running echo hi", types.PhaseEditing},
+		{"exec with target", "exec", "node index.js", "Running node index.js", types.PhaseEditing},
+		{"edit with target", "edit", "src/index.ts", "Editing src/index.ts", types.PhaseEditing},
+		{"edit without target", "edit", "", "Editing code", types.PhaseEditing},
+		{"write with target", "write", "README.md", "Writing README.md", types.PhaseEditing},
+		{"write without target", "write", "", "Writing file", types.PhaseEditing},
+		{"write_file with target", "write_file", "app.log", "Writing app.log", types.PhaseEditing},
+		{"writeFile without target", "writeFile", "", "Writing file", types.PhaseEditing},
+		{"multiedit with target", "multiedit", "main.go", "Editing main.go", types.PhaseEditing},
+		{"multi_edit without target", "multi_edit", "", "Editing code", types.PhaseEditing},
+		{"notebook_edit without target", "notebook_edit", "", "Editing code", types.PhaseEditing},
+		{"exec_command with target", "exec_command", "npm test", "Running tests", types.PhaseTesting},
+		{"exec_command general", "exec_command", "git status", "Running git status", types.PhaseEditing},
+		{"read with target", "read", "config.yaml", "Reading config.yaml", types.PhaseInvestigating},
+		{"read without target", "read", "", "Reading file", types.PhaseInvestigating},
+		{"grep with target", "grep", "search-term", "Searching search-term", types.PhaseInvestigating},
+		{"grep without target", "grep", "", "Investigating codebase", types.PhaseInvestigating},
+		{"find with target", "find", "*.json", "Searching *.json", types.PhaseInvestigating},
+		{"glob with target", "glob", "**/*.go", "Searching **/*.go", types.PhaseInvestigating},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := SummaryInput{
+				Activity:     types.ActivityBusy,
+				ActiveTool:   &tt.tool,
+				ActiveTarget: &tt.target,
 			}
 			res := FallbackSummary(input)
 			if res.Action != tt.wantAction {
