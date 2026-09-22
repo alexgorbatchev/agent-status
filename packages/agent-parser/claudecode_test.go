@@ -152,14 +152,34 @@ func TestParseClaudeCodeLine(t *testing.T) {
 	t.Run("last-prompt with lastPrompt and content", func(t *testing.T) {
 		line1 := `{"type":"last-prompt","lastPrompt":"Fix bugs","timestamp":"2026-09-19T10:00:00.000Z"}`
 		evs1, err := ParseClaudeCodeLine([]byte(line1))
-		if err != nil || len(evs1) != 1 || *evs1[0].Data.LastPrompt != "Fix bugs" {
-			t.Errorf("failed last-prompt 1: %+v", evs1)
+		if err != nil {
+			t.Fatalf("ParseClaudeCodeLine failed: %v", err)
+		}
+		if len(evs1) != 0 {
+			t.Errorf("expected 0 events for last-prompt line1, got %d: %+v", len(evs1), evs1)
 		}
 
 		line2 := `{"type":"last-prompt","content":"Prompt via content","timestamp":"2026-09-19T10:00:00.000Z"}`
 		evs2, err := ParseClaudeCodeLine([]byte(line2))
-		if err != nil || len(evs2) != 1 || *evs2[0].Data.LastPrompt != "Prompt via content" {
-			t.Errorf("failed last-prompt 2: %+v", evs2)
+		if err != nil {
+			t.Fatalf("ParseClaudeCodeLine failed: %v", err)
+		}
+		if len(evs2) != 0 {
+			t.Errorf("expected 0 events for last-prompt line2, got %d: %+v", len(evs2), evs2)
+		}
+	})
+
+	t.Run("last-prompt produces no activity event without timestamp", func(t *testing.T) {
+		p := NewClaudeCodeParser()
+		line := []byte(`{"type":"last-prompt","sessionId":"ses-lp-test","lastPrompt":"/code-review"}`)
+		evs, err := p.ParseLine(line)
+		if err != nil {
+			t.Fatalf("ParseLine failed: %v", err)
+		}
+		for _, ev := range evs {
+			if ev.EventType == "turn_start" {
+				t.Fatalf("unexpected turn_start event emitted for last-prompt: %+v", ev)
+			}
 		}
 	})
 
@@ -1077,25 +1097,17 @@ func TestClaudeCode_TitleFromUserPromptAndLastPrompt(t *testing.T) {
 		}
 	})
 
-	t.Run("last-prompt sets title on turn_start", func(t *testing.T) {
+	t.Run("last-prompt produces no turn_start event", func(t *testing.T) {
 		p := NewClaudeCodeParser()
 		line := []byte(`{"type":"last-prompt","sessionId":"ses-title-2","lastPrompt":"/code-review"}`)
 		evs, err := p.ParseLine(line)
 		if err != nil {
 			t.Fatalf("ParseLine error: %v", err)
 		}
-		var turnStart *ParsedEvent
-		for i := range evs {
-			if evs[i].EventType == "turn_start" {
-				turnStart = &evs[i]
-				break
+		for _, ev := range evs {
+			if ev.EventType == "turn_start" {
+				t.Fatalf("unexpected turn_start event emitted for last-prompt: %+v", ev)
 			}
-		}
-		if turnStart == nil {
-			t.Fatal("expected turn_start event")
-		}
-		if turnStart.Data.Title == nil || *turnStart.Data.Title != "/code-review" {
-			t.Errorf("turn_start Title = %v, want '/code-review'", turnStart.Data.Title)
 		}
 	})
 

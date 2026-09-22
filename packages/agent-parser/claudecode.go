@@ -527,31 +527,22 @@ func parseClaudeCodeLineEvents(
 		}
 
 	case "last-prompt":
+		// LastPrompt records are pointers to the most recent user prompt and carry no independent
+		// timestamp. Emitting turn_start here falsely initiates a user turn (often after the turn has
+		// already completed) and timestamps it with ingest time. The actual user turn is handled by "user" records (#65).
 		promptVal := raw.LastPrompt
 		if promptVal == "" && raw.Content != nil {
 			promptVal = extractContentString(raw.Content)
 		}
 		if promptVal != "" {
-			var titlePtr *string
 			shouldSetTitle := !isSubagent && (explicitTitles == nil || (!explicitTitles[sessKey] && sessionTitles[sessKey] == ""))
 			if shouldSetTitle {
 				if title, ok := ExtractClaudeCodeTitleFromPrompt(promptVal); ok {
 					if sessionTitles != nil {
 						sessionTitles[sessKey] = title
 					}
-					titlePtr = stringPtr(title)
 				}
 			}
-			events = append(events, ParsedEvent{
-				EventType: "turn_start",
-				Timestamp: ts,
-				CWD:       raw.CWD,
-				GitBranch: raw.GitBranch,
-				Data: types.TelemetryFrameData{
-					LastPrompt: stringPtr(promptVal),
-					Title:      titlePtr,
-				},
-			})
 		}
 
 	case "user":

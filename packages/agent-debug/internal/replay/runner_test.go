@@ -212,6 +212,34 @@ func TestReplay_ClaudeCode(t *testing.T) {
 			t.Errorf("expected exactly 1 turn_start before break, got %v", resEvent.EventCounts)
 		}
 	})
+
+	t.Run("last-prompt record following completed turn preserves IDLE activity", func(t *testing.T) {
+		lpSessID := "claude-session-lp-idle"
+		lpFile := filepath.Join(tmpDir, fmt.Sprintf("%s.jsonl", lpSessID))
+		lpContent := `{"type":"ai-title","aiTitle":"Check System Status","timestamp":"2026-09-22T19:55:00.000Z","cwd":"/repo","gitBranch":"main","sessionId":"` + lpSessID + `"}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Check system status"}]},"timestamp":"2026-09-22T19:55:01.000Z","sessionId":"` + lpSessID + `"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"All systems operational."}],"stop_reason":"end_turn"},"usage":{"input_tokens":500,"output_tokens":50},"timestamp":"2026-09-22T19:55:05.000Z","sessionId":"` + lpSessID + `"}
+{"type":"system","subtype":"turn_duration","durationMs":4000,"timestamp":"2026-09-22T19:55:06.000Z","sessionId":"` + lpSessID + `"}
+{"type":"last-prompt","lastPrompt":"Check system status","sessionId":"` + lpSessID + `"}
+`
+		if err := os.WriteFile(lpFile, []byte(lpContent), 0644); err != nil {
+			t.Fatalf("writing last-prompt transcript: %v", err)
+		}
+
+		res, err := RunReplay(ctx, ReplayOptions{
+			FilePath: lpFile,
+			Harness:  types.HarnessClaudeCode,
+		})
+		if err != nil {
+			t.Fatalf("RunReplay failed: %v", err)
+		}
+		if res.Agent == nil {
+			t.Fatalf("expected non-nil Agent")
+		}
+		if res.Agent.Activity.Activity != types.ActivityIdle {
+			t.Errorf("expected Activity IDLE after turn end with trailing last-prompt, got %s (action=%q)", res.Agent.Activity.Activity, res.Agent.Activity.Action)
+		}
+	})
 }
 
 func TestReplay_Pi(t *testing.T) {
