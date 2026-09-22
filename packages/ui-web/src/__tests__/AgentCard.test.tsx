@@ -241,6 +241,34 @@ describe("AgentCard Component", () => {
     cleanup();
   });
 
+  it("renders header with left-aligned harness badge and hide button without bullet separator", () => {
+    const html = renderToStaticMarkup(<AgentCard agent={fixture_agentStateRunning} onToggleHide={() => {}} />);
+
+    expect(html).not.toContain("•");
+
+    const harnessIndex = html.indexOf('data-testid="AgentCard--harness-badge"');
+    const hideIndex = html.indexOf('data-testid="AgentCard--hide-button"');
+    const statusIndex = html.indexOf('data-testid="StatusBadge"');
+
+    expect(harnessIndex).toBeGreaterThan(-1);
+    expect(hideIndex).toBeGreaterThan(-1);
+    expect(statusIndex).toBeGreaterThan(-1);
+    expect(harnessIndex).toBeLessThan(hideIndex);
+    expect(hideIndex).toBeLessThan(statusIndex);
+  });
+
+  it("renders env badge before branch badge in metadata badges", () => {
+    const html = renderToStaticMarkup(<AgentCard agent={fixture_agentStateRunning} />);
+
+    const envIndex = html.indexOf('data-testid="AgentCard--env-badge"');
+    const branchIndex = html.indexOf('data-testid="AgentCard--branch-badge"');
+
+    expect(envIndex).toBeGreaterThan(-1);
+    expect(branchIndex).toBeGreaterThan(-1);
+    expect(envIndex).toBeLessThan(branchIndex);
+    expect(html).toContain(fixture_agentStateRunning.environment.label);
+  });
+
   describe("stall detection tiers", () => {
     it("renders healthy tier (<60s) without stall badges or warnings", () => {
       const now = Date.now();
