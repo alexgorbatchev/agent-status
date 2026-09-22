@@ -18,6 +18,7 @@ describe("Header Component", () => {
         environments={[fixture_environmentInfo]}
         isConnected={true}
         onOpenHelp={() => {}}
+        now={1789850000000}
       />,
     );
 

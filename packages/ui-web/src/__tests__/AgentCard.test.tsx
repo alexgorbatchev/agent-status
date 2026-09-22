@@ -156,6 +156,49 @@ describe("AgentCard Component", () => {
     expect(html).toContain('title="Last active: Never"');
   });
 
+  it("renders silence stall indicator, Stalled badge, and amber card styling when running busy session is silent >= 120s", () => {
+    const now = Date.now();
+    const agent = factory_agentState({
+      activity: {
+        ...fixture_agentStateRunning.activity,
+        lifecycle: "RUNNING",
+        activity: "BUSY",
+        activeTool: null,
+        activeToolStartedAt: null,
+        updatedAt: now - 130000,
+      },
+    });
+    const html = renderToStaticMarkup(<AgentCard agent={agent} />);
+
+    expect(html).toContain('data-testid="AgentCard"');
+    expect(html).toContain("border-amber-500/80");
+    expect(html).toContain('data-testid="StatusBadge"');
+    expect(html).toContain("Stalled (2m)");
+    expect(html).toContain('data-testid="AgentCard--last-active"');
+    expect(html).toContain("Silent for 2m");
+  });
+
+  it("renders Active relativeTime when running busy session is active < 120s", () => {
+    const now = Date.now();
+    const agent = factory_agentState({
+      activity: {
+        ...fixture_agentStateRunning.activity,
+        lifecycle: "RUNNING",
+        activity: "BUSY",
+        activeTool: null,
+        activeToolStartedAt: null,
+        updatedAt: now - 15000,
+      },
+    });
+    const html = renderToStaticMarkup(<AgentCard agent={agent} />);
+
+    expect(html).toContain('data-testid="StatusBadge"');
+    expect(html).toContain("Busy");
+    expect(html).not.toContain("Stalled");
+    expect(html).toContain('data-testid="AgentCard--last-active"');
+    expect(html).toContain("Active ");
+  });
+
   it("renders hide button and calls onToggleHide without triggering onOpenDrawer", async () => {
     const { mockDoc, cleanup } = setupMockDomEnvironment();
     const holder: IAgentHolder = {};

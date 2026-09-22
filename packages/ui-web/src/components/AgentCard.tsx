@@ -17,7 +17,13 @@ import {
   EyeOff,
 } from "lucide-react";
 import { useRelativeTime } from "../hooks/useRelativeTime";
-import { formatExactTime, getToolExecutionDuration, getToolStallTier, formatDuration } from "../utils/agentUtils";
+import {
+  formatExactTime,
+  getToolExecutionDuration,
+  getToolStallTier,
+  formatDuration,
+  isSessionStalled,
+} from "../utils/agentUtils";
 
 const HARNESS_LABELS: Record<HarnessType, string> = {
   "claude-code": "Claude Code",
@@ -46,6 +52,12 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
   const formattedDuration = durationMs !== null ? formatDuration(durationMs) : null;
   const isStalled = stallTier === "stalled";
 
+  const isRunningBusy = activity.lifecycle === "RUNNING" && activity.activity === "BUSY";
+  const sessionStalled = isRunningBusy && isSessionStalled(activity.updatedAt, now);
+  const silenceMs = Math.max(0, now - activity.updatedAt);
+  const silenceMinutes = Math.floor(silenceMs / 60000);
+  const silenceDuration = `${silenceMinutes}m`;
+
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.target !== event.currentTarget) {
       return;
@@ -66,7 +78,9 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
       onKeyDown={handleKeyDown}
       className={clsx(
         "group relative flex flex-col justify-between p-4 rounded-xl bg-slate-900/80 border transition-all cursor-pointer shadow-lg hover:shadow-slate-950/50",
-        isStalled ? "border-amber-500/80 shadow-amber-950/40" : "border-slate-800 hover:border-slate-700",
+        isStalled || sessionStalled
+          ? "border-amber-500/80 shadow-amber-950/40"
+          : "border-slate-800 hover:border-slate-700",
         agent.isHidden && "border-dashed border-slate-700/60 opacity-60 hover:opacity-100",
         !agent.isHidden && isFinished && "opacity-60 hover:opacity-100",
       )}
@@ -86,6 +100,25 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
               </IconWrapper>
               {HARNESS_LABELS[harness] || harness}
             </span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            {agent.isHidden && (
+              <span
+                data-testid="AgentCard--hidden-badge"
+                role="status"
+                className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 text-[10px] font-medium border border-slate-700 font-mono"
+              >
+                Hidden
+              </span>
+            )}
+            <StatusBadge
+              lifecycle={activity.lifecycle}
+              activity={activity.activity}
+              stallTier={stallTier}
+              toolDuration={formattedDuration ?? undefined}
+              isSessionStalled={sessionStalled}
+              silenceDuration={sessionStalled ? silenceDuration : undefined}
+            />
             {onToggleHide && (
               <button
                 type="button"
@@ -251,14 +284,22 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
           <div
             data-testid="AgentCard--last-active"
             role="status"
-            aria-label={`active: ${relativeTime}`}
+            aria-label={
+              sessionStalled ? `silent: ${silenceDuration}` : isRunningBusy ? `active: ${relativeTime}` : relativeTime
+            }
             className="flex items-center gap-1 bg-slate-800/50 px-2 py-0.5 rounded border border-slate-700/50"
             title={`Last active: ${exactTime}`}
           >
-            <IconWrapper size="xs" tone="muted">
+            <IconWrapper size="xs" tone={sessionStalled ? "warning" : "muted"}>
               <Clock size={12} />
             </IconWrapper>
-            <span className="font-mono text-[11px] text-slate-300">{relativeTime}</span>
+            {sessionStalled ? (
+              <span className="font-mono text-[11px] text-amber-300">Silent for {silenceDuration}</span>
+            ) : isRunningBusy ? (
+              <span className="font-mono text-[11px] text-slate-300">Active {relativeTime}</span>
+            ) : (
+              <span className="font-mono text-[11px] text-slate-300">{relativeTime}</span>
+            )}
           </div>
 
           {stallTier === "notice" && formattedDuration && (

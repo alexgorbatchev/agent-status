@@ -10,6 +10,10 @@ import {
 import { Bot, AlertCircle, DollarSign, Activity, Server, HelpCircle } from "lucide-react";
 import { clsx } from "clsx";
 
+function resolveCurrentTime(): number {
+  return Date.now();
+}
+
 export function Header({
   agents,
   environments,
@@ -17,9 +21,11 @@ export function Header({
   isActiveFilter,
   onToggleActiveFilter,
   onOpenHelp,
+  now: propNow,
 }: IHeaderProps): React.JSX.Element {
+  const now = propNow ?? resolveCurrentTime();
   const activeAgents = filterActiveAgents(agents);
-  const attentionAgents = agents.filter((a) => isAgentRequiringAttention(a));
+  const attentionAgents = agents.filter((a) => isAgentRequiringAttention(a, now));
 
   const totalSpend = calculateTotalSpend(agents);
   const liveEnvs = environments.filter((e) => !e.isStale).length;

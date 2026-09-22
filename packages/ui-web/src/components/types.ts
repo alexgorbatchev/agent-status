@@ -45,6 +45,8 @@ export interface IStatusBadgeProps {
   activity: ActivityState;
   stallTier?: "healthy" | "notice" | "warning" | "stalled";
   toolDuration?: string;
+  isSessionStalled?: boolean;
+  silenceDuration?: string;
 }
 
 export interface IHeaderProps {
@@ -54,6 +56,7 @@ export interface IHeaderProps {
   isActiveFilter?: boolean;
   onToggleActiveFilter?: () => void;
   onOpenHelp?: () => void;
+  now?: number;
 }
 
 export interface IStateHelpDialogProps {
@@ -63,6 +66,7 @@ export interface IStateHelpDialogProps {
 export interface IAttentionBannerProps {
   agents: IAgentState[];
   onSelectAgent: (agent: IAgentState) => void;
+  now?: number;
 }
 
 export interface IAgentCardProps {

@@ -9,6 +9,7 @@ import {
   getToolExecutionDuration,
   getToolStallTier,
   formatDuration,
+  isSessionStalled,
 } from "../utils/agentUtils";
 
 type CalloutType = "warning" | "error";
@@ -17,8 +18,12 @@ function resolveCurrentTime(): number {
   return Date.now();
 }
 
-export function AttentionBanner({ agents, onSelectAgent }: IAttentionBannerProps): React.JSX.Element | null {
-  const now = resolveCurrentTime();
+export function AttentionBanner({
+  agents,
+  onSelectAgent,
+  now: propNow,
+}: IAttentionBannerProps): React.JSX.Element | null {
+  const now = propNow ?? resolveCurrentTime();
   // Tier 1: ACT NOW (Running agents with WAITING_QUESTION or ERROR or STALLED)
   const actNowAgents = agents.filter((a) => isAgentRequiringAttention(a, now));
 
@@ -55,7 +60,9 @@ export function AttentionBanner({ agents, onSelectAgent }: IAttentionBannerProps
         {actNowAgents.map((agent) => {
           const isQuestion = agent.activity.activity === "WAITING_QUESTION";
           const durationMs = getToolExecutionDuration(agent.activity, now);
-          const isStalled = getToolStallTier(durationMs) === "stalled";
+          const isToolStalled = getToolStallTier(durationMs) === "stalled";
+          const isSilenceStalled =
+            agent.activity.activity === "BUSY" && isSessionStalled(agent.activity.updatedAt, now);
           const title = agent.activity.title || "Untitled Agent";
 
           let message = "";
@@ -66,9 +73,15 @@ export function AttentionBanner({ agents, onSelectAgent }: IAttentionBannerProps
             message = agent.activity.question || "Waiting on user question input";
             calloutType = "warning";
             iconTone = "warning";
-          } else if (isStalled && durationMs !== null) {
+          } else if (isToolStalled && durationMs !== null) {
             const toolDesc = agent.activity.action || agent.activity.activeTool || "tool";
             message = `Tool call running for ${formatDuration(durationMs)} without return: ${toolDesc}`;
+            calloutType = "warning";
+            iconTone = "warning";
+          } else if (isSilenceStalled) {
+            const silenceMs = Math.max(0, now - agent.activity.updatedAt);
+            const silenceMinutes = Math.floor(silenceMs / 60000);
+            message = `Session silent for ${silenceMinutes}m without telemetry`;
             calloutType = "warning";
             iconTone = "warning";
           } else {

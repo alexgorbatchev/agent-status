@@ -58,4 +58,14 @@ describe("StatusBadge Component", () => {
       '<span data-testid="StatusBadge" role="status" data-lifecycle="EXITED" class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-950/40 text-red-400 border border-red-800/80"><span data-testid="StatusBadge--indicator" class="w-2 h-2 rounded-full bg-red-500"></span><span data-testid="StatusBadge--label">Died on error</span></span>',
     );
   });
+
+  it("renders RUNNING + BUSY with silence stall as Stalled (Xm) with static amber indicator", () => {
+    const html = renderToStaticMarkup(
+      <StatusBadge lifecycle="RUNNING" activity="BUSY" isSessionStalled={true} silenceDuration="2m" />,
+    );
+    expect(html).toContain('data-testid="StatusBadge"');
+    expect(html).toContain("Stalled (2m)");
+    expect(html).toContain("bg-amber-400");
+    expect(html).not.toContain("animate-pulse");
+  });
 });
