@@ -14,12 +14,21 @@ import (
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/summarizer"
 )
 
+type pendingSummaryCandidate struct {
+	input     summarizer.SummaryInput
+	timestamp int64
+	toolKey   string
+}
+
 type agentContext struct {
-	lastPrompt            string
-	lastAssistantResponse string
-	lastToolArgs          string
-	recentTools           []summarizer.ToolExecution
-	seenSubagents         map[string]struct{}
+	lastPrompt              string
+	lastAssistantResponse   string
+	lastToolArgs            string
+	recentTools             []summarizer.ToolExecution
+	seenSubagents           map[string]struct{}
+	lastSummarizedToolKey   string
+	lastSummaryDispatchedAt int64
+	pendingCandidate        *pendingSummaryCandidate
 }
 
 type summaryJob struct {
@@ -36,6 +45,7 @@ type agentWorker struct {
 
 const (
 	DefaultIdleGracePeriod = 5 * time.Second
+	DefaultDebounceWindow  = 10 * time.Second
 )
 
 type Classifier struct {
@@ -45,7 +55,9 @@ type Classifier struct {
 	agentCtx        map[string]*agentContext
 	workers         map[string]*agentWorker
 	idleTimers      map[string]*time.Timer
+	trailingTimers  map[string]*time.Timer
 	idleGracePeriod time.Duration
+	debounceWindow  time.Duration
 	onUpdate        func(agent *types.IAgentState)
 	mu              sync.Mutex
 	wg              sync.WaitGroup
@@ -54,6 +66,10 @@ type Classifier struct {
 }
 
 func New(s *store.Store, p *pricing.Engine, sum *summarizer.Summarizer) *Classifier {
+	debounce := DefaultDebounceWindow
+	if sum != nil && sum.DebounceWindow() > 0 {
+		debounce = sum.DebounceWindow()
+	}
 	return &Classifier{
 		store:           s,
 		pricing:         p,
@@ -61,8 +77,17 @@ func New(s *store.Store, p *pricing.Engine, sum *summarizer.Summarizer) *Classif
 		agentCtx:        make(map[string]*agentContext),
 		workers:         make(map[string]*agentWorker),
 		idleTimers:      make(map[string]*time.Timer),
+		trailingTimers:  make(map[string]*time.Timer),
 		idleGracePeriod: DefaultIdleGracePeriod,
+		debounceWindow:  debounce,
 	}
+}
+
+// SetDebounceWindow sets the cadence window for tool summarization debounce.
+func (c *Classifier) SetDebounceWindow(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.debounceWindow = d
 }
 
 // SetIdleGracePeriod sets the debounce window before transitioning from BUSY to IDLE on turn_end.
@@ -101,6 +126,10 @@ func (c *Classifier) Close() error {
 		t.Stop()
 		delete(c.idleTimers, id)
 	}
+	for id, t := range c.trailingTimers {
+		t.Stop()
+		delete(c.trailingTimers, id)
+	}
 	c.mu.Unlock()
 
 	c.wg.Wait()
@@ -114,9 +143,85 @@ func (c *Classifier) cancelIdleTimerLocked(agentID string) {
 	}
 }
 
+func (c *Classifier) cancelTrailingTimerLocked(agentID string) {
+	if t, exists := c.trailingTimers[agentID]; exists {
+		t.Stop()
+		delete(c.trailingTimers, agentID)
+	}
+}
+
+func (c *Classifier) scheduleTrailingTimerLocked(agentID string, delay time.Duration) {
+	c.cancelTrailingTimerLocked(agentID)
+	if delay <= 0 {
+		delay = 1 * time.Millisecond
+	}
+	c.trailingTimers[agentID] = time.AfterFunc(delay, func() {
+		c.flushTrailingCandidate(agentID)
+	})
+}
+
+func (c *Classifier) flushTrailingCandidate(agentID string) {
+	c.mu.Lock()
+	c.flushTrailingCandidateLocked(agentID)
+	c.mu.Unlock()
+}
+
+func (c *Classifier) flushTrailingCandidateLocked(agentID string) {
+	if c.closed {
+		return
+	}
+	delete(c.trailingTimers, agentID)
+
+	actx := c.agentCtx[agentID]
+	if actx == nil || actx.pendingCandidate == nil {
+		return
+	}
+
+	cand := actx.pendingCandidate
+	actx.pendingCandidate = nil
+
+	// Check duplicate suppression: if candidate matches lastSummarizedToolKey, skip
+	if cand.toolKey != "" && cand.toolKey == actx.lastSummarizedToolKey {
+		return
+	}
+
+	actx.lastSummarizedToolKey = cand.toolKey
+	actx.lastSummaryDispatchedAt = cand.timestamp
+
+	input := cand.input
+	ts := cand.timestamp
+	isSync := c.syncMode
+
+	if isSync {
+		c.mu.Unlock()
+		res := c.summarizer.Summarize(context.Background(), input)
+		agent, err := c.store.GetAgent(agentID)
+		if err == nil && agent != nil {
+			agent.Activity.Action = res.Action
+			agent.Activity.Phase = res.Phase
+			if agent.Activity.ActiveTool != nil && res.ActiveTarget != nil && *res.ActiveTarget != "" {
+				agent.Activity.ActiveTarget = res.ActiveTarget
+			}
+			agent.Activity.ActionStale = false
+			_ = c.store.SaveAgentState(*agent)
+			c.mu.Lock()
+			cb := c.onUpdate
+			c.mu.Unlock()
+			if cb != nil {
+				cb(agent)
+			}
+		}
+		c.mu.Lock()
+		return
+	}
+
+	c.enqueueJobLocked(agentID, input, ts, false)
+}
+
 // Flush blocks until all pending jobs in the queue for a specific agent have completed.
 func (c *Classifier) Flush(agentID string) {
 	c.mu.Lock()
+	c.flushTrailingCandidateLocked(agentID)
 	w, exists := c.workers[agentID]
 	c.mu.Unlock()
 	if !exists {
@@ -134,9 +239,21 @@ func (c *Classifier) Flush(agentID string) {
 // FlushAll blocks until all pending jobs across all agent queues have completed.
 func (c *Classifier) FlushAll() {
 	c.mu.Lock()
-	ids := make([]string, 0, len(c.workers))
+	ids := make([]string, 0, len(c.workers)+len(c.trailingTimers))
 	for id := range c.workers {
 		ids = append(ids, id)
+	}
+	for id := range c.trailingTimers {
+		found := false
+		for _, existing := range ids {
+			if existing == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			ids = append(ids, id)
+		}
 	}
 	c.mu.Unlock()
 
@@ -319,6 +436,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		case "run_exited":
 			c.mu.Lock()
 			c.cancelIdleTimerLocked(agent.ID)
+			c.cancelTrailingTimerLocked(agent.ID)
 			c.mu.Unlock()
 
 			agent.Activity.Lifecycle = types.LifecycleExited
@@ -420,25 +538,36 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		case "turn_start":
 			c.mu.Lock()
 			c.cancelIdleTimerLocked(agent.ID)
+			c.cancelTrailingTimerLocked(agent.ID)
+			actx.lastAssistantResponse = ""
+			actx.lastToolArgs = ""
+			actx.recentTools = nil
+			actx.lastSummarizedToolKey = ""
+			actx.pendingCandidate = nil
 			c.mu.Unlock()
 			agent.Activity.Activity = types.ActivityBusy
 			agent.Activity.LastError = nil
 			agent.Activity.ActiveTool = nil
 			agent.Activity.ActiveTarget = nil
-			c.mu.Lock()
-			actx.lastAssistantResponse = ""
-			actx.lastToolArgs = ""
-			actx.recentTools = nil
-			c.mu.Unlock()
+			agent.Activity.Action = "Thinking"
+			p := types.PhasePlanning
+			agent.Activity.Phase = &p
 
 		case "thinking":
 			c.mu.Lock()
 			c.cancelIdleTimerLocked(agent.ID)
+			hasRecentTools := len(actx.recentTools) > 0
 			c.mu.Unlock()
 			agent.Activity.Activity = types.ActivityBusy
 			agent.Activity.LastError = nil
 			if frame.Data.Content != nil {
 				agent.Activity.LastThinkingExcerpt = frame.Data.Content
+			}
+			// Action = "Thinking" is only for initial turn start before tools have run
+			if !hasRecentTools && agent.Activity.ActiveTool == nil && (agent.Activity.Action == "" || agent.Activity.Action == "Thinking") {
+				agent.Activity.Action = "Thinking"
+				p := types.PhasePlanning
+				agent.Activity.Phase = &p
 			}
 
 		case "turn_end":
@@ -461,6 +590,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			if isToolUse {
 				c.mu.Lock()
 				c.cancelIdleTimerLocked(agent.ID)
+				c.cancelTrailingTimerLocked(agent.ID)
 				c.mu.Unlock()
 				if agent.Activity.Activity != types.ActivityWaitingQuestion {
 					agent.Activity.Activity = types.ActivityBusy
@@ -470,12 +600,14 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				// Do not overwrite WAITING_QUESTION or clear Question prompt on turn_end
 				c.mu.Lock()
 				c.cancelIdleTimerLocked(agent.ID)
+				c.cancelTrailingTimerLocked(agent.ID)
 				c.mu.Unlock()
 				pendingJob = c.updateSummarization(agent, true)
 			} else if agent.Activity.Activity == types.ActivityError {
 				// Do not overwrite ERROR state on turn_end
 				c.mu.Lock()
 				c.cancelIdleTimerLocked(agent.ID)
+				c.cancelTrailingTimerLocked(agent.ID)
 				c.mu.Unlock()
 				pendingJob = c.updateSummarization(agent, true)
 			} else {
@@ -487,6 +619,11 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				agent.Activity.Question = nil
 
 				c.mu.Lock()
+				actx.lastToolArgs = ""
+				actx.recentTools = nil
+				actx.lastSummarizedToolKey = ""
+				actx.pendingCandidate = nil
+				c.cancelTrailingTimerLocked(agent.ID)
 				gracePeriod := c.idleGracePeriod
 				isSync := c.syncMode
 				c.mu.Unlock()
@@ -579,6 +716,7 @@ func (c *Classifier) updateSummarization(agent *types.IAgentState, forceTrigger 
 
 	input := summarizer.SummaryInput{
 		AgentID:               agent.ID,
+		CurrentAction:         agent.Activity.Action,
 		LastPrompt:            lastPrompt,
 		LastAssistantResponse: lastAssistantResponse,
 		RecentTools:           recentTools,
@@ -591,18 +729,6 @@ func (c *Classifier) updateSummarization(agent *types.IAgentState, forceTrigger 
 		Question:              agent.Activity.Question,
 	}
 
-	// If external LLM summarization is disabled or summarizer is nil, run deterministic fallback immediately
-	if c.summarizer.IsNoSummarize() {
-		fb := summarizer.FallbackSummary(input)
-		agent.Activity.Action = fb.Action
-		agent.Activity.Phase = fb.Phase
-		agent.Activity.ActionStale = false
-		if fb.ActiveTarget != nil {
-			agent.Activity.ActiveTarget = fb.ActiveTarget
-		}
-		return nil
-	}
-
 	// Always compute fallback summary so the returned agent state is immediately valid
 	fb := summarizer.FallbackSummary(input)
 	agent.Activity.Action = fb.Action
@@ -611,15 +737,53 @@ func (c *Classifier) updateSummarization(agent *types.IAgentState, forceTrigger 
 		agent.Activity.ActiveTarget = fb.ActiveTarget
 	}
 
+	// If external LLM summarization is disabled or summarizer is nil, run deterministic fallback immediately
+	if c.summarizer.IsNoSummarize() {
+		agent.Activity.ActionStale = false
+		return nil
+	}
+
 	eventTime := time.Now()
 	if agent.Activity.UpdatedAt > 0 {
 		eventTime = time.UnixMilli(agent.Activity.UpdatedAt)
 	}
+	nowMs := eventTime.UnixMilli()
 
-	// Synchronous mode execution (e.g. for deterministic unit test assertions)
-	if isSync {
-		if forceTrigger || c.summarizer.AllowAt(agent.ID, eventTime) {
+	currentToolKey := ""
+	if agent.Activity.ActiveTool != nil {
+		targetStr := ""
+		if agent.Activity.ActiveTarget != nil {
+			targetStr = *agent.Activity.ActiveTarget
+		}
+		currentToolKey = fmt.Sprintf("%s|%s|%s", *agent.Activity.ActiveTool, targetStr, lastToolArgs)
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	actx = c.agentCtx[agent.ID]
+	if actx == nil {
+		actx = &agentContext{seenSubagents: make(map[string]struct{})}
+		c.agentCtx[agent.ID] = actx
+	}
+
+	windowMs := c.debounceWindow.Milliseconds()
+	if windowMs <= 0 {
+		windowMs = DefaultDebounceWindow.Milliseconds()
+	}
+
+	// 1. Force trigger (e.g. AskUserQuestion, error, turn_end)
+	if forceTrigger {
+		c.cancelTrailingTimerLocked(agent.ID)
+		actx.pendingCandidate = nil
+		actx.lastSummaryDispatchedAt = nowMs
+		actx.lastSummarizedToolKey = currentToolKey
+		c.summarizer.AllowAt(agent.ID, eventTime)
+
+		if isSync {
+			c.mu.Unlock()
 			res := c.summarizer.Summarize(context.Background(), input)
+			c.mu.Lock()
 			isDup := summarizer.IsNearDuplicate(agent.Activity.Action, res.Action, summarizer.DefaultSimilarityThreshold)
 			phaseSame := (agent.Activity.Phase == nil && res.Phase == nil) || (agent.Activity.Phase != nil && res.Phase != nil && *agent.Activity.Phase == *res.Phase)
 			targetSame := (agent.Activity.ActiveTarget == nil && res.ActiveTarget == nil) || (agent.Activity.ActiveTarget != nil && res.ActiveTarget != nil && *agent.Activity.ActiveTarget == *res.ActiveTarget)
@@ -632,35 +796,89 @@ func (c *Classifier) updateSummarization(agent *types.IAgentState, forceTrigger 
 				}
 			}
 			agent.Activity.ActionStale = false
-		} else {
-			if agent.Activity.Activity == types.ActivityBusy {
-				agent.Activity.ActionStale = true
-			}
+			return nil
 		}
-		return nil
-	}
 
-	// Check rate limit debounce for external LLM calls
-	if forceTrigger || c.summarizer.AllowAt(agent.ID, eventTime) {
 		agent.Activity.ActionStale = false
 		return &summaryJob{
 			input:     input,
 			timestamp: agent.Activity.UpdatedAt,
-			force:     forceTrigger,
+			force:     true,
 		}
 	}
 
-	// Debounced/rate-limited continuous turn
+	// 2. Completed tool with no active tool (e.g. tool_result)
+	if agent.Activity.ActiveTool == nil {
+		return nil
+	}
+
+	// 3. Duplicate suppression: if tool and target/args are unchanged, skip redundant summarization
+	if currentToolKey != "" && currentToolKey == actx.lastSummarizedToolKey {
+		agent.Activity.ActionStale = false
+		return nil
+	}
+
+	// 4. Cadence check: 10s debounce window
+	elapsed := nowMs - actx.lastSummaryDispatchedAt
+	canDispatchImmediately := actx.lastSummaryDispatchedAt == 0 || elapsed >= windowMs
+
+	if canDispatchImmediately {
+		c.cancelTrailingTimerLocked(agent.ID)
+		actx.pendingCandidate = nil
+		actx.lastSummaryDispatchedAt = nowMs
+		actx.lastSummarizedToolKey = currentToolKey
+		c.summarizer.AllowAt(agent.ID, eventTime)
+
+		if isSync {
+			c.mu.Unlock()
+			res := c.summarizer.Summarize(context.Background(), input)
+			c.mu.Lock()
+			isDup := summarizer.IsNearDuplicate(agent.Activity.Action, res.Action, summarizer.DefaultSimilarityThreshold)
+			phaseSame := (agent.Activity.Phase == nil && res.Phase == nil) || (agent.Activity.Phase != nil && res.Phase != nil && *agent.Activity.Phase == *res.Phase)
+			targetSame := (agent.Activity.ActiveTarget == nil && res.ActiveTarget == nil) || (agent.Activity.ActiveTarget != nil && res.ActiveTarget != nil && *agent.Activity.ActiveTarget == *res.ActiveTarget)
+
+			if !isDup || !phaseSame || !targetSame {
+				agent.Activity.Action = res.Action
+				agent.Activity.Phase = res.Phase
+				if agent.Activity.ActiveTool != nil && res.ActiveTarget != nil && *res.ActiveTarget != "" {
+					agent.Activity.ActiveTarget = res.ActiveTarget
+				}
+			}
+			agent.Activity.ActionStale = false
+			return nil
+		}
+
+		agent.Activity.ActionStale = false
+		return &summaryJob{
+			input:     input,
+			timestamp: agent.Activity.UpdatedAt,
+			force:     false,
+		}
+	}
+
+	// 5. Within debounce window: buffer tool call as pending candidate and schedule trailing-edge flush
+	actx.pendingCandidate = &pendingSummaryCandidate{
+		input:     input,
+		timestamp: nowMs,
+		toolKey:   currentToolKey,
+	}
 	if agent.Activity.Activity == types.ActivityBusy {
 		agent.Activity.ActionStale = true
 	}
+
+	remaining := time.Duration(windowMs-elapsed) * time.Millisecond
+	c.scheduleTrailingTimerLocked(agent.ID, remaining)
+
 	return nil
 }
 
 func (c *Classifier) enqueueJob(agentID string, input summarizer.SummaryInput, timestamp int64, force bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.enqueueJobLocked(agentID, input, timestamp, force)
+}
 
+func (c *Classifier) enqueueJobLocked(agentID string, input summarizer.SummaryInput, timestamp int64, force bool) {
 	if c.closed {
 		return
 	}
