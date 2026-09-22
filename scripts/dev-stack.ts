@@ -21,6 +21,46 @@ export function shouldSkipBuild(argv: string[] = process.argv): boolean {
   return argv.includes("--no-build");
 }
 
+export function shouldDisableSummarizer(
+  argv: string[] = process.argv,
+  env: Record<string, string | undefined> = process.env
+): boolean {
+  if (argv.includes("--no-summarize")) {
+    return true;
+  }
+  const hasLiteLLM = Boolean(
+    (env.LITELLM_BASE_URL || env.OPENAI_BASE_URL) &&
+      (env.LITELLM_API_KEY || env.LITELLM_KEY || env.OPENAI_API_KEY)
+  );
+  const hasOpenAI = Boolean(env.OPENAI_API_KEY);
+  const hasGemini = Boolean(env.GEMINI_API_KEY);
+  const hasAnthropic = Boolean(env.ANTHROPIC_API_KEY);
+
+  const hasCredentials = hasLiteLLM || hasOpenAI || hasGemini || hasAnthropic;
+  return !hasCredentials;
+}
+
+export interface IIngesterArgsOptions {
+  argv?: string[];
+  env?: Record<string, string | undefined>;
+  logLevel?: string;
+  ingesterBin?: string;
+}
+
+export function getIngesterArgs(options: IIngesterArgsOptions = {}): string[] {
+  const argv = options.argv ?? process.argv;
+  const env = options.env ?? process.env;
+  const logLevel = options.logLevel ?? getLogLevel(argv);
+  const ingesterBin = options.ingesterBin ?? "air-ingester";
+
+  const args = [ingesterBin];
+  if (shouldDisableSummarizer(argv, env)) {
+    args.push("--no-summarize");
+  }
+  args.push("--log-level", logLevel);
+  return args;
+}
+
 export interface IBuildOptions {
   noBuild?: boolean;
   rootDir?: string;
@@ -256,7 +296,13 @@ async function startStack() {
   if (!agent) {
     console.log("   [1/4] Starting air-ingester (:4501)...");
   }
-  const ingester = Bun.spawn([ingesterBin, "--no-summarize", "--log-level", logLevel], {
+  const ingesterArgs = getIngesterArgs({
+    argv: process.argv,
+    env: process.env,
+    logLevel,
+    ingesterBin,
+  });
+  const ingester = Bun.spawn(ingesterArgs, {
     cwd: rootDir,
     env: {
       ...process.env,
