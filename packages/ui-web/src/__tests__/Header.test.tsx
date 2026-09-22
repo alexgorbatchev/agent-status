@@ -70,4 +70,36 @@ describe("Header Component", () => {
     expect(html).toContain("Needs Attention:");
     expect(html).toContain("1");
   });
+
+  it("renders active agents metric as an accessible button with aria-pressed and aria-label", () => {
+    const htmlInactive = renderToStaticMarkup(
+      <Header
+        agents={[fixture_agentStateRunning]}
+        environments={[fixture_environmentInfo]}
+        isConnected={true}
+        isActiveFilter={false}
+        onToggleActiveFilter={() => {}}
+      />,
+    );
+
+    expect(htmlInactive).toContain('data-testid="Header--active-agents"');
+    expect(htmlInactive).toContain("<button");
+    expect(htmlInactive).toContain('aria-pressed="false"');
+    expect(htmlInactive).toContain('aria-label="Filter by active agents"');
+
+    const htmlActive = renderToStaticMarkup(
+      <Header
+        agents={[fixture_agentStateRunning]}
+        environments={[fixture_environmentInfo]}
+        isConnected={true}
+        isActiveFilter={true}
+        onToggleActiveFilter={() => {}}
+      />,
+    );
+
+    expect(htmlActive).toContain('aria-pressed="true"');
+    expect(htmlActive).toContain('aria-label="Disable active agents filter"');
+    expect(htmlActive).toContain("bg-blue-950/70");
+    expect(htmlActive).toContain("text-blue-300");
+  });
 });

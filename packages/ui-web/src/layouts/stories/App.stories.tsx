@@ -29,6 +29,18 @@ const Default: Story = {
     // Exercise switching back to "Group by Project"
     await userEvent.click(projectBtn);
     await expect(projectBtn).toHaveClass("bg-blue-600");
+
+    // Exercise active agents filter toggle and empty state
+    const activeBtn = canvas.getByTestId("Header--active-agents");
+    await userEvent.click(activeBtn);
+    await expect(activeBtn).toHaveAttribute("aria-pressed", "true");
+
+    const noActiveEmptyState = canvas.getByTestId("App--no-active-empty-state");
+    await expect(noActiveEmptyState).toBeInTheDocument();
+
+    const resetBtn = canvas.getByTestId("App--reset-active-filter");
+    await userEvent.click(resetBtn);
+    await expect(activeBtn).toHaveAttribute("aria-pressed", "false");
   },
 };
 

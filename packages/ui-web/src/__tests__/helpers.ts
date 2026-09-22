@@ -147,6 +147,23 @@ export class MockElement {
     }
     return null;
   }
+
+  querySelectorAll(selector: string): MockElement[] {
+    const results: MockElement[] = [];
+    const testIdMatch = selector.match(/\[data-testid="([^"]+)"\]/);
+    if (testIdMatch && testIdMatch[1]) {
+      const targetTestId = testIdMatch[1];
+      if (this.attributes["data-testid"] === targetTestId) {
+        results.push(this);
+      }
+      for (const child of this.children) {
+        if ("querySelectorAll" in child && typeof child.querySelectorAll === "function") {
+          results.push(...child.querySelectorAll(selector));
+        }
+      }
+    }
+    return results;
+  }
 }
 
 export class MockDocument {

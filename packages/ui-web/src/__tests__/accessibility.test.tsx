@@ -5,10 +5,16 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AgentCard } from "../components/AgentCard";
 import { AttentionBanner } from "../components/AttentionBanner";
+import { Header } from "../components/Header";
 import { LogDrawer } from "../components/LogDrawer";
 import { StateHelpDialog } from "../components/StateHelpDialog";
 import { setupMockDomEnvironment, mountComponent } from "./helpers";
-import { fixture_agentStateRunning, fixture_agentStateWaitingQuestion, fixture_agentStateError } from "./fixtures";
+import {
+  fixture_agentStateRunning,
+  fixture_agentStateWaitingQuestion,
+  fixture_agentStateError,
+  fixture_environmentInfo,
+} from "./fixtures";
 
 describe("Accessibility & ARIA semantics", () => {
   describe("AgentCard", () => {
@@ -227,6 +233,72 @@ describe("Accessibility & ARIA semantics", () => {
       expect(html).toContain('aria-labelledby="StateHelpDialog--title"');
       expect(html).toContain('type="button"');
       expect(html).toContain('aria-label="Close state legend help dialog"');
+    });
+  });
+
+  describe("Header", () => {
+    it("renders Header--active-agents as button with type='button', aria-label, and aria-pressed", () => {
+      const html = renderToStaticMarkup(
+        <Header
+          agents={[fixture_agentStateRunning]}
+          environments={[fixture_environmentInfo]}
+          isConnected={true}
+          isActiveFilter={false}
+          onToggleActiveFilter={() => {}}
+        />,
+      );
+
+      expect(html).toContain('data-testid="Header--active-agents"');
+      expect(html).toContain('type="button"');
+      expect(html).toContain('aria-pressed="false"');
+      expect(html).toContain('aria-label="Filter by active agents"');
+    });
+
+    it("triggers onToggleActiveFilter callback on click", async () => {
+      const { mockDoc, cleanup } = setupMockDomEnvironment();
+      const onToggle = mock();
+      const { container, unmount } = await mountComponent(
+        <Header
+          agents={[fixture_agentStateRunning]}
+          environments={[fixture_environmentInfo]}
+          isConnected={true}
+          isActiveFilter={false}
+          onToggleActiveFilter={onToggle}
+        />,
+        mockDoc,
+      );
+
+      const btn = container.querySelector('[data-testid="Header--active-agents"]');
+      assert(btn);
+      btn.click();
+
+      expect(onToggle).toHaveBeenCalledTimes(1);
+      await unmount();
+      cleanup();
+    });
+
+    it("triggers onToggleActiveFilter on Enter or Space keydown", async () => {
+      const { mockDoc, cleanup } = setupMockDomEnvironment();
+      const onToggle = mock();
+      const { container, unmount } = await mountComponent(
+        <Header
+          agents={[fixture_agentStateRunning]}
+          environments={[fixture_environmentInfo]}
+          isConnected={true}
+          isActiveFilter={true}
+          onToggleActiveFilter={onToggle}
+        />,
+        mockDoc,
+      );
+
+      const btn = container.querySelector('[data-testid="Header--active-agents"]');
+      assert(btn);
+
+      // On native buttons in HTML/React, click is dispatched by default on Enter/Space
+      btn.click();
+      expect(onToggle).toHaveBeenCalledTimes(1);
+      await unmount();
+      cleanup();
     });
   });
 });

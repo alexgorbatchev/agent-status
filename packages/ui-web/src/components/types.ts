@@ -51,6 +51,8 @@ export interface IHeaderProps {
   agents: IAgentState[];
   environments: IEnvironmentInfo[];
   isConnected: boolean;
+  isActiveFilter?: boolean;
+  onToggleActiveFilter?: () => void;
   onOpenHelp?: () => void;
 }
 
