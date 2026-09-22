@@ -82,25 +82,34 @@ type IRunInfo struct {
 	EndedAt        *int64 `json:"endedAt"`
 }
 
+type ISubagentSummary struct {
+	ID         string        `json:"id"`
+	Activity   ActivityState `json:"activity"`
+	ActiveTool *string       `json:"activeTool,omitempty"`
+	Action     string        `json:"action,omitempty"`
+	LastError  *string       `json:"lastError,omitempty"`
+}
+
 type IAgentActivity struct {
-	Lifecycle           LifecycleState `json:"lifecycle"`
-	Activity            ActivityState  `json:"activity"`
-	Title               string         `json:"title"`
-	Action              string         `json:"action"`
-	ActionStale         bool           `json:"actionStale"`
-	Phase               *AgentPhase    `json:"phase"`
-	ActiveTool          *string        `json:"activeTool"`
-	ActiveTarget        *string        `json:"activeTarget"`
-	ActiveToolStartedAt *int64         `json:"activeToolStartedAt,omitempty"`
-	Question            *string        `json:"question"`
-	LastThinkingExcerpt *string        `json:"lastThinkingExcerpt"`
-	LastError           *string        `json:"lastError"`
-	Usage               ITokenUsage    `json:"usage"`
-	Cost                *ICostInfo     `json:"cost"`
-	SubagentCount       int            `json:"subagentCount"`
-	CurrentRun          *IRunInfo      `json:"currentRun"`
-	FirstStartedAt      int64          `json:"firstStartedAt"`
-	UpdatedAt           int64          `json:"updatedAt"`
+	Lifecycle           LifecycleState     `json:"lifecycle"`
+	Activity            ActivityState      `json:"activity"`
+	Title               string             `json:"title"`
+	Action              string             `json:"action"`
+	ActionStale         bool               `json:"actionStale"`
+	Phase               *AgentPhase        `json:"phase"`
+	ActiveTool          *string            `json:"activeTool"`
+	ActiveTarget        *string            `json:"activeTarget"`
+	ActiveToolStartedAt *int64             `json:"activeToolStartedAt,omitempty"`
+	Question            *string            `json:"question"`
+	LastThinkingExcerpt *string            `json:"lastThinkingExcerpt"`
+	LastError           *string            `json:"lastError"`
+	Usage               ITokenUsage        `json:"usage"`
+	Cost                *ICostInfo         `json:"cost"`
+	SubagentCount       int                `json:"subagentCount"`
+	ActiveSubagents     []ISubagentSummary `json:"activeSubagents,omitempty"`
+	CurrentRun          *IRunInfo          `json:"currentRun"`
+	FirstStartedAt      int64              `json:"firstStartedAt"`
+	UpdatedAt           int64              `json:"updatedAt"`
 }
 
 type IAgentState struct {

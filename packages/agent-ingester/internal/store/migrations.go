@@ -166,6 +166,29 @@ func Migrate(db *sql.DB) error {
 		if _, err := db.Exec("PRAGMA user_version = 3;"); err != nil {
 			return fmt.Errorf("updating user_version to 3: %w", err)
 		}
+		version = 3
+	}
+
+	if version < 4 {
+		tx, err := db.Begin()
+		if err != nil {
+			return fmt.Errorf("beginning migration v4 transaction: %w", err)
+		}
+		defer func() {
+			_ = tx.Rollback()
+		}()
+
+		if _, err := tx.Exec("ALTER TABLE agents ADD COLUMN active_subagents TEXT;"); err != nil {
+			return fmt.Errorf("executing migration v4 active_subagents: %w", err)
+		}
+
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("committing migration v4: %w", err)
+		}
+
+		if _, err := db.Exec("PRAGMA user_version = 4;"); err != nil {
+			return fmt.Errorf("updating user_version to 4: %w", err)
+		}
 	}
 
 	return nil

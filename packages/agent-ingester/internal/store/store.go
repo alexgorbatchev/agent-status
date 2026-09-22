@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
@@ -191,6 +192,14 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 	}
 	hiddenAt := agent.HiddenAt
 
+	var activeSubagentsStr *string
+	if len(agent.Activity.ActiveSubagents) > 0 {
+		if b, err := json.Marshal(agent.Activity.ActiveSubagents); err == nil {
+			s := string(b)
+			activeSubagentsStr = &s
+		}
+	}
+
 	_, err = tx.Exec(`
 		INSERT INTO agents (
 			id, session_id, environment_id, harness,
@@ -199,7 +208,7 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 			current_run_id, activity, title, action, action_stale,
 			phase, active_tool, active_target, active_tool_started_at, question, last_thinking_excerpt, last_error,
 			tokens_input, tokens_output, tokens_cache_read, tokens_cache_write, tokens_reasoning, tokens_total,
-			cost_usd, subagent_count, first_started_at, updated_at,
+			cost_usd, subagent_count, active_subagents, first_started_at, updated_at,
 			is_hidden, hidden_at
 		) VALUES (
 			?, ?, ?, ?,
@@ -208,7 +217,7 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 			?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
-			?, ?, ?, ?,
+			?, ?, ?, ?, ?,
 			?, ?
 		)
 		ON CONFLICT(id) DO UPDATE SET
@@ -240,6 +249,7 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 			tokens_total = excluded.tokens_total,
 			cost_usd = excluded.cost_usd,
 			subagent_count = excluded.subagent_count,
+			active_subagents = excluded.active_subagents,
 			updated_at = excluded.updated_at,
 			is_hidden = excluded.is_hidden,
 			hidden_at = excluded.hidden_at
@@ -250,7 +260,7 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 		currentRunID, string(agent.Activity.Activity), agent.Activity.Title, agent.Activity.Action, actionStale,
 		phaseStr, agent.Activity.ActiveTool, agent.Activity.ActiveTarget, agent.Activity.ActiveToolStartedAt, agent.Activity.Question, agent.Activity.LastThinkingExcerpt, agent.Activity.LastError,
 		agent.Activity.Usage.Input, agent.Activity.Usage.Output, agent.Activity.Usage.CacheRead, agent.Activity.Usage.CacheWrite, agent.Activity.Usage.Reasoning, agent.Activity.Usage.Total,
-		costUSD, agent.Activity.SubagentCount, agent.Activity.FirstStartedAt, agent.Activity.UpdatedAt,
+		costUSD, agent.Activity.SubagentCount, activeSubagentsStr, agent.Activity.FirstStartedAt, agent.Activity.UpdatedAt,
 		isHidden, hiddenAt,
 	)
 	if err != nil {
@@ -268,7 +278,7 @@ func (s *Store) GetAgent(id string) (*types.IAgentState, error) {
 			a.current_run_id, a.activity, a.title, a.action, a.action_stale,
 			a.phase, a.active_tool, a.active_target, a.active_tool_started_at, a.question, a.last_thinking_excerpt, a.last_error,
 			a.tokens_input, a.tokens_output, a.tokens_cache_read, a.tokens_cache_write, a.tokens_reasoning, a.tokens_total,
-			a.cost_usd, a.subagent_count, a.first_started_at, a.updated_at,
+			a.cost_usd, a.subagent_count, a.active_subagents, a.first_started_at, a.updated_at,
 			e.id, e.label, e.hostname, e.platform, e.user, e.last_heartbeat_at,
 			r.id, r.pid, r.harness_version, r.started_at, r.ended_at,
 			a.is_hidden, a.hidden_at
@@ -289,6 +299,7 @@ func (s *Store) GetAgent(id string) (*types.IAgentState, error) {
 		activeToolStartedAt                                sql.NullInt64
 		worktreeRel                                        sql.NullString
 		costUSD                                            sql.NullFloat64
+		activeSubagents                                    sql.NullString
 		currentRunID                                       sql.NullString
 		envPlatform                                        string
 		runID                                              sql.NullString
@@ -303,7 +314,7 @@ func (s *Store) GetAgent(id string) (*types.IAgentState, error) {
 		&currentRunID, &activityStr, &agent.Activity.Title, &agent.Activity.Action, &actionStale,
 		&phaseStr, &activeTool, &activeTarget, &activeToolStartedAt, &question, &thinking, &lErr,
 		&agent.Activity.Usage.Input, &agent.Activity.Usage.Output, &agent.Activity.Usage.CacheRead, &agent.Activity.Usage.CacheWrite, &agent.Activity.Usage.Reasoning, &agent.Activity.Usage.Total,
-		&costUSD, &agent.Activity.SubagentCount, &agent.Activity.FirstStartedAt, &agent.Activity.UpdatedAt,
+		&costUSD, &agent.Activity.SubagentCount, &activeSubagents, &agent.Activity.FirstStartedAt, &agent.Activity.UpdatedAt,
 		&agent.Environment.ID, &agent.Environment.Label, &agent.Environment.Hostname, &envPlatform, &agent.Environment.User, &agent.Environment.LastHeartbeatAt,
 		&runID, &runPID, &runHarnessVer, &runStart, &runEnd,
 		&isHidden, &hiddenAt,
@@ -313,6 +324,10 @@ func (s *Store) GetAgent(id string) (*types.IAgentState, error) {
 	}
 	if err != nil {
 		return nil, fmt.Errorf("scanning agent: %w", err)
+	}
+
+	if activeSubagents.Valid && strings.TrimSpace(activeSubagents.String) != "" {
+		_ = json.Unmarshal([]byte(activeSubagents.String), &agent.Activity.ActiveSubagents)
 	}
 
 	agent.Harness = types.HarnessType(harnessStr)

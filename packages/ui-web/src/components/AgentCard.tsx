@@ -100,25 +100,6 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
               </IconWrapper>
               {HARNESS_LABELS[harness] || harness}
             </span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            {agent.isHidden && (
-              <span
-                data-testid="AgentCard--hidden-badge"
-                role="status"
-                className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 text-[10px] font-medium border border-slate-700 font-mono"
-              >
-                Hidden
-              </span>
-            )}
-            <StatusBadge
-              lifecycle={activity.lifecycle}
-              activity={activity.activity}
-              stallTier={stallTier}
-              toolDuration={formattedDuration ?? undefined}
-              isSessionStalled={sessionStalled}
-              silenceDuration={sessionStalled ? silenceDuration : undefined}
-            />
             {onToggleHide && (
               <button
                 type="button"
@@ -155,6 +136,8 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
               activity={activity.activity}
               stallTier={stallTier}
               toolDuration={formattedDuration ?? undefined}
+              isSessionStalled={sessionStalled}
+              silenceDuration={sessionStalled ? silenceDuration : undefined}
             />
           </div>
         </div>
@@ -334,6 +317,34 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
             </div>
           )}
         </div>
+
+        {/* Active Subagents Chips */}
+        {activity.activeSubagents && activity.activeSubagents.length > 0 && (
+          <div data-testid="AgentCard--subagents" className="flex flex-wrap items-center gap-1.5 mb-3">
+            {activity.activeSubagents.map((sub) => {
+              const statusTone =
+                sub.activity === "ERROR"
+                  ? "bg-red-950/40 border-red-800/50 text-red-300"
+                  : sub.activity === "WAITING_QUESTION"
+                    ? "bg-amber-950/40 border-amber-800/50 text-amber-300"
+                    : sub.activity === "BUSY"
+                      ? "bg-blue-950/40 border-blue-800/50 text-blue-300"
+                      : "bg-slate-800/50 border-slate-700/50 text-slate-400";
+              const label = sub.activeTool ? `${sub.id}: ${sub.activeTool}` : `${sub.id}: ${sub.activity}`;
+              return (
+                <span
+                  key={sub.id}
+                  data-testid={`AgentCard--subagent-chip-${sub.id}`}
+                  data-subagent-id={sub.id}
+                  data-subagent-activity={sub.activity}
+                  className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono border ${statusTone}`}
+                >
+                  {label}
+                </span>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Footer: Usage & Spend */}

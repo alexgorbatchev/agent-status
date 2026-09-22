@@ -3,6 +3,7 @@ package classifier
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -20,12 +21,26 @@ type pendingSummaryCandidate struct {
 	toolKey   string
 }
 
+type subagentState struct {
+	id         string
+	activity   types.ActivityState
+	activeTool *string
+	action     string
+	lastError  *string
+	question   *string
+}
+
 type agentContext struct {
 	lastPrompt              string
 	lastAssistantResponse   string
 	lastToolArgs            string
 	recentTools             []summarizer.ToolExecution
 	seenSubagents           map[string]struct{}
+	subagents               map[string]*subagentState
+	rootActivity            types.ActivityState
+	rootAction              string
+	rootQuestion            *string
+	rootLastError           *string
 	lastSummarizedToolKey   string
 	lastSummaryDispatchedAt int64
 	pendingCandidate        *pendingSummaryCandidate
@@ -391,6 +406,11 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		if !exists {
 			actx = &agentContext{
 				seenSubagents: preloaded,
+				subagents:     make(map[string]*subagentState),
+				rootActivity:  agent.Activity.Activity,
+				rootAction:    agent.Activity.Action,
+				rootQuestion:  agent.Activity.Question,
+				rootLastError: agent.Activity.LastError,
 			}
 			c.agentCtx[agent.ID] = actx
 		}
@@ -669,7 +689,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			}
 		}
 	} else {
-		// Subagent event: cancel parent idle timer and increment subagent count for distinct subagents
+		// Subagent event: cancel parent idle timer and track subagent state
 		c.mu.Lock()
 		c.cancelIdleTimerLocked(agent.ID)
 		isNewSubagent := false
@@ -682,6 +702,64 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				actx.seenSubagents[subID] = struct{}{}
 				isNewSubagent = true
 			}
+			if actx.subagents == nil {
+				actx.subagents = make(map[string]*subagentState)
+			}
+			sub, ok := actx.subagents[subID]
+			if !ok {
+				sub = &subagentState{id: subID, activity: types.ActivityBusy}
+				actx.subagents[subID] = sub
+			}
+
+			switch frame.EventType {
+			case "tool_call":
+				sub.activity = types.ActivityBusy
+				sub.activeTool = frame.Data.ToolName
+				if frame.Data.ToolName != nil {
+					sub.action = "Running " + *frame.Data.ToolName
+				}
+				sub.lastError = nil
+				sub.question = nil
+			case "tool_result":
+				if frame.Data.IsError != nil && *frame.Data.IsError {
+					sub.activity = types.ActivityError
+					if frame.Data.ToolOutput != nil {
+						out := *frame.Data.ToolOutput
+						if len(out) > 2000 {
+							out = out[:2000]
+						}
+						sub.lastError = &out
+					}
+					sub.activeTool = nil
+				} else {
+					sub.activity = types.ActivityBusy
+					sub.activeTool = nil
+				}
+			case "error":
+				sub.activity = types.ActivityError
+				if frame.Data.Content != nil {
+					out := *frame.Data.Content
+					sub.lastError = &out
+				} else if frame.Data.ToolOutput != nil {
+					out := *frame.Data.ToolOutput
+					sub.lastError = &out
+				}
+				sub.activeTool = nil
+			case "question_prompt", "waiting_question":
+				sub.activity = types.ActivityWaitingQuestion
+				if frame.Data.Content != nil {
+					q := *frame.Data.Content
+					sub.question = &q
+				}
+				sub.activeTool = nil
+			case "turn_start":
+				sub.activity = types.ActivityBusy
+				sub.activeTool = nil
+				sub.lastError = nil
+			case "turn_end":
+				sub.activity = types.ActivityIdle
+				sub.activeTool = nil
+			}
 		}
 		c.mu.Unlock()
 
@@ -689,6 +767,16 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			agent.Activity.SubagentCount++
 		}
 	}
+
+	c.mu.Lock()
+	if !isSubagent {
+		actx.rootActivity = agent.Activity.Activity
+		actx.rootAction = agent.Activity.Action
+		actx.rootQuestion = agent.Activity.Question
+		actx.rootLastError = agent.Activity.LastError
+	}
+	c.rollupActivityLocked(agent, actx)
+	c.mu.Unlock()
 
 	if err := c.store.SaveAgentState(*agent); err != nil {
 		return nil, fmt.Errorf("saving agent state: %w", err)
@@ -1084,4 +1172,93 @@ func extractTarget(toolName string, input map[string]interface{}) string {
 		}
 	}
 	return ""
+}
+
+func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentContext) {
+	// Build ActiveSubagents summary list
+	var summaries []types.ISubagentSummary
+	for _, sub := range actx.subagents {
+		summaries = append(summaries, types.ISubagentSummary{
+			ID:         sub.id,
+			Activity:   sub.activity,
+			ActiveTool: sub.activeTool,
+			Action:     sub.action,
+			LastError:  sub.lastError,
+		})
+	}
+	sort.Slice(summaries, func(i, j int) bool {
+		return summaries[i].ID < summaries[j].ID
+	})
+	agent.Activity.ActiveSubagents = summaries
+
+	if len(actx.subagents) == 0 {
+		return
+	}
+
+	var subError *subagentState
+	var subQuestion *subagentState
+	var subBusy *subagentState
+
+	for _, sub := range actx.subagents {
+		if sub.activity == types.ActivityError && subError == nil {
+			subError = sub
+		}
+		if sub.activity == types.ActivityWaitingQuestion && subQuestion == nil {
+			subQuestion = sub
+		}
+		if sub.activity == types.ActivityBusy && subBusy == nil {
+			subBusy = sub
+		}
+	}
+
+	// 1. Error Precedence
+	if actx.rootActivity == types.ActivityError {
+		agent.Activity.Activity = types.ActivityError
+		agent.Activity.LastError = actx.rootLastError
+		return
+	} else if subError != nil {
+		agent.Activity.Activity = types.ActivityError
+		if subError.lastError != nil {
+			errStr := fmt.Sprintf("[Subagent %s] %s", subError.id, *subError.lastError)
+			agent.Activity.LastError = &errStr
+		}
+		return
+	}
+
+	// 2. User Input Precedence
+	if actx.rootActivity == types.ActivityWaitingQuestion {
+		agent.Activity.Activity = types.ActivityWaitingQuestion
+		agent.Activity.Question = actx.rootQuestion
+		return
+	} else if subQuestion != nil {
+		agent.Activity.Activity = types.ActivityWaitingQuestion
+		if subQuestion.question != nil {
+			qStr := fmt.Sprintf("[Subagent %s] %s", subQuestion.id, *subQuestion.question)
+			agent.Activity.Question = &qStr
+		}
+		return
+	}
+
+	// 3. Busy vs Idle
+	if actx.rootActivity == types.ActivityBusy {
+		agent.Activity.Activity = types.ActivityBusy
+		agent.Activity.Action = actx.rootAction
+	} else if subBusy != nil {
+		agent.Activity.Activity = types.ActivityBusy
+		if subBusy.activeTool != nil && *subBusy.activeTool != "" {
+			agent.Activity.Action = fmt.Sprintf("Running subagent %s: %s", subBusy.id, *subBusy.activeTool)
+		} else if subBusy.action != "" {
+			agent.Activity.Action = fmt.Sprintf("Running subagent %s: %s", subBusy.id, subBusy.action)
+		} else {
+			agent.Activity.Action = fmt.Sprintf("Running subagent %s task", subBusy.id)
+		}
+	} else {
+		// Root is idle and all subagents are idle
+		agent.Activity.Activity = types.ActivityIdle
+		if actx.rootAction != "" && actx.rootAction != "Thinking" {
+			agent.Activity.Action = actx.rootAction
+		} else {
+			agent.Activity.Action = "Idle"
+		}
+	}
 }

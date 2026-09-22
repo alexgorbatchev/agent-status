@@ -27,8 +27,8 @@ func TestOpen_Memory(t *testing.T) {
 	if err := st.DB().QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("query user_version failed: %v", err)
 	}
-	if version != 3 {
-		t.Errorf("got user_version = %d, want 3", version)
+	if version != 4 {
+		t.Errorf("got user_version = %d, want 4", version)
 	}
 }
 
@@ -153,8 +153,8 @@ func TestMigrate_V1ToV2(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 3 {
-		t.Errorf("got user_version = %d, want 3", version)
+	if version != 4 {
+		t.Errorf("got user_version = %d, want 4", version)
 	}
 
 	var indexCount int
@@ -171,6 +171,14 @@ func TestMigrate_V1ToV2(t *testing.T) {
 	}
 	if hasCol != 1 {
 		t.Errorf("expected active_tool_started_at column to exist, got count %d", hasCol)
+	}
+
+	var hasSubCol int
+	if err := db.QueryRow("SELECT count(*) FROM pragma_table_info('agents') WHERE name = 'active_subagents';").Scan(&hasSubCol); err != nil {
+		t.Fatalf("querying active_subagents column: %v", err)
+	}
+	if hasSubCol != 1 {
+		t.Errorf("expected active_subagents column to exist, got count %d", hasSubCol)
 	}
 }
 
@@ -1682,6 +1690,58 @@ func TestStore_ActiveToolStartedAt_PersistenceAndClearing(t *testing.T) {
 	}
 	if err := st.EndCurrentRun(agentNoRun.ID, now+20000); err != nil {
 		t.Fatalf("EndCurrentRun on agent without current run failed: %v", err)
+	}
+}
+
+func TestStore_ActiveSubagents_Persistence(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	now := time.Now().UnixMilli()
+	tool := "grep"
+	sub := types.ISubagentSummary{
+		ID:         "sub-store-1",
+		Activity:   types.ActivityBusy,
+		ActiveTool: &tool,
+		Action:     "Running grep",
+	}
+
+	agent := types.IAgentState{
+		ID:        "agent-sub-store",
+		SessionID: "sess-sub-store",
+		Harness:   types.HarnessPi,
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-sub-store",
+			Platform: "darwin",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle:       types.LifecycleRunning,
+			Activity:        types.ActivityBusy,
+			ActiveSubagents: []types.ISubagentSummary{sub},
+			FirstStartedAt:  now,
+			UpdatedAt:       now,
+		},
+	}
+
+	if err := st.SaveAgentState(agent); err != nil {
+		t.Fatalf("SaveAgentState failed: %v", err)
+	}
+
+	loaded, err := st.GetAgent(agent.ID)
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if len(loaded.Activity.ActiveSubagents) != 1 {
+		t.Fatalf("expected 1 ActiveSubagent, got %d", len(loaded.Activity.ActiveSubagents))
+	}
+	if loaded.Activity.ActiveSubagents[0].ID != "sub-store-1" {
+		t.Errorf("expected sub ID 'sub-store-1', got %q", loaded.Activity.ActiveSubagents[0].ID)
+	}
+	if loaded.Activity.ActiveSubagents[0].Action != "Running grep" {
+		t.Errorf("expected sub Action 'Running grep', got %q", loaded.Activity.ActiveSubagents[0].Action)
 	}
 }
 

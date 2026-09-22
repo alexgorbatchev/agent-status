@@ -55,6 +55,14 @@ export interface IRunInfo {
   endedAt: number | null;
 }
 
+export interface ISubagentSummary {
+  id: string;
+  activity: ActivityState;
+  activeTool?: string | null;
+  action?: string;
+  lastError?: string | null;
+}
+
 export interface IAgentActivity {
   lifecycle: LifecycleState;
   activity: ActivityState;
@@ -71,6 +79,7 @@ export interface IAgentActivity {
   usage: ITokenUsage;
   cost: ICostInfo | null;
   subagentCount: number;
+  activeSubagents?: ISubagentSummary[];
   currentRun: IRunInfo | null;
   firstStartedAt: number;
   updatedAt: number;

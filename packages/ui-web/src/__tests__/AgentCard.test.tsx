@@ -404,4 +404,34 @@ describe("AgentCard Component", () => {
       expect(html).toContain('data-stall-tier="stalled"');
     });
   });
+
+  describe("Subagent status chips", () => {
+    it("renders subagent chips when activeSubagents is present", () => {
+      const agentWithSubagents: IAgentState = {
+        ...fixture_agentStateRunning,
+        activity: {
+          ...fixture_agentStateRunning.activity,
+          activeSubagents: [
+            {
+              id: "sub-1",
+              activity: "BUSY",
+              activeTool: "bash",
+              action: "npm test",
+            },
+            {
+              id: "sub-2",
+              activity: "ERROR",
+              lastError: "compile error",
+            },
+          ],
+        },
+      };
+      const html = renderToStaticMarkup(<AgentCard agent={agentWithSubagents} />);
+      expect(html).toContain('data-testid="AgentCard--subagents"');
+      expect(html).toContain('data-testid="AgentCard--subagent-chip-sub-1"');
+      expect(html).toContain('data-testid="AgentCard--subagent-chip-sub-2"');
+      expect(html).toContain("sub-1");
+      expect(html).toContain("sub-2");
+    });
+  });
 });
