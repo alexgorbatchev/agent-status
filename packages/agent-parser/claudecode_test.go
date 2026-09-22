@@ -716,7 +716,7 @@ func TestClaudeCodeParser_SchemaAliases(t *testing.T) {
 }
 
 func TestClaudeCodeParser_BatchAndNotebookEditingTools(t *testing.T) {
-	t.Run("MultiEdit tool_use and tool_result", func(t *testing.T) {
+	t.Run("MultiEdit tool_use", func(t *testing.T) {
 		p := NewClaudeCodeParser()
 		assistantLine := []byte(`{
 			"type": "assistant",

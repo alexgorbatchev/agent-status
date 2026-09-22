@@ -507,4 +507,30 @@ func TestParsePiLine(t *testing.T) {
 			t.Errorf("EventType = %q, want 'turn_end'", evs[1].EventType)
 		}
 	})
+
+	t.Run("assistant content block with omitted tool call ID produces nil ToolCallID", func(t *testing.T) {
+		line := []byte(`{
+			"type": "message",
+			"message": {
+				"role": "assistant",
+				"content": [
+					{
+						"type": "tool_call",
+						"name": "bash",
+						"arguments": {"command": "ls"}
+					}
+				]
+			}
+		}`)
+		evs, err := ParsePiLine(line, "/cwd")
+		if err != nil {
+			t.Fatalf("ParsePiLine error: %v", err)
+		}
+		if len(evs) != 2 || evs[0].EventType != "tool_call" {
+			t.Fatalf("expected tool_call event, got %+v", evs)
+		}
+		if evs[0].Data.ToolCallID != nil {
+			t.Errorf("expected ToolCallID=nil, got %v", *evs[0].Data.ToolCallID)
+		}
+	})
 }
