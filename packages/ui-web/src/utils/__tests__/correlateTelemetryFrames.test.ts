@@ -343,4 +343,28 @@ describe("correlateTelemetryFrames", () => {
     expect(result[0].data.toolOutput).toBe("output 1");
     expect(result[1].data.toolOutput).toBe("output 2");
   });
+
+  it("preserves intermediate turn_end frames with stopReason tool_use and usage intact", () => {
+    const call = createFrame(1, 1000, "tool_call", {
+      toolCallId: "call-1",
+      toolName: "bash",
+      toolInput: { command: "test" },
+    });
+    const intermediateTurnEnd = createFrame(2, 1010, "turn_end", {
+      stopReason: "tool_use",
+      usage: { input: 50, output: 20, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 70 },
+    });
+    const resultFrame = createFrame(3, 1100, "tool_result", {
+      toolCallId: "call-1",
+      toolOutput: "test passed",
+    });
+
+    const correlated = correlateTelemetryFrames([call, intermediateTurnEnd, resultFrame]);
+    expect(correlated).toHaveLength(2);
+    expect(correlated[0].eventType).toBe("tool_call");
+    expect(correlated[0].data.toolOutput).toBe("test passed");
+    expect(correlated[1].eventType).toBe("turn_end");
+    expect(correlated[1].data.stopReason).toBe("tool_use");
+    expect(correlated[1].data.usage?.total).toBe(70);
+  });
 });

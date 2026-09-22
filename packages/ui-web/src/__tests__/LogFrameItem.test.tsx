@@ -170,6 +170,49 @@ describe("LogFrameItem Component", () => {
     expect(runExitedHtml).toContain("run_exited");
   });
 
+  it("renders intermediate tool-use turn_end as API RESPONSE with bot icon and no completion checkmark", () => {
+    const toolUseReasons = ["tool_use", "toolUse", "tool_calls", "tool_call"];
+
+    for (const stopReason of toolUseReasons) {
+      const intermediateFrame: ITelemetryFrame = {
+        ...fixture_telemetryFrame,
+        eventType: "turn_end",
+        data: {
+          ...fixture_telemetryFrame.data,
+          stopReason,
+        },
+      };
+
+      const html = renderToString(<LogFrameItem frame={intermediateFrame} />);
+
+      expect(html).toContain('data-testid="LogFrameItem--type"');
+      expect(html).toContain("API RESPONSE");
+      expect(html).not.toContain("turn_end");
+      expect(html).not.toContain("TURN_END");
+      expect(html).toContain("lucide-bot");
+      expect(html).not.toContain("lucide-check-circle-2");
+    }
+  });
+
+  it("renders conversational turn_end with end_turn stopReason as TURN_END with completion checkmark", () => {
+    const terminalFrame: ITelemetryFrame = {
+      ...fixture_telemetryFrame,
+      eventType: "turn_end",
+      data: {
+        ...fixture_telemetryFrame.data,
+        stopReason: "end_turn",
+      },
+    };
+
+    const html = renderToString(<LogFrameItem frame={terminalFrame} />);
+
+    expect(html).toContain('data-testid="LogFrameItem--type"');
+    expect(html).toContain("turn_end");
+    expect(html).not.toContain("API RESPONSE");
+    expect(html).toContain("lucide-check-circle-2");
+    expect(html).not.toContain("lucide-bot");
+  });
+
   it("renders question prompt with min-w-0 and max-w-full containment", () => {
     const questionFrame = {
       ...fixture_telemetryFrame,

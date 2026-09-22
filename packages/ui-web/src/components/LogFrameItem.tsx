@@ -1,6 +1,6 @@
 import React, { useMemo } from "react";
 import type { ILogFrameItemProps } from "./types";
-import { Brain, Wrench, AlertTriangle, User, Play, CheckCircle2 } from "lucide-react";
+import { Brain, Wrench, AlertTriangle, User, Play, CheckCircle2, Bot } from "lucide-react";
 import Markdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
@@ -41,6 +41,12 @@ const markdownComponents = {
 export function LogFrameItem({ frame }: ILogFrameItemProps): React.JSX.Element {
   const isSubagent = Boolean(frame.subagentId);
   const isUser = (frame.data.role === "user" || frame.eventType === "turn_start") && frame.eventType !== "tool_result";
+  const isIntermediateToolTurnEnd =
+    frame.eventType === "turn_end" &&
+    (frame.data.stopReason === "tool_use" ||
+      frame.data.stopReason === "toolUse" ||
+      frame.data.stopReason === "tool_calls" ||
+      frame.data.stopReason === "tool_call");
 
   const renderIcon = (): React.JSX.Element | null => {
     if (isUser) {
@@ -77,6 +83,13 @@ export function LogFrameItem({ frame }: ILogFrameItemProps): React.JSX.Element {
           </span>
         );
       case "turn_end":
+        if (isIntermediateToolTurnEnd) {
+          return (
+            <span className="w-3.5 h-3.5 text-slate-400 flex items-center justify-center">
+              <Bot size={14} />
+            </span>
+          );
+        }
         return (
           <span className="w-3.5 h-3.5 text-slate-400 flex items-center justify-center">
             <CheckCircle2 size={14} />
@@ -121,7 +134,7 @@ export function LogFrameItem({ frame }: ILogFrameItemProps): React.JSX.Element {
             </span>
           )}
           <span data-testid="LogFrameItem--type" className="font-semibold text-slate-300 uppercase">
-            {isUser ? "USER PROMPT" : frame.eventType}
+            {isUser ? "USER PROMPT" : isIntermediateToolTurnEnd ? "API RESPONSE" : frame.eventType}
           </span>
         </div>
         <span data-testid="LogFrameItem--timestamp" className="text-slate-500">
