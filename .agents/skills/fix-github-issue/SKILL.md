@@ -10,13 +10,14 @@ description: >-
 author: alexgorbatchev
 metadata:
   created_on: 2026-09-22 14:38
-  last_modified: 2026-09-22 15:10
+  last_modified: 2026-09-22 15:18
   status: current
 ---
 
 ## Concurrency & Worktree Topology
 
-- **Coordinator Supremacy**: The parent agent acts as the coordinator. It manages the issue queue, arbitrates review findings, performs all merges to integration and main branches, and executes the issue closure handshake.
+- **Coordinator Boundary**: The parent/main agent manages queue ordering, provisions worktrees, receives clean review notifications from subagents, merges verified worktrees into `issues-dev`, tears down worktrees, and closes GitHub issues. The main agent does NOT micromanage the review loop.
+- **Autonomous Subagent Review Pairing**: Subagents working in worktrees are responsible for autonomously pairing with review agents until no further issues are reported ("clean review"). The subagent only notifies the main agent when the review is clean and ready for integration.
 - **Full Queue Completion**: All opened tickets are expected to be finished before completing the run. The coordinator works through the entire open issue set, continuing until no open issues remain.
 - **Dependency-Aware Order Determination**: The coordinator analyzes all open tickets to establish an optimal execution order:
   1. Foundational/parser/data pipeline defects first (e.g. log ingestion, frame parsing, database store layers).
@@ -45,30 +46,30 @@ metadata:
    git -C .workspaces/issues-dev merge origin/main --ff-only
    ```
 
-2. **Ingest Issue Queue**:
+2. **Ingest Issue Queue & Order Tasks**:
    Query open issues:
    ```bash
    gh issue list --state open --limit 20
    ```
-   For each target issue, fetch details:
+   Fetch issue specifications:
    ```bash
    gh issue view <issue-number> --json number,title,body,comments,labels,author
    ```
-   Extract reproduction criteria, root cause hypotheses, affected packages, and acceptance criteria.
+   Map dependencies across open issues and order them into execution batches.
 
 3. **Provision Per-Issue Worktrees (Up to 3 Max)**:
-   For up to 3 issues simultaneously, create dedicated worktrees branched from `issues-dev`:
+   For up to 3 issues concurrently, create dedicated worktrees branched from `issues-dev`:
    ```bash
    git worktree add .workspaces/issue-<number> -b fix/issue-<number> issues-dev
    ```
 
 ---
 
-## 2. Writer Subagent Execution (Red/Green TDD)
+## 2. Subagent Worktree Execution & Autonomous Review Pairing
 
-Delegate each issue implementation to a writer subagent scoped strictly to `.workspaces/issue-<number>` using the harness's native mechanism.
+Delegate each issue to a subagent scoped strictly to `.workspaces/issue-<number>` using the harness's native subagent mechanism.
 
-Instruct the writer subagent to follow the strict Red/Green sequence:
+The worktree subagent is responsible for executing the fix and self-managing the review pairing loop until clean:
 
 ### Step 2A — Red Phase (Failing Reproduction Test)
 1. Locate the appropriate package test file (e.g., `packages/<pkg>/..._test.go` or `__tests__/*.test.tsx`).
@@ -90,100 +91,71 @@ Instruct the writer subagent to follow the strict Red/Green sequence:
    - Use `.tmp` for temporary files, never global `/tmp`.
    - Use structured logging via `packages/agent-common/logging` (snake_case actions, dual-mode output).
 3. Re-run the reproduction test and confirm it passes cleanly.
+4. Confirm statement coverage meets or exceeds 90% (`go test -cover ./...`).
+5. Run workspace test and lint suites in the worktree (`just test-all` and `just lint-all`).
 
-### Step 2C — Package & Workspace Verification
-1. Confirm statement coverage meets or exceeds 90%:
-   ```bash
-   go test -cover ./...
-   ```
-2. Run workspace test and lint suites in the worktree:
-   ```bash
-   just test-all
-   just lint-all
-   ```
+### Step 2C — Autonomous Review Pairing Loop
+1. The worktree subagent pairs directly with a review agent with fresh context on the worktree diff.
+2. The review agent audits the diff against defect resolution, semantic integrity, regression risk, test robustness, and repository policies (see [references/reviewer-prompt.md](references/reviewer-prompt.md)).
+3. **Iterative Remediation**: If the review agent reports any defects or suggestions, the worktree subagent fixes them in `.workspaces/issue-<number>` and re-submits for review.
+4. **Clean Exit**: The pairing loop continues until the review agent reports `NO DEFECTS FOUND`.
 
----
-
-## 3. Independent Review Subagent Gate
-
-Once the writer subagent finishes, delegate a read-only review to an independent reviewer subagent with fresh context in `.workspaces/issue-<number>`.
-
-Pass the prompt template and checklist from [references/reviewer-prompt.md](references/reviewer-prompt.md).
-
-The reviewer audits:
-- Defect resolution validity (true root cause vs superficial patch).
-- Absence of regressions and side-effects.
-- Semantic integrity of primitives and error handling (`%w` wrapping).
-- Test robustness and 90% coverage bar.
-- Absence of forbidden patterns (`any`, `as any`, heredocs, linter evasion).
-
----
-
-## 4. Parent Synthesis & Mandatory Verification Handshake
-
-1. **Arbitrate Review Findings**:
-   Address high and medium findings in `.workspaces/issue-<number>` before integrating.
-
-2. **Sync with Main (Best Effort)**:
-   Before final verification, pull latest changes from `main` into the issue worktree to prevent divergence:
+### Step 2D — Mandatory Verification Handshake & Notification
+1. Keep the worktree synced with `main` / `issues-dev`:
    ```bash
    git -C .workspaces/issue-<number> merge issues-dev
    ```
-
-3. **Mandatory Red/Green Handshake**:
-   - Temporarily disable or revert the fix logic in `.workspaces/issue-<number>`.
-   - Run tests to confirm they fail (validating that tests genuinely guard against the defect).
-   - Re-enable the fix logic.
-   - Confirm tests pass cleanly.
-
-4. **Final Worktree Suite Validation**:
-   ```bash
-   cd .workspaces/issue-<number> && just test-all && just lint-all
-   ```
-
----
-
-## 5. Integration to `issues-dev`, Worktree Teardown & Issue Closure
-
-1. **Commit in Issue Worktree**:
-   Follow conventional commits:
+2. **Red/Green Verification Handshake**:
+   - Temporarily disable the fix in the worktree.
+   - Run tests to confirm they fail (proving the tests genuinely guard against the defect).
+   - Re-enable the fix.
+   - Confirm all tests pass cleanly.
+3. Run final validation in worktree (`just test-all` and `just lint-all`).
+4. Commit changes in the issue worktree:
    ```bash
    cd .workspaces/issue-<number>
    git add <modified-files>
    git commit -m "fix(<package>): <concise summary> (#<issue-number>)"
    ```
+5. Notify the main agent: "Issue #<number> review is clean, tests verified, ready to merge and close."
 
-2. **Merge into Central `issues-dev`**:
+---
+
+## 3. Main Agent Integration to `issues-dev`, Teardown & Issue Closure
+
+Upon receiving the clean review notification from the worktree subagent:
+
+1. **Merge into Central `issues-dev`**:
    In `.workspaces/issues-dev`:
    ```bash
    cd .workspaces/issues-dev
    git merge --no-ff fix/issue-<number> -m "merge: fix/issue-<number> into issues-dev"
    ```
 
-3. **Teardown Issue Worktree**:
-   Remove the individual issue worktree and branch:
+2. **Teardown Issue Worktree**:
+   Remove the individual issue worktree and delete its branch:
    ```bash
    git worktree remove .workspaces/issue-<number>
    git branch -d fix/issue-<number>
    ```
 
-4. **Issue Closure Handshake**:
-   Comment on and close the issue:
+3. **Issue Closure Handshake**:
+   Comment on and close the issue using `gh`:
    ```bash
    gh issue close <issue-number> --comment "Resolved in issues-dev.
 
    ### Summary of Changes
    - Root cause: <description>
    - Fix: <description of changes>
-   - Verification: Added regression tests; verified via red/green validation loop and independent review. Checks pass with >=90% test coverage."
+   - Verification: Added regression tests; verified via red/green validation loop and autonomous review agent pairing. All checks pass with >=90% test coverage."
    ```
 
-5. **Replenish Concurrency Pool**:
+4. **Replenish Concurrency Pool**:
    If additional open issues remain in the queue, immediately provision the next `.workspaces/issue-<number>` from `issues-dev` to maintain up to 3 parallel workers.
 
 ---
 
-## 6. Final Main Merge & Global Teardown
+## 4. Final Main Merge & Global Teardown
 
 When all target issues have been closed and no more actionable open issues remain:
 
