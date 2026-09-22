@@ -54,8 +54,8 @@ func TestRenderAgentView_HumanMode_Question(t *testing.T) {
 	out := buf.String()
 
 	// Assert semantic components
-	if !strings.Contains(out, "(Claude Code) [Hide]") {
-		t.Errorf("expected header with harness and [Hide], got:\n%s", out)
+	if !strings.Contains(out, "(Claude Code) [Focus] [Hide]") {
+		t.Errorf("expected header with harness, [Focus], and [Hide], got:\n%s", out)
 	}
 	if !strings.Contains(out, "(RUNNING)") {
 		t.Errorf("expected header with lifecycle, got:\n%s", out)
@@ -118,8 +118,8 @@ func TestRenderAgentView_HumanMode_Error(t *testing.T) {
 	RenderAgentViewAt(&buf, agent, false, 50000+10000)
 	out := buf.String()
 
-	if !strings.Contains(out, "(Pi) [Hide]") {
-		t.Errorf("expected header with Pi harness and [Hide], got:\n%s", out)
+	if !strings.Contains(out, "(Pi) [Focus] [Hide]") {
+		t.Errorf("expected header with Pi harness, [Focus], and [Hide], got:\n%s", out)
 	}
 	if !strings.Contains(out, "(prod-box)  (branch: fix-bug)") {
 		t.Errorf("expected env badge before branch badge, got:\n%s", out)
@@ -192,8 +192,8 @@ func TestRenderAgentView_HumanMode_Fallbacks(t *testing.T) {
 	if !strings.Contains(out, "Executing grep") {
 		t.Errorf("expected Executing grep from ActiveTool, got:\n%s", out)
 	}
-	if !strings.Contains(out, "(OpenCode) [Hide]") {
-		t.Errorf("expected header with OpenCode harness and [Hide], got:\n%s", out)
+	if !strings.Contains(out, "(OpenCode) [Focus] [Hide]") {
+		t.Errorf("expected header with OpenCode harness, [Focus], and [Hide], got:\n%s", out)
 	}
 	if !strings.Contains(out, "(local-dev)  (branch: main)") {
 		t.Errorf("expected fallback env badge before branch badge, got:\n%s", out)
@@ -344,8 +344,8 @@ func TestRenderAgentView_WallClock(t *testing.T) {
 	}
 	var buf bytes.Buffer
 	RenderAgentView(&buf, agent, false)
-	if !strings.Contains(buf.String(), "(Claude Code) [Hide]") {
-		t.Errorf("expected (Claude Code) [Hide] in wall clock rendering, got:\n%s", buf.String())
+	if !strings.Contains(buf.String(), "(Claude Code) [Focus] [Hide]") {
+		t.Errorf("expected (Claude Code) [Focus] [Hide] in wall clock rendering, got:\n%s", buf.String())
 	}
 }
 

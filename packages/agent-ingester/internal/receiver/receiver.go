@@ -282,7 +282,8 @@ func (r *Receiver) HandleFocusAgent(w http.ResponseWriter, req *http.Request) {
 
 	if r.bearerToken != "" {
 		auth := req.Header.Get("Authorization")
-		if auth != "Bearer "+r.bearerToken {
+		const prefix = "Bearer "
+		if !strings.HasPrefix(auth, prefix) || subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(auth, prefix)), []byte(r.bearerToken)) != 1 {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{"error": "unauthorized"})

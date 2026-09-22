@@ -270,6 +270,16 @@ func TestClient_FindPaneByPID_NotFound(t *testing.T) {
 	if !strings.Contains(err.Error(), "pane not found") {
 		t.Errorf("expected pane not found error, got: %v", err)
 	}
+
+	// Empty CWD or empty harness must not match "." or empty strings
+	_, errEmptyCWD := client.FindPaneByPID(ctx, 0, "", "claude")
+	if errEmptyCWD == nil {
+		t.Errorf("expected error for empty cwd, got nil")
+	}
+	_, errEmptyHarness := client.FindPaneByPID(ctx, 0, "/Users/dev/fallback-project", "")
+	if errEmptyHarness == nil {
+		t.Errorf("expected error for empty harness, got nil")
+	}
 }
 
 func TestClient_FocusPane_Success(t *testing.T) {

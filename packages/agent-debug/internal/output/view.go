@@ -171,17 +171,22 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 	divider := strings.Repeat("-", width)
 
 	// 1. Header row
-	harness := FormatHarnessLabel(agent.Harness)
-	button := "[Hide]"
-	if agent.IsHidden {
-		button = "[Unhide]"
-	}
-	headerLeft := fmt.Sprintf("(%s) %s", harness, button)
-
 	lifecycle := string(agent.Activity.Lifecycle)
 	if lifecycle == "" {
 		lifecycle = string(types.LifecycleRunning)
 	}
+
+	harness := FormatHarnessLabel(agent.Harness)
+	hideButton := "[Hide]"
+	if agent.IsHidden {
+		hideButton = "[Unhide]"
+	}
+	var buttons []string
+	if lifecycle == string(types.LifecycleRunning) {
+		buttons = append(buttons, "[Focus]")
+	}
+	buttons = append(buttons, hideButton)
+	headerLeft := fmt.Sprintf("(%s) %s", harness, strings.Join(buttons, " "))
 	headerRight := fmt.Sprintf("(%s)", lifecycle)
 
 	headerSpace := width - len(headerLeft) - len(headerRight)

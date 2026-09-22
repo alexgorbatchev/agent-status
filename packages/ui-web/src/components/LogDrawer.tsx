@@ -9,7 +9,7 @@ import { LogBuffer } from "../utils/LogBuffer";
 import { correlateTelemetryFrames } from "../utils/correlateTelemetryFrames";
 import { getAgentDebugCommand } from "../utils/agentUtils";
 import { logDrawerMachine } from "../machines/logDrawerMachine";
-import { X, RefreshCw, AlertCircle, Terminal, Check, SquareTerminal } from "lucide-react";
+import { X, RefreshCw, AlertCircle, Terminal, Check, SquareTerminal, Loader2 } from "lucide-react";
 import { focusAgent } from "../services/api";
 
 import { getLogFrameKey } from "../utils";
@@ -37,6 +37,7 @@ export function LogDrawer({
 
   const [copiedAgentId, setCopiedAgentId] = useState<string | null>(null);
   const [isFocusing, setIsFocusing] = useState<boolean>(false);
+  const [focusError, setFocusError] = useState<string | null>(null);
   const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasCopied = agent !== null && copiedAgentId === agent.id;
 
@@ -128,8 +129,14 @@ export function LogDrawer({
       return;
     }
     setIsFocusing(true);
+    setFocusError(null);
     try {
-      await focusAgent(agent.id, apiBaseUrl, token);
+      const res = await focusAgent(agent.id, apiBaseUrl, token);
+      if (!res.ok) {
+        setFocusError(res.error || "Failed to focus in Herdr");
+      }
+    } catch (err: unknown) {
+      setFocusError(err instanceof Error ? err.message : "Failed to focus in Herdr");
     } finally {
       setIsFocusing(false);
     }
@@ -166,17 +173,33 @@ export function LogDrawer({
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
+          {focusError && (
+            <span
+              data-testid="LogDrawer--focus-error"
+              role="alert"
+              className="text-[10px] text-red-400 font-medium px-1.5 py-0.5 rounded bg-red-950/40 border border-red-800/60"
+            >
+              {focusError}
+            </span>
+          )}
+
           <button
             type="button"
             aria-label="Focus in Herdr"
-            title={agent.activity.lifecycle === "RUNNING" ? "Focus in Herdr" : "Agent session is not running"}
+            title={
+              focusError
+                ? focusError
+                : agent.activity.lifecycle === "RUNNING"
+                  ? "Focus in Herdr"
+                  : "Agent session is not running"
+            }
             data-testid="LogDrawer--focus-button"
             disabled={agent.activity.lifecycle !== "RUNNING" || isFocusing}
             onClick={handleFocus}
-            className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+            className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center"
           >
-            <IconWrapper size="lg" tone="muted">
-              <SquareTerminal size={20} />
+            <IconWrapper size="lg" tone={focusError ? "error" : "muted"} spin={isFocusing}>
+              {isFocusing ? <Loader2 size={20} data-testid="LogDrawer--focus-spinner" /> : <SquareTerminal size={20} />}
             </IconWrapper>
           </button>
 

@@ -26,6 +26,7 @@ export interface IIconWrapperProps {
   size?: IconSize;
   tone?: IconTone;
   align?: IconAlign;
+  spin?: boolean;
 }
 
 export interface IViewSwitcherOption<T extends string = string> {

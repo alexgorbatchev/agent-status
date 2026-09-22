@@ -232,8 +232,8 @@ func (c *Client) FindPaneByPID(ctx context.Context, pid int, cwd, harness string
 				return currentPane, nil
 			}
 
-			// Fallback match by CWD + harness name/argv0
-			if cleanCWD != "" && filepath.Clean(proc.CWD) == cleanCWD {
+			// Fallback match by non-empty CWD + non-empty harness name/argv0
+			if cwd != "" && proc.CWD != "" && filepath.Clean(proc.CWD) == cleanCWD && harnessLower != "" {
 				procArg := strings.ToLower(proc.Argv0)
 				procName := strings.ToLower(proc.Name)
 				if strings.Contains(procArg, harnessLower) || strings.Contains(procName, harnessLower) {

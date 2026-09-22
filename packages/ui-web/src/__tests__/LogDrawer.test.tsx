@@ -564,4 +564,43 @@ describe("LogDrawer Component", () => {
       cleanup();
     }
   });
+
+  it("invokes focusAgent and displays error feedback on failure in LogDrawer", async () => {
+    const { mockDoc, cleanup } = setupMockDomEnvironment();
+    const originalFetch = globalThis.fetch;
+    const fetchedUrls: string[] = [];
+    globalThis.fetch = (async (input: unknown): Promise<Response> => {
+      fetchedUrls.push(String(input));
+      return new Response(JSON.stringify({ error: "Pane not found in Herdr" }), { status: 404 });
+    }) as unknown as typeof fetch;
+
+    try {
+      const { container, unmount } = await mountComponent(
+        <LogDrawer agent={fixture_agentStateRunning} onClose={() => {}} />,
+        mockDoc,
+      );
+
+      const focusBtn = container.querySelector('[data-testid="LogDrawer--focus-button"]');
+      assert(focusBtn, "LogDrawer--focus-button must exist");
+
+      await act(async () => {
+        focusBtn.click();
+      });
+
+      expect(
+        fetchedUrls.some((url) =>
+          url.includes(`/api/v1/agents/${encodeURIComponent(fixture_agentStateRunning.id)}/focus`),
+        ),
+      ).toBe(true);
+
+      const errorEl = container.querySelector('[data-testid="LogDrawer--focus-error"]');
+      assert(errorEl, "Focus error feedback must be rendered");
+      expect(errorEl.textContent).toContain("Pane not found in Herdr");
+
+      await unmount();
+    } finally {
+      globalThis.fetch = originalFetch;
+      cleanup();
+    }
+  });
 });

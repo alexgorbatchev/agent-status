@@ -31,6 +31,7 @@ export function IconWrapper({
   size = "md",
   tone = "default",
   align = "center",
+  spin = false,
 }: IIconWrapperProps): React.JSX.Element {
   return (
     <span
@@ -40,6 +41,7 @@ export function IconWrapper({
         SIZE_CLASSES[size],
         TONE_CLASSES[tone],
         ALIGN_CLASSES[align],
+        spin && "animate-spin",
       )}
     >
       {children}
