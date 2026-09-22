@@ -395,6 +395,58 @@ export interface IEditToolResult {
 }
 
 /**
+ * Multi-file / multi-hunk edit tool input (`MultiEdit`).
+ */
+export interface IMultiEditHunk {
+  old_string: string;
+  new_string: string;
+  replace_all?: boolean;
+}
+
+export interface IMultiEditToolInput {
+  file_path: string;
+  edits: IMultiEditHunk[];
+}
+
+/**
+ * Multi-file / multi-hunk edit tool result (`MultiEdit`).
+ */
+export interface IMultiEditToolResult {
+  file_path: string;
+  structured_patch?: IPatchHunk[];
+  user_modified?: boolean;
+}
+
+/**
+ * Jupyter notebook cell edit tool input (`NotebookEdit`).
+ */
+export interface INotebookEditToolInput {
+  notebook_path: string;
+  new_source: string;
+  cell_id?: string;
+  cell_index?: number;
+  edit_mode?: "replace" | "insert" | "delete" | string;
+}
+
+/**
+ * Jupyter notebook cell edit tool result (`NotebookEdit`).
+ */
+export interface INotebookEditToolResult {
+  notebook_path: string;
+  cell_id?: string;
+  cell_index?: number;
+  status?: string;
+}
+
+/**
+ * Jupyter notebook read tool input (`NotebookRead`).
+ */
+export interface INotebookReadToolInput {
+  notebook_path: string;
+  cell_index?: number;
+}
+
+/**
  * File write / create tool input.
  */
 export interface IWriteToolInput {
@@ -877,10 +929,13 @@ export interface IClaudeLastPromptRecord {
 
 /**
  * AI Title record: Rolling high-level title synthesized for the session.
+ * Supports canonical and alias property variations (`aiTitle`, `title`, `ai_title`).
  */
 export interface IClaudeAiTitleRecord {
   type: "ai-title";
-  aiTitle: string;
+  aiTitle?: string;
+  title?: string;
+  ai_title?: string;
   sessionId: string;
 }
 
@@ -939,10 +994,12 @@ export interface IClaudeQueueOperationRecord {
 
 /**
  * Agent name record: Assigns human-readable name to subagents.
+ * Supports canonical and alias property variations (`agentName`, `name`).
  */
 export interface IClaudeAgentNameRecord {
   type: "agent-name";
-  agentName: string;
+  agentName?: string;
+  name?: string;
   sessionId: string;
 }
 

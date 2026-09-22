@@ -8,6 +8,10 @@ status: current
 
 This directory contains the canonical TypeScript specifications, schemas, data structure descriptions, and parsing contracts for AI coding agent session logs and telemetry.
 
+> **CRITICAL ARCHITECTURAL CONTRACT**:
+> The TypeScript definitions in this directory (`claude-code.ts`, `pi.ts`, `codex.ts`, `opencode.ts`) serve as the **canonical type reference** and single source of truth for all harness log formats and cross-version permutations.
+> All Go types, unmarshaling structs, and parser implementations across `packages/agent-parser/`, `packages/agent-common/types/`, `packages/agent-observer/`, and `packages/agent-ingester/` **MUST be kept strictly in sync** with these canonical specifications whenever schemas, aliases, or record variants are added or modified.
+
 ## Supported Harnesses
 
 | Harness | Storage Format | Default On-Disk Location | Type Definition File |
@@ -56,6 +60,18 @@ bun x tsc --noEmit docs/harness-logs/opencode.ts
 - Codex injects a synthetic `<environment_context>` block as the first `user_message`. Extracting session titles requires filtering out `<environment_context>` and taking the first human message.
 - Claude Code emits an explicit `ai-title` record with rolling title updates.
 
+### 5. Schema Aliases & Cross-Version Permutations
+- **Claude Code**:
+  - `ai-title` records accept `aiTitle`, `title`, and `ai_title` property aliases across versions.
+  - `agent-name` records accept `agentName` and `name` property aliases.
+  - Editing tools include single-file `Edit`, `Write`, multi-file batch `MultiEdit` (`edits: Array<{old_string, new_string, replace_all?}>`), and Jupyter notebook operations `NotebookEdit` (`notebook_path`, `new_source`, `cell_id?`, `cell_index?`, `edit_mode?`) and `NotebookRead`.
+- **Codex CLI**:
+  - `session_meta` records accept `id` and legacy `session_id` property aliases.
+  - Tool calls in `response_item` support both standard `function_call` / `function_call_output` and external / MCP `custom_tool_call` / `custom_tool_call_output`.
+  - Tool call parameters accept both `arguments` (JSON string) and `input` (raw or parsed parameter payload).
+- **Pi Coding Agent**:
+  - Content block and message role types accept both camelCase and snake_case variants: `toolCall` | `tool_call` and `toolResult` | `tool_result`.
+
 ---
 
 ## Primary Source References & GitHub Links
@@ -90,6 +106,7 @@ bun x tsc --noEmit docs/harness-logs/opencode.ts
 ## Boundaries
 
 ### Always
+- Treat `docs/harness-logs/*.ts` as the canonical type reference; ensure Go types and unmarshaling structs across `packages/agent-parser/`, `packages/agent-common/types/`, and downstream ingest pipelines are kept strictly in sync with these specifications.
 - Use strict TypeScript typing: NO `any`, NO unsafe `as Type` casts (use type guards), and declare explicit return types on all exported functions.
 - Open SQLite databases for reading with `readonly: true` / URI `?mode=ro`.
 - Automatically record any new user instructions or schema changes into the appropriate `AGENTS.md` file without requiring the user to ask (checking first if conflicts exist).

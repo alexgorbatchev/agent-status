@@ -282,7 +282,9 @@ export interface ICodexCloseAgentArgs {
  */
 export interface ICodexSessionMetaPayload {
   /** Unique session UUIDv7 matching the filename. */
-  readonly id: string;
+  readonly id?: string;
+  /** Legacy session ID field name used in older rollout versions. */
+  readonly session_id?: string;
   /** ISO 8601 creation timestamp. */
   readonly timestamp: string;
   /** Absolute working directory of the project. */
@@ -446,7 +448,9 @@ export interface ICodexFunctionCallPayload {
   /** Unique invocation ID. */
   readonly call_id: string;
   /** JSON-encoded argument string. */
-  readonly arguments: string;
+  readonly arguments?: string;
+  /** Alternative parameter payload used in some tool calls or bridges. */
+  readonly input?: string | Readonly<Record<string, unknown>>;
 }
 
 export interface ICodexFunctionCallOutputPayload {
@@ -454,6 +458,26 @@ export interface ICodexFunctionCallOutputPayload {
   /** Correlating call ID. */
   readonly call_id: string;
   /** Result string output (for shell: contains wall time, exit code, stdout). */
+  readonly output: string;
+}
+
+export interface ICodexCustomToolCallPayload {
+  readonly type: "custom_tool_call";
+  /** Name of the custom tool or MCP method. */
+  readonly name: string;
+  /** Unique invocation ID. */
+  readonly call_id: string;
+  /** JSON-encoded argument string. */
+  readonly arguments?: string;
+  /** Alternative parameter payload used in some tool calls or bridges. */
+  readonly input?: string | Readonly<Record<string, unknown>>;
+}
+
+export interface ICodexCustomToolCallOutputPayload {
+  readonly type: "custom_tool_call_output";
+  /** Correlating call ID. */
+  readonly call_id: string;
+  /** Result string output from custom tool execution. */
   readonly output: string;
 }
 
@@ -482,6 +506,8 @@ export type CodexResponseItemPayload =
   | ICodexRawMessagePayload
   | ICodexFunctionCallPayload
   | ICodexFunctionCallOutputPayload
+  | ICodexCustomToolCallPayload
+  | ICodexCustomToolCallOutputPayload
   | ICodexResponseReasoningPayload
   | ICodexToolSearchCallPayload
   | ICodexToolSearchOutputPayload;

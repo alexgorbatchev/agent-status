@@ -163,7 +163,7 @@ export interface IPiImageContent {
  * Structured tool call invocation emitted by an assistant.
  */
 export interface IPiToolCall {
-  readonly type: "toolCall";
+  readonly type: "toolCall" | "tool_call";
   /** Unique invocation ID used to correlate with tool results. */
   readonly id: string;
   /** Name of the tool invoked (e.g., 'bash', 'read', 'edit', 'write'). */
@@ -234,7 +234,7 @@ export interface IPiAssistantMessage {
  * Tool execution result message returning execution output back to the model.
  */
 export interface IPiToolResultMessage<TDetails = unknown> {
-  readonly role: "toolResult";
+  readonly role: "toolResult" | "tool_result";
   /** Correlating toolCall ID from the assistant's IPiToolCall block. */
   readonly toolCallId: string;
   /** Name of the tool executed. */
@@ -719,7 +719,7 @@ export function extractPiTextContent(
       parts.push(block.text);
     } else if (block.type === "thinking") {
       parts.push(`[thinking]\n${block.thinking}\n[/thinking]`);
-    } else if (block.type === "toolCall") {
+    } else if (block.type === "toolCall" || block.type === "tool_call") {
       parts.push(`[tool: ${block.name}]\n${JSON.stringify(block.arguments, null, 2)}`);
     }
   }
