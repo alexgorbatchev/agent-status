@@ -17,8 +17,12 @@ function resolveCurrentTime(): number {
   return Date.now();
 }
 
-export function AttentionBanner({ agents, onSelectAgent }: IAttentionBannerProps): React.JSX.Element | null {
-  const now = resolveCurrentTime();
+export function AttentionBanner({
+  agents,
+  onSelectAgent,
+  now: propNow,
+}: IAttentionBannerProps): React.JSX.Element | null {
+  const now = propNow ?? resolveCurrentTime();
   // Tier 1: ACT NOW (Running agents with WAITING_QUESTION or ERROR or STALLED)
   const actNowAgents = agents.filter((a) => isAgentRequiringAttention(a, now));
 

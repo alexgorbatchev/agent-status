@@ -55,6 +55,13 @@ export function formatDuration(durationMs: number): string {
   return `${mins}m ${secs}s`;
 }
 
+export function isSessionStalled(updatedAt: number, now: number = Date.now(), thresholdMs: number = 120_000): boolean {
+  if (!updatedAt || updatedAt <= 0 || Number.isNaN(updatedAt)) {
+    return false;
+  }
+  return now - updatedAt >= thresholdMs;
+}
+
 export function isAgentRequiringAttention(agent: IAgentState, now: number = Date.now()): boolean {
   if (agent.activity.lifecycle !== "RUNNING" || agent.environment.isStale) {
     return false;
@@ -63,7 +70,10 @@ export function isAgentRequiringAttention(agent: IAgentState, now: number = Date
     return true;
   }
   const durationMs = getToolExecutionDuration(agent.activity, now);
-  return getToolStallTier(durationMs) === "stalled";
+  if (getToolStallTier(durationMs) === "stalled") {
+    return true;
+  }
+  return agent.activity.activity === "BUSY" && isSessionStalled(agent.activity.updatedAt, now);
 }
 
 export function formatRelativeTime(timestamp: number, now: number = Date.now()): string {

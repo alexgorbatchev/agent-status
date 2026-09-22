@@ -22,6 +22,7 @@ describe("AttentionBanner Component", () => {
     const element = AttentionBanner({
       agents: [fixture_agentStateRunning],
       onSelectAgent: () => {},
+      now: 1789850000000,
     });
     expect(element).toBeNull();
   });
@@ -107,6 +108,7 @@ describe("AttentionBanner Component", () => {
       <AttentionBanner
         agents={[fixture_agentStateWaitingQuestion, fixture_agentStateError, fixture_agentStateRunning]}
         onSelectAgent={() => {}}
+        now={1789850000000}
       />,
     );
 
