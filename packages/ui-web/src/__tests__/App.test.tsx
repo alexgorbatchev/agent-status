@@ -44,11 +44,7 @@ describe("App Layout & Session Visibility", () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
-    if (originalEventSource !== undefined) {
-      globalScope.EventSource = originalEventSource as unknown as typeof MockEventSource;
-    } else {
-      delete globalScope.EventSource;
-    }
+    globalScope.EventSource = originalEventSource;
     MockEventSource.instances = [];
     envCleanup?.();
     envCleanup = null;
