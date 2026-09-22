@@ -297,7 +297,9 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
           <div
             data-testid="AgentCard--last-active"
             role="status"
-            aria-label={`active: ${relativeTime}`}
+            aria-label={
+              sessionStalled ? `silent: ${silenceDuration}` : isRunningBusy ? `active: ${relativeTime}` : relativeTime
+            }
             className="flex items-center gap-1 bg-slate-800/50 px-2 py-0.5 rounded border border-slate-700/50"
             title={`Last active: ${exactTime}`}
           >

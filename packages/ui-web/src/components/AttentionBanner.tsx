@@ -9,6 +9,7 @@ import {
   getToolExecutionDuration,
   getToolStallTier,
   formatDuration,
+  isSessionStalled,
 } from "../utils/agentUtils";
 
 type CalloutType = "warning" | "error";
@@ -59,7 +60,9 @@ export function AttentionBanner({
         {actNowAgents.map((agent) => {
           const isQuestion = agent.activity.activity === "WAITING_QUESTION";
           const durationMs = getToolExecutionDuration(agent.activity, now);
-          const isStalled = getToolStallTier(durationMs) === "stalled";
+          const isToolStalled = getToolStallTier(durationMs) === "stalled";
+          const isSilenceStalled =
+            agent.activity.activity === "BUSY" && isSessionStalled(agent.activity.updatedAt, now);
           const title = agent.activity.title || "Untitled Agent";
 
           let message = "";
@@ -70,9 +73,15 @@ export function AttentionBanner({
             message = agent.activity.question || "Waiting on user question input";
             calloutType = "warning";
             iconTone = "warning";
-          } else if (isStalled && durationMs !== null) {
+          } else if (isToolStalled && durationMs !== null) {
             const toolDesc = agent.activity.action || agent.activity.activeTool || "tool";
             message = `Tool call running for ${formatDuration(durationMs)} without return: ${toolDesc}`;
+            calloutType = "warning";
+            iconTone = "warning";
+          } else if (isSilenceStalled) {
+            const silenceMs = Math.max(0, now - agent.activity.updatedAt);
+            const silenceMinutes = Math.floor(silenceMs / 60000);
+            message = `Session silent for ${silenceMinutes}m without telemetry`;
             calloutType = "warning";
             iconTone = "warning";
           } else {
