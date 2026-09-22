@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-parser"
@@ -154,6 +155,14 @@ func (s *OpencodeScanner) Scan(ctx context.Context) ([]OpencodeSessionDescriptor
 		procsByCWD[cleanCWD] = append(procsByCWD[cleanCWD], proc)
 	}
 
+	// Sort sessions by TimeUpdated descending so newest and resumed sessions take precedence.
+	sort.SliceStable(sessions, func(i, j int) bool {
+		if sessions[i].TimeUpdated != sessions[j].TimeUpdated {
+			return sessions[i].TimeUpdated > sessions[j].TimeUpdated
+		}
+		return sessions[i].TimeCreated > sessions[j].TimeCreated
+	})
+
 	var descriptors []OpencodeSessionDescriptor
 	usedPIDs := make(map[int]bool)
 
@@ -188,6 +197,9 @@ func (s *OpencodeScanner) Scan(ctx context.Context) ([]OpencodeSessionDescriptor
 				}
 
 				diff := sess.TimeCreated - proc.CreateTime
+				if diff < -5000 && sess.TimeUpdated-proc.CreateTime >= -5000 {
+					diff = sess.TimeUpdated - proc.CreateTime
+				}
 				if diff >= -5000 {
 					absDiff := diff
 					if absDiff < 0 {

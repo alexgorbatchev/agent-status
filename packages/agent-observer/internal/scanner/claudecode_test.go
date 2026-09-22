@@ -68,6 +68,20 @@ func TestLocateTranscript(t *testing.T) {
 		t.Errorf("locateTranscript exact slug = %q, want %q", found, exactPath)
 	}
 
+	// 1b. Exact slug without leading dash
+	slugNoDash := "Users-dev-my-project-nodash"
+	slugNoDashDir := filepath.Join(projectsBase, slugNoDash)
+	_ = os.MkdirAll(slugNoDashDir, 0755)
+	noDashPath := filepath.Join(slugNoDashDir, "sess-nodash.jsonl")
+	_ = os.WriteFile(noDashPath, []byte(`{"type":"session"}`+"\n"), 0600)
+	if eval, err := filepath.EvalSymlinks(noDashPath); err == nil {
+		noDashPath = eval
+	}
+	foundNoDash := locateTranscript("sess-nodash", "/Users/dev/my-project-nodash")
+	if foundNoDash != noDashPath {
+		t.Errorf("locateTranscript exact slug no dash = %q, want %q", foundNoDash, noDashPath)
+	}
+
 	// 2. Nested project scanning (when cwd is unknown or different slug)
 	nestedSessionID := "sess-nested-5678"
 	otherDir := filepath.Join(projectsBase, "other-project-folder")
@@ -281,6 +295,11 @@ func TestProcessHelpers(t *testing.T) {
 		if IsProcessAlive(99999999) {
 			t.Errorf("PID 99999999 should not be alive")
 		}
+
+		t.Setenv("AGENT_STATUS_TEST_MOCK_PROC", "1")
+		if !IsProcessAlive(99999999) {
+			t.Errorf("expected mock alive with AGENT_STATUS_TEST_MOCK_PROC=1")
+		}
 	})
 
 	t.Run("VerifyProcessMatch", func(t *testing.T) {
@@ -310,6 +329,11 @@ func TestProcessHelpers(t *testing.T) {
 			if VerifyProcessMatch(currentPID, cTime+120000) {
 				t.Errorf("VerifyProcessMatch with 120s diff should be false")
 			}
+		}
+
+		t.Setenv("AGENT_STATUS_TEST_MOCK_PROC", "1")
+		if !VerifyProcessMatch(99999999, 12345) {
+			t.Errorf("expected mock match with AGENT_STATUS_TEST_MOCK_PROC=1")
 		}
 	})
 

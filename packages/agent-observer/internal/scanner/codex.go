@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -152,9 +153,6 @@ func parseRFC3339Time(s string) int64 {
 	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
 		return t.UnixMilli()
 	}
-	if t, err := time.Parse(time.RFC3339, s); err == nil {
-		return t.UnixMilli()
-	}
 	return 0
 }
 
@@ -259,8 +257,13 @@ func (s *CodexScanner) Scan(ctx context.Context) ([]CodexSessionDescriptor, erro
 		procsByCWD[cleanCWD] = append(procsByCWD[cleanCWD], proc)
 	}
 
-	var descriptors []CodexSessionDescriptor
-	usedPIDs := make(map[int]bool)
+	type codexCandidate struct {
+		desc       CodexSessionDescriptor
+		headerTime int64
+		modTime    int64
+		cleanCWD   string
+	}
+	var candidates []codexCandidate
 
 	err = filepath.WalkDir(resolvedDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -275,11 +278,17 @@ func (s *CodexScanner) Scan(ctx context.Context) ([]CodexSessionDescriptor, erro
 			return nil
 		}
 
+		modTime := int64(0)
+		if info, sErr := d.Info(); sErr == nil {
+			modTime = info.ModTime().UnixMilli()
+		}
+
 		headerTime := header.Timestamp
 		if headerTime == 0 {
-			if info, sErr := d.Info(); sErr == nil {
-				headerTime = info.ModTime().UnixMilli()
-			}
+			headerTime = modTime
+		}
+		if modTime == 0 {
+			modTime = headerTime
 		}
 
 		cleanCWD := filepath.Clean(header.CWD)
@@ -297,8 +306,34 @@ func (s *CodexScanner) Scan(ctx context.Context) ([]CodexSessionDescriptor, erro
 			IsSubagent:     header.IsSubagent,
 		}
 
-		// Pair with active process if available
-		candidateProcs := procsByCWD[cleanCWD]
+		candidates = append(candidates, codexCandidate{
+			desc:       desc,
+			headerTime: headerTime,
+			modTime:    modTime,
+			cleanCWD:   cleanCWD,
+		})
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("walking codex sessions dir: %w", err)
+	}
+
+	// Sort candidates by modification time descending so newest and resumed sessions take precedence.
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].modTime != candidates[j].modTime {
+			return candidates[i].modTime > candidates[j].modTime
+		}
+		return candidates[i].headerTime > candidates[j].headerTime
+	})
+
+	var descriptors []CodexSessionDescriptor
+	usedPIDs := make(map[int]bool)
+
+	for i := range candidates {
+		cand := &candidates[i]
+		candidateProcs := procsByCWD[cand.cleanCWD]
 		var bestProc *CodexProcessInfo
 		var minDiff int64 = 1<<62 - 1
 
@@ -307,7 +342,10 @@ func (s *CodexScanner) Scan(ctx context.Context) ([]CodexSessionDescriptor, erro
 				continue
 			}
 
-			diff := headerTime - proc.CreateTime
+			diff := cand.headerTime - proc.CreateTime
+			if diff < -5000 && cand.modTime-proc.CreateTime >= -5000 {
+				diff = cand.modTime - proc.CreateTime
+			}
 			if diff >= -5000 {
 				absDiff := diff
 				if absDiff < 0 {
@@ -322,23 +360,18 @@ func (s *CodexScanner) Scan(ctx context.Context) ([]CodexSessionDescriptor, erro
 		}
 
 		if bestProc != nil {
-			desc.PID = bestProc.PID
-			desc.IsActive = true
+			cand.desc.PID = bestProc.PID
+			cand.desc.IsActive = true
 			if bestProc.CreateTime > 0 {
-				desc.StartedAt = bestProc.CreateTime
+				cand.desc.StartedAt = bestProc.CreateTime
 			}
 			usedPIDs[bestProc.PID] = true
 		} else if os.Getenv("AGENT_STATUS_TEST_MOCK_PROC") == "1" {
-			desc.PID = 99993
-			desc.IsActive = true
+			cand.desc.PID = 99993
+			cand.desc.IsActive = true
 		}
 
-		descriptors = append(descriptors, desc)
-		return nil
-	})
-
-	if err != nil {
-		return nil, fmt.Errorf("walking codex sessions dir: %w", err)
+		descriptors = append(descriptors, cand.desc)
 	}
 
 	return descriptors, nil

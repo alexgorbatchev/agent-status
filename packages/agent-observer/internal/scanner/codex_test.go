@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -295,6 +296,20 @@ func TestReadCodexSessionHeader(t *testing.T) {
 }
 
 func TestLiveCodexProcessFinder(t *testing.T) {
+	tmpDir := t.TempDir()
+	codexBin := filepath.Join(tmpDir, "codex")
+	if sleepData, err := os.ReadFile("/bin/sleep"); err == nil {
+		if err := os.WriteFile(codexBin, sleepData, 0755); err == nil {
+			cmd := exec.Command(codexBin, "5")
+			if err := cmd.Start(); err == nil {
+				defer func() {
+					_ = cmd.Process.Kill()
+					_ = cmd.Wait()
+				}()
+			}
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -426,5 +441,126 @@ func TestCodexScannerDiscoveryAndPairing(t *testing.T) {
 	nonexistentSessions, err := nonexistentScanner.Scan(context.Background())
 	if err != nil || len(nonexistentSessions) != 0 {
 		t.Errorf("expected nil, nil for nonexistent dir, got %v, %v", nonexistentSessions, err)
+	}
+}
+
+func TestCodexScanner_MultipleSessionsAndResumed(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionsDir := filepath.Join(tmpDir, "sessions")
+
+	testCWD := "/Users/test/projects/my-codex-multi"
+	dateDir := filepath.Join(sessionsDir, "2026", "06", "12")
+	if err := os.MkdirAll(dateDir, 0755); err != nil {
+		t.Fatalf("mkdir error: %v", err)
+	}
+
+	baseTime := time.Date(2026, 6, 12, 16, 0, 0, 0, time.UTC)
+	threeDaysAgo := baseTime.Add(-72 * time.Hour)
+
+	// 1. Older session in testCWD (lexicographically first filename: rollout-2026-06-12T15-50-00)
+	oldID := "sess-codex-old"
+	oldFile := filepath.Join(dateDir, fmt.Sprintf("rollout-2026-06-12T15-50-00-%s.jsonl", oldID))
+	metaOld := map[string]interface{}{
+		"type": "session_meta",
+		"payload": map[string]interface{}{
+			"id":          oldID,
+			"timestamp":   baseTime.Add(-10 * time.Minute).Format(time.RFC3339Nano),
+			"cwd":         testCWD,
+			"cli_version": "0.121.0",
+		},
+	}
+	mOldBytes, _ := json.Marshal(metaOld)
+	_ = os.WriteFile(oldFile, append(mOldBytes, '\n'), 0644)
+	_ = os.Chtimes(oldFile, baseTime.Add(-10*time.Minute), baseTime.Add(-10*time.Minute))
+
+	// 2. Newer active session in same testCWD (lexicographically second filename: rollout-2026-06-12T15-59-00)
+	newID := "sess-codex-new"
+	newFile := filepath.Join(dateDir, fmt.Sprintf("rollout-2026-06-12T15-59-00-%s.jsonl", newID))
+	metaNew := map[string]interface{}{
+		"type": "session_meta",
+		"payload": map[string]interface{}{
+			"id":          newID,
+			"timestamp":   baseTime.Add(-1 * time.Minute).Format(time.RFC3339Nano),
+			"cwd":         testCWD,
+			"cli_version": "0.121.0",
+		},
+	}
+	mNewBytes, _ := json.Marshal(metaNew)
+	_ = os.WriteFile(newFile, append(mNewBytes, '\n'), 0644)
+	_ = os.Chtimes(newFile, baseTime, baseTime)
+
+	// 3. Resumed session in another CWD: header from 3 days ago, but file updated recently (now)
+	resumedCWD := "/Users/test/projects/codex-resumed"
+	resumedDir := filepath.Join(sessionsDir, "2026", "06", "09")
+	_ = os.MkdirAll(resumedDir, 0755)
+
+	resumedID := "sess-codex-resumed"
+	resumedFile := filepath.Join(resumedDir, fmt.Sprintf("rollout-2026-06-09T16-00-00-%s.jsonl", resumedID))
+	metaResumed := map[string]interface{}{
+		"type": "session_meta",
+		"payload": map[string]interface{}{
+			"id":          resumedID,
+			"timestamp":   threeDaysAgo.Format(time.RFC3339Nano),
+			"cwd":         resumedCWD,
+			"cli_version": "0.121.0",
+		},
+	}
+	mResumedBytes, _ := json.Marshal(metaResumed)
+	_ = os.WriteFile(resumedFile, append(mResumedBytes, '\n'), 0644)
+	_ = os.Chtimes(resumedFile, baseTime, baseTime)
+
+	// Mock process finder:
+	// Process 6001 in testCWD started at baseTime - 10 minutes
+	// Process 6002 in resumedCWD started at baseTime
+	mockFinder := func(ctx context.Context) ([]CodexProcessInfo, error) {
+		return []CodexProcessInfo{
+			{
+				PID:        6001,
+				CWD:        testCWD,
+				CreateTime: baseTime.Add(-10 * time.Minute).UnixMilli(),
+			},
+			{
+				PID:        6002,
+				CWD:        resumedCWD,
+				CreateTime: baseTime.UnixMilli(),
+			},
+		}, nil
+	}
+
+	scanner := NewCodexScanner(sessionsDir, mockFinder)
+	sessions, err := scanner.Scan(context.Background())
+	if err != nil {
+		t.Fatalf("scanner.Scan error: %v", err)
+	}
+
+	sessionByID := make(map[string]CodexSessionDescriptor)
+	for _, s := range sessions {
+		sessionByID[s.SessionID] = s
+	}
+
+	// In testCWD, the newer session must be paired with PID 6001
+	newDesc, ok := sessionByID[newID]
+	if !ok {
+		t.Fatalf("session %s not found", newID)
+	}
+	if !newDesc.IsActive || newDesc.PID != 6001 {
+		t.Errorf("expected newer session %s to be active with PID 6001, got active=%v PID=%d", newID, newDesc.IsActive, newDesc.PID)
+	}
+
+	oldDesc, ok := sessionByID[oldID]
+	if !ok {
+		t.Fatalf("session %s not found", oldID)
+	}
+	if oldDesc.IsActive {
+		t.Errorf("expected older session %s to be inactive, got active=%v PID=%d", oldID, oldDesc.IsActive, oldDesc.PID)
+	}
+
+	// Resumed session must be paired with PID 6002 despite 3-day old header
+	resumedDesc, ok := sessionByID[resumedID]
+	if !ok {
+		t.Fatalf("session %s not found", resumedID)
+	}
+	if !resumedDesc.IsActive || resumedDesc.PID != 6002 {
+		t.Errorf("expected resumed session %s to be active with PID 6002, got active=%v PID=%d", resumedID, resumedDesc.IsActive, resumedDesc.PID)
 	}
 }

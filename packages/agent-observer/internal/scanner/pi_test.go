@@ -11,6 +11,14 @@ import (
 )
 
 func TestDefaultPiSessionsDir(t *testing.T) {
+	t.Run("with PI_SESSIONS_DIR set", func(t *testing.T) {
+		t.Setenv("PI_SESSIONS_DIR", "/direct/sessions/dir")
+		got := DefaultPiSessionsDir()
+		if got != "/direct/sessions/dir" {
+			t.Errorf("DefaultPiSessionsDir() = %q, want %q", got, "/direct/sessions/dir")
+		}
+	})
+
 	t.Run("with PI_CODING_AGENT_DIR set", func(t *testing.T) {
 		t.Setenv("PI_CODING_AGENT_DIR", "/custom/pi/dir")
 		got := DefaultPiSessionsDir()
@@ -107,15 +115,25 @@ func TestReadPiSessionHeader(t *testing.T) {
 		}
 	})
 
-	t.Run("valid header", func(t *testing.T) {
-		validFile := filepath.Join(tmpDir, "valid.jsonl")
-		_ = os.WriteFile(validFile, []byte(`{"type":"session","version":3,"id":"s123","timestamp":"2026-09-19T10:00:00Z","cwd":"/path"}`+"\n"), 0600)
-		h, err := ReadPiSessionHeader(validFile)
+	t.Run("valid header with numeric timestamp", func(t *testing.T) {
+		validFileFloat := filepath.Join(tmpDir, "valid_float.jsonl")
+		_ = os.WriteFile(validFileFloat, []byte(`{"type":"session","version":3,"id":"s-float","timestamp":1700000000000.0,"cwd":"/path"}`+"\n"), 0600)
+		h, err := ReadPiSessionHeader(validFileFloat)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if h.ID != "s123" || h.Version != 3 || h.CWD != "/path" {
-			t.Errorf("header mismatch: %+v", h)
+		if h.ID != "s-float" {
+			t.Errorf("expected s-float, got %s", h.ID)
+		}
+
+		validFileInt := filepath.Join(tmpDir, "valid_int.jsonl")
+		_ = os.WriteFile(validFileInt, []byte(`{"type":"session","version":3,"id":"s-int","timestamp":1700000000000,"cwd":"/path"}`+"\n"), 0600)
+		h2, err := ReadPiSessionHeader(validFileInt)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if h2.ID != "s-int" {
+			t.Errorf("expected s-int, got %s", h2.ID)
 		}
 	})
 }
@@ -169,19 +187,22 @@ func TestPiScannerDiscoveryAndPairing(t *testing.T) {
 	sessionFilePath2 := filepath.Join(projectSessionsDir, fmt.Sprintf("%d_%s.jsonl", now.UnixMilli()+1000, sessionID2))
 	_ = os.WriteFile(sessionFilePath2, []byte(string(h2Bytes)+"\n"), 0644)
 
-	// 3. Session with empty timestamp (falls back to file modtime)
+	// 3. Session with numeric timestamp (int64/float64)
 	sessionID3 := "03c0d86d-test-session-3"
-	sessionHeader3 := PiHeader{
-		Type:    "session",
-		Version: 1,
-		ID:      sessionID3,
-		CWD:     testCWD,
-	}
-	h3Bytes, _ := json.Marshal(sessionHeader3)
 	sessionFilePath3 := filepath.Join(projectSessionsDir, fmt.Sprintf("%d_%s.jsonl", now.UnixMilli()+2000, sessionID3))
-	_ = os.WriteFile(sessionFilePath3, []byte(string(h3Bytes)+"\n"), 0644)
+	_ = os.WriteFile(sessionFilePath3, []byte(fmt.Sprintf(`{"type":"session","version":1,"id":%q,"timestamp":%d,"cwd":%q}`+"\n", sessionID3, now.UnixMilli(), testCWD)), 0644)
 
-	// 4. Files to be ignored: subdirectories, non-jsonl, invalid headers
+	// 4. Session with float64 timestamp
+	sessionID4 := "04d0e97e-test-session-4"
+	sessionFilePath4 := filepath.Join(projectSessionsDir, fmt.Sprintf("%d_%s.jsonl", now.UnixMilli()+3000, sessionID4))
+	_ = os.WriteFile(sessionFilePath4, []byte(fmt.Sprintf(`{"type":"session","version":1,"id":%q,"timestamp":%f,"cwd":%q}`+"\n", sessionID4, float64(now.UnixMilli()), testCWD)), 0644)
+
+	// 5. Session with RFC3339 timestamp (without nano)
+	sessionID5 := "05e0f08f-test-session-5"
+	sessionFilePath5 := filepath.Join(projectSessionsDir, fmt.Sprintf("%d_%s.jsonl", now.UnixMilli()+4000, sessionID5))
+	_ = os.WriteFile(sessionFilePath5, []byte(fmt.Sprintf(`{"type":"session","version":1,"id":%q,"timestamp":%q,"cwd":%q}`+"\n", sessionID5, now.Format(time.RFC3339), testCWD)), 0644)
+
+	// 6. Files to be ignored: subdirectories, non-jsonl, invalid headers
 	_ = os.MkdirAll(filepath.Join(projectSessionsDir, "ignored_subdir"), 0755)
 	_ = os.WriteFile(filepath.Join(projectSessionsDir, "notes.txt"), []byte("text"), 0644)
 	_ = os.WriteFile(filepath.Join(projectSessionsDir, "corrupt.jsonl"), []byte("{bad\n"), 0644)
@@ -219,8 +240,8 @@ func TestPiScannerDiscoveryAndPairing(t *testing.T) {
 		t.Fatalf("scanner.Scan error: %v", err)
 	}
 
-	if len(sessions) != 3 {
-		t.Fatalf("expected 3 sessions, got %d", len(sessions))
+	if len(sessions) != 5 {
+		t.Fatalf("expected 5 sessions, got %d", len(sessions))
 	}
 
 	// Verify pairing
@@ -255,5 +276,131 @@ func TestPiScannerDiscoveryAndPairing(t *testing.T) {
 	nonexistentSessions, err := nonexistentScanner.Scan(context.Background())
 	if err != nil || len(nonexistentSessions) != 0 {
 		t.Errorf("expected nil, nil for nonexistent dir, got %v, %v", nonexistentSessions, err)
+	}
+
+	// Test Scan when sessionsDir is a regular file (triggers read error)
+	tmpFile := filepath.Join(tmpDir, "file_as_dir")
+	_ = os.WriteFile(tmpFile, []byte("not a dir"), 0644)
+	errScanner := NewPiScanner(tmpFile, nil)
+	_, scanErr := errScanner.Scan(context.Background())
+	if scanErr == nil {
+		t.Errorf("expected error when sessionsDir is a file")
+	}
+}
+
+func TestPiScanner_MultipleSessionsAndResumed(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionsDir := filepath.Join(tmpDir, "sessions")
+
+	testCWD := "/Users/test/projects/multi-resumed-app"
+	encodedDir := EncodePiCWD(testCWD)
+	projectSessionsDir := filepath.Join(sessionsDir, encodedDir)
+	if err := os.MkdirAll(projectSessionsDir, 0755); err != nil {
+		t.Fatalf("mkdir error: %v", err)
+	}
+
+	baseTime := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
+	threeDaysAgo := baseTime.Add(-72 * time.Hour)
+
+	// 1. Older session in testCWD (lexicographically first filename: 1000_old)
+	oldID := "01-older-session"
+	oldHeader := PiHeader{
+		Type:      "session",
+		Version:   3,
+		ID:        oldID,
+		Timestamp: baseTime.Add(-10 * time.Minute).Format(time.RFC3339Nano),
+		CWD:       testCWD,
+	}
+	oldBytes, _ := json.Marshal(oldHeader)
+	oldFile := filepath.Join(projectSessionsDir, fmt.Sprintf("%d_%s.jsonl", baseTime.Add(-10*time.Minute).UnixMilli(), oldID))
+	_ = os.WriteFile(oldFile, append(oldBytes, '\n'), 0644)
+	_ = os.Chtimes(oldFile, baseTime.Add(-10*time.Minute), baseTime.Add(-10*time.Minute))
+
+	// 2. Newer active session in same testCWD (lexicographically second filename: 2000_new)
+	newID := "02-newer-session"
+	newHeader := PiHeader{
+		Type:      "session",
+		Version:   3,
+		ID:        newID,
+		Timestamp: baseTime.Add(-1 * time.Minute).Format(time.RFC3339Nano),
+		CWD:       testCWD,
+	}
+	newBytes, _ := json.Marshal(newHeader)
+	newFile := filepath.Join(projectSessionsDir, fmt.Sprintf("%d_%s.jsonl", baseTime.Add(-1*time.Minute).UnixMilli(), newID))
+	_ = os.WriteFile(newFile, append(newBytes, '\n'), 0644)
+	_ = os.Chtimes(newFile, baseTime, baseTime)
+
+	// 3. Resumed session in another CWD: header from 3 days ago, but file updated recently (now)
+	resumedCWD := "/Users/test/projects/resumed-app"
+	resumedEncodedDir := EncodePiCWD(resumedCWD)
+	resumedProjectDir := filepath.Join(sessionsDir, resumedEncodedDir)
+	_ = os.MkdirAll(resumedProjectDir, 0755)
+
+	resumedID := "03-resumed-session"
+	resumedHeader := PiHeader{
+		Type:      "session",
+		Version:   3,
+		ID:        resumedID,
+		Timestamp: threeDaysAgo.Format(time.RFC3339Nano),
+		CWD:       resumedCWD,
+	}
+	resumedBytes, _ := json.Marshal(resumedHeader)
+	resumedFile := filepath.Join(resumedProjectDir, fmt.Sprintf("%d_%s.jsonl", threeDaysAgo.UnixMilli(), resumedID))
+	_ = os.WriteFile(resumedFile, append(resumedBytes, '\n'), 0644)
+	_ = os.Chtimes(resumedFile, baseTime, baseTime)
+
+	// Mock process finder:
+	// Process 5001 running in testCWD, started at baseTime - 10 minutes
+	// Process 5002 running in resumedCWD, started at baseTime
+	mockFinder := func(ctx context.Context) ([]PiProcessInfo, error) {
+		return []PiProcessInfo{
+			{
+				PID:        5001,
+				CWD:        testCWD,
+				CreateTime: baseTime.Add(-10 * time.Minute).UnixMilli(),
+			},
+			{
+				PID:        5002,
+				CWD:        resumedCWD,
+				CreateTime: baseTime.UnixMilli(),
+			},
+		}, nil
+	}
+
+	scanner := NewPiScanner(sessionsDir, mockFinder)
+	sessions, err := scanner.Scan(context.Background())
+	if err != nil {
+		t.Fatalf("scanner.Scan error: %v", err)
+	}
+
+	sessionByID := make(map[string]PiSessionDescriptor)
+	for _, s := range sessions {
+		sessionByID[s.SessionID] = s
+	}
+
+	// In testCWD, the newer session (02-newer-session) must be paired with PID 5001, NOT the older one
+	newDesc, ok := sessionByID[newID]
+	if !ok {
+		t.Fatalf("session %s not found", newID)
+	}
+	if !newDesc.IsActive || newDesc.PID != 5001 {
+		t.Errorf("expected newer session %s to be active with PID 5001, got active=%v PID=%d", newID, newDesc.IsActive, newDesc.PID)
+	}
+
+	oldDesc, ok := sessionByID[oldID]
+	if !ok {
+		t.Fatalf("session %s not found", oldID)
+	}
+	if oldDesc.IsActive {
+		t.Errorf("expected older session %s to be inactive, got active=%v PID=%d", oldID, oldDesc.IsActive, oldDesc.PID)
+	}
+
+	// Resumed session (03-resumed-session) must be paired with PID 5002 despite header being 3 days old
+	resumedDesc, ok := sessionByID[resumedID]
+	if !ok {
+		t.Fatalf("session %s not found", resumedID)
+	}
+	if !resumedDesc.IsActive || resumedDesc.PID != 5002 {
+		t.Errorf("expected resumed session %s to be active with PID 5002, got active=%v PID=%d", resumedID, resumedDesc.IsActive, resumedDesc.PID)
 	}
 }

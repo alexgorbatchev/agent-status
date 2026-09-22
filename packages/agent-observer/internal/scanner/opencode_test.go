@@ -3,6 +3,8 @@ package scanner
 import (
 	"context"
 	"database/sql"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -42,6 +44,20 @@ func TestDefaultOpencodeDBPath(t *testing.T) {
 }
 
 func TestLiveOpencodeProcessFinder(t *testing.T) {
+	tmpDir := t.TempDir()
+	opencodeBin := filepath.Join(tmpDir, "opencode")
+	if sleepData, err := os.ReadFile("/bin/sleep"); err == nil {
+		if err := os.WriteFile(opencodeBin, sleepData, 0755); err == nil {
+			cmd := exec.Command(opencodeBin, "5")
+			if err := cmd.Start(); err == nil {
+				defer func() {
+					_ = cmd.Process.Kill()
+					_ = cmd.Wait()
+				}()
+			}
+		}
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -230,5 +246,100 @@ func TestOpencodeScannerDiscoveryAndPairing(t *testing.T) {
 	nonexistentSessions, err := nonexistentScanner.Scan(context.Background())
 	if err != nil || len(nonexistentSessions) != 0 {
 		t.Errorf("expected nil, nil for nonexistent db, got %v, %v", nonexistentSessions, err)
+	}
+}
+
+func TestOpencodeScanner_MultipleSessionsAndResumed(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "opencode.db")
+	createTestOpencodeDB(t, dbPath)
+
+	db, err := sql.Open("sqlite3", "file:"+dbPath+"?mode=rwc")
+	if err != nil {
+		t.Fatalf("opening sqlite db: %v", err)
+	}
+	defer func() {
+		_ = db.Close()
+	}()
+
+	baseTime := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC).UnixMilli()
+	threeDaysAgo := baseTime - 3*24*3600*1000
+
+	testCWD := "/Users/test/projects/opencode-multi"
+	resumedCWD := "/Users/test/projects/opencode-resumed"
+
+	// 1. Older session in testCWD: created 10m ago, updated 5m ago
+	// 2. Newer session in testCWD: created 1m ago, updated now
+	// 3. Resumed session in resumedCWD: created 3 days ago, updated now
+	insertQuery := `
+		INSERT INTO session (
+			id, project_id, parent_id, slug, directory, title,
+			version, agent, model, cost, tokens_input, tokens_output,
+			tokens_reasoning, tokens_cache_read, tokens_cache_write,
+			time_created, time_updated, time_archived, metadata
+		) VALUES
+		('ses_old', 'proj_1', NULL, 'old', ?, 'Old Session', '1.0.0', 'default', '{"id":"gpt-5"}', 0.1, 10, 10, 0, 0, 0, ?, ?, NULL, '{}'),
+		('ses_new', 'proj_1', NULL, 'new', ?, 'New Session', '1.0.0', 'default', '{"id":"gpt-5"}', 0.1, 10, 10, 0, 0, 0, ?, ?, NULL, '{}'),
+		('ses_resumed', 'proj_2', NULL, 'resumed', ?, 'Resumed Session', '1.0.0', 'default', '{"id":"gpt-5"}', 0.1, 10, 10, 0, 0, 0, ?, ?, NULL, '{}');
+	`
+	_, err = db.Exec(insertQuery,
+		testCWD, baseTime-600000, baseTime-300000,
+		testCWD, baseTime-60000, baseTime,
+		resumedCWD, threeDaysAgo, baseTime,
+	)
+	if err != nil {
+		t.Fatalf("inserting test sessions: %v", err)
+	}
+
+	mockFinder := func(ctx context.Context) ([]OpencodeProcessInfo, error) {
+		return []OpencodeProcessInfo{
+			{
+				PID:        7001,
+				CWD:        testCWD,
+				CreateTime: baseTime - 600000,
+			},
+			{
+				PID:        7002,
+				CWD:        resumedCWD,
+				CreateTime: baseTime,
+			},
+		}, nil
+	}
+
+	scanner := NewOpencodeScanner(dbPath, mockFinder)
+	sessions, err := scanner.Scan(context.Background())
+	if err != nil {
+		t.Fatalf("scanner.Scan error: %v", err)
+	}
+
+	sessionByID := make(map[string]OpencodeSessionDescriptor)
+	for _, s := range sessions {
+		sessionByID[s.SessionID] = s
+	}
+
+	// In testCWD, the newer session (ses_new) with latest TimeUpdated must pair with PID 7001
+	newDesc, ok := sessionByID["ses_new"]
+	if !ok {
+		t.Fatalf("session ses_new not found")
+	}
+	if !newDesc.IsActive || newDesc.PID != 7001 {
+		t.Errorf("expected newer session ses_new to be active with PID 7001, got active=%v PID=%d", newDesc.IsActive, newDesc.PID)
+	}
+
+	oldDesc, ok := sessionByID["ses_old"]
+	if !ok {
+		t.Fatalf("session ses_old not found")
+	}
+	if oldDesc.IsActive {
+		t.Errorf("expected older session ses_old to be inactive, got active=%v PID=%d", oldDesc.IsActive, oldDesc.PID)
+	}
+
+	// Resumed session (ses_resumed) must pair with PID 7002 despite created 3 days ago
+	resumedDesc, ok := sessionByID["ses_resumed"]
+	if !ok {
+		t.Fatalf("session ses_resumed not found")
+	}
+	if !resumedDesc.IsActive || resumedDesc.PID != 7002 {
+		t.Errorf("expected resumed session ses_resumed to be active with PID 7002, got active=%v PID=%d", resumedDesc.IsActive, resumedDesc.PID)
 	}
 }
