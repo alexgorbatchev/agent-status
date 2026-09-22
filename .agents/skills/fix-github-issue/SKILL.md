@@ -10,13 +10,15 @@ description: >-
 author: alexgorbatchev
 metadata:
   created_on: 2026-09-22 14:38
-  last_modified: 2026-09-22 15:18
+  last_modified: 2026-09-22 15:22
   status: current
 ---
 
 ## Concurrency & Worktree Topology
 
 - **Coordinator Boundary**: The parent/main agent manages queue ordering, provisions worktrees, receives clean review notifications from subagents, merges verified worktrees into `issues-dev`, tears down worktrees, and closes GitHub issues. The main agent does NOT micromanage the review loop.
+- **Main Agent Rebase Before Provisioning**: The main agent MUST rebase `issues-dev` onto `main` before starting any new subagent or provisioning a new issue worktree.
+- **Subagent Rebase Before Review**: Subagents working in worktrees MUST rebase their branch on `issues-dev` before entering the review pairing loop to eliminate integration conflicts for the main agent.
 - **Autonomous Subagent Review Pairing**: Subagents working in worktrees are responsible for autonomously pairing with review agents until no further issues are reported ("clean review"). The subagent only notifies the main agent when the review is clean and ready for integration.
 - **Full Queue Completion**: All opened tickets are expected to be finished before completing the run. The coordinator works through the entire open issue set, continuing until no open issues remain.
 - **Dependency-Aware Order Determination**: The coordinator analyzes all open tickets to establish an optimal execution order:
@@ -40,10 +42,10 @@ metadata:
    ```bash
    git worktree add .workspaces/issues-dev -b issues-dev main
    ```
-   If it already exists, ensure it is up to date with `main`:
+   If it already exists, ensure it is rebased on `main`:
    ```bash
    git -C .workspaces/issues-dev fetch origin main
-   git -C .workspaces/issues-dev merge origin/main --ff-only
+   git -C .workspaces/issues-dev rebase origin/main
    ```
 
 2. **Ingest Issue Queue & Order Tasks**:
@@ -57,8 +59,13 @@ metadata:
    ```
    Map dependencies across open issues and order them into execution batches.
 
-3. **Provision Per-Issue Worktrees (Up to 3 Max)**:
-   For up to 3 issues concurrently, create dedicated worktrees branched from `issues-dev`:
+3. **Rebase `issues-dev` on `main` & Provision Per-Issue Worktrees (Up to 3 Max)**:
+   Before provisioning each new issue worktree:
+   ```bash
+   git -C .workspaces/issues-dev fetch origin main
+   git -C .workspaces/issues-dev rebase origin/main
+   ```
+   Then create the dedicated worktree branched from `issues-dev`:
    ```bash
    git worktree add .workspaces/issue-<number> -b fix/issue-<number> issues-dev
    ```
@@ -69,7 +76,7 @@ metadata:
 
 Delegate each issue to a subagent scoped strictly to `.workspaces/issue-<number>` using the harness's native subagent mechanism.
 
-The worktree subagent is responsible for executing the fix and self-managing the review pairing loop until clean:
+The worktree subagent is responsible for executing the fix, rebasing on `issues-dev`, and self-managing the review pairing loop until clean:
 
 ### Step 2A — Red Phase (Failing Reproduction Test)
 1. Locate the appropriate package test file (e.g., `packages/<pkg>/..._test.go` or `__tests__/*.test.tsx`).
@@ -94,30 +101,33 @@ The worktree subagent is responsible for executing the fix and self-managing the
 4. Confirm statement coverage meets or exceeds 90% (`go test -cover ./...`).
 5. Run workspace test and lint suites in the worktree (`just test-all` and `just lint-all`).
 
-### Step 2C — Autonomous Review Pairing Loop
+### Step 2C — Mandatory Rebase on `issues-dev` Before Review
+Before entering the review pairing loop, the subagent MUST rebase `fix/issue-<number>` onto `issues-dev`:
+```bash
+git -C .workspaces/issue-<number> rebase issues-dev
+```
+This absorbs any changes integrated by concurrent subagents into `issues-dev`, resolves conflicts directly within the worktree, and guarantees that the review agent audits the exact rebased code. This prevents the main agent from dealing with integration conflicts.
+
+### Step 2D — Autonomous Review Pairing Loop
 1. The worktree subagent pairs directly with a review agent with fresh context on the worktree diff.
 2. The review agent audits the diff against defect resolution, semantic integrity, regression risk, test robustness, and repository policies (see [references/reviewer-prompt.md](references/reviewer-prompt.md)).
 3. **Iterative Remediation**: If the review agent reports any defects or suggestions, the worktree subagent fixes them in `.workspaces/issue-<number>` and re-submits for review.
 4. **Clean Exit**: The pairing loop continues until the review agent reports `NO DEFECTS FOUND`.
 
-### Step 2D — Mandatory Verification Handshake & Notification
-1. Keep the worktree synced with `main` / `issues-dev`:
-   ```bash
-   git -C .workspaces/issue-<number> merge issues-dev
-   ```
-2. **Red/Green Verification Handshake**:
+### Step 2E — Mandatory Verification Handshake & Notification
+1. **Red/Green Verification Handshake**:
    - Temporarily disable the fix in the worktree.
    - Run tests to confirm they fail (proving the tests genuinely guard against the defect).
    - Re-enable the fix.
    - Confirm all tests pass cleanly.
-3. Run final validation in worktree (`just test-all` and `just lint-all`).
-4. Commit changes in the issue worktree:
+2. Run final validation in worktree (`just test-all` and `just lint-all`).
+3. Commit changes in the issue worktree:
    ```bash
    cd .workspaces/issue-<number>
    git add <modified-files>
    git commit -m "fix(<package>): <concise summary> (#<issue-number>)"
    ```
-5. Notify the main agent: "Issue #<number> review is clean, tests verified, ready to merge and close."
+4. Notify the main agent: "Issue #<number> review is clean, tests verified, ready to merge and close."
 
 ---
 
@@ -151,7 +161,12 @@ Upon receiving the clean review notification from the worktree subagent:
    ```
 
 4. **Replenish Concurrency Pool**:
-   If additional open issues remain in the queue, immediately provision the next `.workspaces/issue-<number>` from `issues-dev` to maintain up to 3 parallel workers.
+   If additional open issues remain in the queue, rebase `issues-dev` on `main`:
+   ```bash
+   git -C .workspaces/issues-dev fetch origin main
+   git -C .workspaces/issues-dev rebase origin/main
+   ```
+   Then provision the next `.workspaces/issue-<number>` from `issues-dev` to maintain up to 3 parallel workers.
 
 ---
 
