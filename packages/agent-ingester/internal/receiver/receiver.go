@@ -159,7 +159,7 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			if envName == "" {
 				envName = envID
 			}
-			logging.Info("frames_batch_received", "env", envName, "envId", envID, "count", len(msg.Frames))
+			logging.Debug("frames_batch_received", "env", envName, "envId", envID, "count", len(msg.Frames))
 			var highestSeq int64 = 0
 			lastEnvID := envID
 

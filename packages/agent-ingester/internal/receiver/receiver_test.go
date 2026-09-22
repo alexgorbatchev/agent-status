@@ -1,14 +1,17 @@
 package receiver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/classifier"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/notify"
@@ -1041,5 +1044,148 @@ func TestReceiver_HandleSetVisibility(t *testing.T) {
 	}
 	if resAgent.IsHidden {
 		t.Errorf("expected resAgent.IsHidden == false")
+	}
+}
+
+type safeBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *safeBuffer) Write(p []byte) (n int, err error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *safeBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func TestReceiver_FramesBatchReceivedLogLevel(t *testing.T) {
+	rcv, _, _ := newTestReceiver(t)
+
+	mux := http.NewServeMux()
+	mux.Handle("/ws/ingest", rcv)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/ws/ingest"
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	opts := &websocket.DialOptions{
+		HTTPHeader: http.Header{
+			"Authorization": []string{"Bearer test-token"},
+		},
+	}
+
+	conn, _, err := websocket.Dial(ctx, wsURL, opts)
+	if err != nil {
+		t.Fatalf("websocket dial failed: %v", err)
+	}
+	defer func() {
+		_ = conn.Close(websocket.StatusNormalClosure, "done")
+	}()
+
+	now := time.Now().UnixMilli()
+	frame := types.ITelemetryFrame{
+		Version:   "1.0",
+		Seq:       100,
+		EnvID:     "env-log-test",
+		AgentID:   "env-log-test:pi:sess-1",
+		SessionID: "sess-1",
+		Harness:   types.HarnessPi,
+		EventType: "tool_call",
+		Timestamp: now,
+		Environment: types.IEnvironmentInfo{
+			ID:              "env-log-test",
+			Label:           "test-env",
+			Hostname:        "devbox",
+			Platform:        "linux",
+			User:            "user",
+			LastHeartbeatAt: now,
+		},
+		Project: types.IProjectInfo{
+			ID:            "proj-1",
+			Name:          "proj",
+			CanonicalRoot: "/work/proj",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "main",
+			CWD:    "/work/proj",
+		},
+		Data: types.TelemetryFrameData{},
+	}
+
+	batchMsg := types.IObserverMessage{
+		Type:   "frames",
+		EnvID:  "env-log-test",
+		Frames: []types.ITelemetryFrame{frame},
+	}
+	data, _ := json.Marshal(batchMsg)
+
+	// Capture logs at INFO level
+	var infoBuf safeBuffer
+	infoLogger := logging.NewWithMode(&infoBuf, "ingester", "info", false)
+	origLogger := logging.Default()
+	logging.SetDefault(infoLogger)
+	defer logging.SetDefault(origLogger)
+
+	if err := conn.Write(ctx, websocket.MessageText, data); err != nil {
+		t.Fatalf("writing frame message: %v", err)
+	}
+
+	// Read ack from ingester
+	_, ackBytes, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("reading ack response: %v", err)
+	}
+	var ackMsg types.IIngesterMessage
+	if err := json.Unmarshal(ackBytes, &ackMsg); err != nil || ackMsg.Type != "ack" {
+		t.Fatalf("expected ack message, got %+v", ackMsg)
+	}
+
+	// frames_batch_received must NOT appear in INFO level logs
+	if strings.Contains(infoBuf.String(), "frames_batch_received") {
+		t.Errorf("frames_batch_received should not be logged at INFO level, got:\n%s", infoBuf.String())
+	}
+
+	// Now capture logs at DEBUG level
+	var debugBuf safeBuffer
+	debugLogger := logging.NewWithMode(&debugBuf, "ingester", "debug", false)
+	logging.SetDefault(debugLogger)
+
+	frame2 := frame
+	frame2.Seq = 101
+	batchMsg2 := types.IObserverMessage{
+		Type:   "frames",
+		EnvID:  "env-log-test",
+		Frames: []types.ITelemetryFrame{frame2},
+	}
+	data2, _ := json.Marshal(batchMsg2)
+
+	if err := conn.Write(ctx, websocket.MessageText, data2); err != nil {
+		t.Fatalf("writing second frame message: %v", err)
+	}
+
+	_, ackBytes2, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("reading second ack response: %v", err)
+	}
+	if err := json.Unmarshal(ackBytes2, &ackMsg); err != nil || ackMsg.Type != "ack" {
+		t.Fatalf("expected second ack message, got %+v", ackMsg)
+	}
+
+	// frames_batch_received MUST appear in DEBUG level logs with count=1
+	debugOutput := debugBuf.String()
+	if !strings.Contains(debugOutput, "frames_batch_received") {
+		t.Errorf("expected frames_batch_received in DEBUG level logs, got:\n%s", debugOutput)
+	}
+	if !strings.Contains(debugOutput, "count=1") {
+		t.Errorf("expected count=1 in DEBUG level logs, got:\n%s", debugOutput)
 	}
 }
