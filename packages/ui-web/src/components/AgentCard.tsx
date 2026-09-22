@@ -100,25 +100,6 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
               </IconWrapper>
               {HARNESS_LABELS[harness] || harness}
             </span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            {agent.isHidden && (
-              <span
-                data-testid="AgentCard--hidden-badge"
-                role="status"
-                className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 text-[10px] font-medium border border-slate-700 font-mono"
-              >
-                Hidden
-              </span>
-            )}
-            <StatusBadge
-              lifecycle={activity.lifecycle}
-              activity={activity.activity}
-              stallTier={stallTier}
-              toolDuration={formattedDuration ?? undefined}
-              isSessionStalled={sessionStalled}
-              silenceDuration={sessionStalled ? silenceDuration : undefined}
-            />
             {onToggleHide && (
               <button
                 type="button"
@@ -155,6 +136,8 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
               activity={activity.activity}
               stallTier={stallTier}
               toolDuration={formattedDuration ?? undefined}
+              isSessionStalled={sessionStalled}
+              silenceDuration={sessionStalled ? silenceDuration : undefined}
             />
           </div>
         </div>

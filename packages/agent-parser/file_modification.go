@@ -31,7 +31,7 @@ func NormalizeFileModification(toolName string, toolInput map[string]interface{}
 	hasEdits := hasEditKeys(toolInput)
 
 	contentStr, hasContent := toolInput["content"].(string)
-	if (isWriteTool || !hasEdits) && hasContent {
+	if (isWriteTool || (filePath != "" && !hasEdits)) && hasContent {
 		if filePath == "" {
 			filePath = "untitled"
 		}
