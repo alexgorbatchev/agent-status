@@ -137,7 +137,7 @@ const selectAgentBaseQuery = `
 		a.last_thinking_excerpt, a.last_error,
 		a.tokens_input, a.tokens_output, a.tokens_cache_read, a.tokens_cache_write,
 		a.tokens_reasoning, a.tokens_total,
-		a.cost_usd, a.subagent_count, a.first_started_at, a.updated_at,
+		a.cost_usd, a.subagent_count, a.active_subagents, a.first_started_at, a.updated_at,
 		e.label, e.hostname, e.platform, e.user, e.last_heartbeat_at,
 		r.pid, r.harness_version, r.started_at, r.ended_at,
 		a.is_hidden, a.hidden_at
@@ -169,6 +169,7 @@ func scanAgent(s agentRowScanner, nowMs int64) (*types.IAgentState, error) {
 		tokensReasoning, tokensTotal                                  int64
 		costUSD                                                       sql.NullFloat64
 		subagentCount                                                 int
+		activeSubagents                                               sql.NullString
 		firstStartedAt, updatedAt                                     int64
 		envLabel, envHostname, envPlatform, envUser                   string
 		envLastHeartbeat                                              int64
@@ -188,7 +189,7 @@ func scanAgent(s agentRowScanner, nowMs int64) (*types.IAgentState, error) {
 		&lastThinkingExcerpt, &lastError,
 		&tokensInput, &tokensOutput, &tokensCacheRead, &tokensCacheWrite,
 		&tokensReasoning, &tokensTotal,
-		&costUSD, &subagentCount, &firstStartedAt, &updatedAt,
+		&costUSD, &subagentCount, &activeSubagents, &firstStartedAt, &updatedAt,
 		&envLabel, &envHostname, &envPlatform, &envUser, &envLastHeartbeat,
 		&runPID, &runHarnessVersion, &runStartedAt, &runEndedAt,
 		&isHidden, &hiddenAt,
@@ -326,6 +327,10 @@ func scanAgent(s agentRowScanner, nowMs int64) (*types.IAgentState, error) {
 			FirstStartedAt: firstStartedAt,
 			UpdatedAt:      updatedAt,
 		},
+	}
+
+	if activeSubagents.Valid && strings.TrimSpace(activeSubagents.String) != "" {
+		_ = json.Unmarshal([]byte(activeSubagents.String), &agent.Activity.ActiveSubagents)
 	}
 
 	return agent, nil

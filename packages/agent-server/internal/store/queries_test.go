@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
@@ -63,6 +64,7 @@ CREATE TABLE IF NOT EXISTS agents (
     tokens_total          INTEGER NOT NULL DEFAULT 0,
     cost_usd              REAL,
     subagent_count        INTEGER NOT NULL DEFAULT 0,
+    active_subagents      TEXT,
     first_started_at      INTEGER NOT NULL,
     updated_at            INTEGER NOT NULL,
     is_hidden             INTEGER NOT NULL DEFAULT 0,
@@ -787,4 +789,34 @@ func TestStore_GetAgentLogs(t *testing.T) {
 			t.Fatal("expected error on closed db, got nil")
 		}
 	})
+}
+
+func TestStore_GetAgents_ActiveSubagents_RoundTrip(t *testing.T) {
+	st := setupTestDB(t)
+	seedTestData(t, st)
+	tool := "bash"
+	sub := types.ISubagentSummary{
+		ID:         "sub-test-1",
+		Activity:   types.ActivityBusy,
+		ActiveTool: &tool,
+		Action:     "Running bash",
+	}
+	subJSON, _ := json.Marshal([]types.ISubagentSummary{sub})
+
+	// Update agent row in db with active_subagents column
+	_, err := st.db.Exec(`UPDATE agents SET active_subagents = ? WHERE id = 'env1:claude-code:sess1'`, string(subJSON))
+	if err != nil {
+		t.Fatalf("updating active_subagents: %v", err)
+	}
+
+	agent, err := st.GetAgentByID(context.Background(), "env1:claude-code:sess1")
+	if err != nil {
+		t.Fatalf("GetAgentByID failed: %v", err)
+	}
+	if len(agent.Activity.ActiveSubagents) != 1 {
+		t.Fatalf("expected 1 ActiveSubagent, got %d", len(agent.Activity.ActiveSubagents))
+	}
+	if agent.Activity.ActiveSubagents[0].ID != "sub-test-1" {
+		t.Errorf("expected subagent ID 'sub-test-1', got %q", agent.Activity.ActiveSubagents[0].ID)
+	}
 }
