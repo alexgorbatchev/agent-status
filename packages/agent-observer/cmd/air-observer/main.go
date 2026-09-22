@@ -18,6 +18,7 @@ import (
 	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/tailer"
 	"github.com/alexgorbatchev/agent-status/packages/agent-parser"
 	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree"
+	_ "github.com/ncruces/go-sqlite3/driver"
 	"github.com/spf13/cobra"
 )
 
@@ -218,6 +219,7 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 	activeTails := make(map[string]*activeTail)
 	sessionTails := make(map[string][]string)
 	activeClaudeSessions := make(map[string]bool)
+	activeClaudeSubagents := make(map[string]map[string]bool)
 	activePiSessions := make(map[string]scanner.PiSessionDescriptor)
 	activeCodexSessions := make(map[string]scanner.CodexSessionDescriptor)
 	activeOpencodeSessions := make(map[string]scanner.OpencodeSessionDescriptor)
@@ -371,6 +373,49 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 				if subagents, sErr := ccScanner.DiscoverSubagents(s); sErr == nil {
 					for _, sub := range subagents {
 						subID := sub.SubagentID
+
+						mu.Lock()
+						sessionSubs := activeClaudeSubagents[s.SessionID]
+						if sessionSubs == nil {
+							sessionSubs = make(map[string]bool)
+							activeClaudeSubagents[s.SessionID] = sessionSubs
+						}
+						isNewSub := !sessionSubs[subID]
+						if isNewSub {
+							sessionSubs[subID] = true
+						}
+						mu.Unlock()
+
+						if isNewSub {
+							agentID := fmt.Sprintf("%s:%s:%s", env.ID, types.HarnessClaudeCode, s.SessionID)
+							subNow := time.Now().UnixMilli()
+							if fi, statErr := os.Stat(sub.TranscriptPath); statErr == nil {
+								mod := fi.ModTime().UnixMilli()
+								if mod > 0 && mod < subNow {
+									subNow = mod
+								}
+							}
+							if s.StartedAt > 0 && subNow < s.StartedAt {
+								subNow = s.StartedAt
+							}
+							_ = ship.EnqueueContext(ctx, types.ITelemetryFrame{
+								Version:        "1.0",
+								EnvID:          env.ID,
+								Environment:    *env,
+								AgentID:        agentID,
+								SessionID:      s.SessionID,
+								SubagentID:     &subID,
+								PID:            s.PID,
+								Harness:        types.HarnessClaudeCode,
+								HarnessVersion: s.HarnessVersion,
+								Project:        proj,
+								Workspace:      ws,
+								Timestamp:      subNow,
+								EventType:      "run_started",
+								Data:           types.TelemetryFrameData{},
+							})
+						}
+
 						attachTailer(sub.TranscriptPath, types.HarnessClaudeCode, s.HarnessVersion, s.SessionID, s.CWD, s.PID, &subID)
 					}
 				}
@@ -394,6 +439,7 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 						Data:           types.TelemetryFrameData{},
 					})
 					cleanupSessionTailsLocked(sessID)
+					delete(activeClaudeSubagents, sessID)
 				}
 			}
 			activeClaudeSessions = newCCMap
@@ -640,7 +686,11 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 	// Perform initial scan
 	scanAll()
 
-	scanTicker := time.NewTicker(opts.scanInterval)
+	scanInterval := opts.scanInterval
+	if scanInterval <= 0 {
+		scanInterval = 2 * time.Second
+	}
+	scanTicker := time.NewTicker(scanInterval)
 	defer scanTicker.Stop()
 
 	for {
