@@ -161,15 +161,22 @@ export interface IPiImageContent {
 
 /**
  * Structured tool call invocation emitted by an assistant.
+ * Supports canonical and cross-version property aliases.
  */
 export interface IPiToolCall {
   readonly type: "toolCall" | "tool_call";
   /** Unique invocation ID used to correlate with tool results. */
-  readonly id: string;
+  readonly id?: string;
+  readonly toolCallId?: string;
+  readonly tool_call_id?: string;
   /** Name of the tool invoked (e.g., 'bash', 'read', 'edit', 'write'). */
-  readonly name: string;
+  readonly name?: string;
+  readonly toolName?: string;
+  readonly tool_name?: string;
   /** Parsed JSON argument map passed to the tool. */
-  readonly arguments: Readonly<Record<string, unknown>>;
+  readonly arguments?: Readonly<Record<string, unknown>>;
+  readonly parameters?: Readonly<Record<string, unknown>>;
+  readonly input?: Readonly<Record<string, unknown>>;
   /** Optional thought signature from provider for function calling. */
   readonly thoughtSignature?: string;
   /** Optional tool namespace for dynamic/namespaced toolkits. */
@@ -232,13 +239,16 @@ export interface IPiAssistantMessage {
 
 /**
  * Tool execution result message returning execution output back to the model.
+ * Supports canonical and cross-version property aliases.
  */
 export interface IPiToolResultMessage<TDetails = unknown> {
   readonly role: "toolResult" | "tool_result";
-  /** Correlating toolCall ID from the assistant's IPiToolCall block. */
-  readonly toolCallId: string;
-  /** Name of the tool executed. */
-  readonly toolName: string;
+  /** Correlating toolCall ID from the assistant's IPiToolCall block (canonical or alias). */
+  readonly toolCallId?: string;
+  readonly tool_call_id?: string;
+  /** Name of the tool executed (canonical or alias). */
+  readonly toolName?: string;
+  readonly tool_name?: string;
   /** Formatted output content blocks (text or images). */
   readonly content: readonly (IPiTextContent | IPiImageContent)[];
   /** Tool-specific typed metadata (e.g., exit codes, diff stats). */
@@ -247,10 +257,11 @@ export interface IPiToolResultMessage<TDetails = unknown> {
   readonly usage?: IPiTokenUsage;
   /** Names of new tools dynamically made available after this tool result. */
   readonly addedToolNames?: readonly string[];
-  /** Flag indicating whether the tool execution failed. */
-  readonly isError: boolean;
+  /** Flag indicating whether the tool execution failed (canonical or alias). */
+  readonly isError?: boolean;
+  readonly is_error?: boolean;
   /** Milliseconds epoch timestamp. */
-  readonly timestamp: number;
+  readonly timestamp?: number;
 }
 
 /**
@@ -720,7 +731,9 @@ export function extractPiTextContent(
     } else if (block.type === "thinking") {
       parts.push(`[thinking]\n${block.thinking}\n[/thinking]`);
     } else if (block.type === "toolCall" || block.type === "tool_call") {
-      parts.push(`[tool: ${block.name}]\n${JSON.stringify(block.arguments, null, 2)}`);
+      const toolName = block.name ?? block.toolName ?? block.tool_name ?? "tool";
+      const args = block.arguments ?? block.parameters ?? block.input ?? {};
+      parts.push(`[tool: ${toolName}]\n${JSON.stringify(args, null, 2)}`);
     }
   }
   return parts.join("\n\n");
