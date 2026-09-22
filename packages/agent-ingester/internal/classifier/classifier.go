@@ -524,7 +524,12 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				toolName := *frame.Data.ToolName
 				agent.Activity.ActiveTool = &toolName
 
-				target := extractTarget(toolName, frame.Data.ToolInput)
+				var target string
+				if frame.Data.FileModification != nil && frame.Data.FileModification.FilePath != "" {
+					target = frame.Data.FileModification.FilePath
+				} else {
+					target = extractTarget(toolName, frame.Data.ToolInput)
+				}
 				if target != "" {
 					agent.Activity.ActiveTarget = &target
 				}

@@ -365,30 +365,34 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 								qText = p
 							}
 						}
+						fileMod := NormalizeFileModification(toolName, params)
 						events = append(events, ParsedEvent{
 							EventType: "question_prompt",
 							Timestamp: ts,
 							CWD:       cwd,
 							Data: types.TelemetryFrameData{
-								Role:       stringPtr("assistant"),
-								ToolName:   stringPtr(toolName),
-								ToolCallID: callIDPtr,
-								ToolInput:  params,
-								Question:   stringPtr(qText),
-								Model:      stringPtr(msg.Model),
+								Role:             stringPtr("assistant"),
+								ToolName:         stringPtr(toolName),
+								ToolCallID:       callIDPtr,
+								ToolInput:        params,
+								FileModification: fileMod,
+								Question:         stringPtr(qText),
+								Model:            stringPtr(msg.Model),
 							},
 						})
 					} else {
+						fileMod := NormalizeFileModification(toolName, params)
 						events = append(events, ParsedEvent{
 							EventType: "tool_call",
 							Timestamp: ts,
 							CWD:       cwd,
 							Data: types.TelemetryFrameData{
-								Role:       stringPtr("assistant"),
-								ToolName:   stringPtr(toolName),
-								ToolCallID: callIDPtr,
-								ToolInput:  params,
-								Model:      stringPtr(msg.Model),
+								Role:             stringPtr("assistant"),
+								ToolName:         stringPtr(toolName),
+								ToolCallID:       callIDPtr,
+								ToolInput:        params,
+								FileModification: fileMod,
+								Model:            stringPtr(msg.Model),
 							},
 						})
 					}

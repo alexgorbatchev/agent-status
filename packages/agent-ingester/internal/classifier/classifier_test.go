@@ -3652,3 +3652,62 @@ func TestClassifier_ActiveToolStartedAt_Lifecycle(t *testing.T) {
 	}
 }
 
+func TestClassifier_FileModification_SetsActiveTarget(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, _ := newTestClassifier(t, sum)
+	defer func() { _ = c.Close() }()
+
+	now := int64(1000)
+	baseFrame := types.ITelemetryFrame{
+		Version:   "1.0",
+		EnvID:     "env-filemod",
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-filemod",
+			Platform: "darwin",
+		},
+		AgentID:   "agent-filemod",
+		SessionID: "sess-filemod",
+		Harness:   types.HarnessClaudeCode,
+		Timestamp: now,
+		EventType: "run_started",
+	}
+
+	_, err = c.ProcessFrame(baseFrame)
+	if err != nil {
+		t.Fatalf("ProcessFrame(run_started) failed: %v", err)
+	}
+
+	toolEdit := "Edit"
+	filePath := "packages/agent-parser/normalized.go"
+	fCall := baseFrame
+	fCall.Seq = 2
+	fCall.EventType = "tool_call"
+	fCall.Timestamp = now + 1000
+	fCall.Data = types.TelemetryFrameData{
+		ToolName: &toolEdit,
+		FileModification: &types.FileModification{
+			Action:   "EDIT",
+			FilePath: filePath,
+		},
+		ToolInput: map[string]interface{}{
+			// Deliberately different or empty path to verify FileModification takes precedence
+			"file_path": "legacy_path.go",
+		},
+	}
+
+	agent, err := c.ProcessFrame(fCall)
+	if err != nil {
+		t.Fatalf("ProcessFrame(tool_call) failed: %v", err)
+	}
+
+	if agent.Activity.ActiveTarget == nil {
+		t.Fatalf("expected ActiveTarget non-nil, got nil")
+	}
+	if *agent.Activity.ActiveTarget != filePath {
+		t.Errorf("expected ActiveTarget = %q, got %q", filePath, *agent.Activity.ActiveTarget)
+	}
+}
+

@@ -1,4 +1,5 @@
 import { diffLines, diffWordsWithSpace } from "diff";
+import type { IFileModification } from "../types/types";
 
 export interface IWordToken {
   type: "add" | "del" | "same";
@@ -219,7 +220,15 @@ function parseUnifiedPatch(patchText: string, fallbackPath: string): IFileModifi
   };
 }
 
-export function isFileModification(toolName?: string | null, toolInput?: Record<string, unknown> | null): boolean {
+export function isFileModification(
+  toolName?: string | null,
+  toolInput?: Record<string, unknown> | null,
+  fileModification?: IFileModification | null,
+): boolean {
+  if (fileModification) {
+    return true;
+  }
+
   if (!toolInput) {
     return false;
   }
@@ -273,7 +282,31 @@ export function isFileModification(toolName?: string | null, toolInput?: Record<
 export function parseFileModification(
   toolName?: string | null,
   toolInput?: Record<string, unknown> | null,
+  fileModification?: IFileModification | null,
 ): IFileModificationPayload | null {
+  if (fileModification) {
+    if (fileModification.action === "WRITE") {
+      return {
+        action: "WRITE",
+        filePath: fileModification.filePath,
+        content: fileModification.content,
+      };
+    }
+    const hunks: IDiffHunk[] = (fileModification.hunks ?? []).map((h) => {
+      const lines: IDiffLine[] = h.lines.map((l) => ({ ...l }));
+      applyWordLevelHighlights(lines);
+      return {
+        header: h.header,
+        lines,
+      };
+    });
+    return {
+      action: "EDIT",
+      filePath: fileModification.filePath,
+      hunks,
+    };
+  }
+
   if (!toolInput || !isFileModification(toolName, toolInput)) {
     return null;
   }
@@ -309,15 +342,25 @@ export function parseFileModification(
     };
   }
 
-  // 3. Pi edits array format: edits: Array<{ oldText: string, newText: string }>
+  // 3. Pi edits array format or Claude Code MultiEdit format
   if (Array.isArray(toolInput.edits) && toolInput.edits.length > 0) {
     const hunks: IDiffHunk[] = [];
     const edits = toolInput.edits;
     for (let idx = 0; idx < edits.length; idx++) {
       const edit = edits[idx];
       if (typeof edit === "object" && edit !== null) {
-        const oldText = "oldText" in edit && typeof edit.oldText === "string" ? edit.oldText : "";
-        const newText = "newText" in edit && typeof edit.newText === "string" ? edit.newText : "";
+        const oldText =
+          "oldText" in edit && typeof edit.oldText === "string"
+            ? edit.oldText
+            : "old_string" in edit && typeof edit.old_string === "string"
+              ? edit.old_string
+              : "";
+        const newText =
+          "newText" in edit && typeof edit.newText === "string"
+            ? edit.newText
+            : "new_string" in edit && typeof edit.new_string === "string"
+              ? edit.new_string
+              : "";
         const header = edits.length > 1 ? `Hunk ${idx + 1} of ${edits.length}` : undefined;
         hunks.push(buildHunkFromStrings(oldText, newText, header));
       }

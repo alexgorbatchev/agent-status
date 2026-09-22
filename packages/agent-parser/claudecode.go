@@ -489,32 +489,36 @@ func parseClaudeCodeLineEvents(raw rawJSONLine, ts int64) []ParsedEvent {
 								}
 							}
 						}
+						fileMod := NormalizeFileModification(toolName, b.Input)
 						events = append(events, ParsedEvent{
 							EventType: "question_prompt",
 							Timestamp: ts,
 							CWD:       raw.CWD,
 							GitBranch: raw.GitBranch,
 							Data: types.TelemetryFrameData{
-								Role:       stringPtr("assistant"),
-								ToolName:   stringPtr(toolName),
-								ToolCallID: callID,
-								ToolInput:  b.Input,
-								Question:   stringPtr(qText),
-								Model:      modelPtr,
+								Role:             stringPtr("assistant"),
+								ToolName:         stringPtr(toolName),
+								ToolCallID:       callID,
+								ToolInput:        b.Input,
+								FileModification: fileMod,
+								Question:         stringPtr(qText),
+								Model:            modelPtr,
 							},
 						})
 					} else {
+						fileMod := NormalizeFileModification(toolName, b.Input)
 						events = append(events, ParsedEvent{
 							EventType: "tool_call",
 							Timestamp: ts,
 							CWD:       raw.CWD,
 							GitBranch: raw.GitBranch,
 							Data: types.TelemetryFrameData{
-								Role:       stringPtr("assistant"),
-								ToolName:   stringPtr(toolName),
-								ToolCallID: callID,
-								ToolInput:  b.Input,
-								Model:      modelPtr,
+								Role:             stringPtr("assistant"),
+								ToolName:         stringPtr(toolName),
+								ToolCallID:       callID,
+								ToolInput:        b.Input,
+								FileModification: fileMod,
+								Model:            modelPtr,
 							},
 						})
 					}

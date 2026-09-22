@@ -534,3 +534,87 @@ func TestParsePiLine(t *testing.T) {
 		}
 	})
 }
+
+func TestPiParser_NormalizedFileModification(t *testing.T) {
+	t.Run("edit toolCall produces normalized FileModification", func(t *testing.T) {
+		line := []byte(`{
+			"type": "message",
+			"message": {
+				"role": "assistant",
+				"content": [
+					{
+						"type": "toolCall",
+						"name": "edit",
+						"id": "pi-edit-1",
+						"arguments": {
+							"path": "src/index.ts",
+							"edits": [
+								{"oldText": "const x = 1;", "newText": "const x = 2;"}
+							]
+						}
+					}
+				]
+			}
+		}`)
+		evs, err := ParsePiLine(line, "/workspace")
+		if err != nil {
+			t.Fatalf("ParsePiLine failed: %v", err)
+		}
+		if len(evs) == 0 {
+			t.Fatal("expected events")
+		}
+		fm := evs[0].Data.FileModification
+		if fm == nil {
+			t.Fatal("expected non-nil FileModification for Pi edit tool")
+		}
+		if fm.Action != "EDIT" {
+			t.Errorf("Action = %q, want 'EDIT'", fm.Action)
+		}
+		if fm.FilePath != "src/index.ts" {
+			t.Errorf("FilePath = %q, want 'src/index.ts'", fm.FilePath)
+		}
+		if len(fm.Hunks) != 1 {
+			t.Fatalf("expected 1 hunk, got %d", len(fm.Hunks))
+		}
+	})
+
+	t.Run("write toolCall produces normalized FileModification", func(t *testing.T) {
+		line := []byte(`{
+			"type": "message",
+			"message": {
+				"role": "assistant",
+				"content": [
+					{
+						"type": "toolCall",
+						"name": "write",
+						"id": "pi-write-1",
+						"arguments": {
+							"path": "src/types.ts",
+							"content": "export type Foo = string;\n"
+						}
+					}
+				]
+			}
+		}`)
+		evs, err := ParsePiLine(line, "/workspace")
+		if err != nil {
+			t.Fatalf("ParsePiLine failed: %v", err)
+		}
+		if len(evs) == 0 {
+			t.Fatal("expected events")
+		}
+		fm := evs[0].Data.FileModification
+		if fm == nil {
+			t.Fatal("expected non-nil FileModification for Pi write tool")
+		}
+		if fm.Action != "WRITE" {
+			t.Errorf("Action = %q, want 'WRITE'", fm.Action)
+		}
+		if fm.FilePath != "src/types.ts" {
+			t.Errorf("FilePath = %q, want 'src/types.ts'", fm.FilePath)
+		}
+		if fm.Content == nil || *fm.Content != "export type Foo = string;\n" {
+			t.Errorf("Content = %v, want 'export type Foo = string;\\n'", fm.Content)
+		}
+	})
+}

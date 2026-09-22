@@ -799,3 +799,166 @@ func TestClaudeCodeParser_BatchAndNotebookEditingTools(t *testing.T) {
 		}
 	})
 }
+
+func TestClaudeCodeParser_NormalizedFileModification(t *testing.T) {
+	t.Run("Edit tool_use produces normalized FileModification", func(t *testing.T) {
+		p := NewClaudeCodeParser()
+		line := []byte(`{
+			"type": "assistant",
+			"sessionId": "ses-edit-norm",
+			"message": {
+				"role": "assistant",
+				"content": [
+					{
+						"type": "tool_use",
+						"id": "call_edit_1",
+						"name": "Edit",
+						"input": {
+							"file_path": "main.go",
+							"old_string": "fmt.Println(\"hello\")",
+							"new_string": "fmt.Println(\"world\")"
+						}
+					}
+				]
+			}
+		}`)
+		evs, err := p.ParseLine(line)
+		if err != nil {
+			t.Fatalf("ParseLine failed: %v", err)
+		}
+		var toolCall *ParsedEvent
+		for i := range evs {
+			if evs[i].EventType == "tool_call" {
+				toolCall = &evs[i]
+				break
+			}
+		}
+		if toolCall == nil {
+			t.Fatal("expected tool_call event")
+		}
+		fm := toolCall.Data.FileModification
+		if fm == nil {
+			t.Fatal("expected non-nil FileModification for Edit tool")
+		}
+		if fm.Action != "EDIT" {
+			t.Errorf("Action = %q, want 'EDIT'", fm.Action)
+		}
+		if fm.FilePath != "main.go" {
+			t.Errorf("FilePath = %q, want 'main.go'", fm.FilePath)
+		}
+		if len(fm.Hunks) != 1 {
+			t.Fatalf("expected 1 hunk, got %d", len(fm.Hunks))
+		}
+		hunk := fm.Hunks[0]
+		if len(hunk.Lines) != 2 {
+			t.Fatalf("expected 2 lines in hunk, got %d", len(hunk.Lines))
+		}
+		if hunk.Lines[0].Type != "del" || hunk.Lines[0].Content != "fmt.Println(\"hello\")" {
+			t.Errorf("unexpected del line: %+v", hunk.Lines[0])
+		}
+		if hunk.Lines[1].Type != "add" || hunk.Lines[1].Content != "fmt.Println(\"world\")" {
+			t.Errorf("unexpected add line: %+v", hunk.Lines[1])
+		}
+	})
+
+	t.Run("MultiEdit tool_use produces normalized FileModification with multiple hunks", func(t *testing.T) {
+		p := NewClaudeCodeParser()
+		line := []byte(`{
+			"type": "assistant",
+			"sessionId": "ses-multiedit-norm",
+			"message": {
+				"role": "assistant",
+				"content": [
+					{
+						"type": "tool_use",
+						"id": "call_multiedit_2",
+						"name": "MultiEdit",
+						"input": {
+							"file_path": "pkg/calc.go",
+							"edits": [
+								{"old_string": "a + b", "new_string": "a * b"},
+								{"old_string": "x - y", "new_string": "x / y"}
+							]
+						}
+					}
+				]
+			}
+		}`)
+		evs, err := p.ParseLine(line)
+		if err != nil {
+			t.Fatalf("ParseLine failed: %v", err)
+		}
+		var toolCall *ParsedEvent
+		for i := range evs {
+			if evs[i].EventType == "tool_call" {
+				toolCall = &evs[i]
+				break
+			}
+		}
+		if toolCall == nil {
+			t.Fatal("expected tool_call event")
+		}
+		fm := toolCall.Data.FileModification
+		if fm == nil {
+			t.Fatal("expected non-nil FileModification for MultiEdit tool")
+		}
+		if fm.Action != "EDIT" {
+			t.Errorf("Action = %q, want 'EDIT'", fm.Action)
+		}
+		if fm.FilePath != "pkg/calc.go" {
+			t.Errorf("FilePath = %q, want 'pkg/calc.go'", fm.FilePath)
+		}
+		if len(fm.Hunks) != 2 {
+			t.Fatalf("expected 2 hunks, got %d", len(fm.Hunks))
+		}
+	})
+
+	t.Run("Write tool_use produces normalized FileModification", func(t *testing.T) {
+		p := NewClaudeCodeParser()
+		line := []byte(`{
+			"type": "assistant",
+			"sessionId": "ses-write-norm",
+			"message": {
+				"role": "assistant",
+				"content": [
+					{
+						"type": "tool_use",
+						"id": "call_write_1",
+						"name": "Write",
+						"input": {
+							"file_path": "README.md",
+							"content": "# Hello World\n"
+						}
+					}
+				]
+			}
+		}`)
+		evs, err := p.ParseLine(line)
+		if err != nil {
+			t.Fatalf("ParseLine failed: %v", err)
+		}
+		var toolCall *ParsedEvent
+		for i := range evs {
+			if evs[i].EventType == "tool_call" {
+				toolCall = &evs[i]
+				break
+			}
+		}
+		if toolCall == nil {
+			t.Fatal("expected tool_call event")
+		}
+		fm := toolCall.Data.FileModification
+		if fm == nil {
+			t.Fatal("expected non-nil FileModification for Write tool")
+		}
+		if fm.Action != "WRITE" {
+			t.Errorf("Action = %q, want 'WRITE'", fm.Action)
+		}
+		if fm.FilePath != "README.md" {
+			t.Errorf("FilePath = %q, want 'README.md'", fm.FilePath)
+		}
+		if fm.Content == nil || *fm.Content != "# Hello World\n" {
+			t.Errorf("Content = %v, want '# Hello World\\n'", fm.Content)
+		}
+	})
+}

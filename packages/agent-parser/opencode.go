@@ -633,16 +633,18 @@ func ReconstructSessionEvents(session *OpencodeSession, messages []OpencodeMessa
 							}
 						}
 
+						fileMod := NormalizeFileModification(p.Data.Tool, toolInput)
 						events = append(events, ParsedEvent{
 							EventType: "tool_use",
 							Timestamp: startTs,
 							CWD:       cwd,
 							Data: types.TelemetryFrameData{
-								Role:       stringPtr("assistant"),
-								ToolName:   stringPtr(p.Data.Tool),
-								ToolCallID: stringPtr(p.Data.CallID),
-								ToolInput:  toolInput,
-								Content:    toolTitle,
+								Role:             stringPtr("assistant"),
+								ToolName:         stringPtr(p.Data.Tool),
+								ToolCallID:       stringPtr(p.Data.CallID),
+								ToolInput:        toolInput,
+								FileModification: fileMod,
+								Content:          toolTitle,
 							},
 						})
 

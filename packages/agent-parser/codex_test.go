@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"encoding/json"
 	"testing"
 )
 
@@ -782,6 +783,87 @@ func TestParseCodexLine(t *testing.T) {
 		}
 		if *evs[0].Data.IsError != false {
 			t.Errorf("expected IsError=false, got true")
+		}
+	})
+}
+
+func TestCodexParser_NormalizedFileModification(t *testing.T) {
+	t.Run("apply_patch produces normalized FileModification", func(t *testing.T) {
+		patchText := "diff --git a/internal/calc.go b/internal/calc.go\n--- a/internal/calc.go\n+++ b/internal/calc.go\n@@ -1,3 +1,3 @@\n-const X = 1\n+const X = 2\n"
+		payload := map[string]interface{}{
+			"type": "custom_tool_call",
+			"name": "apply_patch",
+			"call_id": "call_patch_1",
+			"input": map[string]interface{}{
+				"patch": patchText,
+			},
+		}
+		raw := map[string]interface{}{
+			"type": "response_item",
+			"timestamp": "2026-06-12T16:08:40.000Z",
+			"payload": payload,
+		}
+		b, _ := json.Marshal(raw)
+		evs, err := ParseCodexLine(b)
+		if err != nil {
+			t.Fatalf("ParseCodexLine failed: %v", err)
+		}
+		if len(evs) == 0 {
+			t.Fatal("expected events")
+		}
+		fm := evs[0].Data.FileModification
+		if fm == nil {
+			t.Fatal("expected non-nil FileModification for Codex apply_patch")
+		}
+		if fm.Action != "EDIT" {
+			t.Errorf("Action = %q, want 'EDIT'", fm.Action)
+		}
+		if fm.FilePath != "internal/calc.go" {
+			t.Errorf("FilePath = %q, want 'internal/calc.go'", fm.FilePath)
+		}
+		if len(fm.Hunks) != 1 {
+			t.Fatalf("expected 1 hunk, got %d", len(fm.Hunks))
+		}
+		if fm.Hunks[0].Header != "@@ -1,3 +1,3 @@" {
+			t.Errorf("Header = %q, want '@@ -1,3 +1,3 @@'", fm.Hunks[0].Header)
+		}
+	})
+
+	t.Run("write_file produces normalized FileModification", func(t *testing.T) {
+		payload := map[string]interface{}{
+			"type": "custom_tool_call",
+			"name": "write_file",
+			"call_id": "call_write_1",
+			"input": map[string]interface{}{
+				"path": "test.txt",
+				"content": "hello world",
+			},
+		}
+		raw := map[string]interface{}{
+			"type": "response_item",
+			"timestamp": "2026-06-12T16:08:41.000Z",
+			"payload": payload,
+		}
+		b, _ := json.Marshal(raw)
+		evs, err := ParseCodexLine(b)
+		if err != nil {
+			t.Fatalf("ParseCodexLine failed: %v", err)
+		}
+		if len(evs) == 0 {
+			t.Fatal("expected events")
+		}
+		fm := evs[0].Data.FileModification
+		if fm == nil {
+			t.Fatal("expected non-nil FileModification for Codex write_file")
+		}
+		if fm.Action != "WRITE" {
+			t.Errorf("Action = %q, want 'WRITE'", fm.Action)
+		}
+		if fm.FilePath != "test.txt" {
+			t.Errorf("FilePath = %q, want 'test.txt'", fm.FilePath)
+		}
+		if fm.Content == nil || *fm.Content != "hello world" {
+			t.Errorf("Content = %v, want 'hello world'", fm.Content)
 		}
 	})
 }

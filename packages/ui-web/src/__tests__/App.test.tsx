@@ -292,7 +292,6 @@ describe("App Layout & Session Visibility", () => {
     expect(errorEl.textContent).toContain("Disconnected from agent-server stream. Reconnecting...");
     expect(errorEl.getAttribute("class")).toContain("bg-red-600");
     expect(errorEl.getAttribute("class")).toContain("text-white");
-
     await unmount();
   });
 

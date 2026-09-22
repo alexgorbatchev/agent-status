@@ -108,7 +108,9 @@ func FormatEventSummary(rec db.EventRecord) string {
 		if rec.Data.ToolName != nil && *rec.Data.ToolName != "" {
 			parts = append(parts, fmt.Sprintf("tool=%s", *rec.Data.ToolName))
 		}
-		if rec.Data.ToolInput != nil {
+		if rec.Data.FileModification != nil && rec.Data.FileModification.FilePath != "" {
+			parts = append(parts, fmt.Sprintf("file=%s", rec.Data.FileModification.FilePath))
+		} else if rec.Data.ToolInput != nil {
 			if cmdVal, ok := rec.Data.ToolInput["command"].(string); ok && cmdVal != "" {
 				clean := strings.ReplaceAll(strings.TrimSpace(cmdVal), "\n", " ")
 				if len(clean) > 30 {

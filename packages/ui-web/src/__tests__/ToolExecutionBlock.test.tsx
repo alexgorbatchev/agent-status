@@ -331,4 +331,19 @@ describe("ToolExecutionBlock Component", () => {
     expect(htmlFailure).toContain('data-testid="ToolExecutionBlock--status"');
     expect(htmlFailure).toContain("failed");
   });
+
+  it("renders DiffViewer directly from fileModification prop without toolInput", () => {
+    const html = renderToString(
+      <ToolExecutionBlock
+        fileModification={{
+          action: "WRITE",
+          filePath: "docs/spec.md",
+          content: "# Specification\n",
+        }}
+      />,
+    );
+    expect(html).toContain('data-testid="DiffViewer"');
+    expect(html).toContain("docs/spec.md");
+    expect(html).toContain("WRITE");
+  });
 });

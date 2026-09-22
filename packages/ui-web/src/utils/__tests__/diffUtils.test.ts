@@ -51,6 +51,16 @@ describe("diffUtils", () => {
       ).toBe(true);
     });
 
+    it("returns true if fileModification is provided even without toolName or toolInput", () => {
+      expect(
+        isFileModification(null, null, {
+          action: "WRITE",
+          filePath: "out.log",
+          content: "ready",
+        }),
+      ).toBe(true);
+    });
+
     it("returns true when patch contains unified diff @@ header", () => {
       expect(
         isFileModification(null, {
@@ -164,6 +174,50 @@ describe("diffUtils", () => {
       expect(parsed?.filePath).toBe("notes.txt");
       expect(parsed?.content).toBe("First line\nSecond line\n");
       expect(parsed?.hunks).toBeUndefined();
+    });
+
+    it("prioritizes fileModification from telemetry data without inspecting toolInput", () => {
+      const norm = {
+        action: "EDIT" as const,
+        filePath: "pkg/service.go",
+        hunks: [
+          {
+            header: "@@ -1,2 +1,2 @@",
+            lines: [
+              { type: "del" as const, oldLineNumber: 1, content: "old code" },
+              { type: "add" as const, newLineNumber: 1, content: "new code" },
+            ],
+          },
+        ],
+      };
+      const parsed = parseFileModification("unknown_tool", null, norm);
+      expect(parsed).not.toBeNull();
+      expect(parsed?.action).toBe("EDIT");
+      expect(parsed?.filePath).toBe("pkg/service.go");
+      expect(parsed?.hunks).toHaveLength(1);
+      expect(parsed?.hunks?.[0]?.lines[0]?.content).toBe("old code");
+    });
+
+    it("parses Claude Code MultiEdit format with old_string and new_string in edits array", () => {
+      const parsed = parseFileModification("MultiEdit", {
+        file_path: "src/server.ts",
+        edits: [
+          {
+            old_string: "const port = 3000;\n",
+            new_string: "const port = 4000;\n",
+          },
+          {
+            old_string: "const host = 'localhost';\n",
+            new_string: "const host = '0.0.0.0';\n",
+          },
+        ],
+      });
+      expect(parsed).not.toBeNull();
+      expect(parsed?.action).toBe("EDIT");
+      expect(parsed?.filePath).toBe("src/server.ts");
+      expect(parsed?.hunks).toHaveLength(2);
+      expect(parsed?.hunks?.[0]?.lines.find((l) => l.type === "del")?.content).toBe("const port = 3000;");
+      expect(parsed?.hunks?.[0]?.lines.find((l) => l.type === "add")?.content).toBe("const port = 4000;");
     });
   });
 });

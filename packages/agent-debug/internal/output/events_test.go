@@ -216,6 +216,20 @@ func TestFormatEventSummary(t *testing.T) {
 		if s := FormatEventSummary(recPat); !strings.Contains(s, "pattern=") {
 			t.Errorf("got %q, want pattern=", s)
 		}
+
+		recFileMod := db.EventRecord{
+			EventType: "tool_call",
+			Data: types.TelemetryFrameData{
+				ToolName: strPtr("Edit"),
+				FileModification: &types.FileModification{
+					Action:   "EDIT",
+					FilePath: "src/normalized.go",
+				},
+			},
+		}
+		if s := FormatEventSummary(recFileMod); !strings.Contains(s, "file=src/normalized.go") {
+			t.Errorf("got %q, want file=src/normalized.go", s)
+		}
 	})
 
 	t.Run("run_started with title and model", func(t *testing.T) {

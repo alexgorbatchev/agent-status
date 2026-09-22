@@ -152,10 +152,11 @@ export function LogFrameItem({ frame }: ILogFrameItemProps): React.JSX.Element {
         </div>
       )}
 
-      {(frame.data.toolName || frame.data.toolOutput || frame.data.toolInput) && (
+      {(frame.data.toolName || frame.data.toolOutput || frame.data.toolInput || frame.data.fileModification) && (
         <ToolExecutionBlock
           toolName={frame.data.toolName}
           toolInput={frame.data.toolInput}
+          fileModification={frame.data.fileModification}
           toolOutput={frame.data.toolOutput}
           exitCode={frame.data.exitCode}
           isError={frame.data.isError}
