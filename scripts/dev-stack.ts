@@ -9,7 +9,98 @@ if (!existsSync(runDir)) {
 }
 
 const pidFile = resolve(runDir, "pids.json");
-const action = process.argv[2] || "start";
+
+export function getAction(argv: string[] = process.argv): string {
+  const nonFlagArgs = argv.slice(2).filter((arg) => !arg.startsWith("-"));
+  return nonFlagArgs[0] || "start";
+}
+
+const action = getAction();
+
+export function shouldSkipBuild(argv: string[] = process.argv): boolean {
+  return argv.includes("--no-build");
+}
+
+export interface IBuildOptions {
+  noBuild?: boolean;
+  rootDir?: string;
+  isAgent?: boolean;
+  spawnFn?: (
+    cmd: string[],
+    options: { cwd?: string; stdout?: "pipe" | "inherit"; stderr?: "pipe" | "inherit" }
+  ) => {
+    exited: Promise<number>;
+    stdout?: ReadableStream<Uint8Array> | null;
+    stderr?: ReadableStream<Uint8Array> | null;
+  };
+  logFn?: (message: string) => void;
+  errorFn?: (message: string) => void;
+}
+
+export interface IBuildResult {
+  isSkipped: boolean;
+  exitCode: number;
+  stdoutText: string;
+  stderrText: string;
+}
+
+export async function buildBinaries(options: IBuildOptions = {}): Promise<IBuildResult> {
+  const log = options.logFn ?? console.log;
+  const error = options.errorFn ?? console.error;
+  const isAgent = options.isAgent ?? isAgentMode();
+  const targetRootDir = options.rootDir ?? rootDir;
+
+  if (options.noBuild) {
+    if (isAgent) {
+      log("[dev-stack] INFO: skipping binary build (--no-build)");
+    } else {
+      log("[INFO] Skipping binary build (--no-build specified)...");
+    }
+    return {
+      isSkipped: true,
+      exitCode: 0,
+      stdoutText: "",
+      stderrText: "",
+    };
+  }
+
+  if (isAgent) {
+    log("[dev-stack] INFO: building binaries");
+  } else {
+    log("[INFO] Building Go binaries...");
+  }
+
+  const spawn = options.spawnFn ?? Bun.spawn;
+  const buildProc = spawn(["just", "build-all"], {
+    cwd: targetRootDir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdoutText, stderrText] = await Promise.all([
+    buildProc.stdout ? new Response(buildProc.stdout).text() : Promise.resolve(""),
+    buildProc.stderr ? new Response(buildProc.stderr).text() : Promise.resolve(""),
+  ]);
+
+  const exitCode = await buildProc.exited;
+
+  if (exitCode !== 0) {
+    if (stdoutText.trim().length > 0) {
+      error(stdoutText);
+    }
+    if (stderrText.trim().length > 0) {
+      error(stderrText);
+    }
+    error(`[ERROR] Build failed with exit code ${exitCode}`);
+  }
+
+  return {
+    isSkipped: false,
+    exitCode,
+    stdoutText,
+    stderrText,
+  };
+}
 
 function isAgentMode(): boolean {
   const agent = process.env.AGENT?.trim().toLowerCase();
@@ -138,13 +229,14 @@ async function startStack() {
   const serverBin = resolve(rootDir, "packages", "agent-server", "bin", "air-server");
   const observerBin = resolve(rootDir, "packages", "agent-observer", "bin", "air-observer");
 
-  if (isAgentMode()) {
-    console.log("[dev-stack] INFO: building binaries");
-  } else {
-    console.log("[INFO] Building Go binaries...");
+  const buildResult = await buildBinaries({
+    noBuild: shouldSkipBuild(),
+    rootDir,
+    isAgent: isAgentMode(),
+  });
+  if (buildResult.exitCode !== 0) {
+    process.exit(buildResult.exitCode);
   }
-  const buildProc = Bun.spawn(["just", "build-all"], { cwd: rootDir, stdout: "inherit", stderr: "inherit" });
-  await buildProc.exited;
 
   const pids: number[] = [];
   const procs: Subprocess[] = [];
@@ -268,11 +360,13 @@ async function startStack() {
   await Promise.race(procs.map((p) => p.exited));
 }
 
-if (action === "stop") {
-  await stopStack();
-} else if (action === "status") {
-  const pids = await getRunningPIDs();
-  console.log(`Running PIDs: ${pids.length > 0 ? pids.join(", ") : "none"}`);
-} else {
-  await startStack();
+if (import.meta.main) {
+  if (action === "stop") {
+    await stopStack();
+  } else if (action === "status") {
+    const pids = await getRunningPIDs();
+    console.log(`Running PIDs: ${pids.length > 0 ? pids.join(", ") : "none"}`);
+  } else {
+    await startStack();
+  }
 }
