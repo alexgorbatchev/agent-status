@@ -44,3 +44,35 @@ export const Disconnected: Story = {
     await expect(disconnectedIndicator).toBeInTheDocument();
   },
 };
+
+export const ActiveFilterDisabled: Story = {
+  args: {
+    agents: [fixture_agentStateRunning],
+    environments: [fixture_environmentInfo],
+    isConnected: true,
+    isActiveFilter: false,
+  },
+  async play({ canvasElement }) {
+    const canvas = within(canvasElement);
+    const activeBtn = canvas.getByTestId("Header--active-agents");
+    await expect(activeBtn).toBeInTheDocument();
+    await expect(activeBtn).toHaveAttribute("aria-pressed", "false");
+    await expect(activeBtn).toHaveAttribute("aria-label", "Filter by active agents");
+  },
+};
+
+export const ActiveFilterEnabled: Story = {
+  args: {
+    agents: [fixture_agentStateRunning],
+    environments: [fixture_environmentInfo],
+    isConnected: true,
+    isActiveFilter: true,
+  },
+  async play({ canvasElement }) {
+    const canvas = within(canvasElement);
+    const activeBtn = canvas.getByTestId("Header--active-agents");
+    await expect(activeBtn).toBeInTheDocument();
+    await expect(activeBtn).toHaveAttribute("aria-pressed", "true");
+    await expect(activeBtn).toHaveAttribute("aria-label", "Disable active agents filter");
+  },
+};

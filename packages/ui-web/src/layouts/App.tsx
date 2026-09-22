@@ -8,8 +8,9 @@ import { EnvironmentGroup } from "../components/EnvironmentGroup";
 import { LogDrawer } from "../components/LogDrawer";
 import { StateHelpDialog } from "../components/StateHelpDialog";
 import { groupAgentsByProject, groupAgentsByEnvironment } from "../utils/groupingUtils";
+import { filterActiveAgents } from "../utils/agentUtils";
 import { ViewSwitcher } from "../components/ViewSwitcher";
-import { Layers, Server, Eye, EyeOff } from "lucide-react";
+import { Layers, Server, Eye, EyeOff, Activity } from "lucide-react";
 import { DEFAULT_DEV_TOKEN, resolveApiBaseUrl } from "../utils/config";
 import { clsx } from "clsx";
 
@@ -25,6 +26,7 @@ export function App({ apiBaseUrl, token = DEFAULT_DEV_TOKEN }: IAppProps = {}): 
   const [selectedAgent, setSelectedAgent] = useState<IAgentState | null>(null);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [showHidden, setShowHidden] = useState<boolean>(false);
+  const [isActiveFilter, setIsActiveFilter] = useState<boolean>(false);
 
   const hiddenCount = useMemo(() => {
     return agents.filter((a) => a.isHidden).length;
@@ -33,6 +35,11 @@ export function App({ apiBaseUrl, token = DEFAULT_DEV_TOKEN }: IAppProps = {}): 
   const visibleAgents = useMemo(() => {
     return agents.filter((a) => showHidden || !a.isHidden);
   }, [agents, showHidden]);
+
+  const displayedAgents = useMemo(() => {
+    if (!isActiveFilter) return visibleAgents;
+    return filterActiveAgents(visibleAgents);
+  }, [visibleAgents, isActiveFilter]);
 
   const handleToggleHide = useCallback(
     async (agent: IAgentState) => {
@@ -60,10 +67,13 @@ export function App({ apiBaseUrl, token = DEFAULT_DEV_TOKEN }: IAppProps = {}): 
     [resolvedBaseUrl, token, updateAgent],
   );
 
-  const projectGroups = useMemo(() => groupAgentsByProject(visibleAgents), [visibleAgents]);
+  const projectGroups = useMemo(
+    () => groupAgentsByProject(displayedAgents).filter((g) => g.agents.length > 0),
+    [displayedAgents],
+  );
   const environmentGroups = useMemo(
-    () => groupAgentsByEnvironment(visibleAgents, environments),
-    [visibleAgents, environments],
+    () => groupAgentsByEnvironment(displayedAgents, environments).filter((g) => g.agents.length > 0),
+    [displayedAgents, environments],
   );
 
   return (
@@ -72,6 +82,8 @@ export function App({ apiBaseUrl, token = DEFAULT_DEV_TOKEN }: IAppProps = {}): 
         agents={visibleAgents}
         environments={environments}
         isConnected={isConnected}
+        isActiveFilter={isActiveFilter}
+        onToggleActiveFilter={() => setIsActiveFilter((prev) => !prev)}
         onOpenHelp={() => setIsHelpOpen(true)}
       />
 
@@ -129,13 +141,34 @@ export function App({ apiBaseUrl, token = DEFAULT_DEV_TOKEN }: IAppProps = {}): 
           </div>
 
           <span data-testid="App--agent-count" className="text-xs text-slate-500 font-mono">
-            {visibleAgents.length} Agent{visibleAgents.length !== 1 ? "s" : ""}
-            {hiddenCount > 0 && !showHidden ? ` (${hiddenCount} hidden)` : ""}
+            {isActiveFilter
+              ? `${displayedAgents.length} Active of ${visibleAgents.length} Agent${visibleAgents.length !== 1 ? "s" : ""}`
+              : `${visibleAgents.length} Agent${visibleAgents.length !== 1 ? "s" : ""}`}
+            {hiddenCount > 0 && !showHidden && !isActiveFilter ? ` (${hiddenCount} hidden)` : ""}
           </span>
         </div>
 
         {/* Content Listing */}
-        {visibleAgents.length === 0 ? (
+        {isActiveFilter && displayedAgents.length === 0 ? (
+          <div
+            data-testid="App--no-active-empty-state"
+            className="flex flex-col items-center justify-center py-24 px-4 text-center border border-dashed border-slate-800/80 rounded-2xl bg-slate-950/40"
+          >
+            <div className="p-4 rounded-full bg-slate-900/80 border border-slate-800 text-slate-500 mb-4">
+              <Activity size={36} />
+            </div>
+            <h2 className="text-2xl md:text-3xl font-extrabold text-slate-100 tracking-tight">Nothing to see here</h2>
+            <p className="text-sm text-slate-400 mt-2 max-w-md">No agents are currently active in your fleet.</p>
+            <button
+              type="button"
+              data-testid="App--reset-active-filter"
+              onClick={() => setIsActiveFilter(false)}
+              className="mt-6 px-4 py-2 text-xs font-medium rounded-lg bg-slate-900 border border-slate-700 text-slate-200 hover:bg-slate-800 hover:border-slate-600 transition-colors cursor-pointer"
+            >
+              Show all agents
+            </button>
+          </div>
+        ) : visibleAgents.length === 0 ? (
           <div
             data-testid="App--empty-state"
             className="text-center py-20 border border-dashed border-slate-800 rounded-2xl"
