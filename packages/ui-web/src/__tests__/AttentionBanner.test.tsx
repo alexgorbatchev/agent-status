@@ -63,7 +63,7 @@ describe("AttentionBanner Component", () => {
     );
 
     expect(html).toContain('data-testid="AttentionBanner"');
-    expect(html).toContain("Act Now — 1 Agent Require Attention");
+    expect(html).toContain("Act Now — 1 Agent Requires Attention");
     expect(html).toContain("Implement user authentication flow");
     expect(html).toContain("work-macbook");
     expect(html).toContain("Should we use SQLite or PostgreSQL for auth tokens?");
@@ -73,7 +73,7 @@ describe("AttentionBanner Component", () => {
     const html = renderToStaticMarkup(<AttentionBanner agents={[fixture_agentStateError]} onSelectAgent={() => {}} />);
 
     expect(html).toContain('data-testid="AttentionBanner"');
-    expect(html).toContain("Act Now — 1 Agent Require Attention");
+    expect(html).toContain("Act Now — 1 Agent Requires Attention");
     expect(html).toContain("Database schema migration");
     expect(html).toContain("work-macbook");
     expect(html).toContain("Database migration returned exit code 1: syntax error near &#x27;INDEX&#x27;");

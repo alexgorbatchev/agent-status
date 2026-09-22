@@ -1,7 +1,27 @@
 import { describe, it, expect } from "bun:test";
-import { formatA11yTree, serializeA11yTree, type IA11yNode } from "../a11ySnapshot";
+import { formatA11yTree, serializeA11yTree, isDomElement, type IA11yNode } from "../a11ySnapshot";
+import { MockDocument, type MockElement } from "../../__tests__/helpers";
+
+interface IMockWrapper {
+  container: MockElement;
+}
 
 describe("a11ySnapshot utility", () => {
+  describe("isDomElement type guard", () => {
+    it("identifies valid MockElement and rejects invalid objects", () => {
+      const doc = new MockDocument();
+      const el = doc.createElement("div");
+
+      expect(isDomElement(el)).toBe(true);
+      expect(isDomElement(null)).toBe(false);
+      expect(isDomElement(undefined)).toBe(false);
+      expect(isDomElement("string")).toBe(false);
+      expect(isDomElement(123)).toBe(false);
+      expect(isDomElement({})).toBe(false);
+      expect(isDomElement({ nodeType: 2 })).toBe(false);
+    });
+  });
+
   describe("serializeA11yTree", () => {
     it("serializes a single root card without children", () => {
       const node: IA11yNode = {
@@ -60,19 +80,17 @@ describe("a11ySnapshot utility", () => {
             value: "Act Now — 2 Agents Require Attention",
           },
           {
-            type: "Card",
-            value: "Task One",
+            type: "Button",
+            value: "View agent needing attention: Task One",
             children: [
-              { type: "Heading", value: "Task One" },
               { type: "Badge", value: "local-dev" },
               { type: "Callout", label: "warning", value: "Needs confirmation" },
             ],
           },
           {
-            type: "Card",
-            value: "Task Two",
+            type: "Button",
+            value: "View agent needing attention: Task Two",
             children: [
-              { type: "Heading", value: "Task Two" },
               { type: "Badge", value: "remote-prod" },
               { type: "Callout", label: "error", value: "Process failed" },
             ],
@@ -83,12 +101,10 @@ describe("a11ySnapshot utility", () => {
       const expected = [
         'Banner: "Act Now — 2 Agents Require Attention"',
         '  ├─ Heading: "Act Now — 2 Agents Require Attention"',
-        '  ├─ Card: "Task One"',
-        '  │  ├─ Heading: "Task One"',
+        "  ├─ Button: [View agent needing attention: Task One]",
         "  │  ├─ Badge: (local-dev)",
         '  │  └─ Callout (warning): "Needs confirmation"',
-        '  └─ Card: "Task Two"',
-        '     ├─ Heading: "Task Two"',
+        "  └─ Button: [View agent needing attention: Task Two]",
         "     ├─ Badge: (remote-prod)",
         '     └─ Callout (error): "Process failed"',
       ].join("\n");
@@ -97,32 +113,88 @@ describe("a11ySnapshot utility", () => {
     });
   });
 
-  describe("formatA11yTree from HTML strings", () => {
-    it("formats an agent card structure from HTML markup", () => {
-      const html = `
-        <div data-testid="AgentCard" role="button" aria-label="View details for Untitled Agent Session">
-          <div data-testid="AgentCard--header">
-            <span data-testid="AgentCard--env-badge" role="status">local-dev</span>
-            <span data-testid="AgentCard--harness-badge" role="status">Claude Code</span>
-            <span data-testid="StatusBadge" data-lifecycle="RUNNING">
-              <span data-testid="StatusBadge--label">Busy</span>
-            </span>
-            <button data-testid="AgentCard--hide-button" title="Hide agent session" aria-label="Hide agent session">Hide</button>
-          </div>
-          <h3 data-testid="AgentCard--title">Untitled Agent Session</h3>
-          <p data-testid="AgentCard--action">Executing Edit</p>
-          <div data-testid="AgentCard--question" role="alert">Do you want to run this command?</div>
-          <div data-testid="AgentCard--badges">
-            <div data-badge-type="branch">main</div>
-            <div data-badge-type="subagents">2 subagents</div>
-          </div>
-          <div data-testid="AgentCard--footer">
-            <div data-testid="AgentCard--cost">$0.0045</div>
-            <div data-testid="AgentCard--usage">1,800 tokens</div>
-          </div>
-        </div>
-      `;
+  describe("formatA11yTree with native DOM elements", () => {
+    it("formats an agent card structure from native MockElement DOM tree", () => {
+      const doc = new MockDocument();
 
+      const card = doc.createElement("div");
+      card.setAttribute("role", "article");
+      card.setAttribute("aria-label", "Untitled Agent Session");
+
+      const header = doc.createElement("div");
+      const envBadge = doc.createElement("span");
+      envBadge.setAttribute("role", "status");
+      envBadge.textContent = "local-dev";
+      header.appendChild(envBadge);
+
+      const harnessBadge = doc.createElement("span");
+      harnessBadge.setAttribute("role", "status");
+      harnessBadge.textContent = "Claude Code";
+      header.appendChild(harnessBadge);
+
+      const statusBadge = doc.createElement("span");
+      statusBadge.setAttribute("role", "status");
+      statusBadge.setAttribute("data-lifecycle", "RUNNING");
+      statusBadge.textContent = "Busy";
+      header.appendChild(statusBadge);
+
+      const hideButton = doc.createElement("button");
+      hideButton.setAttribute("title", "Hide agent session");
+      hideButton.textContent = "Hide";
+      header.appendChild(hideButton);
+
+      card.appendChild(header);
+
+      const heading = doc.createElement("h3");
+      heading.textContent = "Untitled Agent Session";
+      card.appendChild(heading);
+
+      const action = doc.createElement("p");
+      action.setAttribute("data-action", "true");
+      action.textContent = "Executing Edit";
+      card.appendChild(action);
+
+      const callout = doc.createElement("div");
+      callout.setAttribute("role", "alert");
+      callout.setAttribute("data-callout-type", "warning");
+      callout.textContent = "Do you want to run this command?";
+      card.appendChild(callout);
+
+      const badgesContainer = doc.createElement("div");
+      const branchBadge = doc.createElement("div");
+      branchBadge.setAttribute("role", "status");
+      branchBadge.setAttribute("aria-label", "branch: main");
+      branchBadge.textContent = "main";
+      badgesContainer.appendChild(branchBadge);
+
+      const subagentsBadge = doc.createElement("div");
+      subagentsBadge.setAttribute("role", "status");
+      subagentsBadge.setAttribute("aria-label", "2 subagents");
+      subagentsBadge.textContent = "2 subagents";
+      badgesContainer.appendChild(subagentsBadge);
+
+      const activeBadge = doc.createElement("div");
+      activeBadge.setAttribute("role", "status");
+      activeBadge.setAttribute("aria-label", "active: 2m ago");
+      activeBadge.textContent = "2m ago";
+      badgesContainer.appendChild(activeBadge);
+
+      card.appendChild(badgesContainer);
+
+      const footer = doc.createElement("div");
+      const costEl = doc.createElement("div");
+      costEl.setAttribute("data-metric", "cost");
+      costEl.textContent = "$0.0045";
+      footer.appendChild(costEl);
+
+      const usageEl = doc.createElement("div");
+      usageEl.setAttribute("data-metric", "usage");
+      usageEl.textContent = "1,800 tokens";
+      footer.appendChild(usageEl);
+
+      card.appendChild(footer);
+
+      const tree = formatA11yTree(card);
       const expected = [
         'Card: "Untitled Agent Session"',
         "  ├─ Badge: (local-dev)",
@@ -134,110 +206,145 @@ describe("a11ySnapshot utility", () => {
         '  ├─ Callout (warning): "Do you want to run this command?"',
         "  ├─ Badge: (branch: main)",
         "  ├─ Badge: (2 subagents)",
+        "  ├─ Badge: (active: 2m ago)",
         '  ├─ Cost: "$0.0045"',
         '  └─ Usage: "1,800 tokens"',
       ].join("\n");
 
-      expect(formatA11yTree(html)).toBe(expected);
+      expect(tree).toBe(expected);
     });
 
-    it("formats an attention banner structure from HTML markup", () => {
-      const html = `
-        <div data-testid="AttentionBanner">
-          <h2 data-testid="AttentionBanner--title">Act Now — 1 Agent Requires Attention</h2>
-          <div data-testid="AttentionBanner--grid">
-            <div data-testid="AttentionBanner--agent-card" role="button" aria-label="View agent needing attention: Fix database migrations">
-              <span data-testid="AttentionBanner--agent-title">Fix database migrations</span>
-              <span data-testid="AttentionBanner--agent-env">local-dev</span>
-              <p data-testid="AttentionBanner--agent-message">Database migration failed on step 3</p>
-            </div>
-          </div>
-        </div>
-      `;
+    it("formats an attention banner structure from native DOM elements", () => {
+      const doc = new MockDocument();
 
-      const tree = formatA11yTree(html);
-      expect(tree).toContain('Banner: "Act Now — 1 Agent Requires Attention"');
-      expect(tree).toContain('Heading: "Act Now — 1 Agent Requires Attention"');
-      expect(tree).toContain('Card: "Fix database migrations"');
-      expect(tree).toContain("Badge: (local-dev)");
-      expect(tree).toContain('Callout (error): "Database migration failed on step 3"');
+      const banner = doc.createElement("div");
+      banner.setAttribute("role", "region");
+      banner.setAttribute("aria-label", "Act Now — 1 Agent Requires Attention");
+
+      const title = doc.createElement("h2");
+      title.textContent = "Act Now — 1 Agent Requires Attention";
+      banner.appendChild(title);
+
+      const grid = doc.createElement("div");
+
+      const agentButton = doc.createElement("div");
+      agentButton.setAttribute("role", "button");
+      agentButton.setAttribute("aria-label", "View agent needing attention: Fix database migrations");
+
+      const envSpan = doc.createElement("span");
+      envSpan.setAttribute("role", "status");
+      envSpan.textContent = "local-dev";
+      agentButton.appendChild(envSpan);
+
+      const message = doc.createElement("p");
+      message.setAttribute("role", "alert");
+      message.setAttribute("data-callout-type", "error");
+      message.textContent = "Database migration failed on step 3";
+      agentButton.appendChild(message);
+
+      grid.appendChild(agentButton);
+      banner.appendChild(grid);
+
+      const tree = formatA11yTree(banner);
+      const expected = [
+        'Banner: "Act Now — 1 Agent Requires Attention"',
+        '  ├─ Heading: "Act Now — 1 Agent Requires Attention"',
+        "  └─ Button: [View agent needing attention: Fix database migrations]",
+        "     ├─ Badge: (local-dev)",
+        '     └─ Callout (error): "Database migration failed on step 3"',
+      ].join("\n");
+
+      expect(tree).toBe(expected);
     });
 
-    it("returns empty string when given null, undefined, or empty markup", () => {
-      expect(formatA11yTree("")).toBe("");
-      expect(formatA11yTree(null as unknown as string)).toBe("");
-      expect(formatA11yTree(undefined as unknown as string)).toBe("");
+    it("returns empty string when given null, undefined, or empty container", () => {
+      expect(formatA11yTree(null)).toBe("");
+      expect(formatA11yTree(undefined)).toBe("");
+      const doc = new MockDocument();
+      const emptyDiv = doc.createElement("div");
+      expect(formatA11yTree(emptyDiv)).toBe("");
     });
 
-    it("parses generic DOM elements with headings, buttons, and status", () => {
-      const html = `
-        <div aria-label="Settings Card">
-          <h2>Project Settings</h2>
-          <span role="status">Active</span>
-          <button title="Save settings">Save</button>
-          <div role="alert">Configuration warning</div>
-          <p>Unsaved changes</p>
-        </div>
-      `;
-
-      const tree = formatA11yTree(html);
-      expect(tree).toContain('Card: "Settings Card"');
-      expect(tree).toContain('Heading: "Project Settings"');
-      expect(tree).toContain("Badge: (Active)");
-      expect(tree).toContain("Button: [Save settings]");
-      expect(tree).toContain('Callout (error): "Configuration warning"');
-      expect(tree).toContain('Text: "Unsaved changes"');
-    });
-
-    it("parses DOM objects with MockElement-like structures", () => {
-      const mockObj = {
-        tagName: "DIV",
-        attributes: {
-          "data-testid": "AgentCard",
-          role: "button",
-        },
-        children: [
-          {
-            tagName: "H3",
-            attributes: { "data-testid": "AgentCard--title" },
-            textContent: "Mock Agent",
-            children: [],
-          },
-          {
-            tagName: "SPAN",
-            attributes: { "data-testid": "AgentCard--env-badge" },
-            textContent: "test-env",
-            children: [],
-          },
-          {
-            tagName: "SPAN",
-            attributes: { "data-testid": "AgentCard--harness-badge" },
-            textContent: "Pi",
-            children: [],
-          },
-          {
-            tagName: "SPAN",
-            attributes: { "data-testid": "StatusBadge", "data-lifecycle": "EXITED" },
-            textContent: "Finished",
-            children: [],
-          },
-          {
-            tagName: "P",
-            attributes: { "data-testid": "AgentCard--action" },
-            textContent: "Idle",
-            children: [],
-          },
-        ],
-        textContent: "Mock Agent test-env Pi Finished Idle",
+    it("handles wrapper container with container property or firstElementChild", () => {
+      const doc = new MockDocument();
+      const wrapper: IMockWrapper = {
+        container: doc.createElement("div"),
       };
+      wrapper.container.setAttribute("role", "article");
+      wrapper.container.setAttribute("aria-label", "Wrapped Card");
 
-      const tree = formatA11yTree(mockObj);
-      expect(tree).toContain('Card: "Mock Agent"');
-      expect(tree).toContain("Badge: (test-env)");
-      expect(tree).toContain("Badge: (Pi)");
-      expect(tree).toContain("Status: (EXITED)");
-      expect(tree).toContain('Heading: "Mock Agent"');
-      expect(tree).toContain('Action: "Idle"');
+      const heading = doc.createElement("h2");
+      heading.textContent = "Wrapped Heading";
+      wrapper.container.appendChild(heading);
+
+      const tree = formatA11yTree(wrapper);
+      expect(tree).toBe('Card: "Wrapped Card"\n  └─ Heading: "Wrapped Heading"');
+    });
+
+    it("extracts accessible name from nested heading when card lacks aria-label and title", () => {
+      const doc = new MockDocument();
+      const card = doc.createElement("div");
+      card.setAttribute("role", "article");
+
+      const nested = doc.createElement("div");
+      const h4 = doc.createElement("h4");
+      h4.textContent = "Inferred Card Title";
+      nested.appendChild(h4);
+      card.appendChild(nested);
+
+      const tree = formatA11yTree(card);
+      expect(tree).toContain('Card: "Inferred Card Title"');
+    });
+
+    it("handles data-card, data-banner, data-badge-type, role=alertdialog, and data-role=action", () => {
+      const doc = new MockDocument();
+      const banner = doc.createElement("div");
+      banner.setAttribute("data-banner", "true");
+      banner.setAttribute("aria-label", "Custom Banner");
+
+      const card = doc.createElement("div");
+      card.setAttribute("data-card", "true");
+
+      const action = doc.createElement("p");
+      action.setAttribute("data-role", "action");
+      action.textContent = "Running custom action";
+      card.appendChild(action);
+
+      const alert = doc.createElement("div");
+      alert.setAttribute("role", "alertdialog");
+      alert.textContent = "Critical confirmation needed";
+      card.appendChild(alert);
+
+      const badge = doc.createElement("span");
+      badge.setAttribute("data-badge-type", "tag");
+      badge.textContent = "v1.0.0";
+      card.appendChild(badge);
+
+      banner.appendChild(card);
+
+      const tree = formatA11yTree(banner);
+      expect(tree).toContain('Banner: "Custom Banner"');
+      expect(tree).toContain('Card: "Card"');
+      expect(tree).toContain('Action: "Running custom action"');
+      expect(tree).toContain('Callout (error): "Critical confirmation needed"');
+      expect(tree).toContain("Badge: (v1.0.0)");
+    });
+
+    it("parses headings and buttons when container has multiple semantic items", () => {
+      const doc = new MockDocument();
+      const host = doc.createElement("div");
+
+      const heading = doc.createElement("h1");
+      heading.textContent = "Title 1";
+      host.appendChild(heading);
+
+      const button = doc.createElement("button");
+      button.textContent = "Click Me";
+      host.appendChild(button);
+
+      const tree = formatA11yTree(host);
+      expect(tree).toContain('Heading: "Title 1"');
+      expect(tree).toContain("Button: [Click Me]");
     });
   });
 });

@@ -66,12 +66,18 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
           <div className="flex items-center gap-2 text-xs text-slate-400">
             <span
               data-testid="AgentCard--env-badge"
+              role="status"
               className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono"
             >
               {environment.label}
             </span>
             <span className="text-slate-600">•</span>
-            <span data-testid="AgentCard--harness-badge" className="flex items-center gap-1 font-medium text-slate-300">
+            <span
+              data-testid="AgentCard--harness-badge"
+              role="status"
+              aria-label={HARNESS_LABELS[harness] || harness}
+              className="flex items-center gap-1 font-medium text-slate-300"
+            >
               <IconWrapper size="sm">
                 <Bot size={14} />
               </IconWrapper>
@@ -82,6 +88,7 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
             {agent.isHidden && (
               <span
                 data-testid="AgentCard--hidden-badge"
+                role="status"
                 className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 text-[10px] font-medium border border-slate-700 font-mono"
               >
                 Hidden
@@ -93,7 +100,7 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
                 type="button"
                 data-testid={agent.isHidden ? "AgentCard--unhide-button" : "AgentCard--hide-button"}
                 title={agent.isHidden ? "Unhide agent session" : "Hide agent session"}
-                aria-label={agent.isHidden ? `Unhide ${title}` : `Hide ${title}`}
+                aria-label={agent.isHidden ? "Unhide agent session" : "Hide agent session"}
                 onClick={(event: React.MouseEvent<HTMLButtonElement>) => {
                   event.stopPropagation();
                   onToggleHide(agent);
@@ -120,7 +127,11 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
         </h3>
 
         {/* Action Line */}
-        <p data-testid="AgentCard--action" className="text-xs text-slate-400 line-clamp-2 min-h-[2rem] mb-3">
+        <p
+          data-testid="AgentCard--action"
+          data-action
+          className="text-xs text-slate-400 line-clamp-2 min-h-[2rem] mb-3"
+        >
           {action}
         </p>
 
@@ -128,6 +139,8 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
         {activity.activity === "WAITING_QUESTION" && activity.question && (
           <div
             data-testid="AgentCard--question"
+            role="alert"
+            data-callout-type="warning"
             className="mb-3 p-2 rounded-lg bg-amber-950/40 border border-amber-800/60 text-xs text-amber-200 flex items-start gap-1.5"
           >
             <IconWrapper size="md" tone="warning" align="top">
@@ -140,6 +153,8 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
         {activity.activity === "ERROR" && activity.lastError && (
           <div
             data-testid="AgentCard--error"
+            role="alert"
+            data-callout-type="error"
             className="mb-3 p-2 rounded-lg bg-red-950/40 border border-red-800/60 text-xs text-red-200 flex items-start gap-1.5"
           >
             <IconWrapper size="md" tone="error" align="top">
@@ -154,6 +169,8 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
           <div
             data-testid="AgentCard--branch-badge"
             data-badge-type="branch"
+            role="status"
+            aria-label={`branch: ${workspace.branch || "HEAD"}`}
             className="flex items-center gap-1 bg-slate-800/50 px-2 py-0.5 rounded border border-slate-700/50"
           >
             <IconWrapper size="xs" tone="muted">
@@ -166,6 +183,8 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
             <div
               data-testid="AgentCard--worktree-badge"
               data-badge-type="worktree"
+              role="status"
+              aria-label={`worktree: ${workspace.relPath}`}
               className="flex items-center gap-1 bg-slate-800/50 px-2 py-0.5 rounded border border-slate-700/50"
             >
               <IconWrapper size="xs" tone="muted">
@@ -179,6 +198,8 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
             <div
               data-testid="AgentCard--subagents-badge"
               data-badge-type="subagents"
+              role="status"
+              aria-label={`${activity.subagentCount} subagent${activity.subagentCount > 1 ? "s" : ""}`}
               className="flex items-center gap-1 bg-purple-950/40 border border-purple-800/50 text-purple-300 px-2 py-0.5 rounded text-[11px]"
             >
               <IconWrapper size="xs" tone="purple">
@@ -192,6 +213,8 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
 
           <div
             data-testid="AgentCard--last-active"
+            role="status"
+            aria-label={`active: ${relativeTime}`}
             className="flex items-center gap-1 bg-slate-800/50 px-2 py-0.5 rounded border border-slate-700/50"
             title={`Last active: ${exactTime}`}
           >
@@ -208,14 +231,24 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
         data-testid="AgentCard--footer"
         className="flex items-center justify-between pt-2 border-t border-slate-800 text-xs text-slate-400"
       >
-        <div data-testid="AgentCard--cost" className="flex items-center gap-1 font-mono text-emerald-400">
+        <div
+          data-testid="AgentCard--cost"
+          data-metric="cost"
+          aria-label={formattedCost}
+          className="flex items-center gap-1 font-mono text-emerald-400"
+        >
           <IconWrapper size="sm">
             <DollarSign size={14} />
           </IconWrapper>
           <span>{formattedCost}</span>
         </div>
 
-        <div data-testid="AgentCard--usage" className="text-[11px] text-slate-500 font-mono">
+        <div
+          data-testid="AgentCard--usage"
+          data-metric="usage"
+          aria-label={`${activity.usage.total.toLocaleString()} tokens`}
+          className="text-[11px] text-slate-500 font-mono"
+        >
           {activity.usage.total.toLocaleString()} tokens
         </div>
       </div>
