@@ -54,6 +54,8 @@ export function StatusBadge({ lifecycle, activity }: IStatusBadgeProps): React.J
   return (
     <span
       data-testid="StatusBadge"
+      role="status"
+      data-lifecycle={lifecycle}
       className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium ${config.badgeClass}`}
     >
       <span data-testid="StatusBadge--indicator" className={`w-2 h-2 rounded-full ${config.indicatorClass}`} />

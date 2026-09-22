@@ -16,6 +16,8 @@ Web frontend dashboard for agent-status built with React 19, Tailwind CSS v4, Lu
 - Components live in `src/components/ComponentName.tsx` with Storybook stories in `src/components/stories/ComponentName.stories.tsx`.
 - Centralized TypeScript types live in `src/types/types.ts` and re-export via `src/types/index.ts`.
 - State machines live in `src/machines/` with XState v5 actors and strict event typing.
+- Spec-first UI workflow: when modifying or designing UI components (`AgentCard`, `AttentionBanner`, `LogDrawer`), follow the upstream specification established by `air-debug session view` (#50) using `[buttons]` and `(badges)` notation.
+- Accessibility tree snapshot testing: write semantic accessibility role-tree snapshot tests in `src/__tests__/*.a11y.test.tsx` using `formatA11yTree` (`src/utils/a11ySnapshot.ts`) to verify component accessible hierarchies, accessible names, headings, badges, and buttons.
 - Sessions can be hidden/unhidden via `PATCH /api/v1/agents/{id}`, filtered out by default with a UI toggle to inspect and unhide them.
 - Enforce strict TypeScript: no `any`, no type assertions (`as Type`), explicit return types on public functions.
 
