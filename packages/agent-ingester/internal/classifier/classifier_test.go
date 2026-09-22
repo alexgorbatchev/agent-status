@@ -3712,6 +3712,11 @@ func TestClassifier_FileModification_SetsActiveTarget(t *testing.T) {
 }
 
 func TestClassifier_SubagentActivity_Rollup_ErrorPrecedence(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, _ := newTestClassifier(t, sum)
 	c.SetSyncMode(true)
 	defer func() { _ = c.Close() }()
 
