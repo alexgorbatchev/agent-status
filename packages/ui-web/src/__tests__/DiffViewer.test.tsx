@@ -59,6 +59,36 @@ describe("DiffViewer Component", () => {
     expect(html).toContain("return true");
   });
 
+  it("renders additions and deletions with background colors and white font", () => {
+    const html = renderToString(
+      <DiffViewer
+        payload={{
+          action: "EDIT",
+          filePath: "main.go",
+          hunks: [
+            {
+              lines: [
+                { type: "del", oldLineNumber: 1, content: "const timeout = 10" },
+                { type: "add", newLineNumber: 1, content: "const timeout = 20" },
+              ],
+            },
+          ],
+        }}
+      />,
+    );
+
+    const delLine = html.match(/<div[^>]*data-testid="DiffViewer--del-line"[^>]*>/)?.[0] ?? "";
+    const addLine = html.match(/<div[^>]*data-testid="DiffViewer--add-line"[^>]*>/)?.[0] ?? "";
+
+    expect(delLine).toContain("bg-red-800/80");
+    expect(delLine).toContain("text-white");
+    expect(delLine).not.toContain("border-l-2");
+
+    expect(addLine).toContain("bg-emerald-800/80");
+    expect(addLine).toContain("text-white");
+    expect(addLine).not.toContain("border-l-2");
+  });
+
   it("renders word-level inline difference highlighting within altered lines", () => {
     const html = renderToString(
       <DiffViewer
@@ -97,6 +127,11 @@ describe("DiffViewer Component", () => {
     expect(html).toContain('data-testid="DiffViewer--word-add"');
     expect(html).toContain("10");
     expect(html).toContain("20");
+
+    const wordDel = html.match(/<span[^>]*data-testid="DiffViewer--word-del"[^>]*>/)?.[0] ?? "";
+    const wordAdd = html.match(/<span[^>]*data-testid="DiffViewer--word-add"[^>]*>/)?.[0] ?? "";
+    expect(wordDel).toContain("bg-black/30");
+    expect(wordAdd).toContain("bg-black/30");
   });
 
   it("renders multi-hunk diffs sequentially with hunk headers", () => {

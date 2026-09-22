@@ -119,14 +119,14 @@ export function DiffViewer({ payload }: IDiffViewerProps): React.JSX.Element {
                         <div
                           key={`line-${lIdx}`}
                           data-testid="DiffViewer--del-line"
-                          className="flex items-start bg-red-950/40 text-red-300 hover:bg-red-950/60 border-l-2 border-red-500 py-0.5 px-1 font-mono text-[11px]"
+                          className="flex items-start bg-red-800/80 text-white hover:bg-red-800/90 py-0.5 px-1 font-mono text-[11px]"
                         >
-                          <span className="w-8 shrink-0 text-right select-none pr-2 text-red-400/60 text-[10px]">
+                          <span className="w-8 shrink-0 text-right select-none pr-2 text-white/50 text-[10px]">
                             {line.oldLineNumber ?? ""}
                           </span>
                           <span className="w-8 shrink-0 select-none" />
-                          <span className="w-4 shrink-0 text-center select-none text-red-400 font-semibold">-</span>
-                          <span className="flex-1 whitespace-pre-wrap break-all [overflow-wrap:anywhere] min-w-0 max-w-full">
+                          <span className="w-4 shrink-0 text-center select-none text-white/80 font-semibold">-</span>
+                          <span className="flex-1 whitespace-pre-wrap break-all [overflow-wrap:anywhere] min-w-0 max-w-full text-white">
                             {line.wordTokens
                               ? line.wordTokens.map((token, tIdx) => {
                                   if (token.type === "del") {
@@ -134,7 +134,7 @@ export function DiffViewer({ payload }: IDiffViewerProps): React.JSX.Element {
                                       <span
                                         key={`t-${tIdx}`}
                                         data-testid="DiffViewer--word-del"
-                                        className="bg-red-500/30 text-red-200 rounded px-0.5"
+                                        className="bg-black/30 text-white rounded px-0.5"
                                       >
                                         {token.value}
                                       </span>
@@ -153,14 +153,14 @@ export function DiffViewer({ payload }: IDiffViewerProps): React.JSX.Element {
                         <div
                           key={`line-${lIdx}`}
                           data-testid="DiffViewer--add-line"
-                          className="flex items-start bg-emerald-950/40 text-emerald-300 hover:bg-emerald-950/60 border-l-2 border-emerald-500 py-0.5 px-1 font-mono text-[11px]"
+                          className="flex items-start bg-emerald-800/80 text-white hover:bg-emerald-800/90 py-0.5 px-1 font-mono text-[11px]"
                         >
                           <span className="w-8 shrink-0 select-none" />
-                          <span className="w-8 shrink-0 text-right select-none pr-2 text-emerald-400/60 text-[10px]">
+                          <span className="w-8 shrink-0 text-right select-none pr-2 text-white/50 text-[10px]">
                             {line.newLineNumber ?? ""}
                           </span>
-                          <span className="w-4 shrink-0 text-center select-none text-emerald-400 font-semibold">+</span>
-                          <span className="flex-1 whitespace-pre-wrap break-all [overflow-wrap:anywhere] min-w-0 max-w-full">
+                          <span className="w-4 shrink-0 text-center select-none text-white/80 font-semibold">+</span>
+                          <span className="flex-1 whitespace-pre-wrap break-all [overflow-wrap:anywhere] min-w-0 max-w-full text-white">
                             {line.wordTokens
                               ? line.wordTokens.map((token, tIdx) => {
                                   if (token.type === "add") {
@@ -168,7 +168,7 @@ export function DiffViewer({ payload }: IDiffViewerProps): React.JSX.Element {
                                       <span
                                         key={`t-${tIdx}`}
                                         data-testid="DiffViewer--word-add"
-                                        className="bg-emerald-500/30 text-emerald-200 rounded px-0.5"
+                                        className="bg-black/30 text-white rounded px-0.5"
                                       >
                                         {token.value}
                                       </span>
@@ -186,7 +186,7 @@ export function DiffViewer({ payload }: IDiffViewerProps): React.JSX.Element {
                       <div
                         key={`line-${lIdx}`}
                         data-testid="DiffViewer--ctx-line"
-                        className="flex items-start text-slate-400 hover:bg-slate-900/40 border-l-2 border-transparent py-0.5 px-1 font-mono text-[11px]"
+                        className="flex items-start text-slate-400 hover:bg-slate-900/40 py-0.5 px-1 font-mono text-[11px]"
                       >
                         <span className="w-8 shrink-0 text-right select-none pr-2 text-slate-600 text-[10px]">
                           {line.oldLineNumber ?? ""}
