@@ -16,6 +16,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - Test all: `just test-all`
 - Lint all: `just lint-all`
 - Run Playwright E2E: `just test-e2e`
+- Start Storybook: `just storybook-web`
 
 ## Workspace map
 - `packages/agent-common/` -> `packages/agent-common/AGENTS.md`

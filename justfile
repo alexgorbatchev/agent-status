@@ -60,6 +60,10 @@ test-all:
 test-e2e:
     cd packages/ui-web && just test-e2e
 
+# Start Storybook component explorer for ui-web
+storybook-web *args:
+    cd packages/ui-web && just storybook {{args}}
+
 # Run tests with short output / test summary
 test:
     @just test-all
