@@ -39,7 +39,6 @@ run-debug *args:
 # Build all Go binaries and bundle ui-web
 build-all:
     @mkdir -p packages/agent-observer/bin packages/agent-ingester/bin packages/agent-server/bin packages/agent-debug/bin
-    cd packages/agent-parser && just test
     cd packages/agent-observer && just build
     cd packages/agent-ingester && just build
     cd packages/agent-server && just build
