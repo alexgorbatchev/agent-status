@@ -143,6 +143,7 @@ type rawCodexThreadSpawn struct {
 
 type rawCodexSessionMetaPayload struct {
 	ID                string           `json:"id"`
+	SessionID         string           `json:"session_id,omitempty"`
 	Timestamp         string           `json:"timestamp"`
 	CWD               string           `json:"cwd"`
 	Originator        string           `json:"originator"`
@@ -210,6 +211,7 @@ type rawCodexResponseItemPayload struct {
 	Name      string      `json:"name"`
 	CallID    string      `json:"call_id"`
 	Arguments string      `json:"arguments"`
+	Input     interface{} `json:"input,omitempty"`
 	Output    string      `json:"output"`
 	Query     string      `json:"query"`
 	Content   interface{} `json:"content"`
@@ -292,6 +294,11 @@ func ParseCodexLine(line []byte) ([]ParsedEvent, error) {
 
 		isSubagent := parentThreadID != "" || nickname != "" || role != ""
 
+		sessionID := meta.ID
+		if sessionID == "" {
+			sessionID = meta.SessionID
+		}
+
 		var title string
 		if isSubagent {
 			if nickname != "" && role != "" {
@@ -301,13 +308,13 @@ func ParseCodexLine(line []byte) ([]ParsedEvent, error) {
 			} else if role != "" {
 				title = fmt.Sprintf("Codex Subagent: (%s)", role)
 			} else if parentThreadID != "" {
-				title = fmt.Sprintf("Codex Subagent %s", meta.ID)
+				title = fmt.Sprintf("Codex Subagent %s", sessionID)
 			} else {
-				title = fmt.Sprintf("Codex Session %s", meta.ID)
+				title = fmt.Sprintf("Codex Session %s", sessionID)
 			}
 		} else {
-			if meta.ID != "" {
-				title = fmt.Sprintf("Codex Session %s", meta.ID)
+			if sessionID != "" {
+				title = fmt.Sprintf("Codex Session %s", sessionID)
 			} else {
 				title = "Codex Session"
 			}
@@ -488,11 +495,20 @@ func ParseCodexLine(line []byte) ([]ParsedEvent, error) {
 		}
 
 		switch resp.Type {
-		case "function_call":
+		case "function_call", "custom_tool_call":
 			var inputMap map[string]interface{}
 			if resp.Arguments != "" {
 				if err := json.Unmarshal([]byte(resp.Arguments), &inputMap); err != nil {
 					inputMap = map[string]interface{}{"raw": resp.Arguments}
+				}
+			} else if resp.Input != nil {
+				switch in := resp.Input.(type) {
+				case map[string]interface{}:
+					inputMap = in
+				case string:
+					if err := json.Unmarshal([]byte(in), &inputMap); err != nil {
+						inputMap = map[string]interface{}{"raw": in}
+					}
 				}
 			}
 
@@ -548,7 +564,7 @@ func ParseCodexLine(line []byte) ([]ParsedEvent, error) {
 				})
 			}
 
-		case "function_call_output":
+		case "function_call_output", "custom_tool_call_output":
 			var callIDPtr *string
 			if resp.CallID != "" {
 				callIDPtr = stringPtr(resp.CallID)

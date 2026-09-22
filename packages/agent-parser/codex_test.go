@@ -673,4 +673,115 @@ func TestParseCodexLine(t *testing.T) {
 			t.Error("expected error for invalid response_item payload")
 		}
 	})
+
+	t.Run("session_meta with legacy session_id alias", func(t *testing.T) {
+		line := []byte(`{"type":"session_meta","timestamp":"2026-06-12T16:08:36.000Z","payload":{"session_id":"legacy-ses-999","cwd":"/repo"}}`)
+		evs, err := ParseCodexLine(line)
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("unexpected result: evs=%v err=%v", evs, err)
+		}
+		if evs[0].EventType != "run_started" {
+			t.Fatalf("EventType = %q, want 'run_started'", evs[0].EventType)
+		}
+		if evs[0].Data.Title == nil || *evs[0].Data.Title != "Codex Session legacy-ses-999" {
+			t.Errorf("Title = %v, want 'Codex Session legacy-ses-999'", evs[0].Data.Title)
+		}
+	})
+
+	t.Run("response_item custom_tool_call with arguments", func(t *testing.T) {
+		line := []byte(`{
+			"type": "response_item",
+			"timestamp": "2026-06-12T16:08:44.000Z",
+			"payload": {
+				"type": "custom_tool_call",
+				"name": "mcp_browser_click",
+				"call_id": "call_mcp_001",
+				"arguments": "{\"element_id\": \"btn-submit\"}"
+			}
+		}`)
+		evs, err := ParseCodexLine(line)
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("unexpected result: evs=%v err=%v", evs, err)
+		}
+		if evs[0].EventType != "tool_call" {
+			t.Errorf("EventType = %q, want 'tool_call'", evs[0].EventType)
+		}
+		if *evs[0].Data.ToolName != "mcp_browser_click" || *evs[0].Data.ToolCallID != "call_mcp_001" {
+			t.Errorf("ToolName/ToolCallID mismatch: %+v", evs[0].Data)
+		}
+		if evs[0].Data.ToolInput["element_id"] != "btn-submit" {
+			t.Errorf("ToolInput mismatch: %+v", evs[0].Data.ToolInput)
+		}
+	})
+
+	t.Run("response_item custom_tool_call with input map", func(t *testing.T) {
+		line := []byte(`{
+			"type": "response_item",
+			"timestamp": "2026-06-12T16:08:44.000Z",
+			"payload": {
+				"type": "custom_tool_call",
+				"name": "mcp_search",
+				"call_id": "call_mcp_002",
+				"input": {"query": "auth handlers"}
+			}
+		}`)
+		evs, err := ParseCodexLine(line)
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("unexpected result: evs=%v err=%v", evs, err)
+		}
+		if evs[0].EventType != "tool_call" {
+			t.Errorf("EventType = %q, want 'tool_call'", evs[0].EventType)
+		}
+		if evs[0].Data.ToolInput["query"] != "auth handlers" {
+			t.Errorf("ToolInput mismatch: %+v", evs[0].Data.ToolInput)
+		}
+	})
+
+	t.Run("response_item function_call with input string", func(t *testing.T) {
+		line := []byte(`{
+			"type": "response_item",
+			"timestamp": "2026-06-12T16:08:44.000Z",
+			"payload": {
+				"type": "function_call",
+				"name": "exec_command",
+				"call_id": "call_exec_input_str",
+				"input": "{\"cmd\": \"git status\"}"
+			}
+		}`)
+		evs, err := ParseCodexLine(line)
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("unexpected result: evs=%v err=%v", evs, err)
+		}
+		if evs[0].EventType != "tool_call" {
+			t.Errorf("EventType = %q, want 'tool_call'", evs[0].EventType)
+		}
+		if evs[0].Data.ToolInput["command"] != "git status" {
+			t.Errorf("ToolInput command mismatch: %+v", evs[0].Data.ToolInput)
+		}
+	})
+
+	t.Run("response_item custom_tool_call_output", func(t *testing.T) {
+		line := []byte(`{
+			"type": "response_item",
+			"timestamp": "2026-06-12T16:08:46.000Z",
+			"payload": {
+				"type": "custom_tool_call_output",
+				"call_id": "call_mcp_001",
+				"output": "Element clicked successfully"
+			}
+		}`)
+		evs, err := ParseCodexLine(line)
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("unexpected result: evs=%v err=%v", evs, err)
+		}
+		if evs[0].EventType != "tool_result" {
+			t.Errorf("EventType = %q, want 'tool_result'", evs[0].EventType)
+		}
+		if *evs[0].Data.ToolCallID != "call_mcp_001" || *evs[0].Data.ToolOutput != "Element clicked successfully" {
+			t.Errorf("ToolCallID/ToolOutput mismatch: %+v", evs[0].Data)
+		}
+		if *evs[0].Data.IsError != false {
+			t.Errorf("expected IsError=false, got true")
+		}
+	})
 }

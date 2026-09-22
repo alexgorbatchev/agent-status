@@ -8,6 +8,7 @@ Pure Go parsing routines for extracting structured events from Claude Code, Pi, 
 
 ## Local conventions
 - Match parser behavior against canonical schema specifications in `docs/harness-logs/*.ts`.
+- Go parser types and unmarshaling structs must be kept strictly in sync with the canonical TypeScript definitions in `docs/harness-logs/*.ts`.
 - Parsers must be pure functions without filesystem I/O, network requests, or global state.
 
 ## Local gotchas

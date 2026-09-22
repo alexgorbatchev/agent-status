@@ -642,3 +642,67 @@ func TestClaudeCodeParser_EdgeCasesAndReset(t *testing.T) {
 		t.Errorf("expected run_started after Reset, got %+v", evsAfterReset)
 	}
 }
+
+func TestClaudeCodeParser_SchemaAliases(t *testing.T) {
+	tests := []struct {
+		name      string
+		line      string
+		wantType  string
+		wantTitle string
+	}{
+		{
+			name:      "ai-title with canonical aiTitle",
+			line:      `{"type":"ai-title","sessionId":"ses-1","aiTitle":"Canonical AI Title"}`,
+			wantType:  "title_change",
+			wantTitle: "Canonical AI Title",
+		},
+		{
+			name:      "ai-title with snake_case ai_title",
+			line:      `{"type":"ai-title","sessionId":"ses-1","ai_title":"Snake Case AI Title"}`,
+			wantType:  "title_change",
+			wantTitle: "Snake Case AI Title",
+		},
+		{
+			name:      "ai-title with title alias",
+			line:      `{"type":"ai-title","sessionId":"ses-1","title":"Plain Title Alias"}`,
+			wantType:  "title_change",
+			wantTitle: "Plain Title Alias",
+		},
+		{
+			name:      "agent-name with canonical agentName",
+			line:      `{"type":"agent-name","sessionId":"ses-1","agentName":"architect"}`,
+			wantType:  "title_change",
+			wantTitle: "architect",
+		},
+		{
+			name:      "agent-name with alias name",
+			line:      `{"type":"agent-name","sessionId":"ses-1","name":"planner"}`,
+			wantType:  "title_change",
+			wantTitle: "planner",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := NewClaudeCodeParser()
+			evs, err := p.ParseLine([]byte(tt.line))
+			if err != nil {
+				t.Fatalf("ParseLine error: %v", err)
+			}
+			// May have run_started before title_change
+			var found *ParsedEvent
+			for i := range evs {
+				if evs[i].EventType == tt.wantType {
+					found = &evs[i]
+					break
+				}
+			}
+			if found == nil {
+				t.Fatalf("expected event %q, got %+v", tt.wantType, evs)
+			}
+			if found.Data.Title == nil || *found.Data.Title != tt.wantTitle {
+				t.Errorf("Title = %v, want %q", found.Data.Title, tt.wantTitle)
+			}
+		})
+	}
+}

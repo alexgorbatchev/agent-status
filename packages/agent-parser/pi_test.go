@@ -439,4 +439,72 @@ func TestParsePiLine(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("message with snake_case tool_result role and alias fields", func(t *testing.T) {
+		line := []byte(`{
+			"type": "message",
+			"message": {
+				"role": "tool_result",
+				"tool_name": "bash",
+				"tool_call_id": "call-snake-1",
+				"content": "output text",
+				"is_error": true
+			}
+		}`)
+		evs, err := ParsePiLine(line, "/cwd")
+		if err != nil {
+			t.Fatalf("ParsePiLine error: %v", err)
+		}
+		if len(evs) != 1 {
+			t.Fatalf("expected 1 event, got %d", len(evs))
+		}
+		if evs[0].EventType != "tool_result" {
+			t.Errorf("EventType = %q, want 'tool_result'", evs[0].EventType)
+		}
+		if evs[0].Data.ToolName == nil || *evs[0].Data.ToolName != "bash" {
+			t.Errorf("ToolName = %v, want 'bash'", evs[0].Data.ToolName)
+		}
+		if evs[0].Data.ToolCallID == nil || *evs[0].Data.ToolCallID != "call-snake-1" {
+			t.Errorf("ToolCallID = %v, want 'call-snake-1'", evs[0].Data.ToolCallID)
+		}
+		if evs[0].Data.IsError == nil || *evs[0].Data.IsError != true {
+			t.Errorf("IsError = %v, want true", evs[0].Data.IsError)
+		}
+	})
+
+	t.Run("assistant content block with snake_case tool_call type and alias fields", func(t *testing.T) {
+		line := []byte(`{
+			"type": "message",
+			"message": {
+				"role": "assistant",
+				"content": [
+					{
+						"type": "tool_call",
+						"tool_name": "read",
+						"tool_call_id": "call-snake-2",
+						"arguments": {"file_path": "main.go"}
+					}
+				]
+			}
+		}`)
+		evs, err := ParsePiLine(line, "/cwd")
+		if err != nil {
+			t.Fatalf("ParsePiLine error: %v", err)
+		}
+		if len(evs) != 2 {
+			t.Fatalf("expected 2 events (tool_call, turn_end), got %d", len(evs))
+		}
+		if evs[0].EventType != "tool_call" {
+			t.Errorf("EventType = %q, want 'tool_call'", evs[0].EventType)
+		}
+		if evs[0].Data.ToolName == nil || *evs[0].Data.ToolName != "read" {
+			t.Errorf("ToolName = %v, want 'read'", evs[0].Data.ToolName)
+		}
+		if evs[0].Data.ToolCallID == nil || *evs[0].Data.ToolCallID != "call-snake-2" {
+			t.Errorf("ToolCallID = %v, want 'call-snake-2'", evs[0].Data.ToolCallID)
+		}
+		if evs[1].EventType != "turn_end" {
+			t.Errorf("EventType = %q, want 'turn_end'", evs[1].EventType)
+		}
+	})
 }

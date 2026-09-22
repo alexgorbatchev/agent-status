@@ -14,18 +14,21 @@ import (
 )
 
 type rawPiContentBlock struct {
-	Type       string                 `json:"type"` // "text" | "thinking" | "toolCall" | "toolResult"
-	Text       string                 `json:"text,omitempty"`
-	Thinking   string                 `json:"thinking,omitempty"`
-	ToolName   string                 `json:"toolName,omitempty"`
-	ToolCallID string                 `json:"toolCallId,omitempty"`
-	Name       string                 `json:"name,omitempty"`
-	ID         string                 `json:"id,omitempty"`
-	Input      map[string]interface{} `json:"input,omitempty"`
-	Parameters map[string]interface{} `json:"parameters,omitempty"`
-	Arguments  map[string]interface{} `json:"arguments,omitempty"`
-	Content    interface{}            `json:"content,omitempty"`
-	IsError    *bool                  `json:"isError,omitempty"`
+	Type             string                 `json:"type"` // "text" | "thinking" | "toolCall" | "tool_call" | "toolResult" | "tool_result"
+	Text             string                 `json:"text,omitempty"`
+	Thinking         string                 `json:"thinking,omitempty"`
+	ToolName         string                 `json:"toolName,omitempty"`
+	ToolNameSnake    string                 `json:"tool_name,omitempty"`
+	ToolCallID       string                 `json:"toolCallId,omitempty"`
+	ToolCallIDSnake  string                 `json:"tool_call_id,omitempty"`
+	Name             string                 `json:"name,omitempty"`
+	ID               string                 `json:"id,omitempty"`
+	Input            map[string]interface{} `json:"input,omitempty"`
+	Parameters       map[string]interface{} `json:"parameters,omitempty"`
+	Arguments        map[string]interface{} `json:"arguments,omitempty"`
+	Content          interface{}            `json:"content,omitempty"`
+	IsError          *bool                  `json:"isError,omitempty"`
+	IsErrorSnake     *bool                  `json:"is_error,omitempty"`
 }
 
 type rawPiCostBreakdown struct {
@@ -73,15 +76,18 @@ func (u *rawPiUsage) UnmarshalJSON(data []byte) error {
 }
 
 type rawPiMessage struct {
-	Role       string              `json:"role"` // "user" | "assistant" | "toolResult" | "system"
-	Model      string              `json:"model,omitempty"`
-	Provider   string              `json:"provider,omitempty"`
-	Content    interface{}         `json:"content,omitempty"`
-	Usage      *rawPiUsage         `json:"usage,omitempty"`
-	StopReason string              `json:"stopReason,omitempty"`
-	ToolName   string              `json:"toolName,omitempty"`
-	ToolCallID string              `json:"toolCallId,omitempty"`
-	IsError    *bool               `json:"isError,omitempty"`
+	Role            string              `json:"role"` // "user" | "assistant" | "toolResult" | "tool_result" | "system"
+	Model           string              `json:"model,omitempty"`
+	Provider        string              `json:"provider,omitempty"`
+	Content         interface{}         `json:"content,omitempty"`
+	Usage           *rawPiUsage         `json:"usage,omitempty"`
+	StopReason      string              `json:"stopReason,omitempty"`
+	ToolName        string              `json:"toolName,omitempty"`
+	ToolNameSnake   string              `json:"tool_name,omitempty"`
+	ToolCallID      string              `json:"toolCallId,omitempty"`
+	ToolCallIDSnake string              `json:"tool_call_id,omitempty"`
+	IsError         *bool               `json:"isError,omitempty"`
+	IsErrorSnake    *bool               `json:"is_error,omitempty"`
 }
 
 type rawPiLine struct {
@@ -253,20 +259,30 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 				},
 			})
 
-		case "toolResult":
+		case "toolResult", "tool_result":
 			output := extractContentString(msg.Content)
 			isErr := false
 			if msg.IsError != nil {
 				isErr = *msg.IsError
+			} else if msg.IsErrorSnake != nil {
+				isErr = *msg.IsErrorSnake
 			}
 
+			toolCallIDStr := msg.ToolCallID
+			if toolCallIDStr == "" {
+				toolCallIDStr = msg.ToolCallIDSnake
+			}
 			var toolCallID *string
-			if msg.ToolCallID != "" {
-				toolCallID = stringPtr(msg.ToolCallID)
+			if toolCallIDStr != "" {
+				toolCallID = stringPtr(toolCallIDStr)
+			}
+			toolNameStr := msg.ToolName
+			if toolNameStr == "" {
+				toolNameStr = msg.ToolNameSnake
 			}
 			var toolName *string
-			if msg.ToolName != "" {
-				toolName = stringPtr(msg.ToolName)
+			if toolNameStr != "" {
+				toolName = stringPtr(toolNameStr)
 			}
 
 			events = append(events, ParsedEvent{
@@ -311,12 +327,18 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 						textParts = append(textParts, b.Text)
 					}
 
-				case "toolCall", "tool_use":
+				case "toolCall", "tool_call", "tool_use":
 					toolName := b.ToolName
+					if toolName == "" {
+						toolName = b.ToolNameSnake
+					}
 					if toolName == "" {
 						toolName = b.Name
 					}
 					callID := b.ToolCallID
+					if callID == "" {
+						callID = b.ToolCallIDSnake
+					}
 					if callID == "" {
 						callID = b.ID
 					}

@@ -66,6 +66,9 @@ type rawJSONLine struct {
 	IsSidechain       bool        `json:"isSidechain"`
 	Title             string      `json:"title"`
 	AITitle           string      `json:"aiTitle"`
+	AITitleSnake      string      `json:"ai_title,omitempty"`
+	AgentName         string      `json:"agentName,omitempty"`
+	Name              string      `json:"name,omitempty"`
 	LastPrompt        string      `json:"lastPrompt"`
 	Message           *rawMessage `json:"message"`
 	Content           interface{} `json:"content"`
@@ -313,6 +316,9 @@ func parseClaudeCodeLineEvents(raw rawJSONLine, ts int64) []ParsedEvent {
 	case "ai-title", "title":
 		titleVal := raw.AITitle
 		if titleVal == "" {
+			titleVal = raw.AITitleSnake
+		}
+		if titleVal == "" {
 			titleVal = raw.Title
 		}
 		if titleVal == "" && raw.Content != nil {
@@ -326,6 +332,23 @@ func parseClaudeCodeLineEvents(raw rawJSONLine, ts int64) []ParsedEvent {
 				GitBranch: raw.GitBranch,
 				Data: types.TelemetryFrameData{
 					Title: stringPtr(titleVal),
+				},
+			})
+		}
+
+	case "agent-name":
+		nameVal := raw.AgentName
+		if nameVal == "" {
+			nameVal = raw.Name
+		}
+		if nameVal != "" {
+			events = append(events, ParsedEvent{
+				EventType: "title_change",
+				Timestamp: ts,
+				CWD:       raw.CWD,
+				GitBranch: raw.GitBranch,
+				Data: types.TelemetryFrameData{
+					Title: stringPtr(nameVal),
 				},
 			})
 		}
