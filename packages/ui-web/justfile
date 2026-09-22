@@ -16,6 +16,10 @@ run-ai:
 build:
     bun run build
 
+# Start Storybook component explorer
+storybook *args:
+    bun run storybook {{args}}
+
 # Run policy checks and TypeScript compiler check
 lint:
     bun run check
