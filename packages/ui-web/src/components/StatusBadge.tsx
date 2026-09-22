@@ -51,11 +51,18 @@ const STATUS_CONFIGS: Record<LifecycleState, Record<ActivityState, IStatusBadgeC
   },
 };
 
-export function StatusBadge({ lifecycle, activity, stallTier, toolDuration }: IStatusBadgeProps): React.JSX.Element {
-  const isStalledOrWarning =
+export function StatusBadge({
+  lifecycle,
+  activity,
+  stallTier,
+  toolDuration,
+  isSessionStalled,
+  silenceDuration,
+}: IStatusBadgeProps): React.JSX.Element {
+  const isToolStalledOrWarning =
     lifecycle === "RUNNING" && activity === "BUSY" && (stallTier === "warning" || stallTier === "stalled");
 
-  if (isStalledOrWarning) {
+  if (isToolStalledOrWarning) {
     const durationLabel = toolDuration ? ` • ${toolDuration}` : "";
     return (
       <span
@@ -69,6 +76,23 @@ export function StatusBadge({ lifecycle, activity, stallTier, toolDuration }: IS
           <AlertTriangle size={12} />
         </IconWrapper>
         <span data-testid="StatusBadge--label">Busy{durationLabel}</span>
+      </span>
+    );
+  }
+
+  const isSilenceStalled = lifecycle === "RUNNING" && activity === "BUSY" && Boolean(isSessionStalled);
+  if (isSilenceStalled) {
+    const durationLabel = silenceDuration ? ` (${silenceDuration})` : "";
+    return (
+      <span
+        data-testid="StatusBadge"
+        role="status"
+        data-lifecycle={lifecycle}
+        data-stall-type="silence"
+        className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-950/60 text-amber-300 border border-amber-600/80"
+      >
+        <span data-testid="StatusBadge--indicator" className="w-2 h-2 rounded-full bg-amber-400" />
+        <span data-testid="StatusBadge--label">Stalled{durationLabel}</span>
       </span>
     );
   }

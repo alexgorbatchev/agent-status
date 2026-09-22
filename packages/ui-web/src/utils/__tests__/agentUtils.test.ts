@@ -11,6 +11,7 @@ import {
   getToolExecutionDuration,
   getToolStallTier,
   formatDuration,
+  isSessionStalled,
 } from "../agentUtils";
 import { factory_createAgent, fixture_testEnvironment, fixture_testStaleEnvironment } from "./fixtures";
 import type { IAgentState } from "../../types";
@@ -202,12 +203,14 @@ describe("agentUtils", () => {
     });
 
     it("returns false for RUNNING agent with BUSY or IDLE activity", () => {
+      const now = Date.now();
       const busyAgent: IAgentState = factory_createAgent({
         environment: fixture_testEnvironment,
         activity: {
           ...factory_createAgent().activity,
           lifecycle: "RUNNING",
           activity: "BUSY",
+          updatedAt: now,
         },
       });
       const idleAgent: IAgentState = factory_createAgent({
@@ -216,6 +219,7 @@ describe("agentUtils", () => {
           ...factory_createAgent().activity,
           lifecycle: "RUNNING",
           activity: "IDLE",
+          updatedAt: now,
         },
       });
       expect(isAgentRequiringAttention(busyAgent)).toBe(false);
@@ -451,6 +455,76 @@ describe("agentUtils", () => {
         },
       });
       expect(isAgentRequiringAttention(warningAgent, now)).toBe(false);
+    });
+
+    it("returns true for a running busy agent with silence duration >= 120s", () => {
+      const now = 200000;
+      const silentBusyAgent = factory_createAgent({
+        activity: {
+          ...factory_createAgent().activity,
+          lifecycle: "RUNNING",
+          activity: "BUSY",
+          activeTool: null,
+          activeToolStartedAt: null,
+          updatedAt: now - 130000,
+        },
+      });
+      expect(isAgentRequiringAttention(silentBusyAgent, now)).toBe(true);
+    });
+
+    it("returns false for a running busy agent with silence duration < 120s", () => {
+      const now = 200000;
+      const activeBusyAgent = factory_createAgent({
+        activity: {
+          ...factory_createAgent().activity,
+          lifecycle: "RUNNING",
+          activity: "BUSY",
+          activeTool: null,
+          activeToolStartedAt: null,
+          updatedAt: now - 30000,
+        },
+      });
+      expect(isAgentRequiringAttention(activeBusyAgent, now)).toBe(false);
+    });
+
+    it("returns false for a running IDLE agent with silence duration >= 120s", () => {
+      const now = 200000;
+      const idleAgent = factory_createAgent({
+        activity: {
+          ...factory_createAgent().activity,
+          lifecycle: "RUNNING",
+          activity: "IDLE",
+          updatedAt: now - 130000,
+        },
+      });
+      expect(isAgentRequiringAttention(idleAgent, now)).toBe(false);
+    });
+  });
+
+  describe("isSessionStalled", () => {
+    it("returns false when silence duration is below threshold", () => {
+      const now = 200000;
+      expect(isSessionStalled(now - 30000, now)).toBe(false);
+      expect(isSessionStalled(now - 119999, now)).toBe(false);
+    });
+
+    it("returns true when silence duration is at or exceeds threshold", () => {
+      const now = 1000000;
+      expect(isSessionStalled(now - 120000, now)).toBe(true);
+      expect(isSessionStalled(now - 300000, now)).toBe(true);
+    });
+
+    it("respects custom thresholdMs", () => {
+      const now = 200000;
+      expect(isSessionStalled(now - 50000, now, 60000)).toBe(false);
+      expect(isSessionStalled(now - 65000, now, 60000)).toBe(true);
+    });
+
+    it("returns false for invalid timestamps", () => {
+      const now = 200000;
+      expect(isSessionStalled(0, now)).toBe(false);
+      expect(isSessionStalled(-100, now)).toBe(false);
+      expect(isSessionStalled(Number.NaN, now)).toBe(false);
     });
   });
 });

@@ -22,6 +22,7 @@ describe("AttentionBanner Component", () => {
     const element = AttentionBanner({
       agents: [fixture_agentStateRunning],
       onSelectAgent: () => {},
+      now: 1789850000000,
     });
     expect(element).toBeNull();
   });
@@ -102,11 +103,36 @@ describe("AttentionBanner Component", () => {
     expect(html).toContain('data-callout-type="warning"');
   });
 
+  it("renders single agent card requiring attention for silence-stalled busy session (>=120s)", () => {
+    const now = 200000;
+    const silenceStalledAgent = factory_agentState({
+      activity: {
+        ...fixture_agentStateRunning.activity,
+        lifecycle: "RUNNING",
+        activity: "BUSY",
+        title: "Long-running test execution",
+        updatedAt: now - 150000,
+        activeToolStartedAt: null,
+      } as unknown as IAgentState["activity"],
+    });
+
+    const html = renderToStaticMarkup(
+      <AttentionBanner agents={[silenceStalledAgent]} onSelectAgent={() => {}} now={now} />,
+    );
+
+    expect(html).toContain('data-testid="AttentionBanner"');
+    expect(html).toContain("Act Now — 1 Agent Requires Attention");
+    expect(html).toContain("Long-running test execution");
+    expect(html).toContain("Session silent for 2m without telemetry");
+    expect(html).toContain('data-callout-type="warning"');
+  });
+
   it("renders multiple cards and plural heading when multiple agents require attention", () => {
     const html = renderToStaticMarkup(
       <AttentionBanner
         agents={[fixture_agentStateWaitingQuestion, fixture_agentStateError, fixture_agentStateRunning]}
         onSelectAgent={() => {}}
+        now={1789850000000}
       />,
     );
 

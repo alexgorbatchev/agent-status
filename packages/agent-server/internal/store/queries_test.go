@@ -356,6 +356,93 @@ func TestStore_GetStatus(t *testing.T) {
 			t.Errorf("RequiresAttentionCount = %d, want 1", status.RequiresAttentionCount)
 		}
 	})
+
+	t.Run("stalled silence increases requires attention count", func(t *testing.T) {
+		sSilence := setupTestDB(t)
+		ctx := context.Background()
+		now := time.Now().UnixMilli()
+
+		_, err := sSilence.db.ExecContext(ctx, `
+			INSERT INTO environments (id, label, hostname, platform, user, dropped_frames, last_heartbeat_at)
+			VALUES ('env-silence', 'macbook', 'macbook.local', 'darwin', 'alex', 0, ?)
+		`, now)
+		if err != nil {
+			t.Fatalf("inserting environment: %v", err)
+		}
+
+		// Run 1: stalled silence (updated_at = now - 130000, >= 120s)
+		_, err = sSilence.db.ExecContext(ctx, `
+			INSERT INTO runs (id, agent_id, pid, harness_version, started_at, ended_at)
+			VALUES ('run-silence-1', 'agent-silence-1', 1001, '1.0', ?, NULL)
+		`, now-300000)
+		if err != nil {
+			t.Fatalf("inserting run 1: %v", err)
+		}
+
+		silenceStalledUpdate := now - 130000
+		_, err = sSilence.db.ExecContext(ctx, `
+			INSERT INTO agents (
+				id, session_id, environment_id, harness, project_id, project_name, canonical_root,
+				branch, is_detached, is_worktree, worktree_rel_path, cwd, current_run_id,
+				activity, title, action, action_stale, phase, active_tool, active_target,
+				active_tool_started_at,
+				tokens_input, tokens_output, tokens_cache_read, tokens_cache_write,
+				tokens_reasoning, tokens_total, cost_usd, subagent_count, first_started_at, updated_at
+			) VALUES (
+				'agent-silence-1', 'sess-silence-1', 'env-silence', 'claude-code', 'proj', 'proj', '/repo',
+				'main', 0, 0, NULL, '/repo', 'run-silence-1',
+				'BUSY', 'Working', 'Executing task', 0, 'editing', NULL, NULL,
+				NULL,
+				0, 0, 0, 0, 0, 0, 0, 0, ?, ?
+			)
+		`, now-300000, silenceStalledUpdate)
+		if err != nil {
+			t.Fatalf("inserting agent 1: %v", err)
+		}
+
+		// Run 2: healthy active (updated_at = now - 30000, < 120s)
+		_, err = sSilence.db.ExecContext(ctx, `
+			INSERT INTO runs (id, agent_id, pid, harness_version, started_at, ended_at)
+			VALUES ('run-silence-2', 'agent-silence-2', 1002, '1.0', ?, NULL)
+		`, now-300000)
+		if err != nil {
+			t.Fatalf("inserting run 2: %v", err)
+		}
+
+		activeUpdate := now - 30000
+		_, err = sSilence.db.ExecContext(ctx, `
+			INSERT INTO agents (
+				id, session_id, environment_id, harness, project_id, project_name, canonical_root,
+				branch, is_detached, is_worktree, worktree_rel_path, cwd, current_run_id,
+				activity, title, action, action_stale, phase, active_tool, active_target,
+				active_tool_started_at,
+				tokens_input, tokens_output, tokens_cache_read, tokens_cache_write,
+				tokens_reasoning, tokens_total, cost_usd, subagent_count, first_started_at, updated_at
+			) VALUES (
+				'agent-silence-2', 'sess-silence-2', 'env-silence', 'claude-code', 'proj', 'proj', '/repo',
+				'main', 0, 0, NULL, '/repo', 'run-silence-2',
+				'BUSY', 'Working', 'Executing task', 0, 'editing', NULL, NULL,
+				NULL,
+				0, 0, 0, 0, 0, 0, 0, 0, ?, ?
+			)
+		`, now-300000, activeUpdate)
+		if err != nil {
+			t.Fatalf("inserting agent 2: %v", err)
+		}
+
+		status, err := sSilence.GetStatus(ctx)
+		if err != nil {
+			t.Fatalf("GetStatus failed: %v", err)
+		}
+
+		if status.ActiveAgentCount != 2 {
+			t.Errorf("ActiveAgentCount = %d, want 2", status.ActiveAgentCount)
+		}
+		// Agent 1 has silence >= 120s (stalled) so attention count = 1
+		if status.RequiresAttentionCount != 1 {
+			t.Errorf("RequiresAttentionCount = %d, want 1", status.RequiresAttentionCount)
+		}
+	})
 }
 
 func TestStore_GetEnvironments(t *testing.T) {
