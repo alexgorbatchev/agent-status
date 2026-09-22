@@ -474,6 +474,11 @@ func SetDefault(logger *Logger) {
 	slog.SetDefault(logger)
 }
 
+// Default returns the default logger.
+func Default() *Logger {
+	return slog.Default()
+}
+
 // Debug logs at LevelDebug using the default logger.
 func Debug(action string, args ...any) {
 	slog.Default().Debug(action, args...)

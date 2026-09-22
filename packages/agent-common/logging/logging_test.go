@@ -261,6 +261,9 @@ func TestNewAndSetupFunctions(t *testing.T) {
 		t.Fatal("expected Setup to return non-nil logger")
 	}
 	SetDefault(setupLogger)
+	if got := Default(); got != setupLogger {
+		t.Errorf("Default() = %v, want %v", got, setupLogger)
+	}
 
 	withLogger := With("extra", "val")
 	if withLogger == nil {
