@@ -1001,6 +1001,137 @@ func TestObserverClaudeSubagentRunStartedEmission(t *testing.T) {
 	<-errCh
 }
 
+func TestObserver_StartupSessionReconciliation(t *testing.T) {
+	tmpDir := t.TempDir()
+	cursorPath := filepath.Join(tmpDir, "cursors.json")
+	sessionStatePath := filepath.Join(tmpDir, "observer-sessions.json")
+	claudeDir := filepath.Join(tmpDir, "claude-sessions")
+	_ = os.MkdirAll(claudeDir, 0755)
+	piDir := filepath.Join(tmpDir, "pi-sessions")
+	_ = os.MkdirAll(piDir, 0755)
+
+	// Pre-populate sessionStatePath with 2 sessions that were active in a previous run,
+	// but their processes are no longer alive
+	prevSessions := map[string]scanner.TrackedSession{
+		"sess-reconcile-pi": {
+			SessionID:      "sess-reconcile-pi",
+			Harness:        "pi",
+			PID:            99991, // dead PID
+			CWD:            tmpDir,
+			HarnessVersion: "0.1.0",
+			StartedAt:      time.Now().UnixMilli() - 100000,
+			IsActive:       true,
+		},
+		"sess-reconcile-claude": {
+			SessionID:      "sess-reconcile-claude",
+			Harness:        "claude-code",
+			PID:            99992, // dead PID
+			CWD:            tmpDir,
+			HarnessVersion: "1.0.0",
+			StartedAt:      time.Now().UnixMilli() - 200000,
+			IsActive:       true,
+		},
+	}
+	stateData, err := json.Marshal(prevSessions)
+	if err != nil {
+		t.Fatalf("marshal error: %v", err)
+	}
+	if err := os.WriteFile(sessionStatePath, stateData, 0644); err != nil {
+		t.Fatalf("writeFile error: %v", err)
+	}
+
+	var receivedFramesMu sync.Mutex
+	var receivedExits []string
+	exitPiReceived := make(chan struct{})
+	exitClaudeReceived := make(chan struct{})
+	var oncePi, onceClaude sync.Once
+
+	mockIngester := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+		for {
+			_, data, err := conn.Read(r.Context())
+			if err != nil {
+				return
+			}
+			var msg types.IObserverMessage
+			if err := json.Unmarshal(data, &msg); err == nil && msg.Type == "frames" && len(msg.Frames) > 0 {
+				receivedFramesMu.Lock()
+				for _, f := range msg.Frames {
+					if f.EventType == "run_exited" {
+						receivedExits = append(receivedExits, f.SessionID)
+						if f.SessionID == "sess-reconcile-pi" {
+							oncePi.Do(func() { close(exitPiReceived) })
+						}
+						if f.SessionID == "sess-reconcile-claude" {
+							onceClaude.Do(func() { close(exitClaudeReceived) })
+						}
+					}
+				}
+				receivedFramesMu.Unlock()
+
+				lastSeq := msg.Frames[len(msg.Frames)-1].Seq
+				ack := types.IIngesterMessage{
+					Type: "ack",
+					UpTo: lastSeq,
+				}
+				ackBytes, _ := json.Marshal(ack)
+				_ = conn.Write(r.Context(), websocket.MessageText, ackBytes)
+			}
+		}
+	}))
+	defer mockIngester.Close()
+
+	opts := observerOptions{
+		ingesterURL:       "ws" + strings.TrimPrefix(mockIngester.URL, "http") + "/ws/ingest",
+		cursorPath:        cursorPath,
+		sessionStatePath:  sessionStatePath,
+		claudeSessionsDir: claudeDir,
+		piSessionsDir:     piDir,
+		scanInterval:      50 * time.Millisecond,
+		envFlag:           "test-env",
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runObserverContext(ctx, opts)
+	}()
+
+	// Verify both exited events are received on initial reconciliation scan
+	select {
+	case <-exitPiReceived:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("timed out waiting for sess-reconcile-pi run_exited on startup reconciliation")
+	}
+
+	select {
+	case <-exitClaudeReceived:
+	case <-time.After(3 * time.Second):
+		t.Fatalf("timed out waiting for sess-reconcile-claude run_exited on startup reconciliation")
+	}
+
+	cancel()
+	<-errCh
+
+	// Verify sessionStatePath on disk was updated to remove the exited sessions
+	tracker, err := scanner.NewSessionTracker(sessionStatePath)
+	if err != nil {
+		t.Fatalf("NewSessionTracker error: %v", err)
+	}
+	remaining := tracker.GetAll()
+	if len(remaining) != 0 {
+		t.Errorf("expected 0 remaining active sessions after reconciliation, got %d: %+v", len(remaining), remaining)
+	}
+}
+
+
 
 
 

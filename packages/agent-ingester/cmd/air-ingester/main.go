@@ -16,6 +16,7 @@ import (
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/notify"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/pricing"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/receiver"
+	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/reconciler"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/store"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/summarizer"
 	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree"
@@ -117,6 +118,30 @@ func newRootCmd(cfg *config.Config) *cobra.Command {
 
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
+
+			// Process reconciliation on startup for local environment
+			rec := reconciler.New(st, pub)
+			if recCount, rErr := rec.Reconcile(ctx, ""); rErr != nil {
+				logging.Warn("process_reconciliation_startup_failed", "err", rErr)
+			} else if recCount > 0 {
+				logging.Info("process_reconciliation_startup_complete", "reconciledCount", recCount)
+			}
+
+			// Periodic process reconciliation sweep (every 30 seconds)
+			go func() {
+				ticker := time.NewTicker(30 * time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-ticker.C:
+						if _, pErr := rec.Reconcile(ctx, ""); pErr != nil && ctx.Err() == nil {
+							logging.Warn("process_reconciliation_periodic_failed", "err", pErr)
+						}
+					}
+				}
+			}()
 
 			// Hourly retention pruner
 			go func() {

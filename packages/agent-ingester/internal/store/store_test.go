@@ -1420,3 +1420,142 @@ func TestStore_RecordTelemetryEvent_SubagentAndCoverage(t *testing.T) {
 		t.Errorf("expected error opening non-existent read-only path")
 	}
 }
+
+func TestStore_GetRunningAgents(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	now := time.Now().UnixMilli()
+
+	// 1. Running agent on env-1
+	running1 := types.IAgentState{
+		ID:        "agent-running-1",
+		SessionID: "sess-1",
+		Harness:   types.HarnessPi,
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-1",
+			Platform: "darwin",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle:      types.LifecycleRunning,
+			Activity:       types.ActivityBusy,
+			FirstStartedAt: now,
+			UpdatedAt:      now,
+			CurrentRun: &types.IRunInfo{
+				ID:        "run-1",
+				PID:       1234,
+				StartedAt: now,
+			},
+		},
+	}
+	if err := st.SaveAgentState(running1); err != nil {
+		t.Fatalf("SaveAgentState(running1) failed: %v", err)
+	}
+
+	// 2. Running agent on env-2
+	running2 := types.IAgentState{
+		ID:        "agent-running-2",
+		SessionID: "sess-2",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-2",
+			Platform: "linux",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle:      types.LifecycleRunning,
+			Activity:       types.ActivityIdle,
+			FirstStartedAt: now,
+			UpdatedAt:      now + 10,
+			CurrentRun: &types.IRunInfo{
+				ID:        "run-2",
+				PID:       5678,
+				StartedAt: now,
+			},
+		},
+	}
+	if err := st.SaveAgentState(running2); err != nil {
+		t.Fatalf("SaveAgentState(running2) failed: %v", err)
+	}
+
+	// 3. Exited agent on env-1
+	exited := types.IAgentState{
+		ID:        "agent-exited",
+		SessionID: "sess-3",
+		Harness:   types.HarnessCodex,
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-1",
+			Platform: "darwin",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle:      types.LifecycleExited,
+			Activity:       types.ActivityIdle,
+			FirstStartedAt: now,
+			UpdatedAt:      now - 1000,
+		},
+	}
+	if err := st.SaveAgentState(exited); err != nil {
+		t.Fatalf("SaveAgentState(exited) failed: %v", err)
+	}
+
+	// Query all running agents
+	allRunning, err := st.GetRunningAgents("")
+	if err != nil {
+		t.Fatalf("GetRunningAgents(\"\") failed: %v", err)
+	}
+	if len(allRunning) != 2 {
+		t.Fatalf("expected 2 running agents, got %d", len(allRunning))
+	}
+
+	// Query running agents for env-1
+	env1Running, err := st.GetRunningAgents("env-1")
+	if err != nil {
+		t.Fatalf("GetRunningAgents(\"env-1\") failed: %v", err)
+	}
+	if len(env1Running) != 1 {
+		t.Fatalf("expected 1 running agent for env-1, got %d", len(env1Running))
+	}
+	if env1Running[0].ID != "agent-running-1" {
+		t.Errorf("expected agent-running-1, got %s", env1Running[0].ID)
+	}
+
+	// End run on running1
+	if err := st.EndCurrentRun("agent-running-1", now+2000); err != nil {
+		t.Fatalf("EndCurrentRun failed: %v", err)
+	}
+	env1RunningAfter, err := st.GetRunningAgents("env-1")
+	if err != nil {
+		t.Fatalf("GetRunningAgents after EndCurrentRun failed: %v", err)
+	}
+	if len(env1RunningAfter) != 0 {
+		t.Errorf("expected 0 running agents for env-1 after EndCurrentRun, got %d", len(env1RunningAfter))
+	}
+
+	// Test closed DB error
+	_ = st.Close()
+	if _, err := st.GetRunningAgents(""); err == nil {
+		t.Errorf("expected error on closed DB for GetRunningAgents")
+	}
+	if _, err := st.GetAllActiveAgents(); err == nil {
+		t.Errorf("expected error on closed DB for GetAllActiveAgents")
+	}
+	if _, err := st.GetAllEnvironments(); err == nil {
+		t.Errorf("expected error on closed DB for GetAllEnvironments")
+	}
+	if _, err := st.GetDistinctSubagentIDs("x"); err == nil {
+		t.Errorf("expected error on closed DB for GetDistinctSubagentIDs")
+	}
+	if err := st.RecordTelemetryEvent(types.ITelemetryFrame{}); err == nil {
+		t.Errorf("expected error on closed DB for RecordTelemetryEvent")
+	}
+	if err := st.PruneOldEventsAndExitedAgents(0, 0); err == nil {
+		t.Errorf("expected error on closed DB for PruneOldEventsAndExitedAgents")
+	}
+	if err := Migrate(st.DB()); err == nil {
+		t.Errorf("expected error in Migrate on closed DB")
+	}
+}
+
