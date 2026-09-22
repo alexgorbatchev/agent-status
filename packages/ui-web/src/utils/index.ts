@@ -4,6 +4,7 @@ export * from "./ansiUtils";
 export * from "./config";
 export * from "./correlateTelemetryFrames";
 export * from "./diffUtils";
+export * from "./getLogFrameKey";
 export * from "./groupingUtils";
 export * from "./LogBuffer";
 export * from "./rehypeAnsi";

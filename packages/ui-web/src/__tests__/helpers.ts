@@ -41,6 +41,11 @@ export class MockElement {
   parentNode: MockElement | null = null;
   listeners: Record<string, EventListenerFn[]> = {};
   attributes: Record<string, string> = {};
+  scrollTop = 0;
+  scrollHeight = 0;
+  clientHeight = 0;
+  scrollWidth = 0;
+  clientWidth = 0;
 
   addEventListener(event: string, fn: EventListenerFn): void {
     const list = this.listeners[event] ?? [];
@@ -86,8 +91,42 @@ export class MockElement {
     return child;
   }
 
-  insertBefore(child: MockDomNode, _ref: MockDomNode | null): MockDomNode {
-    return this.appendChild(child);
+  insertBefore(child: MockDomNode, refNode: MockDomNode | null): MockDomNode {
+    if (!refNode) {
+      return this.appendChild(child);
+    }
+    if (child.parentNode) {
+      child.parentNode.removeChild(child);
+    }
+    const childNodeIndex = this.childNodes.indexOf(child);
+    if (childNodeIndex !== -1) {
+      this.childNodes.splice(childNodeIndex, 1);
+    }
+    const refChildIndex = this.childNodes.indexOf(refNode);
+    if (refChildIndex === -1) {
+      this.childNodes.push(child);
+    } else {
+      this.childNodes.splice(refChildIndex, 0, child);
+    }
+
+    if ("tagName" in child) {
+      const childIndex = this.children.indexOf(child);
+      if (childIndex !== -1) {
+        this.children.splice(childIndex, 1);
+      }
+      if ("tagName" in refNode) {
+        const refIndex = this.children.indexOf(refNode);
+        if (refIndex === -1) {
+          this.children.push(child);
+        } else {
+          this.children.splice(refIndex, 0, child);
+        }
+      } else {
+        this.children.push(child);
+      }
+    }
+    child.parentNode = this;
+    return child;
   }
 
   setAttribute(name: string, value: string): void {
@@ -146,6 +185,23 @@ export class MockElement {
       }
     }
     return null;
+  }
+
+  querySelectorAll(selector: string): MockElement[] {
+    const results: MockElement[] = [];
+    const testIdMatch = selector.match(/\[data-testid="([^"]+)"\]/);
+    if (testIdMatch && testIdMatch[1]) {
+      const targetTestId = testIdMatch[1];
+      if (this.attributes["data-testid"] === targetTestId) {
+        results.push(this);
+      }
+      for (const child of this.children) {
+        if ("querySelectorAll" in child && typeof child.querySelectorAll === "function") {
+          results.push(...child.querySelectorAll(selector));
+        }
+      }
+    }
+    return results;
   }
 }
 
