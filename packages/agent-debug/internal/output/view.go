@@ -171,25 +171,18 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 	divider := strings.Repeat("-", width)
 
 	// 1. Header row
-	env := agent.Environment.Label
-	if env == "" {
-		env = agent.Environment.ID
-	}
-	if env == "" {
-		env = "local-dev"
-	}
 	harness := FormatHarnessLabel(agent.Harness)
-	headerLeft := fmt.Sprintf("(%s) • (%s)", env, harness)
+	button := "[Hide]"
+	if agent.IsHidden {
+		button = "[Unhide]"
+	}
+	headerLeft := fmt.Sprintf("(%s) %s", harness, button)
 
 	lifecycle := string(agent.Activity.Lifecycle)
 	if lifecycle == "" {
 		lifecycle = string(types.LifecycleRunning)
 	}
-	button := "[Hide]"
-	if agent.IsHidden {
-		button = "[Unhide]"
-	}
-	headerRight := fmt.Sprintf("(%s) %s", lifecycle, button)
+	headerRight := fmt.Sprintf("(%s)", lifecycle)
 
 	headerSpace := width - len(headerLeft) - len(headerRight)
 	if headerSpace < 1 {
@@ -220,11 +213,19 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 	}
 
 	// 4. Badges
+	env := agent.Environment.Label
+	if env == "" {
+		env = agent.Environment.ID
+	}
+	if env == "" {
+		env = "local-dev"
+	}
 	branch := agent.Workspace.Branch
 	if branch == "" {
 		branch = "main"
 	}
 	var badges []string
+	badges = append(badges, fmt.Sprintf("(%s)", env))
 	badges = append(badges, fmt.Sprintf("(branch: %s)", branch))
 
 	if agent.Workspace.IsWorktree && agent.Workspace.RelPath != nil && *agent.Workspace.RelPath != "" {
