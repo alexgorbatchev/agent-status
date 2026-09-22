@@ -337,6 +337,9 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
                   data-testid={`AgentCard--subagent-chip-${sub.id}`}
                   data-subagent-id={sub.id}
                   data-subagent-activity={sub.activity}
+                  data-badge-type="subagent"
+                  role="status"
+                  aria-label={label}
                   className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono border ${statusTone}`}
                 >
                   {label}

@@ -250,4 +250,39 @@ describe("AgentCard Semantic Accessibility Snapshots", () => {
       cleanup();
     }
   });
+
+  it("matches accessibility snapshot for agent with active subagent chips", async () => {
+    const { mockDoc, cleanup } = setupMockDomEnvironment();
+    try {
+      const tool = "bash";
+      const agentWithSubagents = factory_agentState({
+        ...fixture_agentStateRunning,
+        activity: {
+          ...fixture_agentStateRunning.activity,
+          subagentCount: 1,
+          activeSubagents: [
+            {
+              id: "sub-worker-1",
+              activity: "BUSY",
+              activeTool: tool,
+              action: "Running bash",
+              lastError: null,
+            },
+          ],
+          updatedAt: Date.now() - 120000,
+        },
+      });
+
+      const { container, unmount } = await mountComponent(
+        <AgentCard agent={agentWithSubagents} onToggleHide={noop} />,
+        mockDoc,
+      );
+      const tree = formatA11yTree(container);
+      await unmount();
+
+      expect(tree).toContain("Badge: (sub-worker-1: bash)");
+    } finally {
+      cleanup();
+    }
+  });
 });

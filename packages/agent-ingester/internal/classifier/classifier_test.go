@@ -4071,3 +4071,253 @@ func TestClassifier_SubagentActivity_Rollup_BranchesAndCoverage(t *testing.T) {
 	}
 }
 
+func TestClassifier_Subagent_AskUserQuestionAndQuestionPrompt(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, _ := newTestClassifier(t, sum)
+
+	env := types.IEnvironmentInfo{ID: "env-ask", Label: "devbox", Hostname: "devbox", Platform: "linux", User: "testuser"}
+	ws := types.IWorkspaceInfo{Branch: "main", CWD: "/workspace"}
+	proj := types.IProjectInfo{ID: "repo", Name: "repo", CanonicalRoot: "/workspace"}
+	agentID := "env-ask:claude-code:sess-ask-1"
+
+	_, _ = c.ProcessFrame(types.ITelemetryFrame{
+		Version: "1.0", EnvID: env.ID, Environment: env, AgentID: agentID,
+		SessionID: "sess-ask-1", Harness: types.HarnessClaudeCode, Project: proj, Workspace: ws,
+		Timestamp: 1000, EventType: "run_started",
+	})
+
+	sub1 := "sub-asker"
+	toolAsk := "AskUserQuestion"
+	qText := "Do you want to proceed with subtask?"
+
+	// 1. tool_call with AskUserQuestion
+	agent, err := c.ProcessFrame(types.ITelemetryFrame{
+		Version: "1.0", EnvID: env.ID, Environment: env, AgentID: agentID, SubagentID: &sub1,
+		SessionID: "sess-ask-1", Harness: types.HarnessClaudeCode, Project: proj, Workspace: ws,
+		Timestamp: 1200, EventType: "tool_call",
+		Data: types.TelemetryFrameData{
+			ToolName: &toolAsk,
+			Question: &qText,
+		},
+	})
+	if err != nil {
+		t.Fatalf("ProcessFrame tool_call AskUserQuestion failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityWaitingQuestion {
+		t.Errorf("expected composite Activity WAITING_QUESTION, got %s", agent.Activity.Activity)
+	}
+	if agent.Activity.Question == nil || !strings.Contains(*agent.Activity.Question, qText) {
+		t.Errorf("expected composite Question to contain %q, got %v", qText, agent.Activity.Question)
+	}
+
+	// 2. question_prompt with Question field
+	qPrompt := "Confirm deletion?"
+	agent, err = c.ProcessFrame(types.ITelemetryFrame{
+		Version: "1.0", EnvID: env.ID, Environment: env, AgentID: agentID, SubagentID: &sub1,
+		SessionID: "sess-ask-1", Harness: types.HarnessClaudeCode, Project: proj, Workspace: ws,
+		Timestamp: 1300, EventType: "question_prompt",
+		Data: types.TelemetryFrameData{
+			Question: &qPrompt,
+		},
+	})
+	if err != nil {
+		t.Fatalf("ProcessFrame question_prompt failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityWaitingQuestion {
+		t.Errorf("expected composite Activity WAITING_QUESTION, got %s", agent.Activity.Activity)
+	}
+	if agent.Activity.Question == nil || !strings.Contains(*agent.Activity.Question, qPrompt) {
+		t.Errorf("expected composite Question to contain %q, got %v", qPrompt, agent.Activity.Question)
+	}
+}
+
+func TestClassifier_Subagent_RestartRecoveryFromStore(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c1, st := newTestClassifier(t, sum)
+
+	env := types.IEnvironmentInfo{ID: "env-rec", Label: "devbox", Hostname: "devbox", Platform: "linux", User: "testuser"}
+	ws := types.IWorkspaceInfo{Branch: "main", CWD: "/workspace"}
+	proj := types.IProjectInfo{ID: "repo", Name: "repo", CanonicalRoot: "/workspace"}
+	agentID := "env-rec:claude-code:sess-rec-1"
+
+	_, _ = c1.ProcessFrame(types.ITelemetryFrame{
+		Version: "1.0", EnvID: env.ID, Environment: env, AgentID: agentID,
+		SessionID: "sess-rec-1", Harness: types.HarnessClaudeCode, Project: proj, Workspace: ws,
+		Timestamp: 1000, EventType: "run_started",
+	})
+
+	sub1 := "sub-saved"
+	tBash := "bash"
+	_, _ = c1.ProcessFrame(types.ITelemetryFrame{
+		Version: "1.0", EnvID: env.ID, Environment: env, AgentID: agentID, SubagentID: &sub1,
+		SessionID: "sess-rec-1", Harness: types.HarnessClaudeCode, Project: proj, Workspace: ws,
+		Timestamp: 1100, EventType: "tool_call", Data: types.TelemetryFrameData{ToolName: &tBash},
+	})
+
+	// Now simulate ingester restart by creating a new Classifier with same store
+	p, err := pricing.NewPricingEngine()
+	if err != nil {
+		t.Fatalf("pricing.NewPricingEngine() failed: %v", err)
+	}
+	c2 := New(st, p, sum)
+	c2.SetIdleGracePeriod(0)
+	defer func() { _ = c2.Close() }()
+
+	// Process another subagent frame on c2
+	sub2 := "sub-saved-2"
+	tGrep := "grep"
+	agent2, err := c2.ProcessFrame(types.ITelemetryFrame{
+		Version: "1.0", EnvID: env.ID, Environment: env, AgentID: agentID, SubagentID: &sub2,
+		SessionID: "sess-rec-1", Harness: types.HarnessClaudeCode, Project: proj, Workspace: ws,
+		Timestamp: 1200, EventType: "tool_call", Data: types.TelemetryFrameData{ToolName: &tGrep},
+	})
+	if err != nil {
+		t.Fatalf("c2 ProcessFrame failed: %v", err)
+	}
+
+	// Should have both sub-saved and sub-saved-2 in ActiveSubagents
+	if len(agent2.Activity.ActiveSubagents) != 2 {
+		t.Fatalf("expected 2 ActiveSubagents after restart, got %d", len(agent2.Activity.ActiveSubagents))
+	}
+}
+
+func TestClassifier_Subagent_IdleTransitionWithActiveSubagent(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, _ := newTestClassifier(t, sum)
+
+	env := types.IEnvironmentInfo{ID: "env-idle", Label: "devbox", Hostname: "devbox", Platform: "linux", User: "testuser"}
+	ws := types.IWorkspaceInfo{Branch: "main", CWD: "/workspace"}
+	proj := types.IProjectInfo{ID: "repo", Name: "repo", CanonicalRoot: "/workspace"}
+	agentID := "env-idle:claude-code:sess-idle-1"
+
+	_, _ = c.ProcessFrame(types.ITelemetryFrame{
+		Version: "1.0", EnvID: env.ID, Environment: env, AgentID: agentID,
+		SessionID: "sess-idle-1", Harness: types.HarnessClaudeCode, Project: proj, Workspace: ws,
+		Timestamp: 1000, EventType: "run_started",
+	})
+
+	// Subagent starts and runs tool
+	sub1 := "sub-runner"
+	tTest := "npm test"
+	_, _ = c.ProcessFrame(types.ITelemetryFrame{
+		Version: "1.0", EnvID: env.ID, Environment: env, AgentID: agentID, SubagentID: &sub1,
+		SessionID: "sess-idle-1", Harness: types.HarnessClaudeCode, Project: proj, Workspace: ws,
+		Timestamp: 1100, EventType: "tool_call", Data: types.TelemetryFrameData{ToolName: &tTest},
+	})
+
+	// Trigger handleIdleTransition directly
+	c.handleIdleTransition(agentID, 1200)
+
+	loaded, err := c.store.GetAgent(agentID)
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	// Even though root transitioned to idle, composite activity must remain BUSY because subagent is running!
+	if loaded.Activity.Activity != types.ActivityBusy {
+		t.Errorf("expected composite Activity BUSY during active subagent, got %s", loaded.Activity.Activity)
+	}
+	if !strings.Contains(loaded.Activity.Action, "sub-runner") {
+		t.Errorf("expected Action to mention sub-runner, got %q", loaded.Activity.Action)
+	}
+}
+
+func TestClassifier_Subagent_ErrorAndQuestionClearing(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, _ := newTestClassifier(t, sum)
+
+	env := types.IEnvironmentInfo{ID: "env-clear", Label: "devbox", Hostname: "devbox", Platform: "linux", User: "testuser"}
+	ws := types.IWorkspaceInfo{Branch: "main", CWD: "/workspace"}
+	proj := types.IProjectInfo{ID: "repo", Name: "repo", CanonicalRoot: "/workspace"}
+	agentID := "env-clear:claude-code:sess-clear-1"
+
+	_, _ = c.ProcessFrame(types.ITelemetryFrame{
+		Version: "1.0", EnvID: env.ID, Environment: env, AgentID: agentID,
+		SessionID: "sess-clear-1", Harness: types.HarnessClaudeCode, Project: proj, Workspace: ws,
+		Timestamp: 1000, EventType: "run_started",
+	})
+
+	sub1 := "sub-failing"
+	errMsg := "Compilation failed"
+
+	// Subagent error
+	agent, _ := c.ProcessFrame(types.ITelemetryFrame{
+		Version: "1.0", EnvID: env.ID, Environment: env, AgentID: agentID, SubagentID: &sub1,
+		SessionID: "sess-clear-1", Harness: types.HarnessClaudeCode, Project: proj, Workspace: ws,
+		Timestamp: 1100, EventType: "error", Data: types.TelemetryFrameData{Content: &errMsg},
+	})
+	if agent.Activity.Activity != types.ActivityError {
+		t.Fatalf("expected ActivityError, got %s", agent.Activity.Activity)
+	}
+	if agent.Activity.LastError == nil {
+		t.Fatalf("expected LastError populated, got nil")
+	}
+
+	// Subagent turns end and resolves
+	agent, _ = c.ProcessFrame(types.ITelemetryFrame{
+		Version: "1.0", EnvID: env.ID, Environment: env, AgentID: agentID, SubagentID: &sub1,
+		SessionID: "sess-clear-1", Harness: types.HarnessClaudeCode, Project: proj, Workspace: ws,
+		Timestamp: 1200, EventType: "turn_end",
+	})
+	if agent.Activity.Activity == types.ActivityError {
+		t.Errorf("expected Activity to not be ERROR after turn_end, got %s", agent.Activity.Activity)
+	}
+	if agent.Activity.LastError != nil {
+		t.Errorf("expected LastError to be cleared to nil, got %v", *agent.Activity.LastError)
+	}
+}
+
+func TestClassifier_Subagent_RunExitedClearsSubagents(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, _ := newTestClassifier(t, sum)
+
+	env := types.IEnvironmentInfo{ID: "env-exit", Label: "devbox", Hostname: "devbox", Platform: "linux", User: "testuser"}
+	ws := types.IWorkspaceInfo{Branch: "main", CWD: "/workspace"}
+	proj := types.IProjectInfo{ID: "repo", Name: "repo", CanonicalRoot: "/workspace"}
+	agentID := "env-exit:claude-code:sess-exit-1"
+
+	_, _ = c.ProcessFrame(types.ITelemetryFrame{
+		Version: "1.0", EnvID: env.ID, Environment: env, AgentID: agentID,
+		SessionID: "sess-exit-1", Harness: types.HarnessClaudeCode, Project: proj, Workspace: ws,
+		Timestamp: 1000, EventType: "run_started",
+	})
+
+	sub1 := "sub-running"
+	tBash := "bash"
+	_, _ = c.ProcessFrame(types.ITelemetryFrame{
+		Version: "1.0", EnvID: env.ID, Environment: env, AgentID: agentID, SubagentID: &sub1,
+		SessionID: "sess-exit-1", Harness: types.HarnessClaudeCode, Project: proj, Workspace: ws,
+		Timestamp: 1100, EventType: "tool_call", Data: types.TelemetryFrameData{ToolName: &tBash},
+	})
+
+	// Process run_exited
+	agent, err := c.ProcessFrame(types.ITelemetryFrame{
+		Version: "1.0", EnvID: env.ID, Environment: env, AgentID: agentID,
+		SessionID: "sess-exit-1", Harness: types.HarnessClaudeCode, Project: proj, Workspace: ws,
+		Timestamp: 2000, EventType: "run_exited",
+	})
+	if err != nil {
+		t.Fatalf("run_exited failed: %v", err)
+	}
+	if agent.Activity.Lifecycle != types.LifecycleExited {
+		t.Errorf("expected Lifecycle EXITED, got %s", agent.Activity.Lifecycle)
+	}
+	if agent.Activity.ActiveSubagents != nil {
+		t.Errorf("expected ActiveSubagents nil on run_exited, got %+v", agent.Activity.ActiveSubagents)
+	}
+}
+

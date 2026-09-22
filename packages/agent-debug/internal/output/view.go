@@ -238,6 +238,17 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 			badges = append(badges, fmt.Sprintf("(%d subagents)", agent.Activity.SubagentCount))
 		}
 	}
+	for _, sub := range agent.Activity.ActiveSubagents {
+		var subLabel string
+		if sub.ActiveTool != nil && *sub.ActiveTool != "" {
+			subLabel = fmt.Sprintf("%s: %s", sub.ID, *sub.ActiveTool)
+		} else if sub.Action != "" {
+			subLabel = fmt.Sprintf("%s: %s", sub.ID, sub.Action)
+		} else {
+			subLabel = fmt.Sprintf("%s: %s", sub.ID, sub.Activity)
+		}
+		badges = append(badges, fmt.Sprintf("(subagent %s)", subLabel))
+	}
 	relTime := FormatRelativeTime(agent.Activity.UpdatedAt, nowMs)
 	badges = append(badges, fmt.Sprintf("(active: %s)", relTime))
 	badgesLine := strings.Join(badges, "  ")

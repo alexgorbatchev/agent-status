@@ -404,9 +404,20 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		c.mu.Lock()
 		actx, exists = c.agentCtx[agent.ID]
 		if !exists {
+			subagentsMap := make(map[string]*subagentState)
+			for _, summary := range agent.Activity.ActiveSubagents {
+				subagentsMap[summary.ID] = &subagentState{
+					id:         summary.ID,
+					activity:   summary.Activity,
+					activeTool: summary.ActiveTool,
+					action:     summary.Action,
+					lastError:  summary.LastError,
+				}
+				preloaded[summary.ID] = struct{}{}
+			}
 			actx = &agentContext{
 				seenSubagents: preloaded,
-				subagents:     make(map[string]*subagentState),
+				subagents:     subagentsMap,
 				rootActivity:  agent.Activity.Activity,
 				rootAction:    agent.Activity.Action,
 				rootQuestion:  agent.Activity.Question,
@@ -476,6 +487,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			agent.Activity.ActiveTool = nil
 			agent.Activity.ActiveTarget = nil
 			agent.Activity.ActiveToolStartedAt = nil
+			agent.Activity.ActiveSubagents = nil
 			if err := c.store.EndCurrentRun(agent.ID, now); err != nil {
 				return nil, fmt.Errorf("ending current run: %w", err)
 			}
@@ -713,13 +725,36 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 
 			switch frame.EventType {
 			case "tool_call":
-				sub.activity = types.ActivityBusy
-				sub.activeTool = frame.Data.ToolName
-				if frame.Data.ToolName != nil {
-					sub.action = "Running " + *frame.Data.ToolName
+				if frame.Data.ToolName != nil && *frame.Data.ToolName == "AskUserQuestion" {
+					sub.activity = types.ActivityWaitingQuestion
+					sub.activeTool = nil
+					if frame.Data.Question != nil && strings.TrimSpace(*frame.Data.Question) != "" {
+						sub.question = frame.Data.Question
+					} else if frame.Data.Content != nil && strings.TrimSpace(*frame.Data.Content) != "" {
+						sub.question = frame.Data.Content
+					} else if frame.Data.ToolInput != nil {
+						if qVal, ok := frame.Data.ToolInput["question"]; ok && qVal != nil {
+							if s, ok := qVal.(string); ok && strings.TrimSpace(s) != "" {
+								qStr := strings.TrimSpace(s)
+								sub.question = &qStr
+							}
+						} else if pVal, ok := frame.Data.ToolInput["prompt"]; ok && pVal != nil {
+							if s, ok := pVal.(string); ok && strings.TrimSpace(s) != "" {
+								pStr := strings.TrimSpace(s)
+								sub.question = &pStr
+							}
+						}
+					}
+					sub.lastError = nil
+				} else {
+					sub.activity = types.ActivityBusy
+					sub.activeTool = frame.Data.ToolName
+					if frame.Data.ToolName != nil {
+						sub.action = "Running " + *frame.Data.ToolName
+					}
+					sub.lastError = nil
+					sub.question = nil
 				}
-				sub.lastError = nil
-				sub.question = nil
 			case "tool_result":
 				if frame.Data.IsError != nil && *frame.Data.IsError {
 					sub.activity = types.ActivityError
@@ -747,8 +782,11 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				sub.activeTool = nil
 			case "question_prompt", "waiting_question":
 				sub.activity = types.ActivityWaitingQuestion
-				if frame.Data.Content != nil {
-					q := *frame.Data.Content
+				if frame.Data.Question != nil && strings.TrimSpace(*frame.Data.Question) != "" {
+					q := strings.TrimSpace(*frame.Data.Question)
+					sub.question = &q
+				} else if frame.Data.Content != nil && strings.TrimSpace(*frame.Data.Content) != "" {
+					q := strings.TrimSpace(*frame.Data.Content)
 					sub.question = &q
 				}
 				sub.activeTool = nil
@@ -775,7 +813,11 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		actx.rootQuestion = agent.Activity.Question
 		actx.rootLastError = agent.Activity.LastError
 	}
-	c.rollupActivityLocked(agent, actx)
+	if agent.Activity.Lifecycle != types.LifecycleExited {
+		c.rollupActivityLocked(agent, actx)
+	} else {
+		agent.Activity.ActiveSubagents = nil
+	}
 	c.mu.Unlock()
 
 	if err := c.store.SaveAgentState(*agent); err != nil {
@@ -1123,6 +1165,15 @@ func (c *Classifier) handleIdleTransition(agentID string, scheduledUpdatedAt int
 	agent.Activity.Question = nil
 	agent.Activity.UpdatedAt = time.Now().UnixMilli()
 
+	c.mu.Lock()
+	if actx, ok := c.agentCtx[agentID]; ok {
+		actx.rootActivity = types.ActivityIdle
+		actx.rootAction = "Idle"
+		actx.rootQuestion = nil
+		c.rollupActivityLocked(agent, actx)
+	}
+	c.mu.Unlock()
+
 	job := c.updateSummarization(agent, true)
 	if err := c.store.SaveAgentState(*agent); err != nil {
 		logging.Error("saving_idle_agent_failed", "err", err, "agentId", agentID)
@@ -1195,19 +1246,20 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 		return
 	}
 
-	var subError *subagentState
-	var subQuestion *subagentState
-	var subBusy *subagentState
+	var subError *types.ISubagentSummary
+	var subQuestion *types.ISubagentSummary
+	var subBusy *types.ISubagentSummary
 
-	for _, sub := range actx.subagents {
-		if sub.activity == types.ActivityError && subError == nil {
-			subError = sub
+	for i := range summaries {
+		s := &summaries[i]
+		if s.Activity == types.ActivityError && subError == nil {
+			subError = s
 		}
-		if sub.activity == types.ActivityWaitingQuestion && subQuestion == nil {
-			subQuestion = sub
+		if s.Activity == types.ActivityWaitingQuestion && subQuestion == nil {
+			subQuestion = s
 		}
-		if sub.activity == types.ActivityBusy && subBusy == nil {
-			subBusy = sub
+		if s.Activity == types.ActivityBusy && subBusy == nil {
+			subBusy = s
 		}
 	}
 
@@ -1218,11 +1270,13 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 		return
 	} else if subError != nil {
 		agent.Activity.Activity = types.ActivityError
-		if subError.lastError != nil {
-			errStr := fmt.Sprintf("[Subagent %s] %s", subError.id, *subError.lastError)
+		if subError.LastError != nil {
+			errStr := fmt.Sprintf("[Subagent %s] %s", subError.ID, *subError.LastError)
 			agent.Activity.LastError = &errStr
 		}
 		return
+	} else {
+		agent.Activity.LastError = actx.rootLastError
 	}
 
 	// 2. User Input Precedence
@@ -1232,11 +1286,13 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 		return
 	} else if subQuestion != nil {
 		agent.Activity.Activity = types.ActivityWaitingQuestion
-		if subQuestion.question != nil {
-			qStr := fmt.Sprintf("[Subagent %s] %s", subQuestion.id, *subQuestion.question)
+		if sub, ok := actx.subagents[subQuestion.ID]; ok && sub.question != nil {
+			qStr := fmt.Sprintf("[Subagent %s] %s", subQuestion.ID, *sub.question)
 			agent.Activity.Question = &qStr
 		}
 		return
+	} else {
+		agent.Activity.Question = actx.rootQuestion
 	}
 
 	// 3. Busy vs Idle
@@ -1245,12 +1301,12 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 		agent.Activity.Action = actx.rootAction
 	} else if subBusy != nil {
 		agent.Activity.Activity = types.ActivityBusy
-		if subBusy.activeTool != nil && *subBusy.activeTool != "" {
-			agent.Activity.Action = fmt.Sprintf("Running subagent %s: %s", subBusy.id, *subBusy.activeTool)
-		} else if subBusy.action != "" {
-			agent.Activity.Action = fmt.Sprintf("Running subagent %s: %s", subBusy.id, subBusy.action)
+		if subBusy.ActiveTool != nil && *subBusy.ActiveTool != "" {
+			agent.Activity.Action = fmt.Sprintf("Running subagent %s: %s", subBusy.ID, *subBusy.ActiveTool)
+		} else if subBusy.Action != "" {
+			agent.Activity.Action = fmt.Sprintf("Running subagent %s: %s", subBusy.ID, subBusy.Action)
 		} else {
-			agent.Activity.Action = fmt.Sprintf("Running subagent %s task", subBusy.id)
+			agent.Activity.Action = fmt.Sprintf("Running subagent %s task", subBusy.ID)
 		}
 	} else {
 		// Root is idle and all subagents are idle
