@@ -2894,7 +2894,7 @@ func TestClassifier_FlushAll_And_Coverage(t *testing.T) {
 		t.Errorf("expected ensureAction to populate Action")
 	}
 
-	// Test FlushAll with active workers
+	// Test FlushAll with active workers and trailing timers
 	f := types.ITelemetryFrame{
 		AgentID:   "agent-flush",
 		SessionID: "sess-flush",
@@ -2902,5 +2902,542 @@ func TestClassifier_FlushAll_And_Coverage(t *testing.T) {
 		Timestamp: 1000,
 	}
 	_, _ = c.ProcessFrame(f)
+
+	c.mu.Lock()
+	c.scheduleTrailingTimerLocked("agent-flush", 0)
+	c.scheduleTrailingTimerLocked("agent-flush-2", 10*time.Millisecond)
+	c.mu.Unlock()
+
 	c.FlushAll()
+
+	// Test syncMode trailing candidate flush
+	c.SetSyncMode(true)
+	c.SetOnUpdate(func(a *types.IAgentState) {})
+	toolEdit := "Edit"
+	c.mu.Lock()
+	actx := c.agentCtx["agent-flush"]
+	if actx == nil {
+		actx = &agentContext{seenSubagents: make(map[string]struct{})}
+		c.agentCtx["agent-flush"] = actx
+	}
+	actx.pendingCandidate = &pendingSummaryCandidate{
+		input: summarizer.SummaryInput{
+			AgentID:    "agent-flush",
+			Activity:   types.ActivityBusy,
+			ActiveTool: &toolEdit,
+		},
+		timestamp: 1005,
+		toolKey:   "Edit|file.go|",
+	}
+	c.mu.Unlock()
+
+	c.Flush("agent-flush")
+
+	// Test saturated worker queue in enqueueJobLocked
+	c.SetSyncMode(false)
+	c.mu.Lock()
+	for i := 0; i < 15; i++ {
+		c.enqueueJobLocked("agent-flush", summarizer.SummaryInput{
+			AgentID:  "agent-flush",
+			Activity: types.ActivityBusy,
+		}, int64(2000+i), false)
+	}
+	c.mu.Unlock()
+	c.Flush("agent-flush")
+
+	// Test ensureAction on error and waiting_question
+	agent.Activity.Activity = types.ActivityError
+	agent.Activity.Action = ""
+	c.ensureAction(agent)
+	if agent.Activity.Action == "" {
+		t.Errorf("expected ensureAction to populate Action for error")
+	}
+
+	agent.Activity.Activity = types.ActivityWaitingQuestion
+	agent.Activity.Action = ""
+	c.ensureAction(agent)
+	if agent.Activity.Action == "" {
+		t.Errorf("expected ensureAction to populate Action for question")
+	}
+}
+
+func TestClassifier_ToolResultAndThinking_DoNotRevertActionToThinking(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New failed: %v", err)
+	}
+
+	c, st := newTestClassifier(t, sum)
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{
+		Label:    "local-dev",
+		Hostname: "test-host",
+		Platform: "darwin",
+		User:     "dev",
+	}
+	ws := types.IWorkspaceInfo{
+		Branch: "main",
+		CWD:    "/workspace/test",
+	}
+	proj := types.IProjectInfo{
+		ID:            "test-proj",
+		Name:          "test-proj",
+		CanonicalRoot: "/workspace/test",
+	}
+
+	baseFrame := types.ITelemetryFrame{
+		Version:        "1.0",
+		EnvID:          "env-1",
+		Environment:    env,
+		AgentID:        "env-1:claude-code:sess-no-revert",
+		SessionID:      "sess-no-revert",
+		PID:            4242,
+		Harness:        types.HarnessClaudeCode,
+		HarnessVersion: "1.0.0",
+		Project:        proj,
+		Workspace:      ws,
+	}
+
+	now := int64(100000)
+
+	var agent *types.IAgentState
+
+	// 1. run_started
+	fStart := baseFrame
+	fStart.Seq = 1
+	fStart.Timestamp = now
+	fStart.EventType = "run_started"
+	_, err = c.ProcessFrame(fStart)
+	if err != nil {
+		t.Fatalf("ProcessFrame(run_started) failed: %v", err)
+	}
+
+	// 2. turn_start
+	fTurnStart := baseFrame
+	fTurnStart.Seq = 2
+	fTurnStart.Timestamp = now + 1000
+	fTurnStart.EventType = "turn_start"
+	_, err = c.ProcessFrame(fTurnStart)
+	if err != nil {
+		t.Fatalf("ProcessFrame(turn_start) failed: %v", err)
+	}
+
+	// 3. thinking frame at beginning of turn before any tools run -> Action should be "Thinking"
+	thinkingContent1 := "I should edit the auth file to fix token expiration"
+	fThinking1 := baseFrame
+	fThinking1.Seq = 3
+	fThinking1.Timestamp = now + 2000
+	fThinking1.EventType = "thinking"
+	fThinking1.Data = types.TelemetryFrameData{
+		Content: &thinkingContent1,
+	}
+	agent, err = c.ProcessFrame(fThinking1)
+	if err != nil {
+		t.Fatalf("ProcessFrame(thinking1) failed: %v", err)
+	}
+	if agent.Activity.Action != "Thinking" {
+		t.Errorf("expected Action 'Thinking' at start of turn, got %q", agent.Activity.Action)
+	}
+
+	// 4. tool_call (Edit)
+	toolEdit := "Edit"
+	filePath := "internal/auth/jwt.go"
+	fToolCall := baseFrame
+	fToolCall.Seq = 4
+	fToolCall.Timestamp = now + 3000
+	fToolCall.EventType = "tool_call"
+	fToolCall.Data = types.TelemetryFrameData{
+		ToolName:  &toolEdit,
+		ToolInput: map[string]interface{}{"path": filePath},
+	}
+	agent, err = c.ProcessFrame(fToolCall)
+	if err != nil {
+		t.Fatalf("ProcessFrame(tool_call) failed: %v", err)
+	}
+	if agent.Activity.Action != "Editing internal/auth/jwt.go" {
+		t.Errorf("expected Action 'Editing internal/auth/jwt.go', got %q", agent.Activity.Action)
+	}
+	if agent.Activity.ActiveTool == nil || *agent.Activity.ActiveTool != "Edit" {
+		t.Errorf("expected ActiveTool 'Edit', got %v", agent.Activity.ActiveTool)
+	}
+
+	// 5. tool_result (success) -> MUST NOT revert Action to "Thinking"!
+	outOk := "File updated successfully"
+	isErrFalse := false
+	fToolRes := baseFrame
+	fToolRes.Seq = 5
+	fToolRes.Timestamp = now + 4000
+	fToolRes.EventType = "tool_result"
+	fToolRes.Data = types.TelemetryFrameData{
+		ToolOutput: &outOk,
+		IsError:    &isErrFalse,
+	}
+	agent, err = c.ProcessFrame(fToolRes)
+	if err != nil {
+		t.Fatalf("ProcessFrame(tool_result) failed: %v", err)
+	}
+	if agent.Activity.ActiveTool != nil {
+		t.Errorf("expected ActiveTool nil after tool_result, got %q", *agent.Activity.ActiveTool)
+	}
+	if agent.Activity.Action == "Thinking" {
+		t.Errorf("Action was reverted to 'Thinking' after tool_result! Expected semantic action to be preserved")
+	}
+	if agent.Activity.Action != "Editing internal/auth/jwt.go" {
+		t.Errorf("expected Action 'Editing internal/auth/jwt.go', got %q", agent.Activity.Action)
+	}
+
+	// Verify persisted state in SQLite as well
+	persisted, err := st.GetAgent(agent.ID)
+	if err != nil {
+		t.Fatalf("st.GetAgent failed: %v", err)
+	}
+	if persisted.Activity.Action == "Thinking" {
+		t.Errorf("persisted Action was reverted to 'Thinking' after tool_result")
+	}
+	if persisted.Activity.Action != "Editing internal/auth/jwt.go" {
+		t.Errorf("expected persisted Action 'Editing internal/auth/jwt.go', got %q", persisted.Activity.Action)
+	}
+
+	// 6. thinking frame arriving while busy after a tool has executed -> MUST NOT overwrite Action with "Thinking"
+	thinkingContent2 := "Now examining the test results and deciding what to do next"
+	fThinking2 := baseFrame
+	fThinking2.Seq = 6
+	fThinking2.Timestamp = now + 5000
+	fThinking2.EventType = "thinking"
+	fThinking2.Data = types.TelemetryFrameData{
+		Content: &thinkingContent2,
+	}
+	agent, err = c.ProcessFrame(fThinking2)
+	if err != nil {
+		t.Fatalf("ProcessFrame(thinking2) failed: %v", err)
+	}
+	if agent.Activity.Action == "Thinking" {
+		t.Errorf("Action was overwritten with 'Thinking' by mid-turn thinking frame!")
+	}
+	if agent.Activity.Action != "Editing internal/auth/jwt.go" {
+		t.Errorf("expected Action 'Editing internal/auth/jwt.go', got %q", agent.Activity.Action)
+	}
+
+	// 7. second tool_call (Bash)
+	toolBash := "Bash"
+	cmdStr := "go test ./..."
+	fToolCall2 := baseFrame
+	fToolCall2.Seq = 7
+	fToolCall2.Timestamp = now + 6000
+	fToolCall2.EventType = "tool_call"
+	fToolCall2.Data = types.TelemetryFrameData{
+		ToolName:  &toolBash,
+		ToolInput: map[string]interface{}{"command": cmdStr},
+	}
+	agent, err = c.ProcessFrame(fToolCall2)
+	if err != nil {
+		t.Fatalf("ProcessFrame(tool_call 2) failed: %v", err)
+	}
+	if agent.Activity.Action != "Running tests" {
+		t.Errorf("expected Action 'Running tests', got %q", agent.Activity.Action)
+	}
+
+	// 8. second tool_result -> MUST NOT revert to "Thinking"
+	fToolRes2 := baseFrame
+	fToolRes2.Seq = 8
+	fToolRes2.Timestamp = now + 7000
+	fToolRes2.EventType = "tool_result"
+	fToolRes2.Data = types.TelemetryFrameData{
+		ToolOutput: &outOk,
+		IsError:    &isErrFalse,
+	}
+	agent, err = c.ProcessFrame(fToolRes2)
+	if err != nil {
+		t.Fatalf("ProcessFrame(tool_result 2) failed: %v", err)
+	}
+	if agent.Activity.Action == "Thinking" {
+		t.Errorf("Action was reverted to 'Thinking' after second tool_result")
+	}
+	if agent.Activity.Action != "Running tests" {
+		t.Errorf("expected Action 'Running tests', got %q", agent.Activity.Action)
+	}
+}
+
+func TestClassifier_DebounceCadence_TrailingEdgeFlush(t *testing.T) {
+	var mu sync.Mutex
+	requestCount := 0
+	lastRequestPrompt := ""
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requestCount++
+		mu.Unlock()
+
+		var body map[string]interface{}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if msgs, ok := body["messages"].([]interface{}); ok && len(msgs) > 0 {
+			if m, ok := msgs[len(msgs)-1].(map[string]interface{}); ok {
+				if content, ok := m["content"].(string); ok {
+					mu.Lock()
+					lastRequestPrompt = content
+					mu.Unlock()
+				}
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]interface{}{
+			"id":     "chatcmpl-test",
+			"object": "chat.completion",
+			"choices": []map[string]interface{}{
+				{
+					"index": 0,
+					"message": map[string]interface{}{
+						"role":    "assistant",
+						"content": `{"action":"Summarized Tool Action","phase":"editing"}`,
+					},
+					"finish_reason": "stop",
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(mockServer.Close)
+
+	p, err := openai.New(
+		anyllm.WithBaseURL(mockServer.URL+"/v1"),
+		anyllm.WithAPIKey("test-key"),
+	)
+	if err != nil {
+		t.Fatalf("openai.New() failed: %v", err)
+	}
+
+	sum, err := summarizer.New(summarizer.Config{
+		Providers: []summarizer.ProviderConfig{
+			{
+				Name:     "mock-openai",
+				Provider: p,
+				Model:    "gpt-4o-mini",
+			},
+		},
+		DebounceWindow: 50 * time.Millisecond,
+		Timeout:        2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("summarizer.New failed: %v", err)
+	}
+
+	c, _ := newTestClassifier(t, sum)
+	defer func() { _ = c.Close() }()
+
+	c.SetDebounceWindow(50 * time.Millisecond)
+
+	baseFrame := types.ITelemetryFrame{
+		Version:        "1.0",
+		EnvID:          "env-1",
+		AgentID:        "env-1:claude:sess-cadence",
+		SessionID:      "sess-cadence",
+		PID:            100,
+		Harness:        types.HarnessClaudeCode,
+		HarnessVersion: "1.0.0",
+		Project:        types.IProjectInfo{ID: "p1", Name: "p1", CanonicalRoot: "/ws"},
+		Workspace:      types.IWorkspaceInfo{Branch: "main", CWD: "/ws"},
+		Environment:    types.IEnvironmentInfo{Label: "local", Platform: "darwin"},
+	}
+
+	// 1. Start session & turn
+	fStart := baseFrame
+	fStart.EventType = "run_started"
+	fStart.Timestamp = 1000
+	_, _ = c.ProcessFrame(fStart)
+
+	fTurn := baseFrame
+	fTurn.EventType = "turn_start"
+	fTurn.Timestamp = 1001
+	_, _ = c.ProcessFrame(fTurn)
+
+	// 2. Tool call 1 (Bash) -> should trigger immediate summary
+	tBash := "Bash"
+	cmd1 := "npm install"
+	fTool1 := baseFrame
+	fTool1.EventType = "tool_call"
+	fTool1.Timestamp = 1002
+	fTool1.Data = types.TelemetryFrameData{
+		ToolName:  &tBash,
+		ToolInput: map[string]interface{}{"command": cmd1},
+	}
+	_, err = c.ProcessFrame(fTool1)
+	if err != nil {
+		t.Fatalf("ProcessFrame(fTool1) failed: %v", err)
+	}
+
+	c.Flush("env-1:claude:sess-cadence")
+
+	mu.Lock()
+	countAfter1 := requestCount
+	mu.Unlock()
+	if countAfter1 != 1 {
+		t.Fatalf("expected 1 summary after tool 1, got %d", countAfter1)
+	}
+
+	// 3. Tool call 2 (Grep) within 50ms window -> should be buffered
+	tGrep := "grep"
+	pat2 := "authToken"
+	fTool2 := baseFrame
+	fTool2.EventType = "tool_call"
+	fTool2.Timestamp = 1010
+	fTool2.Data = types.TelemetryFrameData{
+		ToolName:  &tGrep,
+		ToolInput: map[string]interface{}{"pattern": pat2},
+	}
+	_, err = c.ProcessFrame(fTool2)
+	if err != nil {
+		t.Fatalf("ProcessFrame(fTool2) failed: %v", err)
+	}
+
+	// 4. Tool call 3 (Edit) within 50ms window -> should replace candidate
+	tEdit := "Edit"
+	file3 := "src/token.ts"
+	fTool3 := baseFrame
+	fTool3.EventType = "tool_call"
+	fTool3.Timestamp = 1020
+	fTool3.Data = types.TelemetryFrameData{
+		ToolName:  &tEdit,
+		ToolInput: map[string]interface{}{"path": file3},
+	}
+	_, err = c.ProcessFrame(fTool3)
+	if err != nil {
+		t.Fatalf("ProcessFrame(fTool3) failed: %v", err)
+	}
+
+	// Wait for trailing edge timer to fire (> 50ms)
+	time.Sleep(120 * time.Millisecond)
+	c.Flush("env-1:claude:sess-cadence")
+
+	mu.Lock()
+	countAfterFlush := requestCount
+	prompt := lastRequestPrompt
+	mu.Unlock()
+
+	// Should have dispatched exactly 2 summaries total: tool 1 immediately, and tool 3 on trailing edge
+	if countAfterFlush != 2 {
+		t.Fatalf("expected 2 summaries total (immediate + trailing), got %d", countAfterFlush)
+	}
+	if !strings.Contains(prompt, "src/token.ts") && !strings.Contains(prompt, "Edit") {
+		t.Errorf("expected trailing summary to include src/token.ts / Edit, got prompt:\n%s", prompt)
+	}
+}
+
+func TestClassifier_DuplicateToolSuppression(t *testing.T) {
+	var mu sync.Mutex
+	requestCount := 0
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requestCount++
+		mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]interface{}{
+			"id":     "chatcmpl-test",
+			"object": "chat.completion",
+			"choices": []map[string]interface{}{
+				{
+					"index": 0,
+					"message": map[string]interface{}{
+						"role":    "assistant",
+						"content": `{"action":"Testing duplicate suppression"}`,
+					},
+					"finish_reason": "stop",
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(mockServer.Close)
+
+	p, err := openai.New(
+		anyllm.WithBaseURL(mockServer.URL+"/v1"),
+		anyllm.WithAPIKey("test-key"),
+	)
+	if err != nil {
+		t.Fatalf("openai.New() failed: %v", err)
+	}
+
+	sum, err := summarizer.New(summarizer.Config{
+		Providers: []summarizer.ProviderConfig{
+			{
+				Name:     "mock-openai",
+				Provider: p,
+				Model:    "gpt-4o-mini",
+			},
+		},
+		DebounceWindow: 50 * time.Millisecond,
+		Timeout:        2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("summarizer.New failed: %v", err)
+	}
+
+	c, _ := newTestClassifier(t, sum)
+	defer func() { _ = c.Close() }()
+
+	c.SetDebounceWindow(50 * time.Millisecond)
+
+	baseFrame := types.ITelemetryFrame{
+		Version:        "1.0",
+		EnvID:          "env-1",
+		AgentID:        "env-1:claude:sess-dup",
+		SessionID:      "sess-dup",
+		PID:            200,
+		Harness:        types.HarnessClaudeCode,
+		HarnessVersion: "1.0.0",
+		Project:        types.IProjectInfo{ID: "p1", Name: "p1", CanonicalRoot: "/ws"},
+		Workspace:      types.IWorkspaceInfo{Branch: "main", CWD: "/ws"},
+		Environment:    types.IEnvironmentInfo{Label: "local", Platform: "darwin"},
+	}
+
+	fStart := baseFrame
+	fStart.EventType = "run_started"
+	fStart.Timestamp = 1000
+	_, _ = c.ProcessFrame(fStart)
+
+	// Tool call 1
+	tBash := "Bash"
+	cmd := "go test ./..."
+	fTool1 := baseFrame
+	fTool1.EventType = "tool_call"
+	fTool1.Timestamp = 1002
+	fTool1.Data = types.TelemetryFrameData{
+		ToolName:  &tBash,
+		ToolInput: map[string]interface{}{"command": cmd},
+	}
+	_, _ = c.ProcessFrame(fTool1)
+	c.Flush("env-1:claude:sess-dup")
+
+	mu.Lock()
+	count1 := requestCount
+	mu.Unlock()
+	if count1 != 1 {
+		t.Fatalf("expected 1 summary after tool 1, got %d", count1)
+	}
+
+	// Advance time beyond debounce window (> 50ms)
+	time.Sleep(70 * time.Millisecond)
+
+	// Tool call 2 with identical tool and command
+	fTool2 := baseFrame
+	fTool2.EventType = "tool_call"
+	fTool2.Timestamp = 2000
+	fTool2.Data = types.TelemetryFrameData{
+		ToolName:  &tBash,
+		ToolInput: map[string]interface{}{"command": cmd},
+	}
+	_, _ = c.ProcessFrame(fTool2)
+	c.Flush("env-1:claude:sess-dup")
+
+	mu.Lock()
+	count2 := requestCount
+	mu.Unlock()
+
+	// Should NOT trigger a second summary because tool call is unchanged
+	if count2 != 1 {
+		t.Errorf("expected duplicate tool call to be suppressed (count = 1), got %d", count2)
+	}
 }

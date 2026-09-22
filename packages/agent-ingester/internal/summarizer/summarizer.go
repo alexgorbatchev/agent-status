@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	DefaultDebounceWindow      = 12 * time.Second
+	DefaultDebounceWindow      = 10 * time.Second
 	DefaultTimeout             = 10 * time.Second
 	DefaultSimilarityThreshold = 0.60
 	MaxThinkingLength          = 1200 // ~300 tokens
@@ -39,6 +39,7 @@ type ToolExecution struct {
 
 type SummaryInput struct {
 	AgentID               string
+	CurrentAction         string
 	LastPrompt            string
 	LastAssistantResponse string
 	RecentTools           []ToolExecution
@@ -232,7 +233,13 @@ func (s *Summarizer) IsNoSummarize() bool {
 	return s.noSummarize || len(s.providers) == 0
 }
 
-// Allow checks the per-agent rate limiter for the 12-second debounce window using the current time.
+// DebounceWindow returns the configured debounce window.
+func (s *Summarizer) DebounceWindow() time.Duration {
+	if s == nil {
+		return 0
+	}
+	return s.debounce
+}
 func (s *Summarizer) Allow(agentID string) bool {
 	return s.AllowAt(agentID, time.Now())
 }
@@ -880,6 +887,68 @@ func FallbackSummary(input SummaryInput) SummaryResult {
 		default:
 			if input.LastAssistantResponse != "" && len(input.RecentTools) == 0 {
 				action = "Responded to user"
+			} else if input.CurrentAction != "" && input.CurrentAction != "Thinking" {
+				action = input.CurrentAction
+			} else if len(input.RecentTools) > 0 {
+				last := input.RecentTools[len(input.RecentTools)-1]
+				tool := last.ToolName
+				target := last.Target
+				switch tool {
+				case "Edit", "NotebookEdit":
+					p := types.PhaseEditing
+					phase = &p
+					if target != "" {
+						action = fmt.Sprintf("Editing %s", target)
+					} else {
+						action = "Editing code"
+					}
+				case "Write":
+					p := types.PhaseEditing
+					phase = &p
+					if target != "" {
+						action = fmt.Sprintf("Writing %s", target)
+					} else {
+						action = "Writing file"
+					}
+				case "Read", "readFile", "read_file":
+					p := types.PhaseInvestigating
+					phase = &p
+					if target != "" {
+						action = fmt.Sprintf("Reading %s", target)
+					} else {
+						action = "Reading file"
+					}
+				case "Bash":
+					if strings.Contains(strings.ToLower(target), "test") || strings.Contains(strings.ToLower(target), "jest") || strings.Contains(strings.ToLower(target), "pytest") {
+						p := types.PhaseTesting
+						phase = &p
+						action = "Running tests"
+					} else if target != "" {
+						p := types.PhaseEditing
+						phase = &p
+						action = fmt.Sprintf("Running %s", target)
+					} else {
+						p := types.PhaseEditing
+						phase = &p
+						action = "Running shell command"
+					}
+				case "WebSearch", "WebFetch", "ast-grep", "codegraph", "grep", "Grep", "find":
+					p := types.PhaseInvestigating
+					phase = &p
+					if target != "" {
+						action = fmt.Sprintf("Searching %s", target)
+					} else {
+						action = "Investigating codebase"
+					}
+				default:
+					p := types.PhaseEditing
+					phase = &p
+					if target != "" {
+						action = fmt.Sprintf("Using %s on %s", tool, target)
+					} else {
+						action = fmt.Sprintf("Using %s", tool)
+					}
+				}
 			} else if input.LastThinkingExcerpt != "" {
 				p := types.PhasePlanning
 				phase = &p

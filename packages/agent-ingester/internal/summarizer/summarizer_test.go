@@ -387,6 +387,28 @@ func TestDeterministicFallbackSummary(t *testing.T) {
 			wantAction: "Working",
 			wantPhase:  types.PhasePlanning,
 		},
+		{
+			name: "busy preserves existing CurrentAction over thinking",
+			input: SummaryInput{
+				Activity:            types.ActivityBusy,
+				CurrentAction:       "Refactoring auth middleware",
+				LastThinkingExcerpt: "Thinking about next step...",
+			},
+			wantAction: "Refactoring auth middleware",
+			wantPhase:  types.PhasePlanning,
+		},
+		{
+			name: "busy preserves recent tool over thinking when tool completed",
+			input: SummaryInput{
+				Activity: types.ActivityBusy,
+				RecentTools: []ToolExecution{
+					{ToolName: "Bash", Target: "npm test"},
+				},
+				LastThinkingExcerpt: "Analyzing test output...",
+			},
+			wantAction: "Running tests",
+			wantPhase:  types.PhaseTesting,
+		},
 	}
 
 	for _, tt := range tests {
@@ -732,6 +754,64 @@ func TestDebounceRateLimiting(t *testing.T) {
 
 	if !s.Allow(agentID) {
 		t.Errorf("Allow() after debounce window should return true")
+	}
+}
+
+func TestSummarizer_DebounceWindow(t *testing.T) {
+	var s *Summarizer
+	if s.DebounceWindow() != 0 {
+		t.Errorf("expected 0 for nil Summarizer, got %v", s.DebounceWindow())
+	}
+
+	sum, err := New(Config{DebounceWindow: 7 * time.Second})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	if sum.DebounceWindow() != 7*time.Second {
+		t.Errorf("expected 7s, got %v", sum.DebounceWindow())
+	}
+}
+
+func TestFallbackSummary_RecentToolsBranches(t *testing.T) {
+	tests := []struct {
+		name       string
+		tool       string
+		target     string
+		wantAction string
+		wantPhase  types.AgentPhase
+	}{
+		{"NotebookEdit with target", "NotebookEdit", "nb.ipynb", "Editing nb.ipynb", types.PhaseEditing},
+		{"NotebookEdit without target", "NotebookEdit", "", "Editing code", types.PhaseEditing},
+		{"Write with target", "Write", "out.txt", "Writing out.txt", types.PhaseEditing},
+		{"Write without target", "Write", "", "Writing file", types.PhaseEditing},
+		{"Read with target", "Read", "in.txt", "Reading in.txt", types.PhaseInvestigating},
+		{"Read without target", "read_file", "", "Reading file", types.PhaseInvestigating},
+		{"Bash test command", "Bash", "pytest tests/", "Running tests", types.PhaseTesting},
+		{"Bash general with target", "Bash", "git status", "Running git status", types.PhaseEditing},
+		{"Bash general without target", "Bash", "", "Running shell command", types.PhaseEditing},
+		{"WebSearch with target", "WebSearch", "golang docs", "Searching golang docs", types.PhaseInvestigating},
+		{"ast-grep without target", "ast-grep", "", "Investigating codebase", types.PhaseInvestigating},
+		{"custom tool with target", "custom_tool", "param", "Using custom_tool on param", types.PhaseEditing},
+		{"custom tool without target", "custom_tool", "", "Using custom_tool", types.PhaseEditing},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			input := SummaryInput{
+				Activity: types.ActivityBusy,
+				RecentTools: []ToolExecution{
+					{ToolName: tt.tool, Target: tt.target},
+				},
+				LastThinkingExcerpt: "some thinking",
+			}
+			res := FallbackSummary(input)
+			if res.Action != tt.wantAction {
+				t.Errorf("got Action %q, want %q", res.Action, tt.wantAction)
+			}
+			if res.Phase == nil || *res.Phase != tt.wantPhase {
+				t.Errorf("got Phase %v, want %v", res.Phase, tt.wantPhase)
+			}
+		})
 	}
 }
 
