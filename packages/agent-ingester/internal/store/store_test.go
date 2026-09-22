@@ -125,6 +125,93 @@ func TestMigrate_ErrorCases(t *testing.T) {
 	if err := Migrate(db3); err == nil {
 		t.Errorf("expected error running v3 migration without agents table, got nil")
 	}
+
+	// Test v4 failure when agents table does not exist
+	db4, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open failed: %v", err)
+	}
+	defer func() {
+		_ = db4.Close()
+	}()
+	if _, err := db4.Exec("PRAGMA user_version = 3;"); err != nil {
+		t.Fatalf("setting user_version = 3 failed: %v", err)
+	}
+	if err := Migrate(db4); err == nil {
+		t.Errorf("expected error running v4 migration without agents table, got nil")
+	}
+}
+
+func TestMigrate_V2ToV4(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open failed: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	if _, err := db.Exec(schemaV1); err != nil {
+		t.Fatalf("schemaV1 failed: %v", err)
+	}
+	if _, err := db.Exec("ALTER TABLE agents ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0;"); err != nil {
+		t.Fatalf("v2 is_hidden failed: %v", err)
+	}
+	if _, err := db.Exec("ALTER TABLE agents ADD COLUMN hidden_at INTEGER;"); err != nil {
+		t.Fatalf("v2 hidden_at failed: %v", err)
+	}
+	if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_agents_hidden ON agents(is_hidden);"); err != nil {
+		t.Fatalf("v2 idx_agents_hidden failed: %v", err)
+	}
+	if _, err := db.Exec("PRAGMA user_version = 2;"); err != nil {
+		t.Fatalf("setting user_version = 2 failed: %v", err)
+	}
+
+	if err := Migrate(db); err != nil {
+		t.Fatalf("Migrate() from v2 failed: %v", err)
+	}
+
+	var version int
+	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
+		t.Fatalf("reading user_version: %v", err)
+	}
+	if version != 4 {
+		t.Errorf("got user_version = %d, want 4", version)
+	}
+}
+
+func TestMigrate_V3ToV4(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open failed: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	if _, err := db.Exec(schemaV1); err != nil {
+		t.Fatalf("schemaV1 failed: %v", err)
+	}
+	if _, err := db.Exec("ALTER TABLE agents ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0;"); err != nil {
+		t.Fatalf("v2 failed: %v", err)
+	}
+	if _, err := db.Exec("ALTER TABLE agents ADD COLUMN hidden_at INTEGER;"); err != nil {
+		t.Fatalf("v2 failed: %v", err)
+	}
+	if _, err := db.Exec("ALTER TABLE agents ADD COLUMN active_tool_started_at INTEGER;"); err != nil {
+		t.Fatalf("v3 failed: %v", err)
+	}
+	if _, err := db.Exec("PRAGMA user_version = 3;"); err != nil {
+		t.Fatalf("setting user_version = 3 failed: %v", err)
+	}
+
+	if err := Migrate(db); err != nil {
+		t.Fatalf("Migrate() from v3 failed: %v", err)
+	}
+
+	var version int
+	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
+		t.Fatalf("reading user_version: %v", err)
+	}
+	if version != 4 {
+		t.Errorf("got user_version = %d, want 4", version)
+	}
 }
 
 func TestMigrate_V1ToV2(t *testing.T) {
@@ -1744,4 +1831,225 @@ func TestStore_ActiveSubagents_Persistence(t *testing.T) {
 		t.Errorf("expected sub Action 'Running grep', got %q", loaded.Activity.ActiveSubagents[0].Action)
 	}
 }
+
+func TestStore_SaveAgentState_EndedRun_NullCurrentRunID(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test_ended_run.db")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	now := time.Now().UnixMilli()
+	ended := now + 1000
+
+	// 1. Initial save of an agent whose run has already ended
+	agent := types.IAgentState{
+		ID:        "agent-ended-run",
+		SessionID: "sess-ended",
+		Harness:   types.HarnessPi,
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-1",
+			Platform: "darwin",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle:      types.LifecycleExited,
+			Activity:       types.ActivityIdle,
+			FirstStartedAt: now,
+			UpdatedAt:      ended,
+			CurrentRun: &types.IRunInfo{
+				ID:        "run-ended-1",
+				PID:       9999,
+				StartedAt: now,
+				EndedAt:   &ended,
+			},
+		},
+	}
+
+	if err := st.SaveAgentState(agent); err != nil {
+		t.Fatalf("SaveAgentState failed: %v", err)
+	}
+
+	// Direct DB check: current_run_id MUST be NULL
+	var currentRunID sql.NullString
+	err = st.DB().QueryRow("SELECT current_run_id FROM agents WHERE id = ?", agent.ID).Scan(&currentRunID)
+	if err != nil {
+		t.Fatalf("querying current_run_id: %v", err)
+	}
+	if currentRunID.Valid {
+		t.Errorf("expected current_run_id to be NULL for ended run, got %q", currentRunID.String)
+	}
+
+	// 2. Active run updated to ended run via SaveAgentState
+	activeAgent := types.IAgentState{
+		ID:        "agent-active-then-ended",
+		SessionID: "sess-active",
+		Harness:   types.HarnessPi,
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-1",
+			Platform: "darwin",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle:      types.LifecycleRunning,
+			Activity:       types.ActivityBusy,
+			FirstStartedAt: now,
+			UpdatedAt:      now,
+			CurrentRun: &types.IRunInfo{
+				ID:        "run-active-1",
+				PID:       8888,
+				StartedAt: now,
+				EndedAt:   nil,
+			},
+		},
+	}
+	if err := st.SaveAgentState(activeAgent); err != nil {
+		t.Fatalf("SaveAgentState(active) failed: %v", err)
+	}
+
+	// Verify current_run_id is non-null while active
+	err = st.DB().QueryRow("SELECT current_run_id FROM agents WHERE id = ?", activeAgent.ID).Scan(&currentRunID)
+	if err != nil {
+		t.Fatalf("querying current_run_id: %v", err)
+	}
+	if !currentRunID.Valid || currentRunID.String != "run-active-1" {
+		t.Errorf("expected current_run_id = 'run-active-1', got %v", currentRunID)
+	}
+
+	// Now update to ended
+	activeAgent.Activity.Lifecycle = types.LifecycleExited
+	activeAgent.Activity.Activity = types.ActivityIdle
+	activeAgent.Activity.CurrentRun.EndedAt = &ended
+	if err := st.SaveAgentState(activeAgent); err != nil {
+		t.Fatalf("SaveAgentState(ended update) failed: %v", err)
+	}
+
+	err = st.DB().QueryRow("SELECT current_run_id FROM agents WHERE id = ?", activeAgent.ID).Scan(&currentRunID)
+	if err != nil {
+		t.Fatalf("querying current_run_id after end: %v", err)
+	}
+	if currentRunID.Valid {
+		t.Errorf("expected current_run_id to be NULL after run ended, got %q", currentRunID.String)
+	}
+}
+
+func TestStore_GetRunningAgents_IgnoresEndedRuns(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test_running_ended.db")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	now := time.Now().UnixMilli()
+	ended := now + 500
+
+	// Insert an agent with an ended run where current_run_id points to an ended run
+	_, err = st.DB().Exec(`INSERT INTO environments (id, label, hostname, platform, user, last_heartbeat_at) VALUES ('env-1', 'local', 'localhost', 'darwin', 'user', ?)`, now)
+	if err != nil {
+		t.Fatalf("inserting environment: %v", err)
+	}
+	_, err = st.DB().Exec(`INSERT INTO runs (id, agent_id, pid, harness_version, started_at, ended_at) VALUES ('run-1', 'agent-1', 1111, '1.0.0', ?, ?)`, now, ended)
+	if err != nil {
+		t.Fatalf("inserting run: %v", err)
+	}
+	_, err = st.DB().Exec(`
+		INSERT INTO agents (id, environment_id, session_id, harness, project_id, project_name, canonical_root, branch, cwd, first_started_at, updated_at, activity, current_run_id)
+		VALUES ('agent-1', 'env-1', 'sess-1', 'pi', 'proj-1', 'proj', '/tmp', 'main', '/tmp', ?, ?, 'BUSY', 'run-1')
+	`, now, now)
+	if err != nil {
+		t.Fatalf("inserting agent: %v", err)
+	}
+
+	// GetRunningAgents must NOT return agent-1 because run-1 has ended_at set
+	running, err := st.GetRunningAgents("")
+	if err != nil {
+		t.Fatalf("GetRunningAgents failed: %v", err)
+	}
+	if len(running) != 0 {
+		t.Errorf("expected 0 running agents because run is ended, got %d", len(running))
+	}
+
+	// Calling GetAgent on an agent with an ended run exercises the historical run branch
+	agentWithEndedRun, err := st.GetAgent("agent-1")
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if agentWithEndedRun == nil {
+		t.Fatalf("expected non-nil agent")
+	}
+	if agentWithEndedRun.Activity.Lifecycle != types.LifecycleExited {
+		t.Errorf("expected LifecycleExited, got %v", agentWithEndedRun.Activity.Lifecycle)
+	}
+	if agentWithEndedRun.Activity.CurrentRun == nil || agentWithEndedRun.Activity.CurrentRun.EndedAt == nil {
+		t.Errorf("expected CurrentRun populated with ended run, got %+v", agentWithEndedRun.Activity.CurrentRun)
+	}
+}
+
+func TestStore_GetAgent_ExitedWithHistoricalRun(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test_exited_get.db")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	now := time.Now().UnixMilli()
+	ended := now + 1000
+
+	agent := types.IAgentState{
+		ID:        "agent-get-exited",
+		SessionID: "sess-get-exited",
+		Harness:   types.HarnessPi,
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-1",
+			Platform: "darwin",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle:      types.LifecycleRunning,
+			Activity:       types.ActivityBusy,
+			FirstStartedAt: now,
+			UpdatedAt:      now,
+			CurrentRun: &types.IRunInfo{
+				ID:             "run-to-end",
+				PID:            1234,
+				HarnessVersion: "1.0.0",
+				StartedAt:      now,
+			},
+		},
+	}
+	if err := st.SaveAgentState(agent); err != nil {
+		t.Fatalf("SaveAgentState failed: %v", err)
+	}
+
+	// End current run
+	if err := st.EndCurrentRun(agent.ID, ended); err != nil {
+		t.Fatalf("EndCurrentRun failed: %v", err)
+	}
+
+	// Fetch via GetAgent
+	fetched, err := st.GetAgent(agent.ID)
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if fetched == nil {
+		t.Fatalf("expected non-nil agent")
+	}
+	if fetched.Activity.Lifecycle != types.LifecycleExited {
+		t.Errorf("expected LifecycleExited, got %s", fetched.Activity.Lifecycle)
+	}
+	if fetched.Activity.CurrentRun != nil {
+		t.Errorf("expected CurrentRun nil for ended agent without current_run_id, got %+v", fetched.Activity.CurrentRun)
+	}
+
+	// Also test EndCurrentRun when current_run_id is already NULL
+	if err := st.EndCurrentRun(agent.ID, ended+500); err != nil {
+		t.Errorf("EndCurrentRun on already ended agent failed: %v", err)
+	}
+
+	// Test EndCurrentRun when agent does not exist (ErrNoRows)
+	if err := st.EndCurrentRun("non-existent-agent", ended+1000); err != nil {
+		t.Errorf("EndCurrentRun on non-existent agent failed: %v", err)
+	}
+}
+
 

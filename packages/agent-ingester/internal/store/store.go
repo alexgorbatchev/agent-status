@@ -146,9 +146,11 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 
 	// Save or update run if present
 	var currentRunID *string
+	if agent.Activity.CurrentRun != nil && agent.Activity.CurrentRun.EndedAt == nil {
+		currentRunID = &agent.Activity.CurrentRun.ID
+	}
 	if agent.Activity.CurrentRun != nil {
 		r := agent.Activity.CurrentRun
-		currentRunID = &r.ID
 		_, err = tx.Exec(`
 			INSERT INTO runs (id, agent_id, pid, harness_version, started_at, ended_at)
 			VALUES (?, ?, ?, ?, ?, ?)
@@ -473,13 +475,15 @@ func (s *Store) GetAllActiveAgents() ([]types.IAgentState, error) {
 // GetRunningAgents returns all agents with an active current_run_id.
 // If envID is non-empty, it filters to agents belonging to that environment.
 func (s *Store) GetRunningAgents(envID string) ([]types.IAgentState, error) {
-	query := "SELECT id FROM agents WHERE current_run_id IS NOT NULL"
+	query := `SELECT a.id FROM agents a
+JOIN runs r ON a.current_run_id = r.id
+WHERE a.current_run_id IS NOT NULL AND r.ended_at IS NULL`
 	var args []interface{}
 	if envID != "" {
-		query += " AND environment_id = ?"
+		query += " AND a.environment_id = ?"
 		args = append(args, envID)
 	}
-	query += " ORDER BY updated_at DESC"
+	query += " ORDER BY a.updated_at DESC"
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {

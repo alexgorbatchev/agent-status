@@ -656,4 +656,55 @@ func TestReconciler_LogLevel_DebugForIndividualExits(t *testing.T) {
 	}
 }
 
+type mockStoreWithAgents struct {
+	store.Store
+	agents       []types.IAgentState
+	endRunCalled bool
+}
+
+func (m *mockStoreWithAgents) GetRunningAgents(envID string) ([]types.IAgentState, error) {
+	return m.agents, nil
+}
+
+func (m *mockStoreWithAgents) EndCurrentRun(agentID string, endedAt int64) error {
+	m.endRunCalled = true
+	return nil
+}
+
+func (m *mockStoreWithAgents) GetAgent(agentID string) (*types.IAgentState, error) {
+	return nil, nil
+}
+
+func TestReconciler_SkipsExitedLifecycle(t *testing.T) {
+	st := &mockStoreWithAgents{
+		agents: []types.IAgentState{
+			{
+				ID: "agent-exited",
+				Activity: types.IAgentActivity{
+					Lifecycle: types.LifecycleExited,
+					CurrentRun: &types.IRunInfo{
+						ID:  "run-exited",
+						PID: 999999, // dead PID
+					},
+				},
+			},
+		},
+	}
+	checker := &mockProcessChecker{
+		alivePIDs: map[int]bool{999999: false},
+	}
+	rec := New(st, nil, WithProcessChecker(checker))
+
+	count, err := rec.Reconcile(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Reconcile failed: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("expected 0 reconciled agents because agent lifecycle is EXITED, got %d", count)
+	}
+	if st.endRunCalled {
+		t.Errorf("expected EndCurrentRun not to be called for already EXITED agent")
+	}
+}
+
 

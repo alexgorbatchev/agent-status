@@ -121,6 +121,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, envID string) (int, error) {
 		default:
 		}
 
+		// Skip agents whose lifecycle is already EXITED
+		if agent.Activity.Lifecycle == types.LifecycleExited {
+			continue
+		}
+
 		// Only reconcile agents belonging to this local machine if envID is empty
 		if envID == "" && r.localHostname != "" && agent.Environment.Hostname != "" && agent.Environment.Hostname != r.localHostname {
 			continue
