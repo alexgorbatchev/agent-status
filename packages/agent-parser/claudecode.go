@@ -174,8 +174,14 @@ func makeClaudeCodeRunStartedEvent(raw rawJSONLine, ts int64) ParsedEvent {
 	var titlePtr *string
 	if raw.AITitle != "" {
 		titlePtr = stringPtr(raw.AITitle)
+	} else if raw.AITitleSnake != "" {
+		titlePtr = stringPtr(raw.AITitleSnake)
 	} else if raw.Title != "" {
 		titlePtr = stringPtr(raw.Title)
+	} else if raw.AgentName != "" {
+		titlePtr = stringPtr(raw.AgentName)
+	} else if raw.Name != "" {
+		titlePtr = stringPtr(raw.Name)
 	} else if raw.SessionID != "" {
 		titlePtr = stringPtr("Claude Code Session " + raw.SessionID)
 	}

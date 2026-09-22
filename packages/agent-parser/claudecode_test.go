@@ -689,7 +689,15 @@ func TestClaudeCodeParser_SchemaAliases(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParseLine error: %v", err)
 			}
-			// May have run_started before title_change
+			// Line 1 should emit run_started with Title set
+			if len(evs) < 1 || evs[0].EventType != "run_started" {
+				t.Fatalf("expected first event 'run_started', got %+v", evs)
+			}
+			if evs[0].Data.Title == nil || *evs[0].Data.Title != tt.wantTitle {
+				t.Errorf("run_started Title = %v, want %q", evs[0].Data.Title, tt.wantTitle)
+			}
+
+			// Followed by title_change
 			var found *ParsedEvent
 			for i := range evs {
 				if evs[i].EventType == tt.wantType {
@@ -705,4 +713,89 @@ func TestClaudeCodeParser_SchemaAliases(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestClaudeCodeParser_BatchAndNotebookEditingTools(t *testing.T) {
+	t.Run("MultiEdit tool_use and tool_result", func(t *testing.T) {
+		p := NewClaudeCodeParser()
+		assistantLine := []byte(`{
+			"type": "assistant",
+			"sessionId": "ses-edit-1",
+			"message": {
+				"role": "assistant",
+				"content": [
+					{
+						"type": "tool_use",
+						"id": "call_multiedit_1",
+						"name": "MultiEdit",
+						"input": {
+							"file_path": "src/parser.go",
+							"edits": [{"old_string": "foo", "new_string": "bar"}]
+						}
+					}
+				]
+			}
+		}`)
+		evs, err := p.ParseLine(assistantLine)
+		if err != nil {
+			t.Fatalf("ParseLine error: %v", err)
+		}
+		// Expect run_started and tool_call
+		var toolCall *ParsedEvent
+		for i := range evs {
+			if evs[i].EventType == "tool_call" {
+				toolCall = &evs[i]
+				break
+			}
+		}
+		if toolCall == nil {
+			t.Fatalf("expected tool_call event, got %+v", evs)
+		}
+		if toolCall.Data.ToolName == nil || *toolCall.Data.ToolName != "MultiEdit" {
+			t.Errorf("ToolName = %v, want 'MultiEdit'", toolCall.Data.ToolName)
+		}
+		if toolCall.Data.ToolCallID == nil || *toolCall.Data.ToolCallID != "call_multiedit_1" {
+			t.Errorf("ToolCallID = %v, want 'call_multiedit_1'", toolCall.Data.ToolCallID)
+		}
+	})
+
+	t.Run("NotebookEdit tool_use", func(t *testing.T) {
+		p := NewClaudeCodeParser()
+		line := []byte(`{
+			"type": "assistant",
+			"sessionId": "ses-nb-1",
+			"message": {
+				"role": "assistant",
+				"content": [
+					{
+						"type": "tool_use",
+						"id": "call_nbedit_1",
+						"name": "NotebookEdit",
+						"input": {
+							"notebook_path": "analysis.ipynb",
+							"cell_index": 2,
+							"new_source": "import pandas as pd"
+						}
+					}
+				]
+			}
+		}`)
+		evs, err := p.ParseLine(line)
+		if err != nil {
+			t.Fatalf("ParseLine error: %v", err)
+		}
+		var toolCall *ParsedEvent
+		for i := range evs {
+			if evs[i].EventType == "tool_call" {
+				toolCall = &evs[i]
+				break
+			}
+		}
+		if toolCall == nil {
+			t.Fatalf("expected tool_call event, got %+v", evs)
+		}
+		if toolCall.Data.ToolName == nil || *toolCall.Data.ToolName != "NotebookEdit" {
+			t.Errorf("ToolName = %v, want 'NotebookEdit'", toolCall.Data.ToolName)
+		}
+	})
 }
