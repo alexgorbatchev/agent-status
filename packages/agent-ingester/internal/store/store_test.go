@@ -27,8 +27,8 @@ func TestOpen_Memory(t *testing.T) {
 	if err := st.DB().QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("query user_version failed: %v", err)
 	}
-	if version != 2 {
-		t.Errorf("got user_version = %d, want 2", version)
+	if version != 3 {
+		t.Errorf("got user_version = %d, want 3", version)
 	}
 }
 
@@ -110,6 +110,21 @@ func TestMigrate_ErrorCases(t *testing.T) {
 	if err := Migrate(db2); err == nil {
 		t.Errorf("expected error running v2 migration without agents table, got nil")
 	}
+
+	// Test v3 failure when agents table does not exist
+	db3, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open failed: %v", err)
+	}
+	defer func() {
+		_ = db3.Close()
+	}()
+	if _, err := db3.Exec("PRAGMA user_version = 2;"); err != nil {
+		t.Fatalf("setting user_version = 2 failed: %v", err)
+	}
+	if err := Migrate(db3); err == nil {
+		t.Errorf("expected error running v3 migration without agents table, got nil")
+	}
 }
 
 func TestMigrate_V1ToV2(t *testing.T) {
@@ -138,8 +153,8 @@ func TestMigrate_V1ToV2(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 2 {
-		t.Errorf("got user_version = %d, want 2", version)
+	if version != 3 {
+		t.Errorf("got user_version = %d, want 3", version)
 	}
 
 	var indexCount int
@@ -148,6 +163,14 @@ func TestMigrate_V1ToV2(t *testing.T) {
 	}
 	if indexCount != 1 {
 		t.Errorf("expected idx_agents_hidden to exist, got count %d", indexCount)
+	}
+
+	var hasCol int
+	if err := db.QueryRow("SELECT count(*) FROM pragma_table_info('agents') WHERE name = 'active_tool_started_at';").Scan(&hasCol); err != nil {
+		t.Fatalf("querying active_tool_started_at column: %v", err)
+	}
+	if hasCol != 1 {
+		t.Errorf("expected active_tool_started_at column to exist, got count %d", hasCol)
 	}
 }
 
@@ -718,6 +741,12 @@ func TestStore_ErrorHandlingOnClosedDB(t *testing.T) {
 	if _, err := st.GetAllEnvironments(); err == nil {
 		t.Errorf("expected error on closed db for GetAllEnvironments")
 	}
+	if _, err := st.GetDistinctSubagentIDs("a"); err == nil {
+		t.Errorf("expected error on closed db for GetDistinctSubagentIDs")
+	}
+	if _, err := st.SetAgentVisibility("a", true, nil); err == nil {
+		t.Errorf("expected error on closed db for SetAgentVisibility")
+	}
 	if err := st.RecordTelemetryEvent(types.ITelemetryFrame{}); err == nil {
 		t.Errorf("expected error on closed db for RecordTelemetryEvent")
 	}
@@ -862,6 +891,19 @@ func TestPruneOldEventsAndExitedAgents(t *testing.T) {
 	}
 	if eventCount != 1 {
 		t.Errorf("got %d telemetry events, want 1", eventCount)
+	}
+
+	// Test error in PruneOldEventsAndExitedAgents when table is dropped
+	stDrop, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer func() { _ = stDrop.Close() }()
+	if _, err := stDrop.DB().Exec("DROP TABLE telemetry_events;"); err != nil {
+		t.Fatalf("dropping table failed: %v", err)
+	}
+	if err := stDrop.PruneOldEventsAndExitedAgents(100, 100); err == nil {
+		t.Errorf("expected error in PruneOldEventsAndExitedAgents on dropped table")
 	}
 }
 
@@ -1336,19 +1378,26 @@ func TestStore_RecordTelemetryEvent_SubagentAndCoverage(t *testing.T) {
 		t.Errorf("unexpected subIDs: %v", subIDs)
 	}
 
-	// Empty string subagent ID should be treated as nil
-	emptySub := ""
-	frame2 := types.ITelemetryFrame{
-		Seq:        2,
-		AgentID:    "agent-cov",
-		SubagentID: &emptySub,
-		SessionID:  "sess-cov",
-		EventType:  "tool_result",
-		Timestamp:  1001,
+	// Closed db error testing for RecordTelemetryEvent and GetAllActiveAgents
+	stClosed, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
 	}
-	if err := st.RecordTelemetryEvent(frame2); err != nil {
-		t.Fatalf("RecordTelemetryEvent with empty subagent failed: %v", err)
+	_ = stClosed.Close()
+	if err := stClosed.RecordTelemetryEvent(frame); err == nil {
+		t.Errorf("expected error on closed db for RecordTelemetryEvent")
 	}
+	if _, err := stClosed.GetAllActiveAgents(); err == nil {
+		t.Errorf("expected error on closed db for GetAllActiveAgents")
+	}
+
+	// Unmarshal error test for RecordTelemetryEvent
+	badFrame := frame
+	badFrame.Data.ToolInput = map[string]interface{}{"bad": make(chan int)}
+	if err := st.RecordTelemetryEvent(badFrame); err == nil {
+		t.Errorf("expected error for unmarshalable Data in RecordTelemetryEvent")
+	}
+
 
 	// Test ActionStale and Cost and Phase and Hidden in SaveAgentState
 	phase := types.PhasePlanning
@@ -1420,3 +1469,81 @@ func TestStore_RecordTelemetryEvent_SubagentAndCoverage(t *testing.T) {
 		t.Errorf("expected error opening non-existent read-only path")
 	}
 }
+
+func TestStore_ActiveToolStartedAt_PersistenceAndClearing(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	now := int64(1700000000000)
+	toolStart := now - 50000
+	toolBash := "bash"
+
+	agent := types.IAgentState{
+		ID:        "agent-tool-stall-store",
+		SessionID: "sess-stall",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-stall",
+			Platform: "darwin",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle:           types.LifecycleRunning,
+			Activity:            types.ActivityBusy,
+			ActiveTool:          &toolBash,
+			ActiveToolStartedAt: &toolStart,
+			FirstStartedAt:      now,
+			UpdatedAt:           now,
+			CurrentRun: &types.IRunInfo{
+				ID:        "run-stall-1",
+				PID:       9999,
+				StartedAt: now,
+			},
+		},
+	}
+
+	// 1. Save agent state with ActiveToolStartedAt populated
+	if err := st.SaveAgentState(agent); err != nil {
+		t.Fatalf("SaveAgentState failed: %v", err)
+	}
+
+	// 2. GetAgent and verify ActiveToolStartedAt is retrieved correctly
+	loaded, err := st.GetAgent(agent.ID)
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if loaded.Activity.ActiveToolStartedAt == nil {
+		t.Fatalf("expected ActiveToolStartedAt to be non-nil, got nil")
+	}
+	if *loaded.Activity.ActiveToolStartedAt != toolStart {
+		t.Errorf("expected ActiveToolStartedAt = %d, got %d", toolStart, *loaded.Activity.ActiveToolStartedAt)
+	}
+
+	// 3. EndCurrentRun and verify ActiveToolStartedAt is cleared to nil
+	if err := st.EndCurrentRun(agent.ID, now+10000); err != nil {
+		t.Fatalf("EndCurrentRun failed: %v", err)
+	}
+
+	afterEnd, err := st.GetAgent(agent.ID)
+	if err != nil {
+		t.Fatalf("GetAgent after EndCurrentRun failed: %v", err)
+	}
+	if afterEnd.Activity.ActiveToolStartedAt != nil {
+		t.Errorf("expected ActiveToolStartedAt to be nil after EndCurrentRun, got %v", *afterEnd.Activity.ActiveToolStartedAt)
+	}
+
+	// 4. EndCurrentRun on agent where current_run_id is already NULL
+	agentNoRun := agent
+	agentNoRun.ID = "agent-no-run-test"
+	agentNoRun.SessionID = "sess-no-run"
+	agentNoRun.Activity.CurrentRun = nil
+	if err := st.SaveAgentState(agentNoRun); err != nil {
+		t.Fatalf("SaveAgentState for agentNoRun failed: %v", err)
+	}
+	if err := st.EndCurrentRun(agentNoRun.ID, now+20000); err != nil {
+		t.Fatalf("EndCurrentRun on agent without current run failed: %v", err)
+	}
+}
+

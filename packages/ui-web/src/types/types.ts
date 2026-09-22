@@ -64,6 +64,7 @@ export interface IAgentActivity {
   phase: AgentPhase | null;
   activeTool: string | null;
   activeTarget: string | null;
+  activeToolStartedAt?: number | null;
   question: string | null; // Active prompt when WAITING_QUESTION
   lastThinkingExcerpt: string | null;
   lastError: string | null;

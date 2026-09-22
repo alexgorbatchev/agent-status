@@ -17,7 +17,7 @@ import {
   EyeOff,
 } from "lucide-react";
 import { useRelativeTime } from "../hooks/useRelativeTime";
-import { formatExactTime } from "../utils/agentUtils";
+import { formatExactTime, getToolExecutionDuration, getToolStallTier, formatDuration } from "../utils/agentUtils";
 
 const HARNESS_LABELS: Record<HarnessType, string> = {
   "claude-code": "Claude Code",
@@ -26,6 +26,10 @@ const HARNESS_LABELS: Record<HarnessType, string> = {
   opencode: "OpenCode",
 };
 
+function resolveCurrentTime(): number {
+  return Date.now();
+}
+
 export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps): React.JSX.Element {
   const { activity, environment, workspace, harness } = agent;
 
@@ -33,8 +37,14 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
   const title = activity.title || "Untitled Agent Session";
   const action = activity.action || (activity.activeTool ? `Executing ${activity.activeTool}` : "Idle");
   const isFinished = activity.lifecycle === "EXITED";
+  const now = resolveCurrentTime();
   const relativeTime = useRelativeTime(activity.updatedAt);
   const exactTime = formatExactTime(activity.updatedAt);
+
+  const durationMs = getToolExecutionDuration(activity, now);
+  const stallTier = getToolStallTier(durationMs);
+  const formattedDuration = durationMs !== null ? formatDuration(durationMs) : null;
+  const isStalled = stallTier === "stalled";
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.target !== event.currentTarget) {
@@ -55,7 +65,8 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
       onClick={() => onOpenDrawer?.(agent)}
       onKeyDown={handleKeyDown}
       className={clsx(
-        "group relative flex flex-col justify-between p-4 rounded-xl bg-slate-900/80 border border-slate-800 hover:border-slate-700 transition-all cursor-pointer shadow-lg hover:shadow-slate-950/50",
+        "group relative flex flex-col justify-between p-4 rounded-xl bg-slate-900/80 border transition-all cursor-pointer shadow-lg hover:shadow-slate-950/50",
+        isStalled ? "border-amber-500/80 shadow-amber-950/40" : "border-slate-800 hover:border-slate-700",
         agent.isHidden && "border-dashed border-slate-700/60 opacity-60 hover:opacity-100",
         !agent.isHidden && isFinished && "opacity-60 hover:opacity-100",
       )}
@@ -94,7 +105,12 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
                 Hidden
               </span>
             )}
-            <StatusBadge lifecycle={activity.lifecycle} activity={activity.activity} />
+            <StatusBadge
+              lifecycle={activity.lifecycle}
+              activity={activity.activity}
+              stallTier={stallTier}
+              toolDuration={formattedDuration ?? undefined}
+            />
             {onToggleHide && (
               <button
                 type="button"
@@ -164,6 +180,25 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
           </div>
         )}
 
+        {(stallTier === "warning" || stallTier === "stalled") && formattedDuration && (
+          <div
+            data-testid="AgentCard--stall-warning"
+            role="alert"
+            data-callout-type="warning"
+            className="mb-3 p-2 rounded-lg bg-amber-950/40 border border-amber-800/60 text-xs text-amber-200 flex flex-col gap-1"
+          >
+            <div className="flex items-center gap-1.5 font-medium">
+              <IconWrapper size="md" tone="warning" align="top">
+                <AlertTriangle size={16} />
+              </IconWrapper>
+              <span>Command running for {formattedDuration} without output or return</span>
+            </div>
+            {activity.action && (
+              <div className="font-mono text-[11px] text-amber-300/80 truncate pl-5">Command: {activity.action}</div>
+            )}
+          </div>
+        )}
+
         {/* Metadata Badges */}
         <div data-testid="AgentCard--badges" className="flex flex-wrap items-center gap-2 text-xs text-slate-400 mb-3">
           <div
@@ -191,6 +226,38 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
                 <FolderGit2 size={12} />
               </IconWrapper>
               <span className="font-mono text-[11px] text-slate-300">{workspace.relPath}</span>
+            </div>
+          )}
+
+          {stallTier === "notice" && formattedDuration && (
+            <div
+              data-testid="AgentCard--stall-notice"
+              data-badge-type="stall-notice"
+              role="status"
+              aria-label={`${activity.activeTool} running for ${formattedDuration}`}
+              className="flex items-center gap-1 bg-amber-950/40 border border-amber-800/50 text-amber-300 px-2 py-0.5 rounded text-[11px]"
+            >
+              <IconWrapper size="xs" tone="warning">
+                <Clock size={12} />
+              </IconWrapper>
+              <span>
+                ⏱️ {activity.activeTool} running for {formattedDuration}
+              </span>
+            </div>
+          )}
+
+          {(stallTier === "warning" || stallTier === "stalled") && formattedDuration && (
+            <div
+              data-testid="AgentCard--stall-duration"
+              data-badge-type="stall-duration"
+              role="status"
+              aria-label={`${formattedDuration} on tool`}
+              className="flex items-center gap-1 bg-amber-950/40 border border-amber-800/50 text-amber-300 px-2 py-0.5 rounded text-[11px]"
+            >
+              <IconWrapper size="xs" tone="warning">
+                <Clock size={12} />
+              </IconWrapper>
+              <span>⏱️ {formattedDuration} on tool</span>
             </div>
           )}
 

@@ -43,6 +43,8 @@ export interface IViewSwitcherProps<T extends string = string> {
 export interface IStatusBadgeProps {
   lifecycle: LifecycleState;
   activity: ActivityState;
+  stallTier?: "healthy" | "notice" | "warning" | "stalled";
+  toolDuration?: string;
 }
 
 export interface IHeaderProps {

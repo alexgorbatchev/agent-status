@@ -453,6 +453,9 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			c.mu.Unlock()
 
 			agent.Activity.Lifecycle = types.LifecycleExited
+			agent.Activity.ActiveTool = nil
+			agent.Activity.ActiveTarget = nil
+			agent.Activity.ActiveToolStartedAt = nil
 			if err := c.store.EndCurrentRun(agent.ID, now); err != nil {
 				return nil, fmt.Errorf("ending current run: %w", err)
 			}
@@ -487,6 +490,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			agent.Activity.Activity = types.ActivityError
 			agent.Activity.ActiveTool = nil
 			agent.Activity.ActiveTarget = nil
+			agent.Activity.ActiveToolStartedAt = nil
 			if frame.Data.Content != nil {
 				errStr := *frame.Data.Content
 				if len(errStr) > 2000 {
@@ -506,6 +510,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			agent.Activity.LastError = nil
 			agent.Activity.ActiveTool = nil
 			agent.Activity.ActiveTarget = nil
+			agent.Activity.ActiveToolStartedAt = nil
 			pendingJob = c.updateSummarization(agent, false)
 
 		case "tool_call":
@@ -514,6 +519,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			c.mu.Unlock()
 			agent.Activity.Activity = types.ActivityBusy
 			agent.Activity.LastError = nil
+			agent.Activity.ActiveToolStartedAt = &now
 			if frame.Data.ToolName != nil {
 				toolName := *frame.Data.ToolName
 				agent.Activity.ActiveTool = &toolName
@@ -562,6 +568,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			agent.Activity.LastError = nil
 			agent.Activity.ActiveTool = nil
 			agent.Activity.ActiveTarget = nil
+			agent.Activity.ActiveToolStartedAt = nil
 			agent.Activity.Action = "Thinking"
 			p := types.PhasePlanning
 			agent.Activity.Phase = &p
@@ -595,8 +602,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				if reason == "tool_use" || reason == "toolUse" || reason == "tool_calls" {
 					isToolUse = true
 				}
-			}
-			if agent.Activity.ActiveTool != nil {
+			} else if agent.Activity.ActiveTool != nil {
 				isToolUse = true
 			}
 
@@ -629,6 +635,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				// so pauses between API calls do not cause BUSY/IDLE flipping.
 				agent.Activity.ActiveTool = nil
 				agent.Activity.ActiveTarget = nil
+				agent.Activity.ActiveToolStartedAt = nil
 				agent.Activity.Question = nil
 
 				c.mu.Lock()

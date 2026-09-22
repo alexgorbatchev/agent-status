@@ -8,6 +8,9 @@ import {
   formatRelativeTime,
   formatExactTime,
   getAgentDebugCommand,
+  getToolExecutionDuration,
+  getToolStallTier,
+  formatDuration,
 } from "../agentUtils";
 import { factory_createAgent, fixture_testEnvironment, fixture_testStaleEnvironment } from "./fixtures";
 import type { IAgentState } from "../../types";
@@ -316,6 +319,138 @@ describe("agentUtils", () => {
         sessionId: "sess-opencode-012",
       });
       expect(getAgentDebugCommand(agent)).toBe("just debug session replay --harness opencode sess-opencode-012");
+    });
+  });
+
+  describe("getToolExecutionDuration", () => {
+    it("returns null if agent is not RUNNING or not BUSY", () => {
+      const idleAgent = factory_createAgent({
+        activity: {
+          ...factory_createAgent().activity,
+          lifecycle: "RUNNING",
+          activity: "IDLE",
+          activeTool: "bash",
+          activeToolStartedAt: 1000,
+        },
+      });
+      expect(getToolExecutionDuration(idleAgent.activity, 2000)).toBeNull();
+
+      const exitedAgent = factory_createAgent({
+        activity: {
+          ...factory_createAgent().activity,
+          lifecycle: "EXITED",
+          activity: "BUSY",
+          activeTool: "bash",
+          activeToolStartedAt: 1000,
+        },
+      });
+      expect(getToolExecutionDuration(exitedAgent.activity, 2000)).toBeNull();
+    });
+
+    it("returns null if activeTool or activeToolStartedAt is missing or non-positive", () => {
+      const noToolAgent = factory_createAgent({
+        activity: {
+          ...factory_createAgent().activity,
+          lifecycle: "RUNNING",
+          activity: "BUSY",
+          activeTool: null,
+          activeToolStartedAt: 1000,
+        },
+      });
+      expect(getToolExecutionDuration(noToolAgent.activity, 2000)).toBeNull();
+
+      const noStartAgent = factory_createAgent({
+        activity: {
+          ...factory_createAgent().activity,
+          lifecycle: "RUNNING",
+          activity: "BUSY",
+          activeTool: "bash",
+          activeToolStartedAt: null,
+        },
+      });
+      expect(getToolExecutionDuration(noStartAgent.activity, 2000)).toBeNull();
+    });
+
+    it("computes elapsed duration accurately", () => {
+      const activity = {
+        ...factory_createAgent().activity,
+        lifecycle: "RUNNING" as const,
+        activity: "BUSY" as const,
+        activeTool: "bash",
+        activeToolStartedAt: 10000,
+      };
+      expect(getToolExecutionDuration(activity, 15000)).toBe(5000);
+      expect(getToolExecutionDuration(activity, 70000)).toBe(60000);
+      expect(getToolExecutionDuration(activity, 9000)).toBe(0); // clock skew floor
+    });
+  });
+
+  describe("getToolStallTier", () => {
+    it("evaluates healthy for < 60s or null", () => {
+      expect(getToolStallTier(null)).toBe("healthy");
+      expect(getToolStallTier(0)).toBe("healthy");
+      expect(getToolStallTier(59999)).toBe("healthy");
+    });
+
+    it("evaluates notice for 60s - 119s", () => {
+      expect(getToolStallTier(60000)).toBe("notice");
+      expect(getToolStallTier(75000)).toBe("notice");
+      expect(getToolStallTier(119999)).toBe("notice");
+    });
+
+    it("evaluates warning for 120s - 179s", () => {
+      expect(getToolStallTier(120000)).toBe("warning");
+      expect(getToolStallTier(150000)).toBe("warning");
+      expect(getToolStallTier(179999)).toBe("warning");
+    });
+
+    it("evaluates stalled for >= 180s (3m+)", () => {
+      expect(getToolStallTier(180000)).toBe("stalled");
+      expect(getToolStallTier(202000)).toBe("stalled");
+      expect(getToolStallTier(600000)).toBe("stalled");
+    });
+  });
+
+  describe("formatDuration", () => {
+    it("formats durations under 60s as seconds", () => {
+      expect(formatDuration(45000)).toBe("45s");
+      expect(formatDuration(5000)).toBe("5s");
+    });
+
+    it("formats durations 60s and above as minutes and seconds", () => {
+      expect(formatDuration(75000)).toBe("1m 15s");
+      expect(formatDuration(135000)).toBe("2m 15s");
+      expect(formatDuration(202000)).toBe("3m 22s");
+    });
+  });
+
+  describe("isAgentRequiringAttention with stalled tools", () => {
+    it("returns true for a running busy agent with a tool running >= 180s", () => {
+      const now = 200000;
+      const stalledAgent = factory_createAgent({
+        activity: {
+          ...factory_createAgent().activity,
+          lifecycle: "RUNNING",
+          activity: "BUSY",
+          activeTool: "bash",
+          activeToolStartedAt: now - 185000,
+        },
+      });
+      expect(isAgentRequiringAttention(stalledAgent, now)).toBe(true);
+    });
+
+    it("returns false for a running busy agent with a tool running < 180s", () => {
+      const now = 200000;
+      const warningAgent = factory_createAgent({
+        activity: {
+          ...factory_createAgent().activity,
+          lifecycle: "RUNNING",
+          activity: "BUSY",
+          activeTool: "bash",
+          activeToolStartedAt: now - 150000,
+        },
+      });
+      expect(isAgentRequiringAttention(warningAgent, now)).toBe(false);
     });
   });
 });

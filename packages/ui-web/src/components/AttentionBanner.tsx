@@ -2,12 +2,25 @@ import React from "react";
 import type { IAttentionBannerProps } from "./types";
 import type { IAgentState } from "../types";
 import { IconWrapper } from "./IconWrapper";
+import type { IconTone } from "./types";
 import { AlertCircle, HelpCircle, AlertTriangle, ArrowRight } from "lucide-react";
-import { isAgentRequiringAttention } from "../utils/agentUtils";
+import {
+  isAgentRequiringAttention,
+  getToolExecutionDuration,
+  getToolStallTier,
+  formatDuration,
+} from "../utils/agentUtils";
+
+type CalloutType = "warning" | "error";
+
+function resolveCurrentTime(): number {
+  return Date.now();
+}
 
 export function AttentionBanner({ agents, onSelectAgent }: IAttentionBannerProps): React.JSX.Element | null {
-  // Tier 1: ACT NOW (Running agents with WAITING_QUESTION or ERROR)
-  const actNowAgents = agents.filter(isAgentRequiringAttention);
+  const now = resolveCurrentTime();
+  // Tier 1: ACT NOW (Running agents with WAITING_QUESTION or ERROR or STALLED)
+  const actNowAgents = agents.filter((a) => isAgentRequiringAttention(a, now));
 
   if (actNowAgents.length === 0) return null;
 
@@ -41,7 +54,29 @@ export function AttentionBanner({ agents, onSelectAgent }: IAttentionBannerProps
       <div data-testid="AttentionBanner--grid" className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {actNowAgents.map((agent) => {
           const isQuestion = agent.activity.activity === "WAITING_QUESTION";
+          const durationMs = getToolExecutionDuration(agent.activity, now);
+          const isStalled = getToolStallTier(durationMs) === "stalled";
           const title = agent.activity.title || "Untitled Agent";
+
+          let message = "";
+          let calloutType: CalloutType = "error";
+          let iconTone: IconTone = "error";
+
+          if (isQuestion) {
+            message = agent.activity.question || "Waiting on user question input";
+            calloutType = "warning";
+            iconTone = "warning";
+          } else if (isStalled && durationMs !== null) {
+            const toolDesc = agent.activity.action || agent.activity.activeTool || "tool";
+            message = `Tool call running for ${formatDuration(durationMs)} without return: ${toolDesc}`;
+            calloutType = "warning";
+            iconTone = "warning";
+          } else {
+            message = agent.activity.lastError || "Agent encountered an execution error";
+            calloutType = "error";
+            iconTone = "error";
+          }
+
           return (
             <div
               key={agent.id}
@@ -59,7 +94,7 @@ export function AttentionBanner({ agents, onSelectAgent }: IAttentionBannerProps
                     <HelpCircle size={16} />
                   </IconWrapper>
                 ) : (
-                  <IconWrapper size="md" tone="error" align="top">
+                  <IconWrapper size="md" tone={iconTone} align="top">
                     <AlertTriangle size={16} />
                   </IconWrapper>
                 )}
@@ -77,12 +112,10 @@ export function AttentionBanner({ agents, onSelectAgent }: IAttentionBannerProps
                   <p
                     data-testid="AttentionBanner--agent-message"
                     role="alert"
-                    data-callout-type={isQuestion ? "warning" : "error"}
+                    data-callout-type={calloutType}
                     className="text-xs text-slate-400 line-clamp-1 mt-0.5 font-mono"
                   >
-                    {isQuestion
-                      ? agent.activity.question || "Waiting on user question input"
-                      : agent.activity.lastError || "Agent encountered an execution error"}
+                    {message}
                   </p>
                 </div>
               </div>

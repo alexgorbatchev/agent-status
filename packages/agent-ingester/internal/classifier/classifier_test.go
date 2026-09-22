@@ -3530,3 +3530,125 @@ func TestClassifier_DuplicateRunStarted_Idempotent(t *testing.T) {
 		t.Errorf("Activity was reset: expected %s, got %s", types.ActivityBusy, agent.Activity.Activity)
 	}
 }
+
+func TestClassifier_ActiveToolStartedAt_Lifecycle(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, s := newTestClassifier(t, sum)
+	c.SetSyncMode(true)
+	defer func() { _ = c.Close() }()
+
+	now := int64(10000)
+	agentID := "agent-active-tool-stall-test"
+	sessID := "sess-stall-lifecycle"
+	env := types.IEnvironmentInfo{ID: "env-stall", Platform: "darwin"}
+	ws := types.IWorkspaceInfo{Branch: "main", CWD: "/workspace"}
+	proj := types.IProjectInfo{ID: "proj-1", Name: "repo", CanonicalRoot: "/repo"}
+
+	baseFrame := types.ITelemetryFrame{
+		AgentID:     agentID,
+		SessionID:   sessID,
+		Harness:     types.HarnessClaudeCode,
+		Environment: env,
+		Workspace:   ws,
+		Project:     proj,
+		Timestamp:   now,
+	}
+
+	// 1. run_started
+	fStart := baseFrame
+	fStart.Seq = 1
+	fStart.EventType = "run_started"
+	fStart.PID = 5432
+	agent, err := c.ProcessFrame(fStart)
+	if err != nil {
+		t.Fatalf("ProcessFrame(run_started) failed: %v", err)
+	}
+	if agent.Activity.ActiveToolStartedAt != nil {
+		t.Errorf("expected ActiveToolStartedAt nil at run_started, got %v", *agent.Activity.ActiveToolStartedAt)
+	}
+
+	// 2. tool_call: bash at t = 10500 -> MUST set ActiveToolStartedAt = 10500
+	toolTime := int64(10500)
+	toolBash := "bash"
+	fCall := baseFrame
+	fCall.Seq = 2
+	fCall.EventType = "tool_call"
+	fCall.Timestamp = toolTime
+	fCall.Data = types.TelemetryFrameData{
+		ToolName:  &toolBash,
+		ToolInput: map[string]interface{}{"command": "git rebase main"},
+	}
+	agent, err = c.ProcessFrame(fCall)
+	if err != nil {
+		t.Fatalf("ProcessFrame(tool_call) failed: %v", err)
+	}
+	if agent.Activity.ActiveToolStartedAt == nil {
+		t.Fatalf("expected ActiveToolStartedAt non-nil after tool_call, got nil")
+	}
+	if *agent.Activity.ActiveToolStartedAt != toolTime {
+		t.Errorf("expected ActiveToolStartedAt = %d, got %d", toolTime, *agent.Activity.ActiveToolStartedAt)
+	}
+	persisted, err := s.GetAgent(agentID)
+	if err != nil || persisted == nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if persisted.Activity.ActiveToolStartedAt == nil || *persisted.Activity.ActiveToolStartedAt != toolTime {
+		t.Errorf("persisted ActiveToolStartedAt mismatch: got %v", persisted.Activity.ActiveToolStartedAt)
+	}
+
+	// 3. tool_result at t = 12000 -> MUST clear ActiveToolStartedAt, ActiveTool, ActiveTarget
+	resultTime := int64(12000)
+	out := "rebase complete"
+	fResult := baseFrame
+	fResult.Seq = 3
+	fResult.EventType = "tool_result"
+	fResult.Timestamp = resultTime
+	fResult.Data = types.TelemetryFrameData{
+		ToolOutput: &out,
+	}
+	agent, err = c.ProcessFrame(fResult)
+	if err != nil {
+		t.Fatalf("ProcessFrame(tool_result) failed: %v", err)
+	}
+	if agent.Activity.ActiveToolStartedAt != nil {
+		t.Errorf("expected ActiveToolStartedAt nil after tool_result, got %d", *agent.Activity.ActiveToolStartedAt)
+	}
+
+	// 4. Another tool_call followed by turn_end -> MUST clear ActiveToolStartedAt
+	toolTime2 := int64(13000)
+	fCall2 := baseFrame
+	fCall2.Seq = 4
+	fCall2.EventType = "tool_call"
+	fCall2.Timestamp = toolTime2
+	fCall2.Data = types.TelemetryFrameData{
+		ToolName:  &toolBash,
+		ToolInput: map[string]interface{}{"command": "git status"},
+	}
+	agent, err = c.ProcessFrame(fCall2)
+	if err != nil {
+		t.Fatalf("ProcessFrame(tool_call 2) failed: %v", err)
+	}
+	if agent.Activity.ActiveToolStartedAt == nil || *agent.Activity.ActiveToolStartedAt != toolTime2 {
+		t.Fatalf("expected ActiveToolStartedAt = %d, got %v", toolTime2, agent.Activity.ActiveToolStartedAt)
+	}
+
+	stopEndTurn := "end_turn"
+	fTurnEnd := baseFrame
+	fTurnEnd.Seq = 5
+	fTurnEnd.EventType = "turn_end"
+	fTurnEnd.Timestamp = int64(14000)
+	fTurnEnd.Data = types.TelemetryFrameData{
+		StopReason: &stopEndTurn,
+	}
+	agent, err = c.ProcessFrame(fTurnEnd)
+	if err != nil {
+		t.Fatalf("ProcessFrame(turn_end) failed: %v", err)
+	}
+	if agent.Activity.ActiveToolStartedAt != nil {
+		t.Errorf("expected ActiveToolStartedAt nil after turn_end, got %d", *agent.Activity.ActiveToolStartedAt)
+	}
+}
+

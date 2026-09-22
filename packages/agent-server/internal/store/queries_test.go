@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS agents (
     phase                 TEXT CHECK (phase IS NULL OR phase IN ('planning','editing','testing','debugging','investigating')),
     active_tool           TEXT,
     active_target         TEXT,
+    active_tool_started_at INTEGER,
     question              TEXT,
     last_thinking_excerpt TEXT,
     last_error            TEXT,
@@ -296,6 +297,63 @@ func TestStore_GetStatus(t *testing.T) {
 		_, err := sErr.GetStatus(context.Background())
 		if err == nil {
 			t.Fatal("expected error on closed db, got nil")
+		}
+	})
+
+	t.Run("stalled tool increases requires attention count", func(t *testing.T) {
+		sStall := setupTestDB(t)
+		ctx := context.Background()
+		now := time.Now().UnixMilli()
+
+		_, err := sStall.db.ExecContext(ctx, `
+			INSERT INTO environments (id, label, hostname, platform, user, dropped_frames, last_heartbeat_at)
+			VALUES ('env-stall', 'macbook', 'macbook.local', 'darwin', 'alex', 0, ?)
+		`, now)
+		if err != nil {
+			t.Fatalf("inserting environment: %v", err)
+		}
+
+		_, err = sStall.db.ExecContext(ctx, `
+			INSERT INTO runs (id, agent_id, pid, harness_version, started_at, ended_at)
+			VALUES ('run-stall', 'agent-stall', 1234, '1.0', ?, NULL)
+		`, now-300000)
+		if err != nil {
+			t.Fatalf("inserting run: %v", err)
+		}
+
+		// Agent running in BUSY state with active tool started 200 seconds ago (>= 180s = stalled)
+		stalledToolStart := now - 200000
+		_, err = sStall.db.ExecContext(ctx, `
+			INSERT INTO agents (
+				id, session_id, environment_id, harness, project_id, project_name, canonical_root,
+				branch, is_detached, is_worktree, worktree_rel_path, cwd, current_run_id,
+				activity, title, action, action_stale, phase, active_tool, active_target,
+				active_tool_started_at,
+				tokens_input, tokens_output, tokens_cache_read, tokens_cache_write,
+				tokens_reasoning, tokens_total, cost_usd, subagent_count, first_started_at, updated_at
+			) VALUES (
+				'agent-stall', 'sess-stall', 'env-stall', 'claude-code', 'proj', 'proj', '/repo',
+				'main', 0, 0, NULL, '/repo', 'run-stall',
+				'BUSY', 'Rebasing', 'Executing git rebase', 0, 'editing', 'bash', 'git rebase',
+				?,
+				0, 0, 0, 0, 0, 0, 0, 0, ?, ?
+			)
+		`, stalledToolStart, now-300000, now)
+		if err != nil {
+			t.Fatalf("inserting stalled agent: %v", err)
+		}
+
+		status, err := sStall.GetStatus(ctx)
+		if err != nil {
+			t.Fatalf("GetStatus failed: %v", err)
+		}
+
+		if status.ActiveAgentCount != 1 {
+			t.Errorf("ActiveAgentCount = %d, want 1", status.ActiveAgentCount)
+		}
+		// Since agent is in BUSY with tool >= 180s, it must be counted in RequiresAttentionCount
+		if status.RequiresAttentionCount != 1 {
+			t.Errorf("RequiresAttentionCount = %d, want 1", status.RequiresAttentionCount)
 		}
 	})
 }

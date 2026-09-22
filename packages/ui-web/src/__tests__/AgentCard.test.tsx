@@ -240,4 +240,85 @@ describe("AgentCard Component", () => {
     await unmount();
     cleanup();
   });
+
+  describe("stall detection tiers", () => {
+    it("renders healthy tier (<60s) without stall badges or warnings", () => {
+      const now = Date.now();
+      const healthyAgent: IAgentState = {
+        ...fixture_agentStateRunning,
+        activity: {
+          ...fixture_agentStateRunning.activity,
+          lifecycle: "RUNNING",
+          activity: "BUSY",
+          activeTool: "bash",
+          activeToolStartedAt: now - 30000,
+        },
+      };
+      const html = renderToStaticMarkup(<AgentCard agent={healthyAgent} />);
+      expect(html).not.toContain('data-testid="AgentCard--stall-notice"');
+      expect(html).not.toContain('data-testid="AgentCard--stall-warning"');
+      expect(html).not.toContain('data-testid="AgentCard--stall-duration"');
+    });
+
+    it("renders notice tier (60s - 119s) with metadata notice badge", () => {
+      const now = Date.now();
+      const noticeAgent: IAgentState = {
+        ...fixture_agentStateRunning,
+        activity: {
+          ...fixture_agentStateRunning.activity,
+          lifecycle: "RUNNING",
+          activity: "BUSY",
+          activeTool: "bash",
+          activeToolStartedAt: now - 75000,
+        },
+      };
+      const html = renderToStaticMarkup(<AgentCard agent={noticeAgent} />);
+      expect(html).toContain('data-testid="AgentCard--stall-notice"');
+      expect(html).toContain("bash running for 1m 15s");
+      expect(html).not.toContain('data-testid="AgentCard--stall-warning"');
+    });
+
+    it("renders warning tier (120s - 179s) with diagnostic callout and duration badge", () => {
+      const now = Date.now();
+      const warningAgent: IAgentState = {
+        ...fixture_agentStateRunning,
+        activity: {
+          ...fixture_agentStateRunning.activity,
+          lifecycle: "RUNNING",
+          activity: "BUSY",
+          activeTool: "bash",
+          action: "git rebase main",
+          activeToolStartedAt: now - 135000,
+        },
+      };
+      const html = renderToStaticMarkup(<AgentCard agent={warningAgent} />);
+      expect(html).toContain('data-testid="AgentCard--stall-warning"');
+      expect(html).toContain("Command running for 2m 15s without output or return");
+      expect(html).toContain("Command: git rebase main");
+      expect(html).toContain('data-testid="AgentCard--stall-duration"');
+      expect(html).toContain("2m 15s on tool");
+      expect(html).toContain('data-stall-tier="warning"');
+    });
+
+    it("renders stalled tier (>=180s) with amber glow border and diagnostic callout", () => {
+      const now = Date.now();
+      const stalledAgent: IAgentState = {
+        ...fixture_agentStateRunning,
+        activity: {
+          ...fixture_agentStateRunning.activity,
+          lifecycle: "RUNNING",
+          activity: "BUSY",
+          activeTool: "bash",
+          action: "npm test",
+          activeToolStartedAt: now - 200000,
+        },
+      };
+      const html = renderToStaticMarkup(<AgentCard agent={stalledAgent} />);
+      expect(html).toContain('data-testid="AgentCard--stall-warning"');
+      expect(html).toContain("Command running for 3m 20s without output or return");
+      expect(html).toContain("Command: npm test");
+      expect(html).toContain("border-amber-500/80");
+      expect(html).toContain('data-stall-tier="stalled"');
+    });
+  });
 });
