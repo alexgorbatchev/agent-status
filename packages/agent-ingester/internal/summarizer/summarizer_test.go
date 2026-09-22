@@ -1105,7 +1105,111 @@ func TestSummarizer_ContextCanceledDuringFailover(t *testing.T) {
 	}
 }
 
+func TestSummarizer_LiteLLMKeyAlias(t *testing.T) {
+	t.Setenv("LITELLM_BASE_URL", "https://litellm.test/v1")
+	t.Setenv("LITELLM_API_KEY", "")
+	t.Setenv("LITELLM_KEY", "litellm-alias-secret")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	s, err := New(Config{})
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	if !s.HasProviders() {
+		t.Errorf("expected HasProviders() to be true when LITELLM_KEY is set")
+	}
+
+	providers := s.ActiveProviders()
+	if len(providers) != 1 {
+		t.Fatalf("expected 1 provider, got %d", len(providers))
+	}
+	if providers[0].Name != "openai" {
+		t.Errorf("provider Name = %q, want openai", providers[0].Name)
+	}
+	if providers[0].Endpoint != "https://litellm.test/v1" {
+		t.Errorf("provider Endpoint = %q, want https://litellm.test/v1", providers[0].Endpoint)
+	}
+}
+
+func TestSummarizer_ActiveProvidersAndStatus(t *testing.T) {
+	// 1. Disabled by flag
+	sDisabled, err := New(Config{
+		NoSummarize: true,
+	})
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	if !sDisabled.DisabledByFlag() {
+		t.Errorf("expected DisabledByFlag = true")
+	}
+	if sDisabled.HasProviders() {
+		t.Errorf("expected HasProviders = false")
+	}
+	if len(sDisabled.ActiveProviders()) != 0 {
+		t.Errorf("expected 0 active providers when disabled by flag")
+	}
+
+	// 2. Unconfigured (no credentials)
+	t.Setenv("LITELLM_BASE_URL", "")
+	t.Setenv("LITELLM_API_KEY", "")
+	t.Setenv("LITELLM_KEY", "")
+	t.Setenv("OPENAI_BASE_URL", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	sEmpty, err := New(Config{})
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	if sEmpty.DisabledByFlag() {
+		t.Errorf("expected DisabledByFlag = false when unconfigured")
+	}
+	if sEmpty.HasProviders() {
+		t.Errorf("expected HasProviders = false when unconfigured")
+	}
+	if !sEmpty.IsNoSummarize() {
+		t.Errorf("expected IsNoSummarize = true when unconfigured")
+	}
+
+	// 3. Configured with mock provider
+	p, err := openai.New(anyllm.WithAPIKey("dummy-key"))
+	if err != nil {
+		t.Fatalf("openai.New() failed: %v", err)
+	}
+	sConfigured, err := New(Config{
+		Providers: []ProviderConfig{
+			{
+				Name:     "openai",
+				Provider: p,
+				Model:    "gpt-4o-mini",
+				Endpoint: "https://litellm.example.com",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	if !sConfigured.HasProviders() {
+		t.Errorf("expected HasProviders = true")
+	}
+	if sConfigured.DisabledByFlag() {
+		t.Errorf("expected DisabledByFlag = false")
+	}
+	active := sConfigured.ActiveProviders()
+	if len(active) != 1 {
+		t.Fatalf("expected 1 active provider, got %d", len(active))
+	}
+	if active[0].Name != "openai" || active[0].Model != "gpt-4o-mini" || active[0].Endpoint != "https://litellm.example.com" {
+		t.Errorf("unexpected active provider info: %+v", active[0])
+	}
+}
+
 func TestSummarizer_NoSummarizeFlag(t *testing.T) {
+
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatalf("mock server should not be called when NoSummarize=true")
 	}))

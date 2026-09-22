@@ -113,6 +113,7 @@ func TestLoad_OpenAIFallbacks(t *testing.T) {
 	t.Setenv("AIR_BEARER_TOKEN", "")
 	t.Setenv("LITELLM_BASE_URL", "")
 	t.Setenv("LITELLM_API_KEY", "")
+	t.Setenv("LITELLM_KEY", "")
 	t.Setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 	t.Setenv("OPENAI_API_KEY", "sk-openai-test-key")
 
@@ -124,3 +125,18 @@ func TestLoad_OpenAIFallbacks(t *testing.T) {
 		t.Errorf("got LiteLLMAPIKey %q, want sk-openai-test-key", cfg.LiteLLMAPIKey)
 	}
 }
+
+func TestLoad_LiteLLMKeyAlias(t *testing.T) {
+	t.Setenv("AIR_INGESTER_ADDR", "")
+	t.Setenv("AIR_BEARER_TOKEN", "")
+	t.Setenv("LITELLM_BASE_URL", "https://litellm.custom/v1")
+	t.Setenv("LITELLM_API_KEY", "")
+	t.Setenv("LITELLM_KEY", "litellm-alias-key-999")
+	t.Setenv("OPENAI_API_KEY", "")
+
+	cfg := Load()
+	if cfg.LiteLLMAPIKey != "litellm-alias-key-999" {
+		t.Errorf("got LiteLLMAPIKey %q, want litellm-alias-key-999", cfg.LiteLLMAPIKey)
+	}
+}
+

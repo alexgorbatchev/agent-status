@@ -78,6 +78,7 @@ func newRootCmd(cfg *config.Config) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("initializing summarizer engine: %w", err)
 			}
+			logSummarizerStartup(cfg, sumEngine)
 
 			pub, err := notify.NewPublisher(cfg.NotifySock)
 			if err != nil {
@@ -194,6 +195,24 @@ func newRootCmd(cfg *config.Config) *cobra.Command {
 	cobrahelptree.Setup(rootCmd)
 
 	return rootCmd
+}
+
+func logSummarizerStartup(cfg *config.Config, sumEngine *summarizer.Summarizer) {
+	if cfg.NoSummarize {
+		logging.Info("summarizer_disabled", "reason", "flag --no-summarize was provided; running with deterministic fallback heuristics")
+		return
+	}
+	if sumEngine != nil && sumEngine.HasProviders() {
+		for _, p := range sumEngine.ActiveProviders() {
+			if p.Endpoint != "" {
+				logging.Info("summarizer_ready", "provider", p.Name, "model", p.Model, "endpoint", p.Endpoint)
+			} else {
+				logging.Info("summarizer_ready", "provider", p.Name, "model", p.Model)
+			}
+		}
+		return
+	}
+	logging.Warn("summarizer_unconfigured", "reason", "no LLM provider credentials found; AI action summarization is disabled. To enable, set LITELLM_BASE_URL and LITELLM_API_KEY (or LITELLM_KEY), OPENAI_API_KEY, GEMINI_API_KEY, or ANTHROPIC_API_KEY")
 }
 
 func main() {

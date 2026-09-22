@@ -52,6 +52,9 @@ func Load() *Config {
 
 	liteLLMKey := os.Getenv("LITELLM_API_KEY")
 	if liteLLMKey == "" {
+		liteLLMKey = os.Getenv("LITELLM_KEY")
+	}
+	if liteLLMKey == "" {
 		liteLLMKey = os.Getenv("OPENAI_API_KEY")
 	}
 

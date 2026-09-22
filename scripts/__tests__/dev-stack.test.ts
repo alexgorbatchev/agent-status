@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
   buildBinaries,
   getIngesterArgs,
+  getSummarizerStatus,
   shouldDisableSummarizer,
   shouldSkipBuild,
   type IBuildOptions,
@@ -200,6 +201,60 @@ describe("dev-stack build controls (#72)", () => {
           ingesterBin: "/bin/air-ingester",
         });
         expect(args).toEqual(["/bin/air-ingester", "--no-summarize", "--log-level", "info"]);
+      });
+    });
+
+    describe("getSummarizerStatus (#63)", () => {
+      it("returns disabled status when --no-summarize is passed", () => {
+        const status = getSummarizerStatus(["bun", "scripts/dev-stack.ts", "start", "--no-summarize"], {
+          OPENAI_API_KEY: "sk-test",
+        });
+        expect(status.enabled).toBe(false);
+        expect(status.reason).toContain("--no-summarize");
+      });
+
+      it("returns unconfigured warning status when no credentials exist", () => {
+        const status = getSummarizerStatus(["bun", "scripts/dev-stack.ts", "start"], {});
+        expect(status.enabled).toBe(false);
+        expect(status.reason).toContain("no LLM provider credentials found");
+      });
+
+      it("returns enabled OpenAI status with endpoint when LITELLM_KEY alias is used", () => {
+        const status = getSummarizerStatus(["bun", "scripts/dev-stack.ts", "start"], {
+          LITELLM_BASE_URL: "https://litellm.example.com",
+          LITELLM_KEY: "sk-litellm-key-alias",
+        });
+        expect(status.enabled).toBe(true);
+        expect(status.provider).toBe("openai");
+        expect(status.model).toBe("gpt-4o-mini");
+        expect(status.endpoint).toBe("https://litellm.example.com");
+      });
+
+      it("returns enabled OpenAI status when OPENAI_API_KEY is used", () => {
+        const status = getSummarizerStatus(["bun", "scripts/dev-stack.ts", "start"], {
+          OPENAI_API_KEY: "sk-openai",
+        });
+        expect(status.enabled).toBe(true);
+        expect(status.provider).toBe("openai");
+        expect(status.model).toBe("gpt-4o-mini");
+      });
+
+      it("returns enabled Gemini status when GEMINI_API_KEY is used", () => {
+        const status = getSummarizerStatus(["bun", "scripts/dev-stack.ts", "start"], {
+          GEMINI_API_KEY: "gemini-key",
+        });
+        expect(status.enabled).toBe(true);
+        expect(status.provider).toBe("gemini");
+        expect(status.model).toBe("gemini-2.0-flash");
+      });
+
+      it("returns enabled Anthropic status when ANTHROPIC_API_KEY is used", () => {
+        const status = getSummarizerStatus(["bun", "scripts/dev-stack.ts", "start"], {
+          ANTHROPIC_API_KEY: "anthropic-key",
+        });
+        expect(status.enabled).toBe(true);
+        expect(status.provider).toBe("anthropic");
+        expect(status.model).toBe("claude-3-5-haiku-latest");
       });
     });
   });

@@ -5,7 +5,12 @@ import (
 	"strings"
 	"testing"
 
+	anyllm "github.com/mozilla-ai/any-llm-go"
+	"github.com/mozilla-ai/any-llm-go/providers/openai"
+
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/config"
+	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/summarizer"
 )
 
 func TestIngesterCommandHelp(t *testing.T) {
@@ -138,3 +143,80 @@ func TestIngesterDefaultConfig(t *testing.T) {
 		t.Errorf("expected --no-summarize default value to be 'false', got %q", flag.DefValue)
 	}
 }
+
+func TestLogSummarizerStartup(t *testing.T) {
+	origLogger := logging.Default()
+	t.Cleanup(func() {
+		logging.SetDefault(origLogger)
+	})
+
+	t.Run("disabled by flag", func(t *testing.T) {
+		buf := new(bytes.Buffer)
+		logging.SetDefault(logging.NewWithMode(buf, "test-ingester", "info", true))
+
+		cfg := &config.Config{NoSummarize: true}
+		logSummarizerStartup(cfg, nil)
+
+		out := buf.String()
+		if !strings.Contains(out, "summarizer_disabled") {
+			t.Errorf("expected summarizer_disabled log, got: %s", out)
+		}
+		if !strings.Contains(out, "flag --no-summarize was provided") {
+			t.Errorf("expected reason in log, got: %s", out)
+		}
+	})
+
+	t.Run("unconfigured credentials", func(t *testing.T) {
+		buf := new(bytes.Buffer)
+		logging.SetDefault(logging.NewWithMode(buf, "test-ingester", "info", true))
+
+		cfg := &config.Config{NoSummarize: false}
+		sumEngine, err := summarizer.New(summarizer.Config{NoSummarize: true})
+		if err != nil {
+			t.Fatalf("summarizer.New failed: %v", err)
+		}
+		logSummarizerStartup(cfg, sumEngine)
+
+		out := buf.String()
+		if !strings.Contains(out, "summarizer_unconfigured") {
+			t.Errorf("expected summarizer_unconfigured log, got: %s", out)
+		}
+		if !strings.Contains(out, "no LLM provider credentials found") {
+			t.Errorf("expected warning reason in log, got: %s", out)
+		}
+	})
+
+	t.Run("ready with active provider", func(t *testing.T) {
+		buf := new(bytes.Buffer)
+		logging.SetDefault(logging.NewWithMode(buf, "test-ingester", "info", true))
+
+		cfg := &config.Config{NoSummarize: false}
+		p, err := openai.New(anyllm.WithAPIKey("dummy-key"))
+		if err != nil {
+			t.Fatalf("openai.New failed: %v", err)
+		}
+		sumEngine, err := summarizer.New(summarizer.Config{
+			Providers: []summarizer.ProviderConfig{
+				{
+					Name:     "openai",
+					Provider: p,
+					Model:    "gpt-4o-mini",
+					Endpoint: "https://litellm.example.com",
+				},
+			},
+		})
+		if err != nil {
+			t.Fatalf("summarizer.New failed: %v", err)
+		}
+		logSummarizerStartup(cfg, sumEngine)
+
+		out := buf.String()
+		if !strings.Contains(out, "summarizer_ready") {
+			t.Errorf("expected summarizer_ready log, got: %s", out)
+		}
+		if !strings.Contains(out, "openai") || !strings.Contains(out, "gpt-4o-mini") || !strings.Contains(out, "https://litellm.example.com") {
+			t.Errorf("expected provider, model and endpoint in log, got: %s", out)
+		}
+	})
+}
+

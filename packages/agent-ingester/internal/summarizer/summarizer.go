@@ -70,6 +70,14 @@ type ProviderConfig struct {
 	Name     string
 	Provider anyllm.Provider
 	Model    string
+	Endpoint string
+}
+
+// ProviderInfo represents public metadata about an active LLM summarizer provider.
+type ProviderInfo struct {
+	Name     string `json:"name"`
+	Model    string `json:"model"`
+	Endpoint string `json:"endpoint,omitempty"`
 }
 
 type Config struct {
@@ -142,6 +150,9 @@ func New(cfg Config) (*Summarizer, error) {
 		liteLLMKey = os.Getenv("LITELLM_API_KEY")
 	}
 	if liteLLMKey == "" {
+		liteLLMKey = os.Getenv("LITELLM_KEY")
+	}
+	if liteLLMKey == "" {
 		liteLLMKey = cfg.OpenAIAPIKey
 	}
 	if liteLLMKey == "" {
@@ -172,6 +183,7 @@ func New(cfg Config) (*Summarizer, error) {
 				Name:     "openai",
 				Provider: p,
 				Model:    model,
+				Endpoint: liteLLMBaseURL,
 			})
 		}
 	}
@@ -223,6 +235,42 @@ func New(cfg Config) (*Summarizer, error) {
 	}
 
 	return s, nil
+}
+
+// ActiveProviders returns metadata for all configured providers.
+func (s *Summarizer) ActiveProviders() []ProviderInfo {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	res := make([]ProviderInfo, len(s.providers))
+	for i, p := range s.providers {
+		res[i] = ProviderInfo{
+			Name:     p.Name,
+			Model:    p.Model,
+			Endpoint: p.Endpoint,
+		}
+	}
+	return res
+}
+
+// DisabledByFlag returns true if summarization was explicitly disabled by flag/config.
+func (s *Summarizer) DisabledByFlag() bool {
+	if s == nil {
+		return false
+	}
+	return s.noSummarize
+}
+
+// HasProviders returns true if at least one active LLM provider is configured.
+func (s *Summarizer) HasProviders() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.providers) > 0
 }
 
 // IsNoSummarize returns whether external LLM calls are disabled or unconfigured.
