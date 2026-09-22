@@ -10,13 +10,20 @@ description: >-
 author: alexgorbatchev
 metadata:
   created_on: 2026-09-22 14:38
-  last_modified: 2026-09-22 15:02
+  last_modified: 2026-09-22 15:10
   status: current
 ---
 
 ## Concurrency & Worktree Topology
 
 - **Coordinator Supremacy**: The parent agent acts as the coordinator. It manages the issue queue, arbitrates review findings, performs all merges to integration and main branches, and executes the issue closure handshake.
+- **Full Queue Completion**: All opened tickets are expected to be finished before completing the run. The coordinator works through the entire open issue set, continuing until no open issues remain.
+- **Dependency-Aware Order Determination**: The coordinator analyzes all open tickets to establish an optimal execution order:
+  1. Foundational/parser/data pipeline defects first (e.g. log ingestion, frame parsing, database store layers).
+  2. Middleware/classifier/reconciliation bugs second.
+  3. UI/presentation card and consumer adjustments third.
+  4. Tooling/scripts/build and dev-stack ergonomics fourth.
+  5. Decoupled issues across distinct packages are prioritized for parallel execution across the 3 subagent slots.
 - **Max 3 Parallel Subagents**: At most 3 subagents may run concurrently. When more than 3 issues are queued, maintain an active pool of up to 3 and launch subsequent issues as earlier ones complete.
 - **Central Integration Worktree (`issues-dev`)**: All completed issue fixes merge into a central integration worktree `.workspaces/issues-dev` on branch `issues-dev` (branched from `main`). No issue branch merges directly to `main`.
 - **Per-Issue Worktree Isolation**: Each active issue runs in its own dedicated worktree `.workspaces/issue-<number>` on branch `fix/issue-<number>` (branched from `issues-dev`).
