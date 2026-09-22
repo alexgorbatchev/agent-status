@@ -141,8 +141,9 @@ func loadClaudeCodeSession(filePath string, sessionIDOverride string, cwdOverrid
 	}
 
 	// 1. Read main transcript
+	ccParser := parser.NewClaudeCodeParser()
 	mainEvents, inferredCWD, err := readJSONLLines(filePath, func(line []byte) ([]parser.ParsedEvent, error) {
-		return parser.ParseClaudeCodeLine(line)
+		return ccParser.ParseLine(line)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("reading claude transcript %s: %w", filePath, err)
@@ -193,8 +194,9 @@ func loadClaudeCodeSession(filePath string, sessionIDOverride string, cwdOverrid
 			subagentIDs = append(subagentIDs, subID)
 
 			subPath := filepath.Join(subDir, entry.Name())
+			subParser := parser.NewClaudeCodeParser()
 			subEvents, _, sErr := readJSONLLines(subPath, func(line []byte) ([]parser.ParsedEvent, error) {
-				return parser.ParseClaudeCodeLine(line)
+				return subParser.ParseLine(line)
 			})
 			if sErr != nil {
 				continue

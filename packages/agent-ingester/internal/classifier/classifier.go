@@ -421,6 +421,19 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			c.mu.Lock()
 			c.cancelIdleTimerLocked(agent.ID)
 			c.mu.Unlock()
+
+			// Handle run_started idempotently: if an active run already exists with matching PID and unended lifecycle,
+			// preserve existing run ID, StartedAt, and do not re-trigger action summarization.
+			if agent.Activity.CurrentRun != nil &&
+				agent.Activity.CurrentRun.EndedAt == nil &&
+				agent.Activity.Lifecycle == types.LifecycleRunning &&
+				(agent.Activity.CurrentRun.PID == frame.PID || frame.PID == 0 || agent.Activity.CurrentRun.PID == 0) {
+				if agent.Activity.CurrentRun.PID == 0 && frame.PID != 0 {
+					agent.Activity.CurrentRun.PID = frame.PID
+				}
+				break
+			}
+
 			agent.Activity.Lifecycle = types.LifecycleRunning
 			agent.Activity.Activity = types.ActivityIdle
 			runID := fmt.Sprintf("%s:%d:%d", agent.ID, frame.PID, now)
