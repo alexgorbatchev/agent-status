@@ -61,20 +61,20 @@ describe("getLogFrameKey", () => {
   });
 
   it("falls back to 'agent' when agentId is missing or empty", () => {
-    const frame = {
+    const frame: ITelemetryFrame = {
       ...fixture_telemetryFrame,
-      agentId: "" as unknown as string,
+      agentId: "",
       seq: 1,
       timestamp: 1700000003000,
-      eventType: "user_prompt",
+      eventType: "question_prompt",
       subagentId: null,
       data: {
         ...fixture_telemetryFrame.data,
         toolCallId: null,
       },
-    } as unknown as ITelemetryFrame;
+    };
 
     const key = getLogFrameKey(frame);
-    expect(key).toBe("agent-1-1700000003000-user_prompt");
+    expect(key).toBe("agent-1-1700000003000-question_prompt");
   });
 });

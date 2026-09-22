@@ -313,7 +313,7 @@ test.describe("LogDrawer & Live Tail", () => {
     const initialScrollTop = await stream.evaluate((el) => el.scrollTop);
     expect(initialScrollTop).toBeGreaterThanOrEqual(150);
 
-    const targetItem = page.getByTestId("LogFrameItem").nth(4);
+    const targetItem = page.getByText("Historical log entry 5");
     const boundingBoxBefore = await targetItem.boundingBox();
     expect(boundingBoxBefore).not.toBeNull();
 
