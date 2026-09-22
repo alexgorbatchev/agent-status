@@ -4264,6 +4264,13 @@ func TestClassifier_Subagent_IdleTransitionWithActiveSubagent(t *testing.T) {
 		Timestamp: 1000, EventType: "run_started",
 	})
 
+	prompt := "run tests"
+	_, _ = c.ProcessFrame(types.ITelemetryFrame{
+		Version: "1.0", EnvID: env.ID, Environment: env, AgentID: agentID,
+		SessionID: "sess-idle-1", Harness: types.HarnessClaudeCode, Project: proj, Workspace: ws,
+		Timestamp: 1050, EventType: "turn_start", Data: types.TelemetryFrameData{Content: &prompt},
+	})
+
 	// Subagent starts and runs tool
 	sub1 := "sub-runner"
 	tTest := "npm test"
@@ -4273,8 +4280,12 @@ func TestClassifier_Subagent_IdleTransitionWithActiveSubagent(t *testing.T) {
 		Timestamp: 1100, EventType: "tool_call", Data: types.TelemetryFrameData{ToolName: &tTest},
 	})
 
+	c.mu.Lock()
+	gen := c.agentCtx[agentID].rootGeneration
+	c.mu.Unlock()
+
 	// Trigger handleIdleTransition directly
-	c.handleIdleTransition(agentID, 1200)
+	c.handleIdleTransition(agentID, gen)
 
 	loaded, err := c.store.GetAgent(agentID)
 	if err != nil {
@@ -4379,4 +4390,158 @@ func TestClassifier_Subagent_RunExitedClearsSubagents(t *testing.T) {
 		t.Errorf("expected ActiveSubagents nil on run_exited, got %+v", agent.Activity.ActiveSubagents)
 	}
 }
+
+func TestClassifier_SubagentDoesNotCancelRootIdleTimer(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+
+	c, s := newTestClassifier(t, sum)
+	c.syncMode = false
+	c.SetIdleGracePeriod(100 * time.Millisecond)
+	defer func() { _ = c.Close() }()
+
+	proj := types.IProjectInfo{
+		ID:            "proj-1",
+		Name:          "repo",
+		CanonicalRoot: "/repo",
+	}
+	ws := types.IWorkspaceInfo{
+		Branch:     "main",
+		IsDetached: false,
+		IsWorktree: false,
+		CWD:        "/repo",
+	}
+	env := types.IEnvironmentInfo{
+		ID:       "env-1",
+		Hostname: "my-macbook",
+		Label:    "my-macbook",
+		Platform: "darwin",
+	}
+
+	agentID := "env-1:claude-code:sess-subagent-idle"
+	baseFrame := types.ITelemetryFrame{
+		Version:        "1.0",
+		EnvID:          env.ID,
+		Environment:    env,
+		AgentID:        agentID,
+		SessionID:      "sess-subagent-idle",
+		PID:            500,
+		Harness:        types.HarnessClaudeCode,
+		HarnessVersion: "1.0.0",
+		Project:        proj,
+		Workspace:      ws,
+		Timestamp:      1000,
+	}
+
+	// 1. Session start -> Idle
+	fStart := baseFrame
+	fStart.Seq = 1
+	fStart.EventType = "run_started"
+	_, err = c.ProcessFrame(fStart)
+	if err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+
+	// 2. User prompt -> Busy
+	promptText := "Review code"
+	fPrompt := baseFrame
+	fPrompt.Seq = 2
+	fPrompt.Timestamp = 1010
+	fPrompt.EventType = "turn_start"
+	fPrompt.Data = types.TelemetryFrameData{
+		Title:   &promptText,
+		Content: &promptText,
+	}
+	agent, err := c.ProcessFrame(fPrompt)
+	if err != nil {
+		t.Fatalf("turn_start failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Fatalf("expected Activity to be BUSY after user prompt, got %v", agent.Activity.Activity)
+	}
+
+	// 3. Root turn_end with stopReason "end_turn" (no tool use)
+	stopReason := "end_turn"
+	respText := "Done reviewing"
+	fEnd := baseFrame
+	fEnd.Seq = 3
+	fEnd.Timestamp = 1050
+	fEnd.EventType = "turn_end"
+	fEnd.Data = types.TelemetryFrameData{
+		StopReason: &stopReason,
+		Content:    &respText,
+	}
+	agent, err = c.ProcessFrame(fEnd)
+	if err != nil {
+		t.Fatalf("turn_end failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Fatalf("expected Activity to remain BUSY during idle grace period, got %v", agent.Activity.Activity)
+	}
+
+	// 4. Within grace period (e.g. 30ms into 100ms grace period), subagent sends tool_call frame
+	time.Sleep(30 * time.Millisecond)
+	subID := "agent-sub-1"
+	toolName := "bash"
+	fSubTool := baseFrame
+	fSubTool.Seq = 4
+	fSubTool.SubagentID = &subID
+	fSubTool.Timestamp = 1080
+	fSubTool.EventType = "tool_call"
+	fSubTool.Data = types.TelemetryFrameData{
+		ToolName: &toolName,
+	}
+	_, err = c.ProcessFrame(fSubTool)
+	if err != nil {
+		t.Fatalf("subagent tool_call failed: %v", err)
+	}
+
+	// 5. Wait past root grace period (150ms total)
+	time.Sleep(150 * time.Millisecond)
+
+	// Subagent is still busy, but root should have transitioned to IDLE.
+	// Rolled up activity must show BUSY with "Running subagent..." action.
+	reloaded, err := s.GetAgent(agentID)
+	if err != nil || reloaded == nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if reloaded.Activity.Activity != types.ActivityBusy {
+		t.Errorf("expected rolled up Activity to be BUSY while subagent is active, got %v", reloaded.Activity.Activity)
+	}
+	if !strings.Contains(reloaded.Activity.Action, "Running subagent agent-sub-1") {
+		t.Errorf("expected Action to indicate subagent execution, got %q", reloaded.Activity.Action)
+	}
+
+	// Also verify that the root activity within classifier context transitioned to IDLE
+	c.mu.Lock()
+	actx := c.agentCtx[agentID]
+	rootAct := actx.rootActivity
+	c.mu.Unlock()
+	if rootAct != types.ActivityIdle {
+		t.Errorf("expected rootActivity in classifier context to transition to IDLE after grace period, got %v", rootAct)
+	}
+
+	// 6. Subagent finishes with turn_end
+	fSubEnd := baseFrame
+	fSubEnd.Seq = 5
+	fSubEnd.SubagentID = &subID
+	fSubEnd.Timestamp = 1300
+	fSubEnd.EventType = "turn_end"
+	_, err = c.ProcessFrame(fSubEnd)
+	if err != nil {
+		t.Fatalf("subagent turn_end failed: %v", err)
+	}
+
+	// Since root is already IDLE and subagent is now IDLE, rolled up activity must transition to IDLE!
+	reloaded, err = s.GetAgent(agentID)
+	if err != nil || reloaded == nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if reloaded.Activity.Activity != types.ActivityIdle {
+		t.Errorf("expected final Activity to be IDLE after subagent finished, got %v", reloaded.Activity.Activity)
+	}
+}
+
 

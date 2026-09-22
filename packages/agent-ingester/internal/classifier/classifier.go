@@ -41,6 +41,7 @@ type agentContext struct {
 	rootAction              string
 	rootQuestion            *string
 	rootLastError           *string
+	rootGeneration          uint64
 	lastSummarizedToolKey   string
 	lastSummaryDispatchedAt int64
 	pendingCandidate        *pendingSummaryCandidate
@@ -429,6 +430,9 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 	}
 
 	c.mu.Lock()
+	if !isSubagent {
+		actx.rootGeneration++
+	}
 	if actx.seenSubagents == nil {
 		actx.seenSubagents = make(map[string]struct{})
 	}
@@ -696,9 +700,9 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 					c.mu.Lock()
 					c.cancelIdleTimerLocked(agent.ID)
 					targetAgentID := agent.ID
-					scheduledUpdatedAt := agent.Activity.UpdatedAt
+					scheduledGen := actx.rootGeneration
 					c.idleTimers[targetAgentID] = time.AfterFunc(gracePeriod, func() {
-						c.handleIdleTransition(targetAgentID, scheduledUpdatedAt)
+						c.handleIdleTransition(targetAgentID, scheduledGen)
 					})
 					c.mu.Unlock()
 					pendingJob = c.updateSummarization(agent, false)
@@ -706,9 +710,8 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			}
 		}
 	} else {
-		// Subagent event: cancel parent idle timer and track subagent state
+		// Subagent event: track subagent state (do not cancel parent idle timer #64)
 		c.mu.Lock()
-		c.cancelIdleTimerLocked(agent.ID)
 		isNewSubagent := false
 		if frame.SubagentID != nil && *frame.SubagentID != "" {
 			subID := *frame.SubagentID
@@ -1145,13 +1148,19 @@ func (c *Classifier) processSummaryJob(agentID string, job summaryJob) {
 	}
 }
 
-func (c *Classifier) handleIdleTransition(agentID string, scheduledUpdatedAt int64) {
+func (c *Classifier) handleIdleTransition(agentID string, scheduledGen uint64) {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
 		return
 	}
 	delete(c.idleTimers, agentID)
+
+	actx, ok := c.agentCtx[agentID]
+	if !ok || actx.rootGeneration != scheduledGen || actx.rootActivity != types.ActivityBusy {
+		c.mu.Unlock()
+		return
+	}
 	c.mu.Unlock()
 
 	agent, err := c.store.GetAgent(agentID)
@@ -1159,8 +1168,8 @@ func (c *Classifier) handleIdleTransition(agentID string, scheduledUpdatedAt int
 		return
 	}
 
-	// Only transition to IDLE if agent is still running, busy, and has not received newer events since the timer was scheduled
-	if agent.Activity.Lifecycle != types.LifecycleRunning || agent.Activity.Activity != types.ActivityBusy || agent.Activity.UpdatedAt != scheduledUpdatedAt {
+	// Only transition to IDLE if agent is still running
+	if agent.Activity.Lifecycle != types.LifecycleRunning {
 		return
 	}
 
@@ -1170,16 +1179,21 @@ func (c *Classifier) handleIdleTransition(agentID string, scheduledUpdatedAt int
 	agent.Activity.Question = nil
 	agent.Activity.UpdatedAt = time.Now().UnixMilli()
 
+	job := c.updateSummarization(agent, true)
+
 	c.mu.Lock()
-	if actx, ok := c.agentCtx[agentID]; ok {
-		actx.rootActivity = types.ActivityIdle
-		actx.rootAction = "Idle"
-		actx.rootQuestion = nil
-		c.rollupActivityLocked(agent, actx)
+	actx, ok = c.agentCtx[agentID]
+	if !ok || actx.rootGeneration != scheduledGen {
+		c.mu.Unlock()
+		return
 	}
+
+	actx.rootActivity = types.ActivityIdle
+	actx.rootAction = agent.Activity.Action
+	actx.rootQuestion = nil
+	c.rollupActivityLocked(agent, actx)
 	c.mu.Unlock()
 
-	job := c.updateSummarization(agent, true)
 	if err := c.store.SaveAgentState(*agent); err != nil {
 		logging.Error("saving_idle_agent_failed", "err", err, "agentId", agentID)
 		return
