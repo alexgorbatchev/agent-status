@@ -26,7 +26,7 @@ class MockEventSource {
 }
 
 interface IGlobalEventSourceScope {
-  EventSource?: typeof MockEventSource;
+  EventSource?: typeof MockEventSource | typeof EventSource;
 }
 
 describe("App Layout & Session Visibility", () => {
