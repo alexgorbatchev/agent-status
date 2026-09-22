@@ -1,7 +1,8 @@
-import React from "react";
+import React, { useMemo } from "react";
 import type { IAgentGroupSectionProps } from "./types";
 import { AgentCard } from "./AgentCard";
 import { calculateTotalSpend, filterActiveAgents, formatCurrency } from "../utils/agentUtils";
+import { groupAgentsByCategory, CATEGORY_ORDER } from "../utils/groupingUtils";
 import { DollarSign } from "lucide-react";
 
 export function AgentGroupSection({
@@ -23,6 +24,9 @@ export function AgentGroupSection({
     : "w-4 h-4 flex items-center justify-center";
 
   const prefix = testId || "AgentGroupSection";
+
+  const grouped = useMemo(() => groupAgentsByCategory(agents), [agents]);
+  const visibleCategories = CATEGORY_ORDER.filter((cat) => grouped[cat].length > 0);
 
   return (
     <div data-testid="AgentGroupSection" className="mb-8">
@@ -53,10 +57,18 @@ export function AgentGroupSection({
         </div>
       </div>
 
-      {/* Agents Grid */}
-      <div data-testid={`${prefix}--grid`} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {agents.map((agent) => (
-          <AgentCard key={agent.id} agent={agent} onOpenDrawer={onSelectAgent} onToggleHide={onToggleHide} />
+      {/* Agents Grid Sections */}
+      <div data-testid={`${prefix}--grid`} className="flex flex-col gap-8">
+        {visibleCategories.map((category) => (
+          <div
+            key={category}
+            data-testid={`${prefix}--grid-${category}`}
+            className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"
+          >
+            {grouped[category].map((agent) => (
+              <AgentCard key={agent.id} agent={agent} onOpenDrawer={onSelectAgent} onToggleHide={onToggleHide} />
+            ))}
+          </div>
         ))}
       </div>
     </div>

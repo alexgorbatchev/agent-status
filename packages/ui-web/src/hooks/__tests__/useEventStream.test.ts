@@ -365,7 +365,7 @@ describe("useEventStream Hook", () => {
     expect(latestState.agents[0]?.activity.lifecycle).toBe("EXITED");
   });
 
-  it("prepends new agent to state on agent_upsert event", async () => {
+  it("appends new agent to state on agent_upsert event", async () => {
     await act(async () => {
       root.render(jsx(HookHarness, { apiBaseUrl: "http://localhost:4502", onUpdate: handleUpdate }));
     });
@@ -395,8 +395,8 @@ describe("useEventStream Hook", () => {
 
     assert(latestState !== null);
     expect(latestState.agents.length).toBe(2);
-    expect(latestState.agents[0]?.id).toBe("env-2:pi:session-2");
-    expect(latestState.agents[1]?.id).toBe("env-1:claude-code:session-1");
+    expect(latestState.agents[0]?.id).toBe("env-1:claude-code:session-1");
+    expect(latestState.agents[1]?.id).toBe("env-2:pi:session-2");
   });
 
   it("removes agent from state on agent_removed event", async () => {

@@ -1,9 +1,100 @@
 import { describe, it, expect } from "bun:test";
-import { groupAgentsByProject, groupAgentsByEnvironment, compareAgentsByActivity, sortAgents } from "../groupingUtils";
+import {
+  groupAgentsByProject,
+  groupAgentsByEnvironment,
+  getAgentCategory,
+  groupAgentsByCategory,
+  compareAgentsByCategory,
+  sortAgents,
+} from "../groupingUtils";
 import { factory_createAgent, fixture_testEnvironment, fixture_testStaleEnvironment } from "./fixtures";
 import type { IEnvironmentInfo } from "../../types";
 
 describe("groupingUtils", () => {
+  describe("getAgentCategory", () => {
+    it("returns finished for EXITED lifecycle regardless of activity state", () => {
+      const exitedIdle = factory_createAgent({
+        id: "exited-idle",
+        activity: { ...factory_createAgent().activity, lifecycle: "EXITED", activity: "IDLE" },
+      });
+      const exitedBusy = factory_createAgent({
+        id: "exited-busy",
+        activity: { ...factory_createAgent().activity, lifecycle: "EXITED", activity: "BUSY" },
+      });
+      const exitedError = factory_createAgent({
+        id: "exited-error",
+        activity: { ...factory_createAgent().activity, lifecycle: "EXITED", activity: "ERROR" },
+      });
+
+      expect(getAgentCategory(exitedIdle)).toBe("finished");
+      expect(getAgentCategory(exitedBusy)).toBe("finished");
+      expect(getAgentCategory(exitedError)).toBe("finished");
+    });
+
+    it("returns idle for RUNNING lifecycle with IDLE activity", () => {
+      const runningIdle = factory_createAgent({
+        id: "running-idle",
+        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "IDLE" },
+      });
+
+      expect(getAgentCategory(runningIdle)).toBe("idle");
+    });
+
+    it("returns busy for RUNNING lifecycle with BUSY, WAITING_QUESTION, or ERROR activity", () => {
+      const runningBusy = factory_createAgent({
+        id: "running-busy",
+        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "BUSY" },
+      });
+      const runningWaiting = factory_createAgent({
+        id: "running-waiting",
+        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "WAITING_QUESTION" },
+      });
+      const runningError = factory_createAgent({
+        id: "running-error",
+        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "ERROR" },
+      });
+
+      expect(getAgentCategory(runningBusy)).toBe("busy");
+      expect(getAgentCategory(runningWaiting)).toBe("busy");
+      expect(getAgentCategory(runningError)).toBe("busy");
+    });
+  });
+
+  describe("groupAgentsByCategory", () => {
+    it("returns empty arrays for all categories when no agents provided", () => {
+      const result = groupAgentsByCategory([]);
+      expect(result).toEqual({ busy: [], idle: [], finished: [] });
+    });
+
+    it("groups agents by busy, idle, and finished while preserving arrival order without reordering on updatedAt", () => {
+      const busy1 = factory_createAgent({
+        id: "busy-1",
+        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "BUSY", updatedAt: 1000 },
+      });
+      const idle1 = factory_createAgent({
+        id: "idle-1",
+        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "IDLE", updatedAt: 9000 },
+      });
+      const finished1 = factory_createAgent({
+        id: "finished-1",
+        activity: { ...factory_createAgent().activity, lifecycle: "EXITED", activity: "IDLE", updatedAt: 2000 },
+      });
+      const busy2 = factory_createAgent({
+        id: "busy-2",
+        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "BUSY", updatedAt: 5000 },
+      });
+      const idle2 = factory_createAgent({
+        id: "idle-2",
+        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "IDLE", updatedAt: 3000 },
+      });
+
+      const result = groupAgentsByCategory([busy1, idle1, finished1, busy2, idle2]);
+      expect(result.busy.map((a) => a.id)).toEqual(["busy-1", "busy-2"]);
+      expect(result.idle.map((a) => a.id)).toEqual(["idle-1", "idle-2"]);
+      expect(result.finished.map((a) => a.id)).toEqual(["finished-1"]);
+    });
+  });
+
   describe("groupAgentsByProject", () => {
     it("returns empty array when agents list is empty", () => {
       const groups = groupAgentsByProject([]);
@@ -48,10 +139,10 @@ describe("groupingUtils", () => {
       expect(groups[0]?.name).toBe("unknown");
     });
 
-    it("sorts agents within each project group by activity priority (BUSY > WAITING_QUESTION > ERROR > IDLE) and updatedAt desc", () => {
+    it("preserves incoming agent order within each project group without reordering on recent activity", () => {
       const baseProject = { id: "proj-1", name: "Project One", canonicalRoot: "/path/1" };
-      const idleOlder = factory_createAgent({
-        id: "idle-old",
+      const agentFirst = factory_createAgent({
+        id: "agent-first",
         project: baseProject,
         activity: {
           ...factory_createAgent().activity,
@@ -59,58 +150,30 @@ describe("groupingUtils", () => {
           updatedAt: 1000,
         },
       });
-      const idleNewer = factory_createAgent({
-        id: "idle-new",
+      const agentSecond = factory_createAgent({
+        id: "agent-second",
         project: baseProject,
         activity: {
           ...factory_createAgent().activity,
-          activity: "IDLE",
-          updatedAt: 5000,
+          activity: "BUSY",
+          updatedAt: 9000,
         },
       });
-      const errorAgent = factory_createAgent({
-        id: "error",
-        project: baseProject,
-        activity: {
-          ...factory_createAgent().activity,
-          activity: "ERROR",
-          updatedAt: 2000,
-        },
-      });
-      const waitingAgent = factory_createAgent({
-        id: "waiting",
+      const agentThird = factory_createAgent({
+        id: "agent-third",
         project: baseProject,
         activity: {
           ...factory_createAgent().activity,
           activity: "WAITING_QUESTION",
-          updatedAt: 3000,
-        },
-      });
-      const busyOlder = factory_createAgent({
-        id: "busy-old",
-        project: baseProject,
-        activity: {
-          ...factory_createAgent().activity,
-          activity: "BUSY",
-          updatedAt: 4000,
-        },
-      });
-      const busyNewer = factory_createAgent({
-        id: "busy-new",
-        project: baseProject,
-        activity: {
-          ...factory_createAgent().activity,
-          activity: "BUSY",
-          updatedAt: 6000,
+          updatedAt: 500,
         },
       });
 
-      // Pass in intentionally non-sorted order
-      const groups = groupAgentsByProject([idleOlder, idleNewer, errorAgent, waitingAgent, busyOlder, busyNewer]);
+      const groups = groupAgentsByProject([agentFirst, agentSecond, agentThird]);
       expect(groups.length).toBe(1);
 
       const agentIds = groups[0]?.agents.map((a) => a.id);
-      expect(agentIds).toEqual(["busy-new", "busy-old", "waiting", "error", "idle-new", "idle-old"]);
+      expect(agentIds).toEqual(["agent-first", "agent-second", "agent-third"]);
     });
   });
 
@@ -173,85 +236,70 @@ describe("groupingUtils", () => {
       expect(groups[1]?.agents.length).toBe(1);
     });
 
-    it("sorts agents within each environment group by activity priority and updatedAt desc", () => {
-      const idleAgent = factory_createAgent({
-        id: "env1-idle",
+    it("preserves incoming agent order within each environment group without reordering on recent activity", () => {
+      const idleOlder = factory_createAgent({
+        id: "env1-idle-older",
         environment: fixture_testEnvironment,
         activity: {
           ...factory_createAgent().activity,
           activity: "IDLE",
-          updatedAt: 9000,
+          updatedAt: 1000,
         },
       });
-      const busyAgent = factory_createAgent({
-        id: "env1-busy",
+      const busyNewer = factory_createAgent({
+        id: "env1-busy-newer",
         environment: fixture_testEnvironment,
         activity: {
           ...factory_createAgent().activity,
           activity: "BUSY",
-          updatedAt: 1000,
+          updatedAt: 9000,
         },
       });
 
-      const groups = groupAgentsByEnvironment([idleAgent, busyAgent], [fixture_testEnvironment]);
+      const groups = groupAgentsByEnvironment([idleOlder, busyNewer], [fixture_testEnvironment]);
       const agentIds = groups[0]?.agents.map((a) => a.id);
-      expect(agentIds).toEqual(["env1-busy", "env1-idle"]);
+      expect(agentIds).toEqual(["env1-idle-older", "env1-busy-newer"]);
     });
   });
 
-  describe("compareAgentsByActivity and sortAgents", () => {
-    it("sorts agents strictly by activity priority then updatedAt descending", () => {
-      const aIdle = factory_createAgent({
-        id: "idle",
-        activity: { ...factory_createAgent().activity, activity: "IDLE", updatedAt: 5000 },
+  describe("compareAgentsByCategory and sortAgents", () => {
+    it("sorts agents by category order (busy -> idle -> finished) preserving arrival order within each category", () => {
+      const aIdle1 = factory_createAgent({
+        id: "idle-1",
+        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "IDLE", updatedAt: 5000 },
       });
-      const aWaiting = factory_createAgent({
-        id: "waiting",
-        activity: { ...factory_createAgent().activity, activity: "WAITING_QUESTION", updatedAt: 2000 },
-      });
-      const aError = factory_createAgent({
-        id: "error",
-        activity: { ...factory_createAgent().activity, activity: "ERROR", updatedAt: 3000 },
+      const aFinished = factory_createAgent({
+        id: "finished-1",
+        activity: { ...factory_createAgent().activity, lifecycle: "EXITED", activity: "IDLE", updatedAt: 2000 },
       });
       const aBusy1 = factory_createAgent({
         id: "busy-1",
-        activity: { ...factory_createAgent().activity, activity: "BUSY", updatedAt: 1000 },
+        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "BUSY", updatedAt: 1000 },
+      });
+      const aIdle2 = factory_createAgent({
+        id: "idle-2",
+        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "IDLE", updatedAt: 8000 },
       });
       const aBusy2 = factory_createAgent({
         id: "busy-2",
-        activity: { ...factory_createAgent().activity, activity: "BUSY", updatedAt: 4000 },
+        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "BUSY", updatedAt: 9000 },
       });
 
-      const sorted = sortAgents([aIdle, aWaiting, aError, aBusy1, aBusy2]);
-      expect(sorted.map((a) => a.id)).toEqual(["busy-2", "busy-1", "waiting", "error", "idle"]);
+      const sorted = sortAgents([aIdle1, aFinished, aBusy1, aIdle2, aBusy2]);
+      expect(sorted.map((a) => a.id)).toEqual(["busy-1", "busy-2", "idle-1", "idle-2", "finished-1"]);
     });
 
-    it("handles identical activity and timestamp safely", () => {
+    it("handles identical category comparison correctly", () => {
       const a1 = factory_createAgent({
         id: "a1",
-        activity: { ...factory_createAgent().activity, activity: "BUSY", updatedAt: 1000 },
+        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "BUSY", updatedAt: 1000 },
       });
       const a2 = factory_createAgent({
         id: "a2",
-        activity: { ...factory_createAgent().activity, activity: "BUSY", updatedAt: 1000 },
+        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "BUSY", updatedAt: 5000 },
       });
 
-      expect(compareAgentsByActivity(a1, a2)).toBe(0);
-    });
-
-    it("falls back to lower priority for unknown activity states", () => {
-      const aUnknown = factory_createAgent({
-        id: "unknown",
-        // @ts-expect-error test unknown activity state fallback
-        activity: { ...factory_createAgent().activity, activity: "SOMETHING_ELSE", updatedAt: 5000 },
-      });
-      const aIdle = factory_createAgent({
-        id: "idle",
-        activity: { ...factory_createAgent().activity, activity: "IDLE", updatedAt: 1000 },
-      });
-
-      const sorted = sortAgents([aUnknown, aIdle]);
-      expect(sorted.map((a) => a.id)).toEqual(["idle", "unknown"]);
+      expect(compareAgentsByCategory(a1, a2)).toBe(0);
     });
   });
 });

@@ -26,7 +26,7 @@ export function useEventStream(apiBaseUrl?: string, token: string = DEFAULT_DEV_
               updated[idx] = event.agent;
               return updated;
             }
-            return [event.agent, ...prev];
+            return [...prev, event.agent];
           });
         }
         break;
@@ -61,7 +61,7 @@ export function useEventStream(apiBaseUrl?: string, token: string = DEFAULT_DEV_
         copy[idx] = updated;
         return copy;
       }
-      return [updated, ...prev];
+      return [...prev, updated];
     });
   }, []);
 
