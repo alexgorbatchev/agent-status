@@ -46,6 +46,7 @@ type rawUsage struct {
 }
 
 type rawMessage struct {
+	ID             string      `json:"id,omitempty"`
 	Role           string      `json:"role"`
 	Model          string      `json:"model"`
 	StopReason     string      `json:"stop_reason"`
@@ -78,6 +79,8 @@ type rawJSONLine struct {
 	Error             string      `json:"error,omitempty"`
 	ApiErrorStatus    *int        `json:"apiErrorStatus,omitempty"`
 	IsApiErrorMessage bool        `json:"isApiErrorMessage,omitempty"`
+	RequestId         string      `json:"requestId,omitempty"`
+	ApiBlockIndex     *int        `json:"apiBlockIndex,omitempty"`
 }
 
 func parseTimestamp(v interface{}) int64 {
@@ -275,6 +278,7 @@ type ClaudeCodeParser struct {
 	explicitTitles map[string]bool
 	sessionTitles  map[string]string
 	lastTimestamp  int64
+	seenRequests   map[string]bool
 }
 
 // NewClaudeCodeParser creates a new stateful parser stream for Claude Code transcripts.
@@ -283,6 +287,7 @@ func NewClaudeCodeParser() *ClaudeCodeParser {
 		seenSessions:   make(map[string]bool),
 		explicitTitles: make(map[string]bool),
 		sessionTitles:  make(map[string]string),
+		seenRequests:   make(map[string]bool),
 	}
 }
 
@@ -295,6 +300,7 @@ func (p *ClaudeCodeParser) Reset() {
 	p.explicitTitles = make(map[string]bool)
 	p.sessionTitles = make(map[string]string)
 	p.lastTimestamp = 0
+	p.seenRequests = make(map[string]bool)
 }
 
 // ParseLine parses a single line of Claude Code JSONL log output in a session stream.
@@ -320,7 +326,7 @@ func (p *ClaudeCodeParser) ParseLine(line []byte) ([]ParsedEvent, error) {
 		}
 	}
 
-	events := parseClaudeCodeLineEvents(raw, ts, p.explicitTitles, p.sessionTitles)
+	events := parseClaudeCodeLineEvents(raw, ts, p.explicitTitles, p.sessionTitles, p.seenRequests)
 	emitRunStarted := false
 	if raw.SessionID != "" {
 		if !p.seenSessions[raw.SessionID] {
@@ -348,6 +354,7 @@ var (
 	defaultClaudeExplicitTitles = make(map[string]bool)
 	defaultClaudeTitles         = make(map[string]string)
 	defaultClaudeLastTS         int64
+	defaultClaudeRequests       = make(map[string]bool)
 )
 
 // ResetClaudeCodeSessions clears tracked sessions for the package-level ParseClaudeCodeLine.
@@ -358,6 +365,7 @@ func ResetClaudeCodeSessions() {
 	defaultClaudeExplicitTitles = make(map[string]bool)
 	defaultClaudeTitles = make(map[string]string)
 	defaultClaudeLastTS = 0
+	defaultClaudeRequests = make(map[string]bool)
 }
 
 // ResetClaudeCodeSession clears a specific tracked session ID.
@@ -367,6 +375,12 @@ func ResetClaudeCodeSession(sessionID string) {
 	delete(defaultClaudeSessions, sessionID)
 	delete(defaultClaudeExplicitTitles, sessionID)
 	delete(defaultClaudeTitles, sessionID)
+	prefix := sessionID + ":"
+	for k := range defaultClaudeRequests {
+		if strings.HasPrefix(k, prefix) {
+			delete(defaultClaudeRequests, k)
+		}
+	}
 }
 
 // ParseClaudeCodeLine parses a single line of Claude Code JSONL log output into ParsedEvent structs.
@@ -393,7 +407,7 @@ func ParseClaudeCodeLine(line []byte) ([]ParsedEvent, error) {
 		}
 	}
 
-	events := parseClaudeCodeLineEvents(raw, ts, defaultClaudeExplicitTitles, defaultClaudeTitles)
+	events := parseClaudeCodeLineEvents(raw, ts, defaultClaudeExplicitTitles, defaultClaudeTitles, defaultClaudeRequests)
 	emitRunStarted := false
 	if raw.SessionID != "" {
 		if !defaultClaudeSessions[raw.SessionID] {
@@ -411,11 +425,26 @@ func ParseClaudeCodeLine(line []byte) ([]ParsedEvent, error) {
 	return events, nil
 }
 
+func recordSeenRequest(seenRequests map[string]bool, key string) {
+	if len(seenRequests) > 200 {
+		count := 0
+		for k := range seenRequests {
+			delete(seenRequests, k)
+			count++
+			if count >= 100 {
+				break
+			}
+		}
+	}
+	seenRequests[key] = true
+}
+
 func parseClaudeCodeLineEvents(
 	raw rawJSONLine,
 	ts int64,
 	explicitTitles map[string]bool,
 	sessionTitles map[string]string,
+	seenRequests map[string]bool,
 ) []ParsedEvent {
 	var events []ParsedEvent
 	isSubagent := raw.IsSidechain || raw.AgentID != ""
@@ -598,6 +627,12 @@ func parseClaudeCodeLineEvents(
 		}
 
 	case "assistant":
+		reqID := raw.RequestId
+		msgID := ""
+		if raw.Message != nil && raw.Message.ID != "" {
+			msgID = raw.Message.ID
+		}
+
 		var modelPtr *string
 		if raw.Message != nil && raw.Message.Model != "" {
 			modelPtr = stringPtr(raw.Message.Model)
@@ -606,6 +641,7 @@ func parseClaudeCodeLineEvents(
 		if raw.Message != nil {
 			blocks := parseClaudeContentBlocks(raw.Message.Content)
 			var textParts []string
+			hasToolCall := false
 
 			for _, b := range blocks {
 				switch b.Type {
@@ -628,6 +664,7 @@ func parseClaudeCodeLineEvents(
 						})
 					}
 				case "tool_use":
+					hasToolCall = true
 					toolName := b.Name
 					var callID *string
 					if b.ID != "" {
@@ -685,48 +722,74 @@ func parseClaudeCodeLineEvents(
 				}
 			}
 
-			// Turn End with Usage
-			var usage *types.ITokenUsage
-			if raw.Message.Usage != nil {
-				u := raw.Message.Usage
-				reasoning := u.ThinkingTokens
-				if reasoning == 0 {
-					reasoning = u.ReasoningTokens
+			// Decide whether to emit turn_end:
+			// A line containing only thinking (no text and no tool calls) is an intermediate block
+			// (e.g. apiBlockIndex: 0) of a streaming assistant turn. The actual tool call(s) or text
+			// response will arrive on subsequent line(s). Do not emit premature turn_end for pure thinking.
+			hasTerminalContent := len(textParts) > 0 || hasToolCall
+			isIntermediateThinking := !hasTerminalContent && (raw.Message.StopReason == "" || raw.ApiBlockIndex != nil || raw.Message.StopReason == "tool_use" || raw.Message.StopReason == "toolUse")
+
+			if !isIntermediateThinking {
+				isDuplicateRequest := false
+				if seenRequests != nil {
+					if reqID != "" && seenRequests[sessKey+":req:"+reqID] {
+						isDuplicateRequest = true
+					}
+					if msgID != "" && seenRequests[sessKey+":msg:"+msgID] {
+						isDuplicateRequest = true
+					}
+					if reqID != "" {
+						recordSeenRequest(seenRequests, sessKey+":req:"+reqID)
+					}
+					if msgID != "" {
+						recordSeenRequest(seenRequests, sessKey+":msg:"+msgID)
+					}
 				}
-				total := u.InputTokens + u.OutputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
-				usage = &types.ITokenUsage{
-					Input:      u.InputTokens,
-					Output:     u.OutputTokens,
-					CacheRead:  u.CacheReadInputTokens,
-					CacheWrite: u.CacheCreationInputTokens,
-					Reasoning:  reasoning,
-					Total:      total,
+
+				if !isDuplicateRequest || len(textParts) > 0 {
+					var usage *types.ITokenUsage
+					if !isDuplicateRequest && raw.Message.Usage != nil {
+						u := raw.Message.Usage
+						reasoning := u.ThinkingTokens
+						if reasoning == 0 {
+							reasoning = u.ReasoningTokens
+						}
+						total := u.InputTokens + u.OutputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
+						usage = &types.ITokenUsage{
+							Input:      u.InputTokens,
+							Output:     u.OutputTokens,
+							CacheRead:  u.CacheReadInputTokens,
+							CacheWrite: u.CacheCreationInputTokens,
+							Reasoning:  reasoning,
+							Total:      total,
+						}
+					}
+
+					var stopReason *string
+					if raw.Message.StopReason != "" {
+						stopReason = stringPtr(raw.Message.StopReason)
+					}
+
+					var contentPtr *string
+					if len(textParts) > 0 {
+						contentPtr = stringPtr(strings.Join(textParts, "\n"))
+					}
+
+					events = append(events, ParsedEvent{
+						EventType: "turn_end",
+						Timestamp: ts,
+						CWD:       raw.CWD,
+						GitBranch: raw.GitBranch,
+						Data: types.TelemetryFrameData{
+							Role:       stringPtr("assistant"),
+							Model:      modelPtr,
+							StopReason: stopReason,
+							Usage:      usage,
+							Content:    contentPtr,
+						},
+					})
 				}
 			}
-
-			var stopReason *string
-			if raw.Message.StopReason != "" {
-				stopReason = stringPtr(raw.Message.StopReason)
-			}
-
-			var contentPtr *string
-			if len(textParts) > 0 {
-				contentPtr = stringPtr(strings.Join(textParts, "\n"))
-			}
-
-			events = append(events, ParsedEvent{
-				EventType: "turn_end",
-				Timestamp: ts,
-				CWD:       raw.CWD,
-				GitBranch: raw.GitBranch,
-				Data: types.TelemetryFrameData{
-					Role:       stringPtr("assistant"),
-					Model:      modelPtr,
-					StopReason: stopReason,
-					Usage:      usage,
-					Content:    contentPtr,
-				},
-			})
 		}
 
 		// Check for error fields

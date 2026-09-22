@@ -1241,3 +1241,202 @@ func TestClaudeCodeParser_SessionWithoutAiTitle_MatchesCodeReview(t *testing.T) 
 	}
 }
 
+func TestClaudeCodeParser_StreamedMultiBlockDeduplication(t *testing.T) {
+	t.Run("ClaudeCodeParser deduplicates streamed blocks with same requestId", func(t *testing.T) {
+		p := NewClaudeCodeParser()
+		sessID := "stream-session-1"
+
+		line1 := `{"type":"assistant","requestId":"req_011CfKA7YVz3YULfeA8Dx8yU","sessionId":"` + sessID + `","apiBlockIndex":0,"message":{"id":"msg_011CfKA7YVz3YULfeA8Dx8yU","role":"assistant","model":"claude-3-7-sonnet","stop_reason":"tool_use","content":[{"type":"thinking","thinking":"Analyzing the repository structure"}],"usage":{"input_tokens":2,"output_tokens":181,"cache_read_input_tokens":27339,"cache_creation_input_tokens":21361}}}`
+		line2 := `{"type":"assistant","requestId":"req_011CfKA7YVz3YULfeA8Dx8yU","sessionId":"` + sessID + `","apiBlockIndex":1,"message":{"id":"msg_011CfKA7YVz3YULfeA8Dx8yU","role":"assistant","model":"claude-3-7-sonnet","stop_reason":"tool_use","content":[{"type":"tool_use","name":"claude-code-codegraph","id":"call_1","input":{"action":"search"}}],"usage":{"input_tokens":2,"output_tokens":181,"cache_read_input_tokens":27339,"cache_creation_input_tokens":21361}}}`
+		line3 := `{"type":"assistant","requestId":"req_011CfKA7YVz3YULfeA8Dx8yU","sessionId":"` + sessID + `","apiBlockIndex":2,"message":{"id":"msg_011CfKA7YVz3YULfeA8Dx8yU","role":"assistant","model":"claude-3-7-sonnet","stop_reason":"tool_use","content":[{"type":"tool_use","name":"golang","id":"call_2","input":{"action":"build"}}],"usage":{"input_tokens":2,"output_tokens":181,"cache_read_input_tokens":27339,"cache_creation_input_tokens":21361}}}`
+
+		evs1, err := p.ParseLine([]byte(line1))
+		if err != nil {
+			t.Fatalf("ParseLine line1 failed: %v", err)
+		}
+		evs2, err := p.ParseLine([]byte(line2))
+		if err != nil {
+			t.Fatalf("ParseLine line2 failed: %v", err)
+		}
+		evs3, err := p.ParseLine([]byte(line3))
+		if err != nil {
+			t.Fatalf("ParseLine line3 failed: %v", err)
+		}
+
+		allEvents := append(append(evs1, evs2...), evs3...)
+		var turnEndEvents []ParsedEvent
+
+		for _, ev := range allEvents {
+			if ev.EventType == "turn_end" {
+				turnEndEvents = append(turnEndEvents, ev)
+			}
+		}
+
+		var nonRunEvents []ParsedEvent
+		for _, ev := range evs1 {
+			if ev.EventType != "run_started" {
+				nonRunEvents = append(nonRunEvents, ev)
+			}
+		}
+		if len(nonRunEvents) != 1 || nonRunEvents[0].EventType != "thinking" {
+			t.Fatalf("expected line1 to emit thinking event (excluding run_started), got %v", nonRunEvents)
+		}
+		if len(evs2) != 2 || evs2[0].EventType != "tool_call" || evs2[1].EventType != "turn_end" {
+			t.Fatalf("expected line2 to emit [tool_call, turn_end], got %v", evs2)
+		}
+		if len(evs3) != 1 || evs3[0].EventType != "tool_call" {
+			t.Fatalf("expected line3 to emit [tool_call] without duplicate turn_end, got %v", evs3)
+		}
+		if len(turnEndEvents) != 1 {
+			t.Fatalf("expected exactly 1 turn_end event for requestId, got %d", len(turnEndEvents))
+		}
+		if turnEndEvents[0].Data.Usage == nil {
+			t.Fatal("turn_end usage is nil")
+		}
+		if turnEndEvents[0].Data.Usage.Output != 181 {
+			t.Errorf("output tokens = %d, want 181", turnEndEvents[0].Data.Usage.Output)
+		}
+		if turnEndEvents[0].Data.Usage.Total != 48883 {
+			t.Errorf("total tokens = %d, want 48883", turnEndEvents[0].Data.Usage.Total)
+		}
+	})
+
+	t.Run("ParseClaudeCodeLine package-level deduplicates streamed blocks with same requestId", func(t *testing.T) {
+		ResetClaudeCodeSessions()
+		sessID := "stream-session-pkg"
+
+		line1 := `{"type":"assistant","requestId":"req_pkg_1","sessionId":"` + sessID + `","apiBlockIndex":0,"message":{"id":"msg_pkg_1","role":"assistant","model":"claude-3-7-sonnet","stop_reason":"tool_use","content":[{"type":"thinking","thinking":"Processing"}],"usage":{"input_tokens":5,"output_tokens":100,"cache_read_input_tokens":1000,"cache_creation_input_tokens":0}}}`
+		line2 := `{"type":"assistant","requestId":"req_pkg_1","sessionId":"` + sessID + `","apiBlockIndex":1,"message":{"id":"msg_pkg_1","role":"assistant","model":"claude-3-7-sonnet","stop_reason":"tool_use","content":[{"type":"tool_use","name":"Bash","id":"call_pkg","input":{"command":"ls"}}],"usage":{"input_tokens":5,"output_tokens":100,"cache_read_input_tokens":1000,"cache_creation_input_tokens":0}}}`
+
+		evs1, err := ParseClaudeCodeLine([]byte(line1))
+		if err != nil {
+			t.Fatalf("ParseClaudeCodeLine line1 failed: %v", err)
+		}
+		evs2, err := ParseClaudeCodeLine([]byte(line2))
+		if err != nil {
+			t.Fatalf("ParseClaudeCodeLine line2 failed: %v", err)
+		}
+
+		allEvents := append(evs1, evs2...)
+		var turnEndEvents []ParsedEvent
+		for _, ev := range allEvents {
+			if ev.EventType == "turn_end" {
+				turnEndEvents = append(turnEndEvents, ev)
+			}
+		}
+
+		if len(turnEndEvents) != 1 {
+			t.Fatalf("expected exactly 1 turn_end event for requestId, got %d", len(turnEndEvents))
+		}
+	})
+
+	t.Run("ClaudeCodeParser deduplicates using message.id when requestId is omitted", func(t *testing.T) {
+		p := NewClaudeCodeParser()
+		sessID := "stream-session-msgid"
+
+		line1 := `{"type":"assistant","sessionId":"` + sessID + `","apiBlockIndex":0,"message":{"id":"msg_only_1","role":"assistant","model":"claude-3-7-sonnet","stop_reason":"tool_use","content":[{"type":"thinking","thinking":"Processing"}],"usage":{"input_tokens":5,"output_tokens":100}}}`
+		line2 := `{"type":"assistant","sessionId":"` + sessID + `","apiBlockIndex":1,"message":{"id":"msg_only_1","role":"assistant","model":"claude-3-7-sonnet","stop_reason":"tool_use","content":[{"type":"tool_use","name":"Bash","id":"call_msg","input":{"command":"pwd"}}],"usage":{"input_tokens":5,"output_tokens":100}}}`
+
+		evs1, err := p.ParseLine([]byte(line1))
+		if err != nil {
+			t.Fatalf("ParseLine line1 failed: %v", err)
+		}
+		evs2, err := p.ParseLine([]byte(line2))
+		if err != nil {
+			t.Fatalf("ParseLine line2 failed: %v", err)
+		}
+
+		allEvents := append(evs1, evs2...)
+		var turnEndCount int
+		for _, ev := range allEvents {
+			if ev.EventType == "turn_end" {
+				turnEndCount++
+			}
+		}
+
+		if turnEndCount != 1 {
+			t.Fatalf("expected exactly 1 turn_end event for message.id, got %d", turnEndCount)
+		}
+	})
+
+	t.Run("Multiple distinct request turns each emit their own turn_end", func(t *testing.T) {
+		p := NewClaudeCodeParser()
+		sessID := "stream-session-multiturn"
+
+		// Turn 1, block 0 & 1
+		t1b0 := `{"type":"assistant","requestId":"req_turn_1","sessionId":"` + sessID + `","apiBlockIndex":0,"message":{"id":"msg_1","role":"assistant","model":"claude-3-7-sonnet","stop_reason":"tool_use","content":[{"type":"thinking","thinking":"T1"}],"usage":{"input_tokens":10,"output_tokens":20}}}`
+		t1b1 := `{"type":"assistant","requestId":"req_turn_1","sessionId":"` + sessID + `","apiBlockIndex":1,"message":{"id":"msg_1","role":"assistant","model":"claude-3-7-sonnet","stop_reason":"tool_use","content":[{"type":"tool_use","name":"Bash","id":"c1","input":{"command":"echo 1"}}],"usage":{"input_tokens":10,"output_tokens":20}}}`
+
+		// Turn 2, block 0 & 1
+		t2b0 := `{"type":"assistant","requestId":"req_turn_2","sessionId":"` + sessID + `","apiBlockIndex":0,"message":{"id":"msg_2","role":"assistant","model":"claude-3-7-sonnet","stop_reason":"tool_use","content":[{"type":"thinking","thinking":"T2"}],"usage":{"input_tokens":15,"output_tokens":30}}}`
+		t2b1 := `{"type":"assistant","requestId":"req_turn_2","sessionId":"` + sessID + `","apiBlockIndex":1,"message":{"id":"msg_2","role":"assistant","model":"claude-3-7-sonnet","stop_reason":"tool_use","content":[{"type":"tool_use","name":"Bash","id":"c2","input":{"command":"echo 2"}}],"usage":{"input_tokens":15,"output_tokens":30}}}`
+
+		for _, line := range []string{t1b0, t1b1, t2b0, t2b1} {
+			if _, err := p.ParseLine([]byte(line)); err != nil {
+				t.Fatalf("ParseLine failed: %v", err)
+			}
+		}
+
+		// Now reset and check individual session reset
+		ResetClaudeCodeSession(sessID)
+		p.Reset()
+
+		evsAfterReset, err := p.ParseLine([]byte(t1b1))
+		if err != nil {
+			t.Fatalf("ParseLine after reset failed: %v", err)
+		}
+		var turnEndFound bool
+		for _, ev := range evsAfterReset {
+			if ev.EventType == "turn_end" {
+				turnEndFound = true
+			}
+		}
+		if !turnEndFound {
+			t.Fatalf("expected turn_end to be re-emitted after parser Reset")
+		}
+	})
+
+	t.Run("Streamed response with thinking and text preserves response content", func(t *testing.T) {
+		p := NewClaudeCodeParser()
+		sessID := "stream-session-text"
+
+		line1 := `{"type":"assistant","requestId":"req_text_1","sessionId":"` + sessID + `","apiBlockIndex":0,"message":{"id":"msg_text_1","role":"assistant","model":"claude-3-7-sonnet","stop_reason":"end_turn","content":[{"type":"thinking","thinking":"Thinking about solution"}],"usage":{"input_tokens":10,"output_tokens":50}}}`
+		line2 := `{"type":"assistant","requestId":"req_text_1","sessionId":"` + sessID + `","apiBlockIndex":1,"message":{"id":"msg_text_1","role":"assistant","model":"claude-3-7-sonnet","stop_reason":"end_turn","content":[{"type":"text","text":"I have completed the task."}],"usage":{"input_tokens":10,"output_tokens":50}}}`
+
+		evs1, err := p.ParseLine([]byte(line1))
+		if err != nil {
+			t.Fatalf("ParseLine line1 failed: %v", err)
+		}
+		evs2, err := p.ParseLine([]byte(line2))
+		if err != nil {
+			t.Fatalf("ParseLine line2 failed: %v", err)
+		}
+
+		var nonRunEvents []ParsedEvent
+		for _, ev := range evs1 {
+			if ev.EventType != "run_started" {
+				nonRunEvents = append(nonRunEvents, ev)
+			}
+		}
+		if len(nonRunEvents) != 1 || nonRunEvents[0].EventType != "thinking" {
+			t.Fatalf("expected line1 to emit thinking event (excluding run_started), got %v", nonRunEvents)
+		}
+
+		var turnEnds []ParsedEvent
+		for _, ev := range evs2 {
+			if ev.EventType == "turn_end" {
+				turnEnds = append(turnEnds, ev)
+			}
+		}
+		if len(turnEnds) != 1 {
+			t.Fatalf("expected line2 to emit 1 turn_end event, got %d", len(turnEnds))
+		}
+		if turnEnds[0].Data.Content == nil || *turnEnds[0].Data.Content != "I have completed the task." {
+			t.Errorf("content = %v, want 'I have completed the task.'", turnEnds[0].Data.Content)
+		}
+		if turnEnds[0].Data.Usage == nil || turnEnds[0].Data.Usage.Output != 50 {
+			t.Errorf("usage output = %v, want 50", turnEnds[0].Data.Usage)
+		}
+	})
+}
+
