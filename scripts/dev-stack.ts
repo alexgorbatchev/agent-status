@@ -155,7 +155,7 @@ async function startStack() {
   const notifySock = "/tmp/agent-status/notify.sock";
 
   const agent = isAgentMode();
-  const ingesterPrefix = agent ? "[ingester]" : "\x1b[36m[ingester]\x1b[0m";
+  const ingesterPrefix = agent ? "[ingester]" : "\x1b[34m[ingester]\x1b[0m";
   const serverPrefix = agent ? "[server]" : "\x1b[35m[server]\x1b[0m";
   const observerPrefix = agent ? "[observer]" : "\x1b[33m[observer]\x1b[0m";
   const uiPrefix = agent ? "[ui]" : "\x1b[32m[ui]\x1b[0m";
