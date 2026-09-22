@@ -105,6 +105,7 @@ func (s *Server) setupRoutes() {
 		r.Get("/api/v1/agents", s.handleGetAgents)
 		r.Get("/api/v1/agents/{id}", s.handleGetAgentByID)
 		r.Patch("/api/v1/agents/{id}", s.handlePatchAgent)
+		r.Post("/api/v1/agents/{id}/focus", s.handleFocusAgent)
 		r.Get("/api/v1/agents/{id}/logs", s.handleGetAgentLogs)
 	})
 
@@ -249,6 +250,52 @@ func (s *Server) handlePatchAgent(w http.ResponseWriter, r *http.Request) {
 	resp, err := client.Do(req)
 	if err != nil {
 		s.logger.ErrorContext(r.Context(), "ingester_proxy_failed", "err", err)
+		writeError(w, http.StatusBadGateway, "failed to reach ingester")
+		return
+	}
+	defer func() {
+		_ = resp.Body.Close()
+	}()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
+}
+
+func (s *Server) handleFocusAgent(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if unescaped, err := url.PathUnescape(id); err == nil && unescaped != "" {
+		id = unescaped
+	}
+
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "missing agent id")
+		return
+	}
+
+	ingesterURL := s.cfg.IngesterURL
+	if ingesterURL == "" {
+		ingesterURL = "http://127.0.0.1:4501"
+	}
+
+	targetURL := fmt.Sprintf("%s/api/v1/internal/agents/%s/focus", ingesterURL, url.PathEscape(id))
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, targetURL, nil)
+	if err != nil {
+		s.logger.ErrorContext(r.Context(), "create_focus_request_failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to create proxy request")
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if s.cfg.AuthToken != "" {
+		req.Header.Set("Authorization", "Bearer "+s.cfg.AuthToken)
+	} else if auth := r.Header.Get("Authorization"); auth != "" {
+		req.Header.Set("Authorization", auth)
+	}
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		s.logger.ErrorContext(r.Context(), "focus_proxy_failed", "err", err)
 		writeError(w, http.StatusBadGateway, "failed to reach ingester")
 		return
 	}

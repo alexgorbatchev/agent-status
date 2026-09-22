@@ -105,6 +105,7 @@ func newRootCmd(cfg *config.Config) *cobra.Command {
 			mux := http.NewServeMux()
 			mux.Handle("/ws/ingest", rcv)
 			mux.HandleFunc("PATCH /api/v1/internal/agents/{id}/visibility", rcv.HandleSetVisibility)
+			mux.HandleFunc("POST /api/v1/internal/agents/{id}/focus", rcv.HandleFocusAgent)
 			mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write([]byte("ok\n"))

@@ -1,11 +1,15 @@
 package receiver
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +18,7 @@ import (
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/classifier"
+	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/herdr"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/notify"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/pricing"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/store"
@@ -1187,5 +1192,301 @@ func TestReceiver_FramesBatchReceivedLogLevel(t *testing.T) {
 	}
 	if !strings.Contains(debugOutput, "count=1") {
 		t.Errorf("expected count=1 in DEBUG level logs, got:\n%s", debugOutput)
+	}
+}
+
+func TestReceiver_HandleFocusAgent(t *testing.T) {
+	rcv, st, _ := newTestReceiver(t)
+
+	now := time.Now().UnixMilli()
+	runningAgent := types.IAgentState{
+		ID:        "env-1:claude-code:sess-focus",
+		SessionID: "sess-focus",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:              "env-1",
+			Label:           "local",
+			Hostname:        "dev",
+			Platform:        "darwin",
+			User:            "user",
+			LastHeartbeatAt: now,
+		},
+		Project: types.IProjectInfo{
+			ID:            "proj",
+			Name:          "proj",
+			CanonicalRoot: "/work/proj",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "main",
+			CWD:    "/work/proj",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle:      types.LifecycleRunning,
+			Activity:       types.ActivityBusy,
+			Title:          "Focus Test",
+			FirstStartedAt: now,
+			UpdatedAt:      now,
+			CurrentRun: &types.IRunInfo{
+				ID:        "run-focus-1",
+				PID:       54321,
+				StartedAt: now,
+			},
+		},
+	}
+	if err := st.SaveAgentState(runningAgent); err != nil {
+		t.Fatalf("SaveAgentState failed: %v", err)
+	}
+
+	exitedAgent := runningAgent
+	exitedAgent.ID = "env-1:claude-code:sess-focus-exited"
+	exitedAgent.SessionID = "sess-focus-exited"
+	exitedAgent.Activity.Lifecycle = types.LifecycleExited
+	exitedAgent.Activity.CurrentRun = nil
+	if err := st.SaveAgentState(exitedAgent); err != nil {
+		t.Fatalf("SaveAgentState(exitedAgent) failed: %v", err)
+	}
+
+	// 1. Unauthorized without token
+	req := httptest.NewRequest("POST", "/api/v1/internal/agents/env-1:claude-code:sess-focus/focus", nil)
+	req.SetPathValue("id", "env-1:claude-code:sess-focus")
+	w := httptest.NewRecorder()
+	rcv.HandleFocusAgent(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("got status %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+
+	// 2. 404 for non-existent agent
+	req = httptest.NewRequest("POST", "/api/v1/internal/agents/non-existent/focus", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.SetPathValue("id", "non-existent")
+	w = httptest.NewRecorder()
+	rcv.HandleFocusAgent(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("got status %d, want %d", w.Code, http.StatusNotFound)
+	}
+
+	// 3. 409 Conflict for exited agent
+	req = httptest.NewRequest("POST", "/api/v1/internal/agents/env-1:claude-code:sess-focus-exited/focus", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.SetPathValue("id", "env-1:claude-code:sess-focus-exited")
+	w = httptest.NewRecorder()
+	rcv.HandleFocusAgent(w, req)
+	if w.Code != http.StatusConflict {
+		t.Errorf("got status %d, want %d", w.Code, http.StatusConflict)
+	}
+
+	// 4. 503 when Herdr socket is unavailable
+	rcv.SetHerdrClient(herdr.NewClient("/nonexistent/herdr.sock"))
+	req = httptest.NewRequest("POST", "/api/v1/internal/agents/env-1:claude-code:sess-focus/focus", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.SetPathValue("id", "env-1:claude-code:sess-focus")
+	w = httptest.NewRecorder()
+	rcv.HandleFocusAgent(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("got status %d, want %d", w.Code, http.StatusServiceUnavailable)
+	}
+
+	// 5. 200 OK when Herdr finds and focuses pane
+	sockPath := fmt.Sprintf("/tmp/h-rcv-%d.sock", time.Now().UnixNano()%100000)
+	l, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("failed to listen on unix socket: %v", err)
+	}
+	defer func() {
+		_ = l.Close()
+		_ = os.Remove(sockPath)
+	}()
+
+	go func() {
+		for {
+			conn, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer func() { _ = c.Close() }()
+				reader := bufio.NewReader(c)
+				for {
+					line, err := reader.ReadBytes('\n')
+					if err != nil {
+						return
+					}
+					var rpcReq struct {
+						ID     string          `json:"id"`
+						Method string          `json:"method"`
+						Params json.RawMessage `json:"params"`
+					}
+					_ = json.Unmarshal(line, &rpcReq)
+					var resp []byte
+					switch rpcReq.Method {
+					case "ping":
+						resp, _ = json.Marshal(map[string]interface{}{"id": rpcReq.ID, "result": map[string]interface{}{"ok": true}})
+					case "pane.list":
+						resp, _ = json.Marshal(map[string]interface{}{
+							"id": rpcReq.ID,
+							"result": map[string]interface{}{
+								"panes": []map[string]interface{}{
+									{"pane_id": "w1:p1", "workspace_id": "w1", "tab_id": "w1:t1"},
+								},
+							},
+						})
+					case "pane.process_info":
+						resp, _ = json.Marshal(map[string]interface{}{
+							"id": rpcReq.ID,
+							"result": map[string]interface{}{
+								"process_info": map[string]interface{}{
+									"pane_id": "w1:p1",
+									"foreground_processes": []map[string]interface{}{
+										{"pid": 54321, "name": "claude", "argv0": "claude", "cwd": "/work/proj"},
+									},
+								},
+							},
+						})
+					case "pane.focus":
+						resp, _ = json.Marshal(map[string]interface{}{"id": rpcReq.ID, "result": map[string]interface{}{"ok": true}})
+					}
+					resp = append(resp, '\n')
+					_, _ = c.Write(resp)
+				}
+			}(conn)
+		}
+	}()
+
+	rcv.SetHerdrClient(herdr.NewClient(sockPath))
+
+	req = httptest.NewRequest("POST", "/api/v1/internal/agents/env-1:claude-code:sess-focus/focus", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.SetPathValue("id", "env-1:claude-code:sess-focus")
+	w = httptest.NewRecorder()
+	rcv.HandleFocusAgent(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("got status %d, want %d (body: %s)", w.Code, http.StatusOK, w.Body.String())
+	}
+	var res map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatalf("unmarshaling focus response: %v", err)
+	}
+	// 6. Method Not Allowed (GET)
+	req = httptest.NewRequest("GET", "/api/v1/internal/agents/env-1:claude-code:sess-focus/focus", nil)
+	w = httptest.NewRecorder()
+	rcv.HandleFocusAgent(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("got status %d, want %d", w.Code, http.StatusMethodNotAllowed)
+	}
+
+	// 7. Missing agent id
+	req = httptest.NewRequest("POST", "/api/v1/internal/agents//focus", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.SetPathValue("id", "")
+	w = httptest.NewRecorder()
+	rcv.HandleFocusAgent(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("got status %d, want %d", w.Code, http.StatusBadRequest)
+	}
+
+	// 8. Herdr pane not found (404)
+	mockNotFoundClient := herdr.NewClientWithDialer(func(ctx context.Context) (net.Conn, error) {
+		s1, s2 := net.Pipe()
+		go func() {
+			defer func() { _ = s2.Close() }()
+			reader := bufio.NewReader(s2)
+			for {
+				line, err := reader.ReadBytes('\n')
+				if err != nil {
+					return
+				}
+				var rpcReq struct {
+					ID     string `json:"id"`
+					Method string `json:"method"`
+				}
+				_ = json.Unmarshal(line, &rpcReq)
+				var resp []byte
+				switch rpcReq.Method {
+				case "ping":
+					resp, _ = json.Marshal(map[string]interface{}{"id": rpcReq.ID, "result": map[string]interface{}{"ok": true}})
+				case "pane.list":
+					resp, _ = json.Marshal(map[string]interface{}{
+						"id":     rpcReq.ID,
+						"result": map[string]interface{}{"panes": []interface{}{}},
+					})
+				}
+				resp = append(resp, '\n')
+				_, _ = s2.Write(resp)
+			}
+		}()
+		return s1, nil
+	})
+	rcv.SetHerdrClient(mockNotFoundClient)
+	req = httptest.NewRequest("POST", "/api/v1/internal/agents/env-1:claude-code:sess-focus/focus", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.SetPathValue("id", "env-1:claude-code:sess-focus")
+	w = httptest.NewRecorder()
+	rcv.HandleFocusAgent(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("got status %d, want %d", w.Code, http.StatusNotFound)
+	}
+
+	// 9. Herdr focus error (500)
+	mockFocusErrClient := herdr.NewClientWithDialer(func(ctx context.Context) (net.Conn, error) {
+		s1, s2 := net.Pipe()
+		go func() {
+			defer func() { _ = s2.Close() }()
+			reader := bufio.NewReader(s2)
+			for {
+				line, err := reader.ReadBytes('\n')
+				if err != nil {
+					return
+				}
+				var rpcReq struct {
+					ID     string          `json:"id"`
+					Method string          `json:"method"`
+					Params json.RawMessage `json:"params"`
+				}
+				_ = json.Unmarshal(line, &rpcReq)
+				var resp []byte
+				switch rpcReq.Method {
+				case "ping":
+					resp, _ = json.Marshal(map[string]interface{}{"id": rpcReq.ID, "result": map[string]interface{}{"ok": true}})
+				case "pane.list":
+					resp, _ = json.Marshal(map[string]interface{}{
+						"id": rpcReq.ID,
+						"result": map[string]interface{}{
+							"panes": []map[string]interface{}{
+								{"pane_id": "w1:p1", "workspace_id": "w1", "tab_id": "w1:t1"},
+							},
+						},
+					})
+				case "pane.process_info":
+					resp, _ = json.Marshal(map[string]interface{}{
+						"id": rpcReq.ID,
+						"result": map[string]interface{}{
+							"process_info": map[string]interface{}{
+								"pane_id": "w1:p1",
+								"foreground_processes": []map[string]interface{}{
+									{"pid": 54321, "name": "claude", "argv0": "claude", "cwd": "/work/proj"},
+								},
+							},
+						},
+					})
+				case "pane.focus":
+					resp, _ = json.Marshal(map[string]interface{}{
+						"id":    rpcReq.ID,
+						"error": map[string]interface{}{"code": -32000, "message": "focus failure"},
+					})
+				}
+				resp = append(resp, '\n')
+				_, _ = s2.Write(resp)
+			}
+		}()
+		return s1, nil
+	})
+	rcv.SetHerdrClient(mockFocusErrClient)
+	req = httptest.NewRequest("POST", "/api/v1/internal/agents/env-1:claude-code:sess-focus/focus", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.SetPathValue("id", "env-1:claude-code:sess-focus")
+	w = httptest.NewRecorder()
+	rcv.HandleFocusAgent(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("got status %d, want %d", w.Code, http.StatusInternalServerError)
 	}
 }

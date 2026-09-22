@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -12,6 +14,7 @@ import (
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/classifier"
+	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/herdr"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/notify"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/store"
 	"github.com/coder/websocket"
@@ -24,6 +27,7 @@ type Receiver struct {
 	bearerToken string
 	mu          sync.RWMutex
 	envNames    map[string]string
+	herdrClient *herdr.Client
 }
 
 const maxMessageReadLimit = 64 * 1024 * 1024 // 64 MiB
@@ -35,7 +39,12 @@ func New(s *store.Store, c *classifier.Classifier, p *notify.Publisher, token st
 		publisher:   p,
 		bearerToken: token,
 		envNames:    make(map[string]string),
+		herdrClient: herdr.NewClient(""),
 	}
+}
+
+func (r *Receiver) SetHerdrClient(c *herdr.Client) {
+	r.herdrClient = c
 }
 
 func (r *Receiver) setEnvName(envID, name string) {
@@ -263,6 +272,96 @@ func (r *Receiver) sendError(ctx context.Context, conn *websocket.Conn, code, ms
 
 type visibilityRequest struct {
 	IsHidden bool `json:"isHidden"`
+}
+
+func (r *Receiver) HandleFocusAgent(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if r.bearerToken != "" {
+		auth := req.Header.Get("Authorization")
+		const prefix = "Bearer "
+		if !strings.HasPrefix(auth, prefix) || subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(auth, prefix)), []byte(r.bearerToken)) != 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"error": "unauthorized"})
+			return
+		}
+	}
+
+	id := req.PathValue("id")
+	if id == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"error": "missing agent id"})
+		return
+	}
+
+	agent, err := r.store.GetAgent(id)
+	if err != nil || agent == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"error": "agent not found"})
+		return
+	}
+
+	if agent.Activity.Lifecycle == types.LifecycleExited {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"error": "agent is exited"})
+		return
+	}
+
+	client := r.herdrClient
+	if client == nil {
+		client = herdr.NewClient("")
+	}
+
+	ctx := req.Context()
+	if err := client.Ping(ctx); err != nil {
+		logging.Warn("herdr_ping_failed", "err", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"error": "herdr multiplexer daemon is not running"})
+		return
+	}
+
+	pid := 0
+	if agent.Activity.CurrentRun != nil {
+		pid = agent.Activity.CurrentRun.PID
+	}
+
+	pane, err := client.FindPaneByPID(ctx, pid, agent.Workspace.CWD, string(agent.Harness))
+	if err != nil {
+		if errors.Is(err, herdr.ErrPaneNotFound) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"error": "no matching herdr pane found for agent"})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"error": fmt.Sprintf("locating herdr pane: %v", err)})
+		return
+	}
+
+	if err := client.FocusPane(ctx, pane.ID); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"error": fmt.Sprintf("focusing herdr pane: %v", err)})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":          true,
+		"paneId":      pane.ID,
+		"workspaceId": pane.WorkspaceID,
+		"tabId":       pane.TabID,
+	})
 }
 
 func (r *Receiver) HandleSetVisibility(w http.ResponseWriter, req *http.Request) {

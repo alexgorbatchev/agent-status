@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import clsx from "clsx";
 import type { IAgentCardProps } from "./types";
 import type { HarnessType } from "../types";
@@ -15,6 +15,8 @@ import {
   Clock,
   Eye,
   EyeOff,
+  SquareTerminal,
+  Loader2,
 } from "lucide-react";
 import { useRelativeTime } from "../hooks/useRelativeTime";
 import {
@@ -24,6 +26,7 @@ import {
   formatDuration,
   isSessionStalled,
 } from "../utils/agentUtils";
+import { focusAgent } from "../services/api";
 
 const HARNESS_LABELS: Record<HarnessType, string> = {
   "claude-code": "Claude Code",
@@ -37,6 +40,8 @@ function resolveCurrentTime(): number {
 }
 
 export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps): React.JSX.Element {
+  const [isFocusing, setIsFocusing] = useState<boolean>(false);
+  const [focusError, setFocusError] = useState<string | null>(null);
   const { activity, environment, workspace, harness } = agent;
 
   const formattedCost = activity.cost ? `$${activity.cost.total.toFixed(4)}` : "—";
@@ -119,6 +124,58 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
                   {agent.isHidden ? <Eye size={13} /> : <EyeOff size={13} />}
                 </IconWrapper>
               </button>
+            )}
+            <button
+              type="button"
+              data-testid="AgentCard--focus-button"
+              aria-label="Focus in Herdr"
+              title={
+                focusError
+                  ? focusError
+                  : activity.lifecycle === "RUNNING"
+                    ? "Focus in Herdr"
+                    : "Agent session is not running"
+              }
+              disabled={activity.lifecycle !== "RUNNING" || isFocusing}
+              onClick={async (event: React.MouseEvent<HTMLButtonElement>) => {
+                event.stopPropagation();
+                if (activity.lifecycle !== "RUNNING" || isFocusing) {
+                  return;
+                }
+                setIsFocusing(true);
+                setFocusError(null);
+                try {
+                  const res = await focusAgent(agent.id);
+                  if (!res.ok) {
+                    setFocusError(res.error || "Failed to focus in Herdr");
+                  }
+                } catch (err: unknown) {
+                  setFocusError(err instanceof Error ? err.message : "Failed to focus in Herdr");
+                } finally {
+                  setIsFocusing(false);
+                }
+              }}
+              onKeyDown={(event: React.KeyboardEvent<HTMLButtonElement>) => {
+                event.stopPropagation();
+              }}
+              className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors focus:outline-none focus:ring-1 focus:ring-slate-500 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+            >
+              <IconWrapper size="xs" tone={focusError ? "error" : "muted"} spin={isFocusing}>
+                {isFocusing ? (
+                  <Loader2 size={13} data-testid="AgentCard--focus-spinner" />
+                ) : (
+                  <SquareTerminal size={13} />
+                )}
+              </IconWrapper>
+            </button>
+            {focusError && (
+              <span
+                data-testid="AgentCard--focus-error"
+                role="alert"
+                className="text-[10px] text-red-400 font-medium px-1.5 py-0.5 rounded bg-red-950/40 border border-red-800/60"
+              >
+                {focusError}
+              </span>
             )}
           </div>
           <div className="flex items-center gap-1.5">

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import assert from "node:assert";
+import { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AgentCard } from "../components/AgentCard";
 import type { IAgentState } from "../types";
@@ -432,6 +433,86 @@ describe("AgentCard Component", () => {
       expect(html).toContain('data-testid="AgentCard--subagent-chip-sub-2"');
       expect(html).toContain("sub-1");
       expect(html).toContain("sub-2");
+    });
+  });
+
+  describe("Focus in Herdr button", () => {
+    it("renders Focus in Herdr button enabled for running agent and disabled for exited agent", () => {
+      const runningHtml = renderToStaticMarkup(<AgentCard agent={fixture_agentStateRunning} />);
+      expect(runningHtml).toContain('data-testid="AgentCard--focus-button"');
+      expect(runningHtml).toContain('aria-label="Focus in Herdr"');
+      expect(runningHtml).not.toContain('disabled=""');
+
+      const exitedHtml = renderToStaticMarkup(<AgentCard agent={fixture_agentStateExited} />);
+      expect(exitedHtml).toContain('data-testid="AgentCard--focus-button"');
+      expect(exitedHtml).toContain("disabled");
+    });
+
+    it("prevents propagation to card on click and invokes focusAgent", async () => {
+      const { mockDoc, cleanup } = setupMockDomEnvironment();
+      let openedDrawer = false;
+      const originalFetch = globalThis.fetch;
+      const fetchedUrls: string[] = [];
+      globalThis.fetch = (async (input: unknown): Promise<Response> => {
+        fetchedUrls.push(String(input));
+        return new Response(JSON.stringify({ ok: true, paneId: "w1:p1" }), { status: 200 });
+      }) as unknown as typeof fetch;
+
+      try {
+        const { container, unmount } = await mountComponent(
+          <AgentCard
+            agent={fixture_agentStateRunning}
+            onOpenDrawer={() => {
+              openedDrawer = true;
+            }}
+          />,
+          mockDoc,
+        );
+
+        const focusBtn = container.querySelector('[data-testid="AgentCard--focus-button"]');
+        assert(focusBtn, "Focus button must be present");
+
+        await act(async () => {
+          focusBtn.click();
+        });
+
+        expect(openedDrawer).toBe(false);
+        expect(fetchedUrls.length).toBe(1);
+        expect(fetchedUrls[0]).toContain(`/api/v1/agents/${encodeURIComponent(fixture_agentStateRunning.id)}/focus`);
+
+        await unmount();
+      } finally {
+        globalThis.fetch = originalFetch;
+        cleanup();
+      }
+    });
+
+    it("surfaces error feedback when focus fails", async () => {
+      const { mockDoc, cleanup } = setupMockDomEnvironment();
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (): Promise<Response> => {
+        return new Response(JSON.stringify({ error: "Herdr daemon offline" }), { status: 503 });
+      }) as unknown as typeof fetch;
+
+      try {
+        const { container, unmount } = await mountComponent(<AgentCard agent={fixture_agentStateRunning} />, mockDoc);
+
+        const focusBtn = container.querySelector('[data-testid="AgentCard--focus-button"]');
+        assert(focusBtn, "Focus button must be present");
+
+        await act(async () => {
+          focusBtn.click();
+        });
+
+        const errorEl = container.querySelector('[data-testid="AgentCard--focus-error"]');
+        assert(errorEl, "Error feedback must be rendered");
+        expect(errorEl.textContent).toContain("Herdr daemon offline");
+
+        await unmount();
+      } finally {
+        globalThis.fetch = originalFetch;
+        cleanup();
+      }
     });
   });
 });
