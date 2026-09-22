@@ -154,8 +154,8 @@ func TestReplay_ClaudeCode(t *testing.T) {
 		if err != nil {
 			t.Fatalf("RunReplay until-line failed: %v", err)
 		}
-		if resLine.FramesProcessed > 4 {
-			t.Errorf("expected <= 4 frames with line breakpoint, got %d", resLine.FramesProcessed)
+		if resLine.FramesProcessed > 5 {
+			t.Errorf("expected <= 5 frames with line breakpoint, got %d", resLine.FramesProcessed)
 		}
 
 		resEvent, err := RunReplay(ctx, ReplayOptions{

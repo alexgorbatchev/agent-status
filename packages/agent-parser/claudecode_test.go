@@ -482,3 +482,163 @@ func TestParseClaudeCodeLine(t *testing.T) {
 		}
 	})
 }
+
+func TestClaudeCodeParser_EmitsRunStartedOnFirstLine(t *testing.T) {
+	p := NewClaudeCodeParser()
+
+	// Line 1: user prompt
+	line1 := `{"type":"user","timestamp":"2026-09-21T10:00:00.000Z","cwd":"/repo/myproj","gitBranch":"feat/test","message":{"role":"user","content":"Hello world"}}`
+	evs1, err := p.ParseLine([]byte(line1))
+	if err != nil {
+		t.Fatalf("ParseLine(line1) failed: %v", err)
+	}
+
+	if len(evs1) < 2 {
+		t.Fatalf("expected at least 2 events on first line (run_started + turn_start), got %d: %+v", len(evs1), evs1)
+	}
+
+	// First event must be run_started
+	if evs1[0].EventType != "run_started" {
+		t.Errorf("evs1[0].EventType = %q, want 'run_started'", evs1[0].EventType)
+	}
+	if evs1[0].CWD != "/repo/myproj" {
+		t.Errorf("evs1[0].CWD = %q, want '/repo/myproj'", evs1[0].CWD)
+	}
+	if evs1[0].GitBranch != "feat/test" {
+		t.Errorf("evs1[0].GitBranch = %q, want 'feat/test'", evs1[0].GitBranch)
+	}
+	if evs1[0].Timestamp != 1789984800000 {
+		t.Errorf("evs1[0].Timestamp = %d, want 1789984800000", evs1[0].Timestamp)
+	}
+
+	// Second event is the turn_start
+	if evs1[1].EventType != "turn_start" {
+		t.Errorf("evs1[1].EventType = %q, want 'turn_start'", evs1[1].EventType)
+	}
+
+	// Line 2: assistant response - MUST NOT emit another run_started
+	line2 := `{"type":"assistant","timestamp":"2026-09-21T10:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Hi there"}]}}`
+	evs2, err := p.ParseLine([]byte(line2))
+	if err != nil {
+		t.Fatalf("ParseLine(line2) failed: %v", err)
+	}
+	for _, ev := range evs2 {
+		if ev.EventType == "run_started" {
+			t.Errorf("unexpected duplicate run_started on line 2: %+v", ev)
+		}
+	}
+}
+
+func TestParseClaudeCodeLine_EmitsRunStartedForSession(t *testing.T) {
+	ResetClaudeCodeSessions()
+	t.Cleanup(func() {
+		ResetClaudeCodeSessions()
+	})
+
+	sessA := "session-aaa-111"
+	sessB := "session-bbb-222"
+
+	// 1. First line of session A -> MUST emit run_started
+	lineA1 := `{"sessionId":"` + sessA + `","type":"user","timestamp":"2026-09-21T10:00:00.000Z","cwd":"/repo/a","gitBranch":"main","message":{"role":"user","content":"Task A"}}`
+	evsA1, err := ParseClaudeCodeLine([]byte(lineA1))
+	if err != nil {
+		t.Fatalf("ParseClaudeCodeLine(lineA1) failed: %v", err)
+	}
+	if len(evsA1) < 2 {
+		t.Fatalf("expected at least 2 events on first line of session A, got %d", len(evsA1))
+	}
+	if evsA1[0].EventType != "run_started" {
+		t.Errorf("expected first event of session A to be run_started, got %q", evsA1[0].EventType)
+	}
+
+	// 2. Second line of session A -> MUST NOT emit run_started
+	lineA2 := `{"sessionId":"` + sessA + `","type":"assistant","timestamp":"2026-09-21T10:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Working on A"}]}}`
+	evsA2, err := ParseClaudeCodeLine([]byte(lineA2))
+	if err != nil {
+		t.Fatalf("ParseClaudeCodeLine(lineA2) failed: %v", err)
+	}
+	for _, ev := range evsA2 {
+		if ev.EventType == "run_started" {
+			t.Errorf("unexpected duplicate run_started on line A2: %+v", ev)
+		}
+	}
+
+	// 3. First line of session B -> MUST emit run_started for session B
+	lineB1 := `{"sessionId":"` + sessB + `","type":"ai-title","aiTitle":"Title B","timestamp":"2026-09-21T11:00:00.000Z","cwd":"/repo/b"}`
+	evsB1, err := ParseClaudeCodeLine([]byte(lineB1))
+	if err != nil {
+		t.Fatalf("ParseClaudeCodeLine(lineB1) failed: %v", err)
+	}
+	if len(evsB1) < 2 {
+		t.Fatalf("expected at least 2 events on first line of session B, got %d", len(evsB1))
+	}
+	if evsB1[0].EventType != "run_started" {
+		t.Errorf("expected first event of session B to be run_started, got %q", evsB1[0].EventType)
+	}
+	if evsB1[1].EventType != "title_change" {
+		t.Errorf("expected second event of session B to be title_change, got %q", evsB1[1].EventType)
+	}
+
+	// 4. After ResetClaudeCodeSessions(), session A emits run_started on next first line
+	ResetClaudeCodeSessions()
+	evsA3, err := ParseClaudeCodeLine([]byte(lineA1))
+	if err != nil {
+		t.Fatalf("ParseClaudeCodeLine(lineA1 after reset) failed: %v", err)
+	}
+	if len(evsA3) < 2 || evsA3[0].EventType != "run_started" {
+		t.Errorf("expected run_started after reset, got %+v", evsA3)
+	}
+
+	// 5. Test ResetClaudeCodeSession individual
+	ResetClaudeCodeSession(sessA)
+	evsA4, err := ParseClaudeCodeLine([]byte(lineA1))
+	if err != nil {
+		t.Fatalf("ParseClaudeCodeLine(lineA1 after individual reset) failed: %v", err)
+	}
+	if len(evsA4) < 2 || evsA4[0].EventType != "run_started" {
+		t.Errorf("expected run_started after ResetClaudeCodeSession, got %+v", evsA4)
+	}
+}
+
+func TestClaudeCodeParser_EdgeCasesAndReset(t *testing.T) {
+	p := NewClaudeCodeParser()
+
+	// Empty line
+	evs, err := p.ParseLine([]byte(""))
+	if err != nil || evs != nil {
+		t.Errorf("expected nil, nil for empty line, got %v, %v", evs, err)
+	}
+
+	// Invalid JSON
+	_, err = p.ParseLine([]byte("{bad-json"))
+	if err == nil {
+		t.Errorf("expected error for bad json in ParseLine")
+	}
+
+	// Line with Title and Model
+	line := `{"title":"Manual Title","sessionId":"ses-custom","type":"user","message":{"role":"user","content":"do it","model":"claude-3-7-sonnet"}}`
+	evs, err = p.ParseLine([]byte(line))
+	if err != nil {
+		t.Fatalf("ParseLine failed: %v", err)
+	}
+	if len(evs) < 1 || evs[0].EventType != "run_started" {
+		t.Fatalf("expected run_started as first event, got %+v", evs)
+	}
+	if evs[0].Data.Title == nil || *evs[0].Data.Title != "Manual Title" {
+		t.Errorf("expected Title 'Manual Title', got %v", evs[0].Data.Title)
+	}
+	if evs[0].Data.Model == nil || *evs[0].Data.Model != "claude-3-7-sonnet" {
+		t.Errorf("expected Model 'claude-3-7-sonnet', got %v", evs[0].Data.Model)
+	}
+
+	// Reset parser
+	p.Reset()
+	// After reset, first line should emit run_started again
+	evsAfterReset, err := p.ParseLine([]byte(line))
+	if err != nil {
+		t.Fatalf("ParseLine after Reset failed: %v", err)
+	}
+	if len(evsAfterReset) < 1 || evsAfterReset[0].EventType != "run_started" {
+		t.Errorf("expected run_started after Reset, got %+v", evsAfterReset)
+	}
+}

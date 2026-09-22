@@ -3441,3 +3441,92 @@ func TestClassifier_DuplicateToolSuppression(t *testing.T) {
 		t.Errorf("expected duplicate tool call to be suppressed (count = 1), got %d", count2)
 	}
 }
+
+func TestClassifier_DuplicateRunStarted_Idempotent(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, _ := newTestClassifier(t, sum)
+	defer func() { _ = c.Close() }()
+
+	baseFrame := types.ITelemetryFrame{
+		Version:        "1.0",
+		EnvID:          "env-test",
+		AgentID:        "env-test:claude-code:sess-run-idempotent",
+		SessionID:      "sess-run-idempotent",
+		PID:            42424,
+		Harness:        types.HarnessClaudeCode,
+		HarnessVersion: "1.0.0",
+		Project:        types.IProjectInfo{ID: "proj-1", Name: "proj-1", CanonicalRoot: "/repo"},
+		Workspace:      types.IWorkspaceInfo{Branch: "main", CWD: "/repo"},
+		Environment:    types.IEnvironmentInfo{Label: "local", Platform: "darwin"},
+	}
+
+	// 1. Initial run_started (e.g. from observer process scanner) at T0 = 1000
+	fStart1 := baseFrame
+	fStart1.EventType = "run_started"
+	fStart1.Timestamp = 1000
+	agent, err := c.ProcessFrame(fStart1)
+	if err != nil {
+		t.Fatalf("ProcessFrame(run_started) failed: %v", err)
+	}
+	if agent.Activity.Lifecycle != types.LifecycleRunning {
+		t.Fatalf("expected Lifecycle %s, got %s", types.LifecycleRunning, agent.Activity.Lifecycle)
+	}
+	if agent.Activity.CurrentRun == nil {
+		t.Fatalf("expected non-nil CurrentRun")
+	}
+
+	initialRunID := agent.Activity.CurrentRun.ID
+	initialStartedAt := agent.Activity.CurrentRun.StartedAt
+	if initialRunID == "" {
+		t.Fatalf("expected non-empty initialRunID")
+	}
+	if initialStartedAt != 1000 {
+		t.Fatalf("expected initialStartedAt = 1000, got %d", initialStartedAt)
+	}
+
+	// 2. Activity occurs (turn_start or tool_call) making agent BUSY at T1 = 1500
+	tBash := "bash"
+	fTool := baseFrame
+	fTool.EventType = "tool_call"
+	fTool.Timestamp = 1500
+	fTool.Data = types.TelemetryFrameData{
+		ToolName: &tBash,
+	}
+	agent, err = c.ProcessFrame(fTool)
+	if err != nil {
+		t.Fatalf("ProcessFrame(tool_call) failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Fatalf("expected Activity %s, got %s", types.ActivityBusy, agent.Activity.Activity)
+	}
+
+	// 3. Duplicate run_started arrives (e.g. tailer reads line 1 from transcript) at T2 = 2500 with same PID
+	fStart2 := baseFrame
+	fStart2.EventType = "run_started"
+	fStart2.Timestamp = 2500
+	agent, err = c.ProcessFrame(fStart2)
+	if err != nil {
+		t.Fatalf("ProcessFrame(duplicate run_started) failed: %v", err)
+	}
+
+	// Assertions for idempotency:
+	// - Run ID must NOT be overwritten
+	if agent.Activity.CurrentRun.ID != initialRunID {
+		t.Errorf("CurrentRun.ID was overwritten: expected %q, got %q", initialRunID, agent.Activity.CurrentRun.ID)
+	}
+	// - StartedAt must NOT be clobbered
+	if agent.Activity.CurrentRun.StartedAt != initialStartedAt {
+		t.Errorf("CurrentRun.StartedAt was clobbered: expected %d, got %d", initialStartedAt, agent.Activity.CurrentRun.StartedAt)
+	}
+	// - Lifecycle must remain RUNNING
+	if agent.Activity.Lifecycle != types.LifecycleRunning {
+		t.Errorf("Lifecycle changed: expected %s, got %s", types.LifecycleRunning, agent.Activity.Lifecycle)
+	}
+	// - Ongoing Activity (BUSY) must NOT be reset to IDLE by duplicate run_started
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Errorf("Activity was reset: expected %s, got %s", types.ActivityBusy, agent.Activity.Activity)
+	}
+}

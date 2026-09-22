@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
@@ -166,7 +167,114 @@ func parseClaudeContentBlocks(content interface{}) []rawContentBlock {
 	return nil
 }
 
+func makeClaudeCodeRunStartedEvent(raw rawJSONLine, ts int64) ParsedEvent {
+	var titlePtr *string
+	if raw.AITitle != "" {
+		titlePtr = stringPtr(raw.AITitle)
+	} else if raw.Title != "" {
+		titlePtr = stringPtr(raw.Title)
+	} else if raw.SessionID != "" {
+		titlePtr = stringPtr("Claude Code Session " + raw.SessionID)
+	}
+
+	var modelPtr *string
+	if raw.Message != nil && raw.Message.Model != "" {
+		modelPtr = stringPtr(raw.Message.Model)
+	}
+
+	return ParsedEvent{
+		EventType: "run_started",
+		Timestamp: ts,
+		CWD:       raw.CWD,
+		GitBranch: raw.GitBranch,
+		Data: types.TelemetryFrameData{
+			Title: titlePtr,
+			Model: modelPtr,
+		},
+	}
+}
+
+// ClaudeCodeParser maintains session stream state when parsing Claude Code transcripts.
+type ClaudeCodeParser struct {
+	mu           sync.Mutex
+	hasStarted   bool
+	seenSessions map[string]bool
+}
+
+// NewClaudeCodeParser creates a new stateful parser stream for Claude Code transcripts.
+func NewClaudeCodeParser() *ClaudeCodeParser {
+	return &ClaudeCodeParser{
+		seenSessions: make(map[string]bool),
+	}
+}
+
+// Reset resets the parser stream state.
+func (p *ClaudeCodeParser) Reset() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.hasStarted = false
+	p.seenSessions = make(map[string]bool)
+}
+
+// ParseLine parses a single line of Claude Code JSONL log output in a session stream.
+// It synthesizes a run_started event on the first line encountered.
+func (p *ClaudeCodeParser) ParseLine(line []byte) ([]ParsedEvent, error) {
+	if len(line) == 0 {
+		return nil, nil
+	}
+
+	var raw rawJSONLine
+	if err := json.Unmarshal(line, &raw); err != nil {
+		return nil, fmt.Errorf("unmarshaling jsonl line: %w", err)
+	}
+
+	ts := parseTimestamp(raw.Timestamp)
+	events := parseClaudeCodeLineEvents(raw, ts)
+
+	p.mu.Lock()
+	emitRunStarted := false
+	if raw.SessionID != "" {
+		if !p.seenSessions[raw.SessionID] {
+			p.seenSessions[raw.SessionID] = true
+			p.hasStarted = true
+			emitRunStarted = true
+		}
+	} else if !p.hasStarted {
+		p.hasStarted = true
+		emitRunStarted = true
+	}
+	p.mu.Unlock()
+
+	if emitRunStarted {
+		runStarted := makeClaudeCodeRunStartedEvent(raw, ts)
+		events = append([]ParsedEvent{runStarted}, events...)
+	}
+
+	return events, nil
+}
+
+var (
+	defaultClaudeMu       sync.Mutex
+	defaultClaudeSessions = make(map[string]bool)
+)
+
+// ResetClaudeCodeSessions clears tracked sessions for the package-level ParseClaudeCodeLine.
+func ResetClaudeCodeSessions() {
+	defaultClaudeMu.Lock()
+	defer defaultClaudeMu.Unlock()
+	defaultClaudeSessions = make(map[string]bool)
+}
+
+// ResetClaudeCodeSession clears a specific tracked session ID.
+func ResetClaudeCodeSession(sessionID string) {
+	defaultClaudeMu.Lock()
+	defer defaultClaudeMu.Unlock()
+	delete(defaultClaudeSessions, sessionID)
+}
+
 // ParseClaudeCodeLine parses a single line of Claude Code JSONL log output into ParsedEvent structs.
+// If the line contains a SessionID and run_started has not yet been emitted for that session,
+// a run_started event is synthesized and prepended.
 func ParseClaudeCodeLine(line []byte) ([]ParsedEvent, error) {
 	if len(line) == 0 {
 		return nil, nil
@@ -178,6 +286,27 @@ func ParseClaudeCodeLine(line []byte) ([]ParsedEvent, error) {
 	}
 
 	ts := parseTimestamp(raw.Timestamp)
+	events := parseClaudeCodeLineEvents(raw, ts)
+
+	emitRunStarted := false
+	if raw.SessionID != "" {
+		defaultClaudeMu.Lock()
+		if !defaultClaudeSessions[raw.SessionID] {
+			defaultClaudeSessions[raw.SessionID] = true
+			emitRunStarted = true
+		}
+		defaultClaudeMu.Unlock()
+	}
+
+	if emitRunStarted {
+		runStarted := makeClaudeCodeRunStartedEvent(raw, ts)
+		events = append([]ParsedEvent{runStarted}, events...)
+	}
+
+	return events, nil
+}
+
+func parseClaudeCodeLineEvents(raw rawJSONLine, ts int64) []ParsedEvent {
 	var events []ParsedEvent
 
 	switch raw.Type {
@@ -449,5 +578,5 @@ func ParseClaudeCodeLine(line []byte) ([]ParsedEvent, error) {
 		}
 	}
 
-	return events, nil
+	return events
 }
