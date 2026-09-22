@@ -865,6 +865,181 @@ func TestPruneOldEventsAndExitedAgents(t *testing.T) {
 	}
 }
 
+func TestPruneOldEventsAndExitedAgents_AbandonedAgentsAndRuns(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer func() {
+		_ = st.Close()
+	}()
+
+	now := time.Now().UnixMilli()
+	exitedAgentCutoff := now - (30 * 24 * 3600 * 1000) // 30 days ago
+	eventCutoff := now - (48 * 3600 * 1000)
+
+	env := types.IEnvironmentInfo{
+		ID:              "env-prune-runs",
+		Label:           "prune-env-runs",
+		Hostname:        "localhost",
+		Platform:        "darwin",
+		User:            "tester",
+		LastHeartbeatAt: now,
+	}
+	if err := st.UpsertEnvironment(env); err != nil {
+		t.Fatalf("UpsertEnvironment failed: %v", err)
+	}
+
+	// 1. Abandoned agent: active lifecycle with current_run_id populated, but untouched for 40 days
+	abandonedAgentID := "env-prune-runs:claude-code:sess-abandoned"
+	abandonedRunID := "run-abandoned-1"
+	abandonedAgent := types.IAgentState{
+		ID:          abandonedAgentID,
+		SessionID:   "sess-abandoned",
+		Harness:     types.HarnessClaudeCode,
+		Environment: env,
+		Project: types.IProjectInfo{
+			ID:            "github.com/test/repo",
+			Name:          "repo",
+			CanonicalRoot: "/repo",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "main",
+			CWD:    "/repo",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityBusy,
+			CurrentRun: &types.IRunInfo{
+				ID:             abandonedRunID,
+				PID:            12345,
+				HarnessVersion: "1.0",
+				StartedAt:      now - (45 * 24 * 3600 * 1000),
+				EndedAt:        nil,
+			},
+			FirstStartedAt: now - (45 * 24 * 3600 * 1000),
+			UpdatedAt:      now - (40 * 24 * 3600 * 1000), // older than 30-day cutoff
+		},
+	}
+	if err := st.SaveAgentState(abandonedAgent); err != nil {
+		t.Fatalf("SaveAgentState(abandonedAgent) failed: %v", err)
+	}
+
+	// 2. Active agent: current_run_id populated, updated recently (10s ago)
+	activeAgentID := "env-prune-runs:claude-code:sess-active-runs"
+	activeRunID := "run-active-current"
+	activeAgent := types.IAgentState{
+		ID:          activeAgentID,
+		SessionID:   "sess-active-runs",
+		Harness:     types.HarnessClaudeCode,
+		Environment: env,
+		Project: types.IProjectInfo{
+			ID:            "github.com/test/repo",
+			Name:          "repo",
+			CanonicalRoot: "/repo",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "main",
+			CWD:    "/repo",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityBusy,
+			CurrentRun: &types.IRunInfo{
+				ID:             activeRunID,
+				PID:            54321,
+				HarnessVersion: "1.0",
+				StartedAt:      now - (1 * 3600 * 1000),
+				EndedAt:        nil,
+			},
+			FirstStartedAt: now - (1 * 3600 * 1000),
+			UpdatedAt:      now - 10000, // recent
+		},
+	}
+	if err := st.SaveAgentState(activeAgent); err != nil {
+		t.Fatalf("SaveAgentState(activeAgent) failed: %v", err)
+	}
+
+	// 3. Historical old completed run for activeAgent: ended 35 days ago (older than 30-day cutoff)
+	oldRunEndedAt := now - (35 * 24 * 3600 * 1000)
+	oldRunID := "run-active-old-completed"
+	_, err = st.DB().Exec(`
+		INSERT INTO runs (id, agent_id, pid, harness_version, started_at, ended_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, oldRunID, activeAgentID, 54320, "1.0", oldRunEndedAt-3600000, oldRunEndedAt)
+	if err != nil {
+		t.Fatalf("insert old completed run failed: %v", err)
+	}
+
+	// 4. Recent completed run for activeAgent: ended 5 days ago (newer than 30-day cutoff)
+	recentRunEndedAt := now - (5 * 24 * 3600 * 1000)
+	recentRunID := "run-active-recent-completed"
+	_, err = st.DB().Exec(`
+		INSERT INTO runs (id, agent_id, pid, harness_version, started_at, ended_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, recentRunID, activeAgentID, 54322, "1.0", recentRunEndedAt-3600000, recentRunEndedAt)
+	if err != nil {
+		t.Fatalf("insert recent completed run failed: %v", err)
+	}
+
+	// 5. Orphaned run: agent_id does not exist in agents table
+	orphanRunID := "run-orphan-no-agent"
+	_, err = st.DB().Exec(`
+		INSERT INTO runs (id, agent_id, pid, harness_version, started_at, ended_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, orphanRunID, "non-existent-agent-id", 99999, "1.0", now-100000, nil)
+	if err != nil {
+		t.Fatalf("insert orphan run failed: %v", err)
+	}
+
+	// Run PruneOldEventsAndExitedAgents
+	if err := st.PruneOldEventsAndExitedAgents(eventCutoff, exitedAgentCutoff); err != nil {
+		t.Fatalf("PruneOldEventsAndExitedAgents failed: %v", err)
+	}
+
+	// Assertions:
+	// 1. Abandoned agent must be deleted
+	prunedAbandoned, err := st.GetAgent(abandonedAgentID)
+	if err != nil {
+		t.Fatalf("GetAgent(abandonedAgentID) error: %v", err)
+	}
+	if prunedAbandoned != nil {
+		t.Errorf("expected abandoned agent with current_run_id to be pruned, but found %+v", prunedAbandoned)
+	}
+
+	// 2. Active agent must remain
+	gotActive, err := st.GetAgent(activeAgentID)
+	if err != nil {
+		t.Fatalf("GetAgent(activeAgentID) error: %v", err)
+	}
+	if gotActive == nil {
+		t.Errorf("expected active agent to remain")
+	}
+
+	// 3. Runs verification
+	checkRunExists := func(runID string) bool {
+		var count int
+		_ = st.DB().QueryRow("SELECT COUNT(*) FROM runs WHERE id = ?", runID).Scan(&count)
+		return count > 0
+	}
+
+	if checkRunExists(abandonedRunID) {
+		t.Errorf("expected abandoned agent's run %q to be pruned", abandonedRunID)
+	}
+	if checkRunExists(orphanRunID) {
+		t.Errorf("expected orphan run %q with non-existent agent_id to be pruned", orphanRunID)
+	}
+	if checkRunExists(oldRunID) {
+		t.Errorf("expected old completed run %q (ended > 30 days ago) to be pruned", oldRunID)
+	}
+	if !checkRunExists(activeRunID) {
+		t.Errorf("expected active agent's current run %q to remain", activeRunID)
+	}
+	if !checkRunExists(recentRunID) {
+		t.Errorf("expected active agent's recent completed run %q (ended 5 days ago) to remain", recentRunID)
+	}
+}
+
 func TestAgentVisibility(t *testing.T) {
 	st, err := Open(":memory:")
 	if err != nil {

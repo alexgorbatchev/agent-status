@@ -19,20 +19,30 @@ func (s *Store) PruneOldEventsAndExitedAgents(retentionCutoffMs int64, exitedRet
 		return fmt.Errorf("deleting old telemetry events: %w", err)
 	}
 
-	// 2. Delete EXITED agents untouched for >30 days
+	// 2. Delete agents untouched for >30 days (both exited and abandoned active agents)
 	_, err = tx.Exec(`
 		DELETE FROM agents
-		WHERE current_run_id IS NULL AND updated_at < ?
+		WHERE updated_at < ?
 	`, exitedRetentionCutoffMs)
 	if err != nil {
-		return fmt.Errorf("deleting old exited agents: %w", err)
+		return fmt.Errorf("deleting old agents: %w", err)
+	}
+
+	// 3. Delete runs that ended before the cutoff or belong to non-existent agents
+	_, err = tx.Exec(`
+		DELETE FROM runs
+		WHERE (ended_at IS NOT NULL AND ended_at < ?)
+		   OR agent_id NOT IN (SELECT id FROM agents)
+	`, exitedRetentionCutoffMs)
+	if err != nil {
+		return fmt.Errorf("deleting old and orphaned runs: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
 		return err
 	}
 
-	// 3. Execute incremental vacuum
+	// 4. Execute incremental vacuum
 	_, _ = s.db.Exec("PRAGMA incremental_vacuum(1000);")
 	return nil
 }
