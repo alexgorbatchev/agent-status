@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -1196,6 +1198,13 @@ func TestReceiver_FramesBatchReceivedLogLevel(t *testing.T) {
 }
 
 func TestReceiver_HandleFocusAgent(t *testing.T) {
+	var calledExecCmd string
+	restoreExec := herdr.MockExecCommand(func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		calledExecCmd = name
+		return exec.CommandContext(ctx, "true")
+	})
+	defer restoreExec()
+
 	rcv, st, _ := newTestReceiver(t)
 
 	now := time.Now().UnixMilli()
@@ -1365,6 +1374,9 @@ func TestReceiver_HandleFocusAgent(t *testing.T) {
 	var res map[string]interface{}
 	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
 		t.Fatalf("unmarshaling focus response: %v", err)
+	}
+	if runtime.GOOS == "darwin" && calledExecCmd != "osascript" {
+		t.Errorf("expected osascript to be called on darwin, got %q", calledExecCmd)
 	}
 	// 6. Method Not Allowed (GET)
 	req = httptest.NewRequest("GET", "/api/v1/internal/agents/env-1:claude-code:sess-focus/focus", nil)

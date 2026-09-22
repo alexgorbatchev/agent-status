@@ -18,6 +18,7 @@ Central telemetry ingestion daemon (`air-ingester`) that receives agent events, 
 - Action summarization runs asynchronously via per-agent serialized queues to avoid blocking WebSocket ingestion.
 - Summaries use specialized prompt templates (Thinking + Tool, Thinking only, Tool only) with sanitized tool arguments (max 300 chars).
 - Semantic deduplication rejects state updates with >= 60% word overlap (Jaccard similarity) when target and phase are unchanged.
+- Herdr terminal window activation (`activateTerminalWindow`) uses thread-safe `herdr.MockExecCommand` for test mocking to prevent OS window focus-stealing on macOS.
 
 ## Local gotchas
 - Unlisted models report `nil` cost rather than `$0.00` to distinguish free usage from unknown rates.

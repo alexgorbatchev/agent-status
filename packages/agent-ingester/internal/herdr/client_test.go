@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -286,6 +288,13 @@ func TestClient_FocusPane_Success(t *testing.T) {
 	srv := startMockHerdrServer(t)
 	defer srv.close()
 
+	called := false
+	restore := MockExecCommand(func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		called = true
+		return exec.CommandContext(ctx, "true")
+	})
+	defer restore()
+
 	client := NewClient(srv.sockPath)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -293,6 +302,10 @@ func TestClient_FocusPane_Success(t *testing.T) {
 	err := client.FocusPane(ctx, "w1:p1")
 	if err != nil {
 		t.Fatalf("expected FocusPane to succeed, got: %v", err)
+	}
+
+	if runtime.GOOS == "darwin" && !called {
+		t.Errorf("expected exec command to be called on darwin, but was not")
 	}
 }
 
@@ -405,16 +418,72 @@ func TestClient_Call_RpcError(t *testing.T) {
 }
 
 func TestActivateTerminalWindow(t *testing.T) {
-	t.Setenv("HERDR_TERMINAL_APP", "NonExistentTestApp")
+	var calledCmd string
+	var calledArgs []string
+
+	restore := MockExecCommand(func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		calledCmd = name
+		calledArgs = args
+		return exec.CommandContext(ctx, "true")
+	})
+	defer restore()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
-	// Should execute and not panic
+
+	// 1. HERDR_TERMINAL_APP set
+	t.Setenv("HERDR_TERMINAL_APP", "CustomApp")
+	t.Setenv("TERM_PROGRAM", "IgnoredApp")
 	activateTerminalWindow(ctx)
 
+	if calledCmd != "osascript" {
+		t.Errorf("expected command 'osascript', got %q", calledCmd)
+	}
+	expectedScript := `tell application "CustomApp" to activate`
+	if len(calledArgs) != 2 || calledArgs[0] != "-e" || calledArgs[1] != expectedScript {
+		t.Errorf("expected args [-e %q], got %v", expectedScript, calledArgs)
+	}
+
+	// 2. Fallback to TERM_PROGRAM
+	calledCmd = ""
+	calledArgs = nil
 	t.Setenv("HERDR_TERMINAL_APP", "")
-	t.Setenv("TERM_PROGRAM", "NonExistentTermProgram")
+	t.Setenv("TERM_PROGRAM", "Ghostty")
 	activateTerminalWindow(ctx)
 
+	if calledCmd != "osascript" {
+		t.Errorf("expected command 'osascript', got %q", calledCmd)
+	}
+	expectedScript = `tell application "Ghostty" to activate`
+	if len(calledArgs) != 2 || calledArgs[0] != "-e" || calledArgs[1] != expectedScript {
+		t.Errorf("expected args [-e %q], got %v", expectedScript, calledArgs)
+	}
+
+	// 3. Neither set -> should not call exec
+	calledCmd = ""
+	calledArgs = nil
+	t.Setenv("HERDR_TERMINAL_APP", "")
 	t.Setenv("TERM_PROGRAM", "")
 	activateTerminalWindow(ctx)
+
+	if calledCmd != "" {
+		t.Errorf("expected no exec call when terminal env vars are empty, got %q", calledCmd)
+	}
+}
+
+func TestMockExecCommand_Restore(t *testing.T) {
+	called := false
+	restore := MockExecCommand(func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		called = true
+		return exec.CommandContext(ctx, "true")
+	})
+
+	t.Setenv("HERDR_TERMINAL_APP", "TestApp")
+	activateTerminalWindow(context.Background())
+	if !called {
+		t.Fatalf("expected mock to be called")
+	}
+
+	restore()
+	restore() // idempotent restore
 }

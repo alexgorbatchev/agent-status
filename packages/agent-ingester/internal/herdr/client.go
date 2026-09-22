@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -269,6 +270,24 @@ func (c *Client) FocusPane(ctx context.Context, paneID string) error {
 	return nil
 }
 
+var (
+	execCommandMu      sync.RWMutex
+	execCommandContext = exec.CommandContext
+)
+
+// MockExecCommand replaces exec.CommandContext for testing and returns a cleanup function to restore it.
+func MockExecCommand(fn func(ctx context.Context, name string, args ...string) *exec.Cmd) func() {
+	execCommandMu.Lock()
+	orig := execCommandContext
+	execCommandContext = fn
+	execCommandMu.Unlock()
+	return func() {
+		execCommandMu.Lock()
+		execCommandContext = orig
+		execCommandMu.Unlock()
+	}
+}
+
 func activateTerminalWindow(ctx context.Context) {
 	termApp := os.Getenv("HERDR_TERMINAL_APP")
 	if termApp == "" {
@@ -279,7 +298,14 @@ func activateTerminalWindow(ctx context.Context) {
 		return
 	}
 
+	execCommandMu.RLock()
+	cmdFn := execCommandContext
+	execCommandMu.RUnlock()
+	if cmdFn == nil {
+		cmdFn = exec.CommandContext
+	}
+
 	script := fmt.Sprintf(`tell application "%s" to activate`, termApp)
-	cmd := exec.CommandContext(ctx, "osascript", "-e", script)
+	cmd := cmdFn(ctx, "osascript", "-e", script)
 	_ = cmd.Run()
 }
