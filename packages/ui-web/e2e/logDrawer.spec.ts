@@ -249,4 +249,97 @@ test.describe("LogDrawer & Live Tail", () => {
     const overflowDiff = await stream.evaluate((el) => el.scrollWidth - el.clientWidth);
     expect(overflowDiff).toBeLessThanOrEqual(0);
   });
+
+  test("preserves visible scroll offset when new live frames are prepended while scrolled down", async ({ page }) => {
+    await setupMockSSERoute(page, [
+      {
+        type: "snapshot",
+        at: Date.now(),
+        agents: [fixture_agentStateRunning],
+        environments: [fixture_environmentInfo],
+      },
+    ]);
+
+    const initialFrames = Array.from({ length: 10 }, (_, i) => ({
+      ...fixture_telemetryFrame,
+      seq: i + 1,
+      timestamp: 1000 + i * 100,
+      data: {
+        ...fixture_telemetryFrame.data,
+        content: `Historical log entry ${i + 1}`,
+        toolName: "Bash",
+        toolInput: { command: `echo "step ${i + 1}"` },
+        toolOutput: `result ${i + 1}`,
+      },
+    }));
+
+    await page.route("**/api/v1/agents/*/logs*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        },
+        body: JSON.stringify(initialFrames),
+      });
+    });
+
+    await page.route("**/api/v1/agents/*/live-tail*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+          "Access-Control-Allow-Origin": "*",
+        },
+        body: "",
+      });
+    });
+
+    await page.goto("/");
+    await page.getByText("Build agent-status dashboard").click();
+
+    const stream = page.getByTestId("LogDrawer--stream");
+    await expect(stream).toBeVisible();
+    await expect(page.getByTestId("LogFrameItem").first()).toBeVisible();
+
+    // Scroll down into stream
+    await stream.evaluate((el) => {
+      el.scrollTop = 200;
+      el.dispatchEvent(new Event("scroll"));
+    });
+
+    const initialScrollTop = await stream.evaluate((el) => el.scrollTop);
+    expect(initialScrollTop).toBeGreaterThanOrEqual(150);
+
+    const targetItem = page.getByText("Historical log entry 5");
+    const boundingBoxBefore = await targetItem.boundingBox();
+    expect(boundingBoxBefore).not.toBeNull();
+
+    const newFrame = {
+      ...fixture_telemetryFrame,
+      seq: 99,
+      timestamp: 9999,
+      data: {
+        ...fixture_telemetryFrame.data,
+        content: "New incoming live tail frame",
+        toolName: "Bash",
+        toolInput: { command: "echo live" },
+        toolOutput: "live output\nsecond line\nthird line",
+      },
+    };
+
+    await page.evaluate((frame) => {
+      window.dispatchEvent(new CustomEvent("mock-sse-event", { detail: frame }));
+    }, newFrame);
+
+    await expect(page.getByText("New incoming live tail frame")).toBeVisible();
+
+    const boundingBoxAfter = await targetItem.boundingBox();
+    expect(boundingBoxAfter).not.toBeNull();
+    if (boundingBoxBefore && boundingBoxAfter) {
+      expect(Math.abs(boundingBoxAfter.y - boundingBoxBefore.y)).toBeLessThanOrEqual(2);
+    }
+  });
 });

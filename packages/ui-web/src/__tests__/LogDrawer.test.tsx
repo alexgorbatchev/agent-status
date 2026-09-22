@@ -1,5 +1,5 @@
 import { describe, it, expect, mock, beforeEach, afterEach } from "bun:test";
-import React from "react";
+import React, { act } from "react";
 import assert from "node:assert";
 import { renderToString } from "react-dom/server";
 import { LogDrawer } from "../components/LogDrawer";
@@ -351,5 +351,181 @@ describe("LogDrawer Component", () => {
     expect(html).toContain("output A");
     expect(html).toContain("echo testB");
     expect(html).toContain("output B");
+  });
+
+  it("preserves LogFrameItem DOM node identity when new frames are prepended (stable React keys without array index)", async () => {
+    const frameA: ITelemetryFrame = {
+      ...fixture_telemetryFrame,
+      seq: 1,
+      timestamp: 1000,
+      eventType: "turn_start",
+      data: { ...fixture_telemetryFrame.data, toolCallId: null },
+    };
+    const frameB: ITelemetryFrame = {
+      ...fixture_telemetryFrame,
+      seq: 2,
+      timestamp: 2000,
+      eventType: "turn_end",
+      data: { ...fixture_telemetryFrame.data, toolCallId: null },
+    };
+
+    globalThis.fetch = mock(async () => {
+      return new Response(JSON.stringify([frameB, frameA]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+
+    const buffer = new LogBuffer([frameB, frameA]);
+    const { mockDoc, cleanup } = setupMockDomEnvironment();
+    try {
+      const { container, unmount } = await mountComponent(
+        <LogDrawer agent={fixture_agentStateRunning} logBuffer={buffer} onClose={() => {}} />,
+        mockDoc,
+      );
+
+      const itemsBefore = container.querySelectorAll('[data-testid="LogFrameItem"]');
+      expect(itemsBefore.length).toBe(2);
+      const frameANodeBefore = itemsBefore[1];
+
+      const frameC: ITelemetryFrame = {
+        ...fixture_telemetryFrame,
+        seq: 3,
+        timestamp: 3000,
+        eventType: "turn_start",
+        data: { ...fixture_telemetryFrame.data, toolCallId: null },
+      };
+
+      await act(async () => {
+        buffer.prepend(frameC);
+      });
+
+      const itemsAfter = container.querySelectorAll('[data-testid="LogFrameItem"]');
+      expect(itemsAfter.length).toBe(3);
+
+      // frameA is now at index 2. With stable keys without array index,
+      // its DOM node must be preserved identically.
+      expect(itemsAfter[2]).toBe(frameANodeBefore);
+
+      await unmount();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("compensates scroll position when new frames are prepended while user is scrolled down", async () => {
+    const frameA: ITelemetryFrame = {
+      ...fixture_telemetryFrame,
+      seq: 1,
+      timestamp: 1000,
+      eventType: "turn_start",
+      data: { ...fixture_telemetryFrame.data, toolCallId: null },
+    };
+    const frameB: ITelemetryFrame = {
+      ...fixture_telemetryFrame,
+      seq: 2,
+      timestamp: 2000,
+      eventType: "turn_end",
+      data: { ...fixture_telemetryFrame.data, toolCallId: null },
+    };
+
+    globalThis.fetch = mock(async () => {
+      return new Response(JSON.stringify([frameB, frameA]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+
+    const buffer = new LogBuffer([frameB, frameA]);
+    const { mockDoc, cleanup } = setupMockDomEnvironment();
+    try {
+      const { container, unmount } = await mountComponent(
+        <LogDrawer agent={fixture_agentStateRunning} logBuffer={buffer} onClose={() => {}} />,
+        mockDoc,
+      );
+
+      const stream = container.querySelector('[data-testid="LogDrawer--stream"]');
+      assert(stream);
+
+      // Simulate user scrolling down into earlier logs
+      stream.scrollTop = 150;
+      stream.scrollHeight = 600;
+      stream.dispatchEvent({ type: "scroll" });
+
+      const frameC: ITelemetryFrame = {
+        ...fixture_telemetryFrame,
+        seq: 3,
+        timestamp: 3000,
+        eventType: "turn_start",
+        data: { ...fixture_telemetryFrame.data },
+      };
+
+      // New frame prepended increases scrollHeight to 720
+      stream.scrollHeight = 720;
+      await act(async () => {
+        buffer.prepend(frameC);
+      });
+
+      // Viewport must adjust scrollTop by +120 (150 + 120 = 270) to prevent visible downward content shift
+      expect(stream.scrollTop).toBe(270);
+
+      await unmount();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("does not compensate scroll position when user is at the top (scrollTop <= 10)", async () => {
+    const frameA: ITelemetryFrame = {
+      ...fixture_telemetryFrame,
+      seq: 1,
+      timestamp: 1000,
+      eventType: "turn_start",
+      data: { ...fixture_telemetryFrame.data, toolCallId: null },
+    };
+
+    globalThis.fetch = mock(async () => {
+      return new Response(JSON.stringify([frameA]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+
+    const buffer = new LogBuffer([frameA]);
+    const { mockDoc, cleanup } = setupMockDomEnvironment();
+    try {
+      const { container, unmount } = await mountComponent(
+        <LogDrawer agent={fixture_agentStateRunning} logBuffer={buffer} onClose={() => {}} />,
+        mockDoc,
+      );
+
+      const stream = container.querySelector('[data-testid="LogDrawer--stream"]');
+      assert(stream);
+
+      // User is at the top
+      stream.scrollTop = 0;
+      stream.scrollHeight = 300;
+      stream.dispatchEvent({ type: "scroll" });
+
+      const frameB: ITelemetryFrame = {
+        ...fixture_telemetryFrame,
+        seq: 2,
+        timestamp: 2000,
+        eventType: "turn_end",
+        data: { ...fixture_telemetryFrame.data },
+      };
+
+      stream.scrollHeight = 420;
+      await act(async () => {
+        buffer.prepend(frameB);
+      });
+
+      // At top, scrollTop must remain 0 allowing new frame to be viewed at the top
+      expect(stream.scrollTop).toBe(0);
+
+      await unmount();
+    } finally {
+      cleanup();
+    }
   });
 });

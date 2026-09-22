@@ -49,7 +49,7 @@ export async function setupMockSSERoute(page: Page, initialEvents: ServerEvent[]
 
         window.addEventListener("mock-sse-event", (e: Event) => {
           if (this.isClosed) return;
-          if (!this.url.includes("/events")) return;
+          if (!this.url.includes("/events") && !this.url.includes("/live-tail")) return;
           const detail = (e as CustomEvent).detail;
           if (this.onmessage) {
             this.onmessage(new MessageEvent("message", { data: JSON.stringify(detail) }));
@@ -58,7 +58,7 @@ export async function setupMockSSERoute(page: Page, initialEvents: ServerEvent[]
 
         window.addEventListener("mock-sse-error", () => {
           if (this.isClosed) return;
-          if (!this.url.includes("/events")) return;
+          if (!this.url.includes("/events") && !this.url.includes("/live-tail")) return;
           this.readyState = 2; // CLOSED
           if (this.onerror) {
             this.onerror(new Event("error"));

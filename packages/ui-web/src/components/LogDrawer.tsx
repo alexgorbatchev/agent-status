@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useMachine } from "@xstate/react";
 import type { ILogDrawerProps } from "./types";
 import { StatusBadge } from "./StatusBadge";
@@ -10,6 +10,8 @@ import { correlateTelemetryFrames } from "../utils/correlateTelemetryFrames";
 import { getAgentDebugCommand } from "../utils/agentUtils";
 import { logDrawerMachine } from "../machines/logDrawerMachine";
 import { X, RefreshCw, AlertCircle, Terminal, Check } from "lucide-react";
+
+import { getLogFrameKey } from "../utils";
 
 export function LogDrawer({
   agent,
@@ -35,6 +37,52 @@ export function LogDrawer({
   const [copiedAgentId, setCopiedAgentId] = useState<string | null>(null);
   const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasCopied = agent !== null && copiedAgentId === agent.id;
+
+  const streamRef = useRef<HTMLDivElement | null>(null);
+  const prevScrollHeightRef = useRef<number>(0);
+  const prevScrollTopRef = useRef<number>(0);
+  const prevAgentIdRef = useRef<string>(agent?.id ?? "");
+
+  const handleScroll = useCallback((): void => {
+    const stream = streamRef.current;
+    if (!stream) {
+      return;
+    }
+    prevScrollTopRef.current = stream.scrollTop;
+    prevScrollHeightRef.current = stream.scrollHeight;
+  }, []);
+
+  useEffect(() => {
+    if (agent && prevAgentIdRef.current !== agent.id) {
+      prevAgentIdRef.current = agent.id;
+      prevScrollTopRef.current = 0;
+      prevScrollHeightRef.current = 0;
+      if (streamRef.current) {
+        streamRef.current.scrollTop = 0;
+      }
+    }
+  }, [agent]);
+
+  useLayoutEffect(() => {
+    const stream = streamRef.current;
+    if (!stream) {
+      return;
+    }
+
+    const prevScrollTop = prevScrollTopRef.current;
+    const prevScrollHeight = prevScrollHeightRef.current;
+    const currentScrollHeight = stream.scrollHeight;
+
+    if (prevScrollTop > 10 && prevScrollHeight > 0) {
+      const heightDelta = currentScrollHeight - prevScrollHeight;
+      if (heightDelta > 0) {
+        stream.scrollTop = prevScrollTop + heightDelta;
+      }
+    }
+
+    prevScrollTopRef.current = stream.scrollTop;
+    prevScrollHeightRef.current = stream.scrollHeight;
+  }, [correlatedLogs]);
 
   useEffect(() => {
     if (agent) {
@@ -171,6 +219,8 @@ export function LogDrawer({
 
       {/* Live Log Stream */}
       <div
+        ref={streamRef}
+        onScroll={handleScroll}
         data-testid="LogDrawer--stream"
         className="flex-1 overflow-y-auto overflow-x-hidden min-w-0 w-full p-4 space-y-3 text-xs"
       >
@@ -179,7 +229,7 @@ export function LogDrawer({
             {isFetchingHistory ? "Loading telemetry log events..." : "No telemetry log events recorded yet."}
           </div>
         ) : (
-          correlatedLogs.map((log, idx) => <LogFrameItem key={`${log.seq}-${log.timestamp}-${idx}`} frame={log} />)
+          correlatedLogs.map((log) => <LogFrameItem key={getLogFrameKey(log)} frame={log} />)
         )}
       </div>
     </div>
