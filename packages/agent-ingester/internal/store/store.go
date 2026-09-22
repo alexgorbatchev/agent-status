@@ -449,6 +449,42 @@ func (s *Store) GetAllActiveAgents() ([]types.IAgentState, error) {
 	return agents, nil
 }
 
+// GetRunningAgents returns all agents with an active current_run_id.
+// If envID is non-empty, it filters to agents belonging to that environment.
+func (s *Store) GetRunningAgents(envID string) ([]types.IAgentState, error) {
+	query := "SELECT id FROM agents WHERE current_run_id IS NOT NULL"
+	var args []interface{}
+	if envID != "" {
+		query += " AND environment_id = ?"
+		args = append(args, envID)
+	}
+	query += " ORDER BY updated_at DESC"
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("querying running agents: %w", err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	var agents []types.IAgentState
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		a, err := s.GetAgent(id)
+		if err != nil {
+			return nil, err
+		}
+		if a != nil {
+			agents = append(agents, *a)
+		}
+	}
+	return agents, rows.Err()
+}
+
 func (s *Store) GetAllEnvironments() ([]types.IEnvironmentInfo, error) {
 	rows, err := s.db.Query("SELECT id, label, hostname, platform, user, last_heartbeat_at FROM environments")
 	if err != nil {

@@ -30,6 +30,7 @@ type observerOptions struct {
 	envFlag           string
 	scanInterval      time.Duration
 	cursorPath        string
+	sessionStatePath  string
 	claudeSessionsDir string
 	claudeProjectsDir string
 	piSessionsDir     string
@@ -53,6 +54,9 @@ func newRootCmd() (*cobra.Command, *observerOptions) {
 	if envToken := os.Getenv("AGENT_STATUS_TOKEN"); envToken != "" {
 		opts.token = envToken
 	}
+	if envState := os.Getenv("AIR_SESSION_STATE_PATH"); envState != "" {
+		opts.sessionStatePath = envState
+	}
 
 	rootCmd := &cobra.Command{
 		Use:   "air-observer",
@@ -71,6 +75,7 @@ func newRootCmd() (*cobra.Command, *observerOptions) {
 	flags.StringVar(&opts.envFlag, "env", "", "Environment label override")
 	flags.DurationVar(&opts.scanInterval, "scan-interval", opts.scanInterval, "Interval between session scans (default 2s)")
 	flags.StringVar(&opts.cursorPath, "cursor-path", "", "Custom path for persistent cursor file")
+	flags.StringVar(&opts.sessionStatePath, "session-state-path", "", "Custom path for persistent session state tracking file")
 	flags.StringVar(&opts.claudeSessionsDir, "claude-sessions-dir", "", "Custom directory for Claude Code sessions")
 	flags.StringVar(&opts.claudeProjectsDir, "claude-projects-dir", "", "Custom directory for Claude Code projects/transcripts")
 	flags.StringVar(&opts.piSessionsDir, "pi-sessions-dir", "", "Custom directory for Pi sessions")
@@ -215,14 +220,79 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 		cancel context.CancelFunc
 	}
 
+	sessionTracker, err := scanner.NewSessionTracker(opts.sessionStatePath)
+	if err != nil {
+		logging.Warn("session_tracker_init_error", "err", err)
+	}
+	defer func() {
+		if sessionTracker != nil {
+			if sErr := sessionTracker.Save(); sErr != nil {
+				logging.Warn("session_tracker_save_error", "err", sErr)
+			}
+		}
+	}()
+
+	type claudeSessionInfo struct {
+		SessionID      string
+		PID            int
+		CWD            string
+		HarnessVersion string
+		StartedAt      int64
+	}
+
 	var mu sync.Mutex
 	activeTails := make(map[string]*activeTail)
 	sessionTails := make(map[string][]string)
-	activeClaudeSessions := make(map[string]bool)
+	activeClaudeSessions := make(map[string]claudeSessionInfo)
 	activeClaudeSubagents := make(map[string]map[string]bool)
 	activePiSessions := make(map[string]scanner.PiSessionDescriptor)
 	activeCodexSessions := make(map[string]scanner.CodexSessionDescriptor)
 	activeOpencodeSessions := make(map[string]scanner.OpencodeSessionDescriptor)
+
+	if sessionTracker != nil {
+		for sessID, s := range sessionTracker.GetAll() {
+			if !s.IsActive {
+				continue
+			}
+			switch types.HarnessType(s.Harness) {
+			case types.HarnessClaudeCode:
+				activeClaudeSessions[sessID] = claudeSessionInfo{
+					SessionID:      sessID,
+					PID:            s.PID,
+					CWD:            s.CWD,
+					HarnessVersion: s.HarnessVersion,
+					StartedAt:      s.StartedAt,
+				}
+			case types.HarnessPi:
+				activePiSessions[sessID] = scanner.PiSessionDescriptor{
+					SessionID:      sessID,
+					PID:            s.PID,
+					CWD:            s.CWD,
+					HarnessVersion: s.HarnessVersion,
+					StartedAt:      s.StartedAt,
+					IsActive:       true,
+				}
+			case types.HarnessCodex:
+				activeCodexSessions[sessID] = scanner.CodexSessionDescriptor{
+					SessionID:      sessID,
+					PID:            s.PID,
+					CWD:            s.CWD,
+					HarnessVersion: s.HarnessVersion,
+					StartedAt:      s.StartedAt,
+					IsActive:       true,
+				}
+			case types.HarnessOpencode:
+				activeOpencodeSessions[sessID] = scanner.OpencodeSessionDescriptor{
+					SessionID:      sessID,
+					PID:            s.PID,
+					CWD:            s.CWD,
+					HarnessVersion: s.HarnessVersion,
+					StartedAt:      s.StartedAt,
+					IsActive:       true,
+				}
+			}
+		}
+	}
 
 	cleanupSessionTailsLocked := func(sessionID string) {
 		for _, p := range sessionTails[sessionID] {
@@ -328,18 +398,38 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 	scanAll := func() {
 		// 1. Scan Claude Code
 		ccSessions, err := ccScanner.Scan()
-		newCCMap := make(map[string]bool)
+		newCCMap := make(map[string]claudeSessionInfo)
 		if err != nil {
 			logging.Warn("scan_failed", "harness", types.HarnessClaudeCode, "err", err)
 		} else {
 			for _, s := range ccSessions {
-				newCCMap[s.SessionID] = true
+				info := claudeSessionInfo{
+					SessionID:      s.SessionID,
+					PID:            s.PID,
+					CWD:            s.CWD,
+					HarnessVersion: s.HarnessVersion,
+					StartedAt:      s.StartedAt,
+				}
+				newCCMap[s.SessionID] = info
+
+				if sessionTracker != nil {
+					sessionTracker.Set(s.SessionID, scanner.TrackedSession{
+						SessionID:      s.SessionID,
+						Harness:        string(types.HarnessClaudeCode),
+						PID:            s.PID,
+						CWD:            s.CWD,
+						HarnessVersion: s.HarnessVersion,
+						StartedAt:      s.StartedAt,
+						IsActive:       true,
+					})
+				}
 
 				// If newly discovered active session, emit run_started so it registers as RUNNING
 				mu.Lock()
-				isNew := !activeClaudeSessions[s.SessionID]
+				_, alreadyActive := activeClaudeSessions[s.SessionID]
+				isNew := !alreadyActive
 				if isNew {
-					activeClaudeSessions[s.SessionID] = true
+					activeClaudeSessions[s.SessionID] = info
 				}
 				mu.Unlock()
 
@@ -423,23 +513,31 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 
 			// Detect exited Claude Code sessions
 			mu.Lock()
-			for sessID := range activeClaudeSessions {
-				if !newCCMap[sessID] {
+			for sessID, oldInfo := range activeClaudeSessions {
+				if _, exists := newCCMap[sessID]; !exists {
 					// Claude Code session exited
 					agentID := fmt.Sprintf("%s:%s:%s", env.ID, types.HarnessClaudeCode, sessID)
+					proj, ws, _ := gitResolver.Resolve(ctx, oldInfo.CWD, "")
 					_ = ship.EnqueueContext(ctx, types.ITelemetryFrame{
 						Version:        "1.0",
 						EnvID:          env.ID,
 						Environment:    *env,
 						AgentID:        agentID,
 						SessionID:      sessID,
+						PID:            oldInfo.PID,
 						Harness:        types.HarnessClaudeCode,
+						HarnessVersion: oldInfo.HarnessVersion,
+						Project:        proj,
+						Workspace:      ws,
 						Timestamp:      time.Now().UnixMilli(),
 						EventType:      "run_exited",
 						Data:           types.TelemetryFrameData{},
 					})
 					cleanupSessionTailsLocked(sessID)
 					delete(activeClaudeSubagents, sessID)
+					if sessionTracker != nil {
+						sessionTracker.Delete(sessID)
+					}
 				}
 			}
 			activeClaudeSessions = newCCMap
@@ -461,6 +559,18 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 					activePiSessions[s.SessionID] = s
 				}
 				mu.Unlock()
+
+				if s.IsActive && sessionTracker != nil {
+					sessionTracker.Set(s.SessionID, scanner.TrackedSession{
+						SessionID:      s.SessionID,
+						Harness:        string(types.HarnessPi),
+						PID:            s.PID,
+						CWD:            s.CWD,
+						HarnessVersion: s.HarnessVersion,
+						StartedAt:      s.StartedAt,
+						IsActive:       true,
+					})
+				}
 
 				if s.IsActive && isNew {
 					proj, ws, _ := gitResolver.Resolve(ctx, s.CWD, "")
@@ -514,6 +624,9 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 						Data:           types.TelemetryFrameData{},
 					})
 					cleanupSessionTailsLocked(sessID)
+					if sessionTracker != nil {
+						sessionTracker.Delete(sessID)
+					}
 				}
 			}
 			activePiSessions = newPiMap
@@ -535,6 +648,18 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 					activeCodexSessions[s.SessionID] = s
 				}
 				mu.Unlock()
+
+				if s.IsActive && sessionTracker != nil {
+					sessionTracker.Set(s.SessionID, scanner.TrackedSession{
+						SessionID:      s.SessionID,
+						Harness:        string(types.HarnessCodex),
+						PID:            s.PID,
+						CWD:            s.CWD,
+						HarnessVersion: s.HarnessVersion,
+						StartedAt:      s.StartedAt,
+						IsActive:       true,
+					})
+				}
 
 				if s.IsActive && isNew {
 					proj, ws, _ := gitResolver.Resolve(ctx, s.CWD, "")
@@ -596,6 +721,9 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 						Data:           types.TelemetryFrameData{},
 					})
 					cleanupSessionTailsLocked(sessID)
+					if sessionTracker != nil {
+						sessionTracker.Delete(sessID)
+					}
 				}
 			}
 			activeCodexSessions = newCodexMap
@@ -617,6 +745,18 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 					activeOpencodeSessions[s.SessionID] = s
 				}
 				mu.Unlock()
+
+				if s.IsActive && sessionTracker != nil {
+					sessionTracker.Set(s.SessionID, scanner.TrackedSession{
+						SessionID:      s.SessionID,
+						Harness:        string(types.HarnessOpencode),
+						PID:            s.PID,
+						CWD:            s.CWD,
+						HarnessVersion: s.HarnessVersion,
+						StartedAt:      s.StartedAt,
+						IsActive:       true,
+					})
+				}
 
 				if s.IsActive && isNew {
 					proj, ws, _ := gitResolver.Resolve(ctx, s.CWD, "")
@@ -676,10 +816,18 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 						EventType:      "run_exited",
 						Data:           types.TelemetryFrameData{},
 					})
+					cleanupSessionTailsLocked(sessID)
+					if sessionTracker != nil {
+						sessionTracker.Delete(sessID)
+					}
 				}
 			}
 			activeOpencodeSessions = newOpencodeMap
 			mu.Unlock()
+		}
+
+		if sessionTracker != nil {
+			_ = sessionTracker.Save()
 		}
 	}
 
