@@ -343,6 +343,11 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 						callID = b.ID
 					}
 
+					var callIDPtr *string
+					if callID != "" {
+						callIDPtr = stringPtr(callID)
+					}
+
 					params := b.Input
 					if params == nil {
 						params = b.Parameters
@@ -367,7 +372,7 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 							Data: types.TelemetryFrameData{
 								Role:       stringPtr("assistant"),
 								ToolName:   stringPtr(toolName),
-								ToolCallID: stringPtr(callID),
+								ToolCallID: callIDPtr,
 								ToolInput:  params,
 								Question:   stringPtr(qText),
 								Model:      stringPtr(msg.Model),
@@ -381,7 +386,7 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 							Data: types.TelemetryFrameData{
 								Role:       stringPtr("assistant"),
 								ToolName:   stringPtr(toolName),
-								ToolCallID: stringPtr(callID),
+								ToolCallID: callIDPtr,
 								ToolInput:  params,
 								Model:      stringPtr(msg.Model),
 							},
