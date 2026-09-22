@@ -4,7 +4,7 @@ import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { jsx } from "react/jsx-runtime";
 import { useEventStream } from "../useEventStream";
-import type { IEventStreamState, ServerEvent } from "../../types";
+import type { IEventStreamState, ServerEvent, IAgentState } from "../../types";
 import {
   fixture_eventStreamEnvironment1,
   fixture_eventStreamEnvironment2,
@@ -394,6 +394,99 @@ describe("useEventStream Hook", () => {
     });
 
     assert(latestState !== null);
+    expect(latestState.agents.length).toBe(2);
+    expect(latestState.agents[0]?.id).toBe("env-1:claude-code:session-1");
+    expect(latestState.agents[1]?.id).toBe("env-2:pi:session-2");
+  });
+
+  it("preserves multi-agent index stability when agent_upsert updates an agent in-place", async () => {
+    await act(async () => {
+      root.render(jsx(HookHarness, { apiBaseUrl: "http://localhost:4502", onUpdate: handleUpdate }));
+    });
+
+    const esInstance = MockEventSource.instances[0];
+    assert(esInstance !== undefined);
+
+    await act(async () => {
+      esInstance.onmessage?.({
+        data: JSON.stringify({
+          type: "snapshot",
+          agents: [fixture_eventStreamAgent1, fixture_eventStreamAgent2],
+          environments: [fixture_eventStreamEnvironment1, fixture_eventStreamEnvironment2],
+        }),
+      });
+    });
+
+    assert(latestState !== null);
+    expect(latestState.agents[0]?.id).toBe("env-1:claude-code:session-1");
+    expect(latestState.agents[1]?.id).toBe("env-2:pi:session-2");
+
+    // Send update for the first agent
+    const updatedFirstAgent: IAgentState = {
+      ...fixture_eventStreamAgent1,
+      activity: {
+        ...fixture_eventStreamAgent1.activity,
+        title: "Updated First Agent Title",
+        updatedAt: 1789899999000,
+      },
+    };
+
+    await act(async () => {
+      esInstance.onmessage?.({
+        data: JSON.stringify({
+          type: "agent_upsert",
+          at: 1789899999000,
+          agent: updatedFirstAgent,
+        }),
+      });
+    });
+
+    // Order must remain stable: agent 1 is still at index 0, agent 2 at index 1
+    expect(latestState.agents[0]?.id).toBe("env-1:claude-code:session-1");
+    expect(latestState.agents[0]?.activity.title).toBe("Updated First Agent Title");
+    expect(latestState.agents[1]?.id).toBe("env-2:pi:session-2");
+  });
+
+  it("updates existing agent in-place and appends new agent via updateAgent callback", async () => {
+    await act(async () => {
+      root.render(jsx(HookHarness, { apiBaseUrl: "http://localhost:4502", onUpdate: handleUpdate }));
+    });
+
+    const esInstance = MockEventSource.instances[0];
+    assert(esInstance !== undefined);
+
+    await act(async () => {
+      esInstance.onmessage?.({
+        data: JSON.stringify({
+          type: "snapshot",
+          agents: [fixture_eventStreamAgent1],
+          environments: [fixture_eventStreamEnvironment1],
+        }),
+      });
+    });
+
+    assert(latestState !== null);
+    assert(latestState.updateAgent !== undefined);
+
+    // Update existing agent in-place
+    const modifiedAgent1: IAgentState = {
+      ...fixture_eventStreamAgent1,
+      isHidden: true,
+    };
+
+    await act(async () => {
+      latestState?.updateAgent?.(modifiedAgent1);
+    });
+
+    expect(latestState.agents.length).toBe(1);
+    expect(latestState.agents[0]?.id).toBe("env-1:claude-code:session-1");
+    expect(latestState.agents[0]?.isHidden).toBe(true);
+
+    // Append new agent via updateAgent
+    await act(async () => {
+      latestState?.updateAgent?.(fixture_eventStreamAgent2);
+    });
+
     expect(latestState.agents.length).toBe(2);
     expect(latestState.agents[0]?.id).toBe("env-1:claude-code:session-1");
     expect(latestState.agents[1]?.id).toBe("env-2:pi:session-2");

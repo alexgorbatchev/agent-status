@@ -2,13 +2,7 @@ import type { IAgentState, IEnvironmentGroupItem, IEnvironmentInfo, IProjectGrou
 
 export type AgentCategory = "busy" | "idle" | "finished";
 
-export const CATEGORY_ORDER: readonly AgentCategory[] = ["busy", "idle", "finished"] as const;
-
-const CATEGORY_PRIORITY: Record<AgentCategory, number> = {
-  busy: 0,
-  idle: 1,
-  finished: 2,
-};
+export const CATEGORY_ORDER: readonly AgentCategory[] = ["busy", "idle", "finished"];
 
 export function getAgentCategory(agent: IAgentState): AgentCategory {
   if (agent.activity.lifecycle === "EXITED") {
@@ -33,16 +27,6 @@ export function groupAgentsByCategory(agents: IAgentState[]): Record<AgentCatego
   }
 
   return groups;
-}
-
-export function compareAgentsByCategory(a: IAgentState, b: IAgentState): number {
-  const priorityA = CATEGORY_PRIORITY[getAgentCategory(a)];
-  const priorityB = CATEGORY_PRIORITY[getAgentCategory(b)];
-  return priorityA - priorityB;
-}
-
-export function sortAgents(agents: IAgentState[]): IAgentState[] {
-  return [...agents].sort(compareAgentsByCategory);
 }
 
 export function groupAgentsByProject(agents: IAgentState[]): IProjectGroupItem[] {

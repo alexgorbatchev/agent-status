@@ -12,6 +12,7 @@ import {
   fixture_staleEnvironmentInfo,
 } from "./fixtures";
 import { FolderGit2 } from "lucide-react";
+import type { IAgentState } from "../types";
 
 describe("AgentGroupSection Component", () => {
   it("renders with title, subtitle, active count and spend", () => {
@@ -119,22 +120,22 @@ describe("AgentGroupSection Component", () => {
   });
 
   it("groups cards into busy, idle, and finished sections in order with double vertical gap and no subtitles", () => {
-    const busyAgent1 = {
+    const busyAgent1: IAgentState = {
       ...fixture_agentStateRunning,
       id: "busy-1",
       activity: { ...fixture_agentStateRunning.activity, title: "Busy Title 1" },
     };
-    const busyAgent2 = {
+    const busyAgent2: IAgentState = {
       ...fixture_agentStateRunning,
       id: "busy-2",
       activity: { ...fixture_agentStateRunning.activity, title: "Busy Title 2" },
     };
-    const idleAgent = {
+    const idleAgent: IAgentState = {
       ...fixture_agentStateRunning,
       id: "idle-1",
-      activity: { ...fixture_agentStateRunning.activity, activity: "IDLE" as const, title: "Idle Title 1" },
+      activity: { ...fixture_agentStateRunning.activity, activity: "IDLE", title: "Idle Title 1" },
     };
-    const finishedAgent = {
+    const finishedAgent: IAgentState = {
       ...fixture_agentStateExited,
       id: "finished-1",
       activity: { ...fixture_agentStateExited.activity, title: "Finished Title 1" },
@@ -181,15 +182,15 @@ describe("AgentGroupSection Component", () => {
   });
 
   it("starts idle cards in their own grid row when there are 5 busy session cards", () => {
-    const busyAgents = Array.from({ length: 5 }, (_, i) => ({
+    const busyAgents: IAgentState[] = Array.from({ length: 5 }, (_, i) => ({
       ...fixture_agentStateRunning,
       id: `busy-${i + 1}`,
       activity: { ...fixture_agentStateRunning.activity, title: `Five Busy ${i + 1}` },
     }));
-    const idleAgent = {
+    const idleAgent: IAgentState = {
       ...fixture_agentStateRunning,
       id: "idle-1",
-      activity: { ...fixture_agentStateRunning.activity, activity: "IDLE" as const, title: "Five Idle 1" },
+      activity: { ...fixture_agentStateRunning.activity, activity: "IDLE", title: "Five Idle 1" },
     };
 
     const html = renderToString(

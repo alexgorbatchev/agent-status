@@ -4,8 +4,6 @@ import {
   groupAgentsByEnvironment,
   getAgentCategory,
   groupAgentsByCategory,
-  compareAgentsByCategory,
-  sortAgents,
 } from "../groupingUtils";
 import { factory_createAgent, fixture_testEnvironment, fixture_testStaleEnvironment } from "./fixtures";
 import type { IEnvironmentInfo } from "../../types";
@@ -259,47 +257,6 @@ describe("groupingUtils", () => {
       const groups = groupAgentsByEnvironment([idleOlder, busyNewer], [fixture_testEnvironment]);
       const agentIds = groups[0]?.agents.map((a) => a.id);
       expect(agentIds).toEqual(["env1-idle-older", "env1-busy-newer"]);
-    });
-  });
-
-  describe("compareAgentsByCategory and sortAgents", () => {
-    it("sorts agents by category order (busy -> idle -> finished) preserving arrival order within each category", () => {
-      const aIdle1 = factory_createAgent({
-        id: "idle-1",
-        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "IDLE", updatedAt: 5000 },
-      });
-      const aFinished = factory_createAgent({
-        id: "finished-1",
-        activity: { ...factory_createAgent().activity, lifecycle: "EXITED", activity: "IDLE", updatedAt: 2000 },
-      });
-      const aBusy1 = factory_createAgent({
-        id: "busy-1",
-        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "BUSY", updatedAt: 1000 },
-      });
-      const aIdle2 = factory_createAgent({
-        id: "idle-2",
-        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "IDLE", updatedAt: 8000 },
-      });
-      const aBusy2 = factory_createAgent({
-        id: "busy-2",
-        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "BUSY", updatedAt: 9000 },
-      });
-
-      const sorted = sortAgents([aIdle1, aFinished, aBusy1, aIdle2, aBusy2]);
-      expect(sorted.map((a) => a.id)).toEqual(["busy-1", "busy-2", "idle-1", "idle-2", "finished-1"]);
-    });
-
-    it("handles identical category comparison correctly", () => {
-      const a1 = factory_createAgent({
-        id: "a1",
-        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "BUSY", updatedAt: 1000 },
-      });
-      const a2 = factory_createAgent({
-        id: "a2",
-        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "BUSY", updatedAt: 5000 },
-      });
-
-      expect(compareAgentsByCategory(a1, a2)).toBe(0);
     });
   });
 });

@@ -187,6 +187,61 @@ export const fixture_agentStateError: IAgentState = {
   },
 };
 
+export const fixture_agentStateIdle: IAgentState = {
+  id: "env-1:claude-code:session-idle-1",
+  sessionId: "session-idle-1",
+  harness: "claude-code",
+  environment: fixture_environmentInfo,
+  project: {
+    id: "github.com/alexgorbatchev/agent-status",
+    name: "agent-status",
+    canonicalRoot: "/Users/alex/dev/agent-status",
+  },
+  workspace: {
+    isWorktree: false,
+    branch: "main",
+    isDetached: false,
+    relPath: null,
+    cwd: "/Users/alex/dev/agent-status",
+  },
+  activity: {
+    lifecycle: "RUNNING",
+    activity: "IDLE",
+    title: "Code review agent",
+    action: "Idle",
+    actionStale: false,
+    phase: null,
+    activeTool: null,
+    activeTarget: null,
+    question: null,
+    lastThinkingExcerpt: null,
+    lastError: null,
+    usage: {
+      input: 500,
+      output: 100,
+      cacheRead: 0,
+      cacheWrite: 0,
+      reasoning: 0,
+      total: 600,
+    },
+    cost: {
+      currency: "USD",
+      total: 0.003,
+      isEstimated: false,
+    },
+    subagentCount: 0,
+    currentRun: {
+      id: "run-idle-1",
+      pid: 12347,
+      harnessVersion: "1.0.0",
+      startedAt: Date.now() - 3600000,
+      endedAt: null,
+    },
+    firstStartedAt: Date.now() - 3600000,
+    updatedAt: Date.now() - 120000,
+  },
+};
+
 export const fixture_agentStateExited: IAgentState = {
   id: "env-1:pi:session-4",
   sessionId: "session-4",
