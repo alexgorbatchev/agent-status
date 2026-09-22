@@ -54,11 +54,11 @@ func TestRenderAgentView_HumanMode_Question(t *testing.T) {
 	out := buf.String()
 
 	// Assert semantic components
-	if !strings.Contains(out, "(local-dev) • (Claude Code)") {
-		t.Errorf("expected header with env and harness, got:\n%s", out)
+	if !strings.Contains(out, "(Claude Code) [Hide]") {
+		t.Errorf("expected header with harness and [Hide], got:\n%s", out)
 	}
-	if !strings.Contains(out, "(RUNNING) [Hide]") {
-		t.Errorf("expected header with lifecycle and [Hide], got:\n%s", out)
+	if !strings.Contains(out, "(RUNNING)") {
+		t.Errorf("expected header with lifecycle, got:\n%s", out)
 	}
 	if !strings.Contains(out, "Refactor authentication middleware") {
 		t.Errorf("expected title in body, got:\n%s", out)
@@ -69,8 +69,8 @@ func TestRenderAgentView_HumanMode_Question(t *testing.T) {
 	if !strings.Contains(out, "[?] Do you want to proceed with editing jwt.go?") {
 		t.Errorf("expected question callout, got:\n%s", out)
 	}
-	if !strings.Contains(out, "(branch: main)") {
-		t.Errorf("expected branch badge, got:\n%s", out)
+	if !strings.Contains(out, "(local-dev)  (branch: main)") {
+		t.Errorf("expected env badge before branch badge, got:\n%s", out)
 	}
 	if !strings.Contains(out, "(worktree: feature-auth)") {
 		t.Errorf("expected worktree badge, got:\n%s", out)
@@ -118,8 +118,11 @@ func TestRenderAgentView_HumanMode_Error(t *testing.T) {
 	RenderAgentViewAt(&buf, agent, false, 50000+10000)
 	out := buf.String()
 
-	if !strings.Contains(out, "(prod-box) • (Pi)") {
-		t.Errorf("expected header with Pi harness, got:\n%s", out)
+	if !strings.Contains(out, "(Pi) [Hide]") {
+		t.Errorf("expected header with Pi harness and [Hide], got:\n%s", out)
+	}
+	if !strings.Contains(out, "(prod-box)  (branch: fix-bug)") {
+		t.Errorf("expected env badge before branch badge, got:\n%s", out)
 	}
 	if !strings.Contains(out, "[!] fatal: compilation failed at line 42") {
 		t.Errorf("expected error callout, got:\n%s", out)
@@ -151,8 +154,11 @@ func TestRenderAgentView_HumanMode_Hidden(t *testing.T) {
 	RenderAgentViewAt(&buf, agent, false, 1000+2000)
 	out := buf.String()
 
-	if !strings.Contains(out, "[Unhide]") {
-		t.Errorf("expected [Unhide] button for hidden agent, got:\n%s", out)
+	if !strings.Contains(out, "(Codex) [Unhide]") {
+		t.Errorf("expected header with Codex harness and [Unhide], got:\n%s", out)
+	}
+	if !strings.Contains(out, "(local-dev)  (branch: main)") {
+		t.Errorf("expected env badge before branch badge, got:\n%s", out)
 	}
 	if !strings.Contains(out, "(EXITED)") {
 		t.Errorf("expected (EXITED) lifecycle, got:\n%s", out)
@@ -186,8 +192,11 @@ func TestRenderAgentView_HumanMode_Fallbacks(t *testing.T) {
 	if !strings.Contains(out, "Executing grep") {
 		t.Errorf("expected Executing grep from ActiveTool, got:\n%s", out)
 	}
-	if !strings.Contains(out, "(branch: main)") {
-		t.Errorf("expected fallback branch main, got:\n%s", out)
+	if !strings.Contains(out, "(OpenCode) [Hide]") {
+		t.Errorf("expected header with OpenCode harness and [Hide], got:\n%s", out)
+	}
+	if !strings.Contains(out, "(local-dev)  (branch: main)") {
+		t.Errorf("expected fallback env badge before branch badge, got:\n%s", out)
 	}
 	if !strings.Contains(out, "(active: never)") {
 		t.Errorf("expected active: never when updatedAt is 0, got:\n%s", out)
@@ -335,8 +344,8 @@ func TestRenderAgentView_WallClock(t *testing.T) {
 	}
 	var buf bytes.Buffer
 	RenderAgentView(&buf, agent, false)
-	if !strings.Contains(buf.String(), "(Claude Code)") {
-		t.Errorf("expected (Claude Code) in wall clock rendering, got:\n%s", buf.String())
+	if !strings.Contains(buf.String(), "(Claude Code) [Hide]") {
+		t.Errorf("expected (Claude Code) [Hide] in wall clock rendering, got:\n%s", buf.String())
 	}
 }
 
