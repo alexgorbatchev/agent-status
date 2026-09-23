@@ -23,6 +23,9 @@ Central telemetry ingestion daemon (`air-ingester`) that receives agent events, 
 ## Local gotchas
 - Unlisted models report `nil` cost rather than `$0.00` to distinguish free usage from unknown rates.
 - Retention cleanup runs every hour to prune events older than 48 hours and exited agents older than 30 days (`internal/store/prune.go`).
+- Subagent frames must not cancel the root idle timer; idle-timer validity is keyed by `agentContext.rootGeneration`, not `UpdatedAt` (`internal/classifier/classifier.go`, #64).
+- `current_run_id` in SQLite is non-NULL only for unended runs, and an exited agent reloads with `CurrentRun == nil` (`internal/store/store.go`, `internal/classifier/classifier.go`, #69, #73).
+- Root activity context (`actx.rootActivity`) is strictly isolated from subagent composite/rolled-up activity so a busy subagent cannot pin the root to BUSY after subagent completion (`internal/classifier/classifier.go`, #97).
 
 ## Boundaries
 - Always (code-based projects only): any time code is changed such that results from running that code are changed, a test file must be changed as well; 90% code coverage is required (scripts/ folder is excluded from this rule)

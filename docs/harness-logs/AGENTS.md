@@ -1,6 +1,6 @@
 ---
 created_on: 2026-09-20 03:20
-last_modified: 2026-09-22 16:58
+last_modified: 2026-09-22 18:00
 status: current
 ---
 
@@ -74,6 +74,9 @@ bun x tsc --noEmit docs/harness-logs/opencode.ts
 
 ### 6. Streamed Per-Block Assistant Lines (Claude Code)
 Claude Code streams multi-block assistant turns by writing each content block as a separate JSONL record line rather than outputting the full response at once. Each block line includes `apiBlockIndex` (0-based integer index, e.g. block 0 for thinking, block 1 for tool_use or text). Crucially, all streaming block lines belonging to a single API response share identical `message.id`, `requestId`, `message.stop_reason`, and cumulative `message.usage`. Parsers and consumers must count usage only once per request rather than summing usage across streaming block lines (#67, #81).
+
+### 7. Pointer Records Without Timestamps (`last-prompt`)
+Claude Code transcript directories contain `last-prompt` pointer records that identify the most recent prompt. These records omit timestamps and exist purely as navigation pointers; parsers and consumers must never treat them as conversational prompt events or emit `turn_start` for them (#65).
 
 ---
 
