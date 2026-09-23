@@ -43,19 +43,20 @@ func TestNew_DefaultsAndProviders(t *testing.T) {
 		t.Errorf("expected nil Summarizer.IsNoSummarize = true")
 	}
 
-	// 3. Provider initialization from env vars and config
-	t.Setenv("LITELLM_BASE_URL", "https://litellm.test/v1")
-	t.Setenv("LITELLM_API_KEY", "litellm-test-key")
-	t.Setenv("GEMINI_API_KEY", "gemini-test-key")
-	t.Setenv("ANTHROPIC_API_KEY", "anthropic-test-key")
-	t.Setenv("AIR_SUMMARIZER_MODEL", "custom-model")
-
+	// 3. Provider initialization from config
 	s2, err := New(Config{
-		DebounceWindow: 5 * time.Second,
-		Timeout:        3 * time.Second,
+		DebounceWindow:  5 * time.Second,
+		Timeout:         3 * time.Second,
+		LiteLLMBaseURL:  "https://litellm.test/v1",
+		LiteLLMAPIKey:   "litellm-test-key",
+		LiteLLMModel:    "custom-model",
+		GeminiAPIKey:    "gemini-test-key",
+		GeminiModel:     "custom-model",
+		AnthropicAPIKey: "anthropic-test-key",
+		AnthropicModel:  "custom-model",
 	})
 	if err != nil {
-		t.Fatalf("New() with env vars error = %v", err)
+		t.Fatalf("New() with config error = %v", err)
 	}
 	if len(s2.providers) < 3 {
 		t.Errorf("expected at least 3 providers initialized, got %d", len(s2.providers))
@@ -1105,21 +1106,17 @@ func TestSummarizer_ContextCanceledDuringFailover(t *testing.T) {
 	}
 }
 
-func TestSummarizer_LiteLLMKeyAlias(t *testing.T) {
-	t.Setenv("LITELLM_BASE_URL", "https://litellm.test/v1")
-	t.Setenv("LITELLM_API_KEY", "")
-	t.Setenv("LITELLM_KEY", "litellm-alias-secret")
-	t.Setenv("OPENAI_API_KEY", "")
-	t.Setenv("GEMINI_API_KEY", "")
-	t.Setenv("ANTHROPIC_API_KEY", "")
-
-	s, err := New(Config{})
+func TestSummarizer_ConfiguredProvider(t *testing.T) {
+	s, err := New(Config{
+		LiteLLMBaseURL: "https://litellm.test/v1",
+		LiteLLMAPIKey:  "litellm-key-secret",
+	})
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
 	}
 
 	if !s.HasProviders() {
-		t.Errorf("expected HasProviders() to be true when LITELLM_KEY is set")
+		t.Errorf("expected HasProviders() to be true when credentials are provided in Config")
 	}
 
 	providers := s.ActiveProviders()
@@ -1153,14 +1150,6 @@ func TestSummarizer_ActiveProvidersAndStatus(t *testing.T) {
 	}
 
 	// 2. Unconfigured (no credentials)
-	t.Setenv("LITELLM_BASE_URL", "")
-	t.Setenv("LITELLM_API_KEY", "")
-	t.Setenv("LITELLM_KEY", "")
-	t.Setenv("OPENAI_BASE_URL", "")
-	t.Setenv("OPENAI_API_KEY", "")
-	t.Setenv("GEMINI_API_KEY", "")
-	t.Setenv("ANTHROPIC_API_KEY", "")
-
 	sEmpty, err := New(Config{})
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
@@ -1252,3 +1241,23 @@ func TestSummarizer_NoSummarizeFlag(t *testing.T) {
 		t.Errorf("got Action %q, want %q", res.Action, "Editing build.ts")
 	}
 }
+
+func TestSummarizer_DoesNotReadEnvironment(t *testing.T) {
+	t.Setenv("LITELLM_BASE_URL", "https://litellm.test/v1")
+	t.Setenv("LITELLM_API_KEY", "litellm-test-key")
+	t.Setenv("LITELLM_KEY", "litellm-alias-key")
+	t.Setenv("OPENAI_BASE_URL", "https://openai.test/v1")
+	t.Setenv("OPENAI_API_KEY", "openai-test-key")
+	t.Setenv("GEMINI_API_KEY", "gemini-test-key")
+	t.Setenv("ANTHROPIC_API_KEY", "anthropic-test-key")
+	t.Setenv("AIR_SUMMARIZER_MODEL", "custom-model")
+
+	s, err := New(Config{})
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	if s.HasProviders() {
+		t.Errorf("expected HasProviders() to be false when Config is empty, even if env vars are set, but got %d providers", len(s.providers))
+	}
+}
+

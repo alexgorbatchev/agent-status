@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
-	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -87,9 +86,6 @@ type Config struct {
 	LiteLLMBaseURL  string
 	LiteLLMAPIKey   string
 	LiteLLMModel    string
-	OpenAIBaseURL   string
-	OpenAIAPIKey    string
-	OpenAIModel     string
 	GeminiAPIKey    string
 	GeminiModel     string
 	AnthropicAPIKey string
@@ -135,30 +131,7 @@ func New(cfg Config) (*Summarizer, error) {
 
 	// 1. OpenAI / LiteLLM Proxy
 	liteLLMBaseURL := cfg.LiteLLMBaseURL
-	if liteLLMBaseURL == "" {
-		liteLLMBaseURL = os.Getenv("LITELLM_BASE_URL")
-	}
-	if liteLLMBaseURL == "" {
-		liteLLMBaseURL = cfg.OpenAIBaseURL
-	}
-	if liteLLMBaseURL == "" {
-		liteLLMBaseURL = os.Getenv("OPENAI_BASE_URL")
-	}
-
 	liteLLMKey := cfg.LiteLLMAPIKey
-	if liteLLMKey == "" {
-		liteLLMKey = os.Getenv("LITELLM_API_KEY")
-	}
-	if liteLLMKey == "" {
-		liteLLMKey = os.Getenv("LITELLM_KEY")
-	}
-	if liteLLMKey == "" {
-		liteLLMKey = cfg.OpenAIAPIKey
-	}
-	if liteLLMKey == "" {
-		liteLLMKey = os.Getenv("OPENAI_API_KEY")
-	}
-
 	if liteLLMBaseURL != "" || liteLLMKey != "" {
 		opts := make([]anyllm.Option, 0, 2)
 		if liteLLMBaseURL != "" {
@@ -170,12 +143,6 @@ func New(cfg Config) (*Summarizer, error) {
 		p, err := openai.New(opts...)
 		if err == nil && p != nil {
 			model := cfg.LiteLLMModel
-			if model == "" {
-				model = cfg.OpenAIModel
-			}
-			if model == "" {
-				model = os.Getenv("AIR_SUMMARIZER_MODEL")
-			}
 			if model == "" {
 				model = "gpt-4o-mini"
 			}
@@ -190,16 +157,10 @@ func New(cfg Config) (*Summarizer, error) {
 
 	// 2. Google Gemini
 	geminiKey := cfg.GeminiAPIKey
-	if geminiKey == "" {
-		geminiKey = os.Getenv("GEMINI_API_KEY")
-	}
 	if geminiKey != "" {
 		p, err := gemini.New(anyllm.WithAPIKey(geminiKey))
 		if err == nil && p != nil {
 			model := cfg.GeminiModel
-			if model == "" {
-				model = os.Getenv("AIR_SUMMARIZER_MODEL")
-			}
 			if model == "" {
 				model = "gemini-2.0-flash"
 			}
@@ -213,16 +174,10 @@ func New(cfg Config) (*Summarizer, error) {
 
 	// 3. Anthropic Claude
 	anthropicKey := cfg.AnthropicAPIKey
-	if anthropicKey == "" {
-		anthropicKey = os.Getenv("ANTHROPIC_API_KEY")
-	}
 	if anthropicKey != "" {
 		p, err := anthropic.New(anyllm.WithAPIKey(anthropicKey))
 		if err == nil && p != nil {
 			model := cfg.AnthropicModel
-			if model == "" {
-				model = os.Getenv("AIR_SUMMARIZER_MODEL")
-			}
 			if model == "" {
 				model = "claude-3-5-haiku-latest"
 			}

@@ -17,6 +17,7 @@ func TestLoad_Defaults(t *testing.T) {
 		"LITELLM_BASE_URL",
 		"OPENAI_BASE_URL",
 		"LITELLM_API_KEY",
+		"LITELLM_KEY",
 		"OPENAI_API_KEY",
 		"GEMINI_API_KEY",
 		"ANTHROPIC_API_KEY",
@@ -137,6 +138,118 @@ func TestLoad_LiteLLMKeyAlias(t *testing.T) {
 	cfg := Load()
 	if cfg.LiteLLMAPIKey != "litellm-alias-key-999" {
 		t.Errorf("got LiteLLMAPIKey %q, want litellm-alias-key-999", cfg.LiteLLMAPIKey)
+	}
+}
+
+func TestLoad_Precedence_BaseURL(t *testing.T) {
+	tests := []struct {
+		name          string
+		liteLLMBaseURL string
+		openaiBaseURL  string
+		want          string
+	}{
+		{
+			name:          "both set prefers LITELLM_BASE_URL",
+			liteLLMBaseURL: "https://litellm.example.com/v1",
+			openaiBaseURL:  "https://openai.example.com/v1",
+			want:          "https://litellm.example.com/v1",
+		},
+		{
+			name:          "only OPENAI_BASE_URL set",
+			liteLLMBaseURL: "",
+			openaiBaseURL:  "https://openai.example.com/v1",
+			want:          "https://openai.example.com/v1",
+		},
+		{
+			name:          "only LITELLM_BASE_URL set",
+			liteLLMBaseURL: "https://litellm.example.com/v1",
+			openaiBaseURL:  "",
+			want:          "https://litellm.example.com/v1",
+		},
+		{
+			name:          "neither set",
+			liteLLMBaseURL: "",
+			openaiBaseURL:  "",
+			want:          "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("LITELLM_BASE_URL", tt.liteLLMBaseURL)
+			t.Setenv("OPENAI_BASE_URL", tt.openaiBaseURL)
+
+			cfg := Load()
+			if cfg.LiteLLMBaseURL != tt.want {
+				t.Errorf("got LiteLLMBaseURL %q, want %q", cfg.LiteLLMBaseURL, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoad_Precedence_APIKey(t *testing.T) {
+	tests := []struct {
+		name         string
+		litellmAPIKey string
+		litellmKey   string
+		openaiAPIKey string
+		want         string
+	}{
+		{
+			name:         "all three set prefers LITELLM_API_KEY",
+			litellmAPIKey: "key-litellm-api",
+			litellmKey:   "key-litellm-alias",
+			openaiAPIKey: "key-openai-fallback",
+			want:         "key-litellm-api",
+		},
+		{
+			name:         "LITELLM_API_KEY empty prefers LITELLM_KEY over OPENAI_API_KEY",
+			litellmAPIKey: "",
+			litellmKey:   "key-litellm-alias",
+			openaiAPIKey: "key-openai-fallback",
+			want:         "key-litellm-alias",
+		},
+		{
+			name:         "only OPENAI_API_KEY set",
+			litellmAPIKey: "",
+			litellmKey:   "",
+			openaiAPIKey: "key-openai-fallback",
+			want:         "key-openai-fallback",
+		},
+		{
+			name:         "only LITELLM_KEY set",
+			litellmAPIKey: "",
+			litellmKey:   "key-litellm-alias",
+			openaiAPIKey: "",
+			want:         "key-litellm-alias",
+		},
+		{
+			name:         "only LITELLM_API_KEY set",
+			litellmAPIKey: "key-litellm-api",
+			litellmKey:   "",
+			openaiAPIKey: "",
+			want:         "key-litellm-api",
+		},
+		{
+			name:         "none set",
+			litellmAPIKey: "",
+			litellmKey:   "",
+			openaiAPIKey: "",
+			want:         "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("LITELLM_API_KEY", tt.litellmAPIKey)
+			t.Setenv("LITELLM_KEY", tt.litellmKey)
+			t.Setenv("OPENAI_API_KEY", tt.openaiAPIKey)
+
+			cfg := Load()
+			if cfg.LiteLLMAPIKey != tt.want {
+				t.Errorf("got LiteLLMAPIKey %q, want %q", cfg.LiteLLMAPIKey, tt.want)
+			}
+		})
 	}
 }
 
