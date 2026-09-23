@@ -5099,4 +5099,228 @@ func TestClassifier_SubagentDoesNotCancelRootIdleTimer(t *testing.T) {
 	}
 }
 
+func TestClassifier_RootActivityNotOverwrittenBySubagentRollup(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, _ := newTestClassifier(t, sum)
+	c.SetSyncMode(true)
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{
+		ID:              "env-sub-pin",
+		Label:           "devbox",
+		Hostname:        "devbox",
+		Platform:        "linux",
+		User:            "testuser",
+		LastHeartbeatAt: time.Now().UnixMilli(),
+	}
+	ws := types.IWorkspaceInfo{Branch: "main", CWD: "/workspace"}
+	proj := types.IProjectInfo{ID: "repo", Name: "repo", CanonicalRoot: "/workspace"}
+	agentID := "env-sub-pin:claude-code:sess-root-pin"
+
+	// 1. Root agent starts and is IDLE
+	agent, err := c.ProcessFrame(types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-root-pin",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   1000,
+		EventType:   "run_started",
+	})
+	if err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityIdle {
+		t.Fatalf("expected root agent to start IDLE, got %s", agent.Activity.Activity)
+	}
+
+	// 2. Background subagent executes a tool and becomes BUSY
+	subID := "sub-worker-1"
+	tBash := "bash"
+	agent, err = c.ProcessFrame(types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		SubagentID:  &subID,
+		SessionID:   "sess-root-pin",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   2000,
+		EventType:   "tool_call",
+		Data:        types.TelemetryFrameData{ToolName: &tBash},
+	})
+	if err != nil {
+		t.Fatalf("subagent tool_call failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Fatalf("expected rolled-up activity to be BUSY while subagent is running, got %s", agent.Activity.Activity)
+	}
+
+	// 3. Root receives a title_change event (does not change activity)
+	title := "Updated Session Title"
+	agent, err = c.ProcessFrame(types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-root-pin",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   2500,
+		EventType:   "title_change",
+		Data:        types.TelemetryFrameData{Title: &title},
+	})
+	if err != nil {
+		t.Fatalf("root title_change failed: %v", err)
+	}
+	// Still BUSY because subagent is still active
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Fatalf("expected rolled-up activity to remain BUSY while subagent is active, got %s", agent.Activity.Activity)
+	}
+
+	// 4. Subagent emits turn_end (subagent finishes and goes IDLE)
+	agent, err = c.ProcessFrame(types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		SubagentID:  &subID,
+		SessionID:   "sess-root-pin",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   3000,
+		EventType:   "turn_end",
+	})
+	if err != nil {
+		t.Fatalf("subagent turn_end failed: %v", err)
+	}
+
+	// 5. Root activity must transition back to IDLE, not remain pinned to BUSY!
+	if agent.Activity.Activity != types.ActivityIdle {
+		t.Errorf("expected agent to transition to IDLE after subagent turn_end, got %s (rootActivity pinned to BUSY)", agent.Activity.Activity)
+	}
+}
+
+func TestClassifier_RootActivityNotOverwrittenByIdempotentRunStarted(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, _ := newTestClassifier(t, sum)
+	c.SetSyncMode(true)
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{
+		ID:              "env-sub-pin2",
+		Label:           "devbox",
+		Hostname:        "devbox",
+		Platform:        "linux",
+		User:            "testuser",
+		LastHeartbeatAt: time.Now().UnixMilli(),
+	}
+	ws := types.IWorkspaceInfo{Branch: "main", CWD: "/workspace"}
+	proj := types.IProjectInfo{ID: "repo", Name: "repo", CanonicalRoot: "/workspace"}
+	agentID := "env-sub-pin2:claude-code:sess-root-pin2"
+
+	// 1. Root agent starts and is IDLE
+	agent, err := c.ProcessFrame(types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		PID:         12345,
+		SessionID:   "sess-root-pin2",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   1000,
+		EventType:   "run_started",
+	})
+	if err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityIdle {
+		t.Fatalf("expected root agent to start IDLE, got %s", agent.Activity.Activity)
+	}
+
+	// 2. Background subagent executes a tool and becomes BUSY
+	subID := "sub-worker-2"
+	tBash := "bash"
+	agent, err = c.ProcessFrame(types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		SubagentID:  &subID,
+		SessionID:   "sess-root-pin2",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   2000,
+		EventType:   "tool_call",
+		Data:        types.TelemetryFrameData{ToolName: &tBash},
+	})
+	if err != nil {
+		t.Fatalf("subagent tool_call failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Fatalf("expected rolled-up activity to be BUSY while subagent is running, got %s", agent.Activity.Activity)
+	}
+
+	// 3. Root receives an idempotent run_started event
+	agent, err = c.ProcessFrame(types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		PID:         12345,
+		SessionID:   "sess-root-pin2",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   2500,
+		EventType:   "run_started",
+	})
+	if err != nil {
+		t.Fatalf("idempotent run_started failed: %v", err)
+	}
+	// Still BUSY because subagent is still active
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Fatalf("expected rolled-up activity to remain BUSY while subagent is active, got %s", agent.Activity.Activity)
+	}
+
+	// 4. Subagent emits turn_end
+	agent, err = c.ProcessFrame(types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		SubagentID:  &subID,
+		SessionID:   "sess-root-pin2",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   3000,
+		EventType:   "turn_end",
+	})
+	if err != nil {
+		t.Fatalf("subagent turn_end failed: %v", err)
+	}
+
+	// 5. Root activity must transition back to IDLE
+	if agent.Activity.Activity != types.ActivityIdle {
+		t.Errorf("expected agent to transition to IDLE after subagent turn_end, got %s (rootActivity pinned to BUSY)", agent.Activity.Activity)
+	}
+}
+
 

@@ -426,13 +426,32 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				}
 				preloaded[summary.ID] = struct{}{}
 			}
+			initialRootActivity := agent.Activity.Activity
+			initialRootAction := agent.Activity.Action
+			initialRootQuestion := agent.Activity.Question
+			initialRootLastError := agent.Activity.LastError
+			if len(subagentsMap) > 0 && agent.Activity.ActiveTool == nil {
+				hasSubBusy := false
+				for _, sub := range subagentsMap {
+					if sub.activity == types.ActivityBusy {
+						hasSubBusy = true
+						break
+					}
+				}
+				if hasSubBusy && initialRootActivity == types.ActivityBusy {
+					initialRootActivity = types.ActivityIdle
+					if strings.HasPrefix(initialRootAction, "Running subagent ") {
+						initialRootAction = "Idle"
+					}
+				}
+			}
 			actx = &agentContext{
 				seenSubagents: preloaded,
 				subagents:     subagentsMap,
-				rootActivity:  agent.Activity.Activity,
-				rootAction:    agent.Activity.Action,
-				rootQuestion:  agent.Activity.Question,
-				rootLastError: agent.Activity.LastError,
+				rootActivity:  initialRootActivity,
+				rootAction:    initialRootAction,
+				rootQuestion:  initialRootQuestion,
+				rootLastError: initialRootLastError,
 			}
 			c.agentCtx[agent.ID] = actx
 		}
@@ -442,6 +461,10 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 	c.mu.Lock()
 	if !isSubagent {
 		actx.rootGeneration++
+		agent.Activity.Activity = actx.rootActivity
+		agent.Activity.Action = actx.rootAction
+		agent.Activity.Question = actx.rootQuestion
+		agent.Activity.LastError = actx.rootLastError
 	}
 	if actx.seenSubagents == nil {
 		actx.seenSubagents = make(map[string]struct{})
@@ -825,7 +848,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 	}
 
 	c.mu.Lock()
-	if !isSubagent {
+	if !isSubagent && agent.Activity.Lifecycle != types.LifecycleExited {
 		actx.rootActivity = agent.Activity.Activity
 		actx.rootAction = agent.Activity.Action
 		actx.rootQuestion = agent.Activity.Question
