@@ -27,8 +27,8 @@ func TestOpen_Memory(t *testing.T) {
 	if err := st.DB().QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("query user_version failed: %v", err)
 	}
-	if version != 4 {
-		t.Errorf("got user_version = %d, want 4", version)
+	if version != 5 {
+		t.Errorf("got user_version = %d, want 5", version)
 	}
 }
 
@@ -173,8 +173,59 @@ func TestMigrate_V2ToV4(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 4 {
-		t.Errorf("got user_version = %d, want 4", version)
+	if version != 5 {
+		t.Errorf("got user_version = %d, want 5", version)
+	}
+}
+
+func TestMigrate_V4ToV5(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open failed: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	if _, err := db.Exec(schemaV1); err != nil {
+		t.Fatalf("schemaV1 failed: %v", err)
+	}
+	if _, err := db.Exec("ALTER TABLE agents ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0;"); err != nil {
+		t.Fatalf("v2 is_hidden failed: %v", err)
+	}
+	if _, err := db.Exec("ALTER TABLE agents ADD COLUMN hidden_at INTEGER;"); err != nil {
+		t.Fatalf("v2 hidden_at failed: %v", err)
+	}
+	if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_agents_hidden ON agents(is_hidden);"); err != nil {
+		t.Fatalf("v2 idx_agents_hidden failed: %v", err)
+	}
+	if _, err := db.Exec("ALTER TABLE agents ADD COLUMN active_tool_started_at INTEGER;"); err != nil {
+		t.Fatalf("v3 active_tool_started_at failed: %v", err)
+	}
+	if _, err := db.Exec("ALTER TABLE agents ADD COLUMN active_subagents TEXT;"); err != nil {
+		t.Fatalf("v4 active_subagents failed: %v", err)
+	}
+	if _, err := db.Exec("PRAGMA user_version = 4;"); err != nil {
+		t.Fatalf("setting user_version = 4 failed: %v", err)
+	}
+
+	if err := Migrate(db); err != nil {
+		t.Fatalf("Migrate() from v4 failed: %v", err)
+	}
+
+	var version int
+	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
+		t.Fatalf("reading user_version: %v", err)
+	}
+	if version != 5 {
+		t.Errorf("got user_version = %d, want 5", version)
+	}
+
+	// Verify new columns exist by selecting them
+	var model sql.NullString
+	var cw sql.NullInt64
+	var fullness sql.NullFloat64
+	err = db.QueryRow("SELECT model, context_window, context_fullness FROM agents LIMIT 1;").Scan(&model, &cw, &fullness)
+	if err != nil && err != sql.ErrNoRows {
+		t.Errorf("querying v5 columns failed: %v", err)
 	}
 }
 
@@ -209,8 +260,8 @@ func TestMigrate_V3ToV4(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 4 {
-		t.Errorf("got user_version = %d, want 4", version)
+	if version != 5 {
+		t.Errorf("got user_version = %d, want 5", version)
 	}
 }
 
@@ -240,8 +291,8 @@ func TestMigrate_V1ToV2(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 4 {
-		t.Errorf("got user_version = %d, want 4", version)
+	if version != 5 {
+		t.Errorf("got user_version = %d, want 5", version)
 	}
 
 	var indexCount int
@@ -798,6 +849,28 @@ func TestAgentState_NilFieldsAndExitedRun(t *testing.T) {
 	}
 }
 
+func TestStore_PruneOldEventsAndExitedAgents_ClosedDB(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	_ = st.Close()
+	if err := st.PruneOldEventsAndExitedAgents(100, 100); err == nil {
+		t.Errorf("expected error from PruneOldEventsAndExitedAgents on closed DB")
+	}
+}
+
+func TestStore_EndCurrentRun_ClosedDB(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	_ = st.Close()
+	if err := st.EndCurrentRun("agent-1", 100); err == nil {
+		t.Errorf("expected error from EndCurrentRun on closed DB")
+	}
+}
+
 func TestStore_ErrorHandlingOnClosedDB(t *testing.T) {
 	st, err := Open(":memory:")
 	if err != nil {
@@ -832,6 +905,9 @@ func TestStore_ErrorHandlingOnClosedDB(t *testing.T) {
 	}
 	if _, err := st.GetAllActiveAgents(); err == nil {
 		t.Errorf("expected error on closed db for GetAllActiveAgents")
+	}
+	if _, err := st.GetRunningAgents(""); err == nil {
+		t.Errorf("expected error on closed db for GetRunningAgents")
 	}
 	if _, err := st.GetAllEnvironments(); err == nil {
 		t.Errorf("expected error on closed db for GetAllEnvironments")
@@ -1701,6 +1777,265 @@ func TestStore_GetRunningAgents(t *testing.T) {
 	if err := Migrate(st.DB()); err == nil {
 		t.Errorf("expected error in Migrate on closed DB")
 	}
+}
+
+func TestStore_EndCurrentRun_WithRun(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	now := time.Now().UnixMilli()
+	runID := "run-test-123"
+	agent := types.IAgentState{
+		ID:        "agent-with-run",
+		SessionID: "sess-run",
+		Harness:   types.HarnessPi,
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-r",
+			Platform: "linux",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityBusy,
+			CurrentRun: &types.IRunInfo{
+				ID:        runID,
+				StartedAt: now - 1000,
+			},
+			UpdatedAt: now,
+		},
+	}
+	if err := st.SaveAgentState(agent); err != nil {
+		t.Fatalf("SaveAgentState failed: %v", err)
+	}
+
+	endedAt := now + 5000
+	if err := st.EndCurrentRun(agent.ID, endedAt); err != nil {
+		t.Fatalf("EndCurrentRun failed: %v", err)
+	}
+	if err := st.EndCurrentRun("non-existent-agent-id-12345", endedAt); err != nil {
+		t.Fatalf("EndCurrentRun on non-existent agent failed: %v", err)
+	}
+
+	loaded, err := st.GetAgent(agent.ID)
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if loaded.Activity.CurrentRun != nil {
+		t.Errorf("expected CurrentRun to be nil after EndCurrentRun, got %+v", loaded.Activity.CurrentRun)
+	}
+
+	// Verify run ended_at in database
+	var dbEndedAt sql.NullInt64
+	if err := st.DB().QueryRow("SELECT ended_at FROM runs WHERE id = ?", runID).Scan(&dbEndedAt); err != nil {
+		t.Fatalf("querying run ended_at failed: %v", err)
+	}
+	if !dbEndedAt.Valid || dbEndedAt.Int64 != endedAt {
+		t.Errorf("run ended_at = %v, want %d", dbEndedAt, endedAt)
+	}
+}
+
+func TestStore_Migrate_ErrorPaths(t *testing.T) {
+	// 0. Error in v1 migration (e.g. conflicting table schema)
+	t.Run("v1 error on invalid schema", func(t *testing.T) {
+		db, err := sql.Open("sqlite3", ":memory:")
+		if err != nil {
+			t.Fatalf("sql.Open failed: %v", err)
+		}
+		defer func() { _ = db.Close() }()
+
+		if _, err := db.Exec("CREATE VIEW agents AS SELECT 1;"); err != nil {
+			t.Fatalf("creating conflicting view failed: %v", err)
+		}
+		// PRAGMA user_version is 0, so Migrate will attempt to run schemaV1 which will fail on table conflict
+		if err := Migrate(db); err == nil {
+			t.Errorf("expected error in Migrate v1 on conflicting table schema")
+		}
+	})
+
+	// 1. Error in v2 migration (e.g. duplicate is_hidden column)
+	t.Run("v2 error on duplicate column", func(t *testing.T) {
+		db, err := sql.Open("sqlite3", ":memory:")
+		if err != nil {
+			t.Fatalf("sql.Open failed: %v", err)
+		}
+		defer func() { _ = db.Close() }()
+
+		if _, err := db.Exec(schemaV1); err != nil {
+			t.Fatalf("schemaV1 failed: %v", err)
+		}
+		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN is_hidden INTEGER;"); err != nil {
+			t.Fatalf("adding duplicate column failed: %v", err)
+		}
+		if _, err := db.Exec("PRAGMA user_version = 1;"); err != nil {
+			t.Fatalf("setting user_version = 1 failed: %v", err)
+		}
+		if err := Migrate(db); err == nil {
+			t.Errorf("expected error in Migrate v2 on duplicate column")
+		}
+	})
+
+	// 2. Error in v3 migration (e.g. duplicate active_tool_started_at column)
+	t.Run("v3 error on duplicate column", func(t *testing.T) {
+		db, err := sql.Open("sqlite3", ":memory:")
+		if err != nil {
+			t.Fatalf("sql.Open failed: %v", err)
+		}
+		defer func() { _ = db.Close() }()
+
+		if _, err := db.Exec(schemaV1); err != nil {
+			t.Fatalf("schemaV1 failed: %v", err)
+		}
+		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0;"); err != nil {
+			t.Fatalf("v2 is_hidden failed: %v", err)
+		}
+		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN hidden_at INTEGER;"); err != nil {
+			t.Fatalf("v2 hidden_at failed: %v", err)
+		}
+		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN active_tool_started_at INTEGER;"); err != nil {
+			t.Fatalf("adding duplicate column failed: %v", err)
+		}
+		if _, err := db.Exec("PRAGMA user_version = 2;"); err != nil {
+			t.Fatalf("setting user_version = 2 failed: %v", err)
+		}
+		if err := Migrate(db); err == nil {
+			t.Errorf("expected error in Migrate v3 on duplicate column")
+		}
+	})
+
+	// 3. Error in v4 migration (e.g. duplicate active_subagents column)
+	t.Run("v4 error on duplicate column", func(t *testing.T) {
+		db, err := sql.Open("sqlite3", ":memory:")
+		if err != nil {
+			t.Fatalf("sql.Open failed: %v", err)
+		}
+		defer func() { _ = db.Close() }()
+
+		if _, err := db.Exec(schemaV1); err != nil {
+			t.Fatalf("schemaV1 failed: %v", err)
+		}
+		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0;"); err != nil {
+			t.Fatalf("v2 is_hidden failed: %v", err)
+		}
+		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN hidden_at INTEGER;"); err != nil {
+			t.Fatalf("v2 hidden_at failed: %v", err)
+		}
+		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN active_tool_started_at INTEGER;"); err != nil {
+			t.Fatalf("v3 active_tool_started_at failed: %v", err)
+		}
+		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN active_subagents TEXT;"); err != nil {
+			t.Fatalf("adding duplicate column failed: %v", err)
+		}
+		if _, err := db.Exec("PRAGMA user_version = 3;"); err != nil {
+			t.Fatalf("setting user_version = 3 failed: %v", err)
+		}
+		if err := Migrate(db); err == nil {
+			t.Errorf("expected error in Migrate v4 on duplicate column")
+		}
+	})
+
+	// 4. Error in v5 migration (e.g. duplicate model column)
+	t.Run("v5 error on duplicate column", func(t *testing.T) {
+		db, err := sql.Open("sqlite3", ":memory:")
+		if err != nil {
+			t.Fatalf("sql.Open failed: %v", err)
+		}
+		defer func() { _ = db.Close() }()
+
+		if _, err := db.Exec(schemaV1); err != nil {
+			t.Fatalf("schemaV1 failed: %v", err)
+		}
+		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0;"); err != nil {
+			t.Fatalf("v2 is_hidden failed: %v", err)
+		}
+		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN hidden_at INTEGER;"); err != nil {
+			t.Fatalf("v2 hidden_at failed: %v", err)
+		}
+		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN active_tool_started_at INTEGER;"); err != nil {
+			t.Fatalf("v3 active_tool_started_at failed: %v", err)
+		}
+		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN active_subagents TEXT;"); err != nil {
+			t.Fatalf("v4 active_subagents failed: %v", err)
+		}
+		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN model TEXT;"); err != nil {
+			t.Fatalf("adding duplicate column failed: %v", err)
+		}
+		if _, err := db.Exec("PRAGMA user_version = 4;"); err != nil {
+			t.Fatalf("setting user_version = 4 failed: %v", err)
+		}
+		if err := Migrate(db); err == nil {
+			t.Errorf("expected error in Migrate v5 on duplicate column")
+		}
+	})
+
+	// 5. Error in v5 migration on duplicate context_window
+	t.Run("v5 error on duplicate context_window", func(t *testing.T) {
+		db, err := sql.Open("sqlite3", ":memory:")
+		if err != nil {
+			t.Fatalf("sql.Open failed: %v", err)
+		}
+		defer func() { _ = db.Close() }()
+
+		if _, err := db.Exec(schemaV1); err != nil {
+			t.Fatalf("schemaV1 failed: %v", err)
+		}
+		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0;"); err != nil {
+			t.Fatalf("v2 is_hidden failed: %v", err)
+		}
+		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN hidden_at INTEGER;"); err != nil {
+			t.Fatalf("v2 hidden_at failed: %v", err)
+		}
+		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN active_tool_started_at INTEGER;"); err != nil {
+			t.Fatalf("v3 active_tool_started_at failed: %v", err)
+		}
+		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN active_subagents TEXT;"); err != nil {
+			t.Fatalf("v4 active_subagents failed: %v", err)
+		}
+		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN context_window INTEGER;"); err != nil {
+			t.Fatalf("adding duplicate column failed: %v", err)
+		}
+		if _, err := db.Exec("PRAGMA user_version = 4;"); err != nil {
+			t.Fatalf("setting user_version = 4 failed: %v", err)
+		}
+		if err := Migrate(db); err == nil {
+			t.Errorf("expected error in Migrate v5 on duplicate context_window")
+		}
+	})
+
+	// 6. Error in v5 migration on duplicate context_fullness
+	t.Run("v5 error on duplicate context_fullness", func(t *testing.T) {
+		db, err := sql.Open("sqlite3", ":memory:")
+		if err != nil {
+			t.Fatalf("sql.Open failed: %v", err)
+		}
+		defer func() { _ = db.Close() }()
+
+		if _, err := db.Exec(schemaV1); err != nil {
+			t.Fatalf("schemaV1 failed: %v", err)
+		}
+		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0;"); err != nil {
+			t.Fatalf("v2 is_hidden failed: %v", err)
+		}
+		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN hidden_at INTEGER;"); err != nil {
+			t.Fatalf("v2 hidden_at failed: %v", err)
+		}
+		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN active_tool_started_at INTEGER;"); err != nil {
+			t.Fatalf("v3 active_tool_started_at failed: %v", err)
+		}
+		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN active_subagents TEXT;"); err != nil {
+			t.Fatalf("v4 active_subagents failed: %v", err)
+		}
+		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN context_fullness REAL;"); err != nil {
+			t.Fatalf("adding duplicate column failed: %v", err)
+		}
+		if _, err := db.Exec("PRAGMA user_version = 4;"); err != nil {
+			t.Fatalf("setting user_version = 4 failed: %v", err)
+		}
+		if err := Migrate(db); err == nil {
+			t.Errorf("expected error in Migrate v5 on duplicate context_fullness")
+		}
+	})
 }
 
 func TestStore_ActiveToolStartedAt_PersistenceAndClearing(t *testing.T) {

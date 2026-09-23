@@ -69,6 +69,9 @@ CREATE TABLE IF NOT EXISTS agents (
     updated_at            INTEGER NOT NULL,
     is_hidden             INTEGER NOT NULL DEFAULT 0,
     hidden_at             INTEGER,
+    model                 TEXT,
+    context_window        INTEGER,
+    context_fullness      REAL,
     UNIQUE (environment_id, harness, session_id)
 );
 
@@ -134,7 +137,8 @@ func seedTestData(t *testing.T, s *Store) {
 			last_thinking_excerpt, last_error,
 			tokens_input, tokens_output, tokens_cache_read, tokens_cache_write,
 			tokens_reasoning, tokens_total, cost_usd, subagent_count,
-			first_started_at, updated_at
+			first_started_at, updated_at,
+			model, context_window, context_fullness
 		) VALUES (
 			'env1:claude-code:sess1', 'sess1', 'env1', 'claude-code',
 			'github.com/org/repo1', 'repo1', '/path/to/repo1',
@@ -144,7 +148,8 @@ func seedTestData(t *testing.T, s *Store) {
 			'thinking about options', NULL,
 			100, 50, 20, 10,
 			0, 180, 1.25, 2,
-			?, ?
+			?, ?,
+			'claude-3-7-sonnet', 200000, 0.25
 		)
 	`, now-10000, now)
 	if err != nil {
@@ -574,6 +579,15 @@ func TestStore_GetAgentByID(t *testing.T) {
 		}
 		if agent.IsHidden {
 			t.Errorf("expected agent.IsHidden == false")
+		}
+		if agent.Activity.Model == nil || *agent.Activity.Model != "claude-3-7-sonnet" {
+			t.Errorf("agent model = %v, want claude-3-7-sonnet", agent.Activity.Model)
+		}
+		if agent.Activity.ContextWindow == nil || *agent.Activity.ContextWindow != 200000 {
+			t.Errorf("agent context window = %v, want 200000", agent.Activity.ContextWindow)
+		}
+		if agent.Activity.ContextFullness == nil || *agent.Activity.ContextFullness != 0.25 {
+			t.Errorf("agent context fullness = %v, want 0.25", agent.Activity.ContextFullness)
 		}
 	})
 

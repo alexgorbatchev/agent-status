@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/models"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
@@ -529,8 +530,11 @@ func ReconstructSessionEvents(session *OpencodeSession, messages []OpencodeMessa
 		titlePtr = stringPtr(session.Title)
 	}
 	var modelPtr *string
+	var cwPtr *int64
 	if session.Model != "" {
 		modelPtr = stringPtr(session.Model)
+		cw := models.ResolveContextWindow(session.Model)
+		cwPtr = &cw
 	}
 
 	events = append(events, ParsedEvent{
@@ -538,8 +542,9 @@ func ReconstructSessionEvents(session *OpencodeSession, messages []OpencodeMessa
 		Timestamp: session.TimeCreated,
 		CWD:       session.Directory,
 		Data: types.TelemetryFrameData{
-			Title: titlePtr,
-			Model: modelPtr,
+			Title:              titlePtr,
+			Model:              modelPtr,
+			ModelContextWindow: cwPtr,
 		},
 	})
 
@@ -700,16 +705,29 @@ func ReconstructSessionEvents(session *OpencodeSession, messages []OpencodeMessa
 					endTs = *msg.Data.Time.Completed
 				}
 
+				var contextWindowPtr *int64
+				var fullnessPtr *float64
+				if msgModel != "" {
+					cw := models.ResolveContextWindow(msgModel)
+					contextWindowPtr = &cw
+					if usage != nil && cw > 0 {
+						fn := models.CalculateContextFullness(usage.Total, cw)
+						fullnessPtr = &fn
+					}
+				}
+
 				events = append(events, ParsedEvent{
 					EventType: "turn_end",
 					Timestamp: endTs,
 					CWD:       cwd,
 					Data: types.TelemetryFrameData{
-						Role:           stringPtr("assistant"),
-						Model:          stringPtr(msgModel),
-						StopReason:     stopReason,
-						Usage:          usage,
-						RawHarnessCost: msg.Data.Cost,
+						Role:               stringPtr("assistant"),
+						Model:              stringPtr(msgModel),
+						ModelContextWindow: contextWindowPtr,
+						ContextFullness:    fullnessPtr,
+						StopReason:         stopReason,
+						Usage:              usage,
+						RawHarnessCost:     msg.Data.Cost,
 					},
 				})
 			}

@@ -576,4 +576,54 @@ func TestMessagesAndEventsJSON(t *testing.T) {
 			t.Fatalf("decoded project group mismatch: %+v", decodedGroup)
 		}
 	})
+
+	t.Run("ContextWindow and ContextFullness serialization", func(t *testing.T) {
+		model := "claude-3-7-sonnet"
+		cw := int64(200000)
+		fullness := 0.35
+		activity := IAgentActivity{
+			Lifecycle:       LifecycleRunning,
+			Activity:        ActivityBusy,
+			Model:           &model,
+			ContextWindow:   &cw,
+			ContextFullness: &fullness,
+		}
+		data, err := json.Marshal(activity)
+		if err != nil {
+			t.Fatalf("json.Marshal failed: %v", err)
+		}
+		var decodedAct IAgentActivity
+		if err := json.Unmarshal(data, &decodedAct); err != nil {
+			t.Fatalf("json.Unmarshal failed: %v", err)
+		}
+		if decodedAct.Model == nil || *decodedAct.Model != model {
+			t.Errorf("decoded model = %v, want %q", decodedAct.Model, model)
+		}
+		if decodedAct.ContextWindow == nil || *decodedAct.ContextWindow != cw {
+			t.Errorf("decoded ContextWindow = %v, want %d", decodedAct.ContextWindow, cw)
+		}
+		if decodedAct.ContextFullness == nil || *decodedAct.ContextFullness != fullness {
+			t.Errorf("decoded ContextFullness = %v, want %f", decodedAct.ContextFullness, fullness)
+		}
+
+		frameData := TelemetryFrameData{
+			Model:              &model,
+			ModelContextWindow: &cw,
+			ContextFullness:    &fullness,
+		}
+		frameBytes, err := json.Marshal(frameData)
+		if err != nil {
+			t.Fatalf("json.Marshal frameData failed: %v", err)
+		}
+		var decodedFrame TelemetryFrameData
+		if err := json.Unmarshal(frameBytes, &decodedFrame); err != nil {
+			t.Fatalf("json.Unmarshal frameData failed: %v", err)
+		}
+		if decodedFrame.ModelContextWindow == nil || *decodedFrame.ModelContextWindow != cw {
+			t.Errorf("decoded ModelContextWindow = %v, want %d", decodedFrame.ModelContextWindow, cw)
+		}
+		if decodedFrame.ContextFullness == nil || *decodedFrame.ContextFullness != fullness {
+			t.Errorf("decoded ContextFullness = %v, want %f", decodedFrame.ContextFullness, fullness)
+		}
+	})
 }

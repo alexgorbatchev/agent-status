@@ -103,6 +103,9 @@ type IAgentActivity struct {
 	Question            *string            `json:"question"`
 	LastThinkingExcerpt *string            `json:"lastThinkingExcerpt"`
 	LastError           *string            `json:"lastError"`
+	Model               *string            `json:"model,omitempty"`
+	ContextWindow       *int64             `json:"contextWindow,omitempty"`
+	ContextFullness     *float64           `json:"contextFullness,omitempty"`
 	Usage               ITokenUsage        `json:"usage"`
 	Cost                *ICostInfo         `json:"cost"`
 	SubagentCount       int                `json:"subagentCount"`
@@ -164,6 +167,8 @@ type TelemetryFrameData struct {
 	Title            *string                `json:"title,omitempty"`
 	LastPrompt       *string                `json:"lastPrompt,omitempty"`
 	Model            *string                `json:"model,omitempty"`
+	ModelContextWindow *int64               `json:"modelContextWindow,omitempty"`
+	ContextFullness    *float64             `json:"contextFullness,omitempty"`
 	ToolName         *string                `json:"toolName,omitempty"`
 	ToolCallID       *string                `json:"toolCallId,omitempty"`
 	ToolInput        map[string]interface{} `json:"toolInput,omitempty"`

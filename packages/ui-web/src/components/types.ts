@@ -134,6 +134,8 @@ export interface IAnsiTextProps {
 
 export interface ITokenUsageBarProps {
   usage: ITokenUsage;
+  contextWindow?: number | null;
+  contextFullness?: number | null;
 }
 
 export interface IDiffViewerProps {

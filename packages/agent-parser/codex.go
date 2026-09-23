@@ -13,7 +13,9 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/models"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 )
 
@@ -149,6 +151,7 @@ type rawCodexSessionMetaPayload struct {
 	Originator        string           `json:"originator"`
 	CLIVersion        string           `json:"cli_version"`
 	Source            interface{}      `json:"source"`
+	Model             string           `json:"model,omitempty"`
 	ModelProvider     string           `json:"model_provider"`
 	BaseInstructions  *struct {
 		Text string `json:"text"`
@@ -198,6 +201,7 @@ type rawCodexEventMsgPayload struct {
 	LastAgentMessage string                  `json:"last_agent_message"`
 	Code             interface{}             `json:"code"`
 	Info             *rawCodexTokenCountInfo `json:"info"`
+	ModelContextWindow int64                 `json:"model_context_window,omitempty"`
 	Summary          []struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
@@ -228,8 +232,39 @@ type rawCodexLine struct {
 	Payload   json.RawMessage `json:"payload"`
 }
 
+// CodexParser maintains session stream state when parsing Codex rollout transcripts.
+type CodexParser struct {
+	mu            sync.Mutex
+	currentModel  string
+	contextWindow int64
+}
+
+// NewCodexParser creates a new stateful parser stream for Codex transcripts.
+func NewCodexParser() *CodexParser {
+	return &CodexParser{}
+}
+
+// Reset resets the parser stream state.
+func (p *CodexParser) Reset() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.currentModel = ""
+	p.contextWindow = 0
+}
+
+// ParseLine parses a single line using this CodexParser instance.
+func (p *CodexParser) ParseLine(line []byte) ([]ParsedEvent, error) {
+	return parseCodexLineWithState(line, p)
+}
+
+var defaultCodexParser = NewCodexParser()
+
 // ParseCodexLine parses a single line of Codex rollout JSONL log into ParsedEvent structs.
 func ParseCodexLine(line []byte) ([]ParsedEvent, error) {
+	return parseCodexLineWithState(line, defaultCodexParser)
+}
+
+func parseCodexLineWithState(line []byte, p *CodexParser) ([]ParsedEvent, error) {
 	trimmed := strings.TrimSpace(string(line))
 	if len(trimmed) == 0 {
 		return nil, nil
@@ -321,8 +356,27 @@ func ParseCodexLine(line []byte) ([]ParsedEvent, error) {
 		}
 
 		var modelPtr *string
-		if meta.ModelProvider != "" {
+		var contextWindowPtr *int64
+		if meta.Model != "" {
+			modelPtr = stringPtr(meta.Model)
+			cw := models.ResolveContextWindow(meta.Model)
+			contextWindowPtr = &cw
+			if p != nil {
+				p.mu.Lock()
+				p.currentModel = meta.Model
+				p.contextWindow = cw
+				p.mu.Unlock()
+			}
+		} else if meta.ModelProvider != "" {
 			modelPtr = stringPtr(meta.ModelProvider)
+			cw := models.ResolveContextWindow(meta.ModelProvider)
+			contextWindowPtr = &cw
+			if p != nil {
+				p.mu.Lock()
+				p.currentModel = meta.ModelProvider
+				p.contextWindow = cw
+				p.mu.Unlock()
+			}
 		}
 
 		events = append(events, ParsedEvent{
@@ -331,8 +385,9 @@ func ParseCodexLine(line []byte) ([]ParsedEvent, error) {
 			CWD:       meta.CWD,
 			GitBranch: gitBranch,
 			Data: types.TelemetryFrameData{
-				Title: stringPtr(title),
-				Model: modelPtr,
+				Title:              stringPtr(title),
+				Model:              modelPtr,
+				ModelContextWindow: contextWindowPtr,
 			},
 		})
 
@@ -343,12 +398,20 @@ func ParseCodexLine(line []byte) ([]ParsedEvent, error) {
 		}
 
 		if ctx.Model != "" {
+			cw := models.ResolveContextWindow(ctx.Model)
+			if p != nil {
+				p.mu.Lock()
+				p.currentModel = ctx.Model
+				p.contextWindow = cw
+				p.mu.Unlock()
+			}
 			events = append(events, ParsedEvent{
 				EventType: "model_change",
 				Timestamp: ts,
 				CWD:       ctx.CWD,
 				Data: types.TelemetryFrameData{
-					Model: stringPtr(ctx.Model),
+					Model:              stringPtr(ctx.Model),
+					ModelContextWindow: &cw,
 				},
 			})
 		}
@@ -429,20 +492,59 @@ func ParseCodexLine(line []byte) ([]ParsedEvent, error) {
 					tot = chosen.PromptTokens + chosen.CompletionTokens
 				}
 
+				freshInput := chosen.PromptTokens - chosen.CachedPromptTokens
+				if freshInput < 0 {
+					freshInput = 0
+				}
+
 				usage := &types.ITokenUsage{
-					Input:      chosen.PromptTokens,
+					Input:      freshInput,
 					Output:     chosen.CompletionTokens,
 					CacheRead:  chosen.CachedPromptTokens,
+					CacheWrite: 0,
 					Reasoning:  chosen.ReasoningTokens,
 					Total:      tot,
+				}
+
+				var activeModel string
+				var activeCw int64
+				if p != nil {
+					p.mu.Lock()
+					activeModel = p.currentModel
+					activeCw = p.contextWindow
+					p.mu.Unlock()
+				}
+
+				cw := evt.Info.ModelContextWindow
+				if cw == 0 {
+					cw = activeCw
+				}
+				if cw == 0 && activeModel != "" {
+					cw = models.ResolveContextWindow(activeModel)
+				}
+
+				var cwPtr *int64
+				var fullnessPtr *float64
+				if cw > 0 {
+					cwPtr = &cw
+					fn := models.CalculateContextFullness(tot, cw)
+					fullnessPtr = &fn
+				}
+
+				var modelPtr *string
+				if activeModel != "" {
+					modelPtr = stringPtr(activeModel)
 				}
 
 				events = append(events, ParsedEvent{
 					EventType: "turn_end",
 					Timestamp: ts,
 					Data: types.TelemetryFrameData{
-						Role:  stringPtr("assistant"),
-						Usage: usage,
+						Role:               stringPtr("assistant"),
+						Model:              modelPtr,
+						ModelContextWindow: cwPtr,
+						ContextFullness:    fullnessPtr,
+						Usage:              usage,
 					},
 				})
 			}

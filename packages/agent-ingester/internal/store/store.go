@@ -211,7 +211,8 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 			phase, active_tool, active_target, active_tool_started_at, question, last_thinking_excerpt, last_error,
 			tokens_input, tokens_output, tokens_cache_read, tokens_cache_write, tokens_reasoning, tokens_total,
 			cost_usd, subagent_count, active_subagents, first_started_at, updated_at,
-			is_hidden, hidden_at
+			is_hidden, hidden_at,
+			model, context_window, context_fullness
 		) VALUES (
 			?, ?, ?, ?,
 			?, ?, ?,
@@ -220,7 +221,8 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 			?, ?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
-			?, ?
+			?, ?,
+			?, ?, ?
 		)
 		ON CONFLICT(id) DO UPDATE SET
 			project_id = excluded.project_id,
@@ -254,7 +256,10 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 			active_subagents = excluded.active_subagents,
 			updated_at = excluded.updated_at,
 			is_hidden = excluded.is_hidden,
-			hidden_at = excluded.hidden_at
+			hidden_at = excluded.hidden_at,
+			model = excluded.model,
+			context_window = excluded.context_window,
+			context_fullness = excluded.context_fullness
 	`,
 		agent.ID, agent.SessionID, agent.Environment.ID, string(agent.Harness),
 		agent.Project.ID, agent.Project.Name, agent.Project.CanonicalRoot,
@@ -264,6 +269,7 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 		agent.Activity.Usage.Input, agent.Activity.Usage.Output, agent.Activity.Usage.CacheRead, agent.Activity.Usage.CacheWrite, agent.Activity.Usage.Reasoning, agent.Activity.Usage.Total,
 		costUSD, agent.Activity.SubagentCount, activeSubagentsStr, agent.Activity.FirstStartedAt, agent.Activity.UpdatedAt,
 		isHidden, hiddenAt,
+		agent.Activity.Model, agent.Activity.ContextWindow, agent.Activity.ContextFullness,
 	)
 	if err != nil {
 		return fmt.Errorf("upserting agent: %w", err)
@@ -283,7 +289,8 @@ func (s *Store) GetAgent(id string) (*types.IAgentState, error) {
 			a.cost_usd, a.subagent_count, a.active_subagents, a.first_started_at, a.updated_at,
 			e.id, e.label, e.hostname, e.platform, e.user, e.last_heartbeat_at,
 			r.id, r.pid, r.harness_version, r.started_at, r.ended_at,
-			a.is_hidden, a.hidden_at
+			a.is_hidden, a.hidden_at,
+			a.model, a.context_window, a.context_fullness
 		FROM agents a
 		JOIN environments e ON a.environment_id = e.id
 		LEFT JOIN runs r ON a.current_run_id = r.id
@@ -308,6 +315,9 @@ func (s *Store) GetAgent(id string) (*types.IAgentState, error) {
 		runPID                                             sql.NullInt64
 		runHarnessVer                                      sql.NullString
 		runStart, runEnd                                   sql.NullInt64
+		modelStr                                           sql.NullString
+		contextWindow                                      sql.NullInt64
+		contextFullness                                    sql.NullFloat64
 	)
 
 	err := row.Scan(
@@ -320,6 +330,7 @@ func (s *Store) GetAgent(id string) (*types.IAgentState, error) {
 		&agent.Environment.ID, &agent.Environment.Label, &agent.Environment.Hostname, &envPlatform, &agent.Environment.User, &agent.Environment.LastHeartbeatAt,
 		&runID, &runPID, &runHarnessVer, &runStart, &runEnd,
 		&isHidden, &hiddenAt,
+		&modelStr, &contextWindow, &contextFullness,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -376,6 +387,17 @@ func (s *Store) GetAgent(id string) (*types.IAgentState, error) {
 			Total:       costUSD.Float64,
 			IsEstimated: false,
 		}
+	}
+	if modelStr.Valid && modelStr.String != "" {
+		agent.Activity.Model = &modelStr.String
+	}
+	if contextWindow.Valid {
+		v := contextWindow.Int64
+		agent.Activity.ContextWindow = &v
+	}
+	if contextFullness.Valid {
+		v := contextFullness.Float64
+		agent.Activity.ContextFullness = &v
 	}
 
 	// Lifecycle derivation based on current run

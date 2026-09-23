@@ -5992,3 +5992,72 @@ func TestClassifier_TurnEndToolUseStopReasons(t *testing.T) {
 	}
 }
 
+func TestClassifier_ModelAndContextFullnessTracking(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, _ := newTestClassifier(t, sum)
+
+	model := "claude-3-7-sonnet-20250219"
+	cw := int64(200000)
+	fullness := 0.25
+	f := types.ITelemetryFrame{
+		Version: "1.0",
+		Seq:     1,
+		EnvID:   "env-1",
+		Environment: types.IEnvironmentInfo{
+			ID:              "env-1",
+			Label:           "local",
+			Hostname:        "host",
+			Platform:        "linux",
+			User:            "user",
+			LastHeartbeatAt: time.Now().UnixMilli(),
+		},
+		AgentID:        "env-1:claude-code:sess-cw-test",
+		SessionID:      "sess-cw-test",
+		PID:            1234,
+		Harness:        types.HarnessClaudeCode,
+		HarnessVersion: "1.0",
+		Project: types.IProjectInfo{
+			ID:            "proj",
+			Name:          "proj",
+			CanonicalRoot: "/proj",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "main",
+			CWD:    "/proj",
+		},
+		Timestamp: time.Now().UnixMilli(),
+		EventType: "turn_end",
+		Data: types.TelemetryFrameData{
+			Model:              &model,
+			ModelContextWindow: &cw,
+			ContextFullness:    &fullness,
+			Usage: &types.ITokenUsage{
+				Input:      5000,
+				Output:     1000,
+				CacheRead:  40000,
+				CacheWrite: 4000,
+				Total:      50000,
+			},
+		},
+	}
+
+	agent, err := c.ProcessFrame(f)
+	if err != nil {
+		t.Fatalf("ProcessFrame failed: %v", err)
+	}
+
+	if agent.Activity.Model == nil || *agent.Activity.Model != model {
+		t.Errorf("agent.Activity.Model = %v, want %q", agent.Activity.Model, model)
+	}
+	if agent.Activity.ContextWindow == nil || *agent.Activity.ContextWindow != cw {
+		t.Errorf("agent.Activity.ContextWindow = %v, want %d", agent.Activity.ContextWindow, cw)
+	}
+	if agent.Activity.ContextFullness == nil || *agent.Activity.ContextFullness != fullness {
+		t.Errorf("agent.Activity.ContextFullness = %v, want %f", agent.Activity.ContextFullness, fullness)
+	}
+}
+
+

@@ -1,7 +1,14 @@
 import React from "react";
 import type { ITokenUsageBarProps } from "./types";
 
-export function TokenUsageBar({ usage }: ITokenUsageBarProps): React.JSX.Element {
+export function TokenUsageBar({ usage, contextWindow, contextFullness }: ITokenUsageBarProps): React.JSX.Element {
+  const fullnessPercent =
+    typeof contextFullness === "number"
+      ? (contextFullness * 100).toFixed(1)
+      : typeof contextWindow === "number" && contextWindow > 0
+        ? ((usage.total / contextWindow) * 100).toFixed(1)
+        : null;
+
   return (
     <div
       data-testid="TokenUsageBar"
@@ -10,7 +17,14 @@ export function TokenUsageBar({ usage }: ITokenUsageBarProps): React.JSX.Element
       <span data-testid="TokenUsageBar--input">In: {usage.input.toLocaleString()}</span>
       <span data-testid="TokenUsageBar--output">Out: {usage.output.toLocaleString()}</span>
       {usage.cacheRead > 0 && <span data-testid="TokenUsageBar--cache">Cache: {usage.cacheRead.toLocaleString()}</span>}
+      {usage.cacheWrite > 0 && (
+        <span data-testid="TokenUsageBar--create">Create: {usage.cacheWrite.toLocaleString()}</span>
+      )}
+      {usage.reasoning > 0 && (
+        <span data-testid="TokenUsageBar--reasoning">Reasoning: {usage.reasoning.toLocaleString()}</span>
+      )}
       <span data-testid="TokenUsageBar--total">Total: {usage.total.toLocaleString()}</span>
+      {fullnessPercent !== null && <span data-testid="TokenUsageBar--fullness">{`Context: ${fullnessPercent}%`}</span>}
     </div>
   );
 }

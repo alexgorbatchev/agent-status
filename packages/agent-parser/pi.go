@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/models"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 )
 
@@ -174,12 +175,29 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 	switch raw.Type {
 	case "session":
 		// Session header
+		sessionModel := raw.ModelID
+		if sessionModel == "" {
+			sessionModel = raw.Model
+		}
+		if sessionModel == "" {
+			sessionModel = raw.Model_ID
+		}
+		var sessModelPtr *string
+		var sessCwPtr *int64
+		if sessionModel != "" {
+			sessModelPtr = stringPtr(sessionModel)
+			cw := models.ResolveContextWindow(sessionModel)
+			sessCwPtr = &cw
+		}
+
 		events = append(events, ParsedEvent{
 			EventType: "run_started",
 			Timestamp: ts,
 			CWD:       cwd,
 			Data: types.TelemetryFrameData{
-				Title: stringPtr("Pi Session " + raw.ID),
+				Title:              stringPtr("Pi Session " + raw.ID),
+				Model:              sessModelPtr,
+				ModelContextWindow: sessCwPtr,
 			},
 		})
 
@@ -211,12 +229,14 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 			modelName = raw.Model_ID
 		}
 		if modelName != "" {
+			cw := models.ResolveContextWindow(modelName)
 			events = append(events, ParsedEvent{
 				EventType: "model_change",
 				Timestamp: ts,
 				CWD:       cwd,
 				Data: types.TelemetryFrameData{
-					Model: stringPtr(modelName),
+					Model:              stringPtr(modelName),
+					ModelContextWindow: &cw,
 				},
 			})
 		}
@@ -299,6 +319,11 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 			})
 
 		case "assistant":
+			var contextWindowPtr *int64
+			if msg.Model != "" {
+				cw := models.ResolveContextWindow(msg.Model)
+				contextWindowPtr = &cw
+			}
 			blocks := parsePiContentBlocks(msg.Content)
 			var textParts []string
 
@@ -310,14 +335,20 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 						thought = b.Text
 					}
 					if thought != "" {
+						var cwPtr *int64
+						if msg.Model != "" {
+							cw := models.ResolveContextWindow(msg.Model)
+							cwPtr = &cw
+						}
 						events = append(events, ParsedEvent{
 							EventType: "thinking",
 							Timestamp: ts,
 							CWD:       cwd,
 							Data: types.TelemetryFrameData{
-								Role:    stringPtr("assistant"),
-								Content: stringPtr(thought),
-								Model:   stringPtr(msg.Model),
+								Role:               stringPtr("assistant"),
+								Content:            stringPtr(thought),
+								Model:              stringPtr(msg.Model),
+								ModelContextWindow: cwPtr,
 							},
 						})
 					}
@@ -372,12 +403,13 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 							CWD:       cwd,
 							Data: types.TelemetryFrameData{
 								Role:             stringPtr("assistant"),
-								ToolName:         stringPtr(toolName),
-								ToolCallID:       callIDPtr,
-								ToolInput:        params,
-								FileModification: fileMod,
-								Question:         stringPtr(qText),
-								Model:            stringPtr(msg.Model),
+								ToolName:           stringPtr(toolName),
+								ToolCallID:         callIDPtr,
+								ToolInput:          params,
+								FileModification:   fileMod,
+								Question:           stringPtr(qText),
+								Model:              stringPtr(msg.Model),
+								ModelContextWindow: contextWindowPtr,
 							},
 						})
 					} else {
@@ -387,12 +419,13 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 							Timestamp: ts,
 							CWD:       cwd,
 							Data: types.TelemetryFrameData{
-								Role:             stringPtr("assistant"),
-								ToolName:         stringPtr(toolName),
-								ToolCallID:       callIDPtr,
-								ToolInput:        params,
-								FileModification: fileMod,
-								Model:            stringPtr(msg.Model),
+								Role:               stringPtr("assistant"),
+								ToolName:           stringPtr(toolName),
+								ToolCallID:         callIDPtr,
+								ToolInput:          params,
+								FileModification:   fileMod,
+								Model:              stringPtr(msg.Model),
+								ModelContextWindow: contextWindowPtr,
 							},
 						})
 					}
@@ -429,8 +462,15 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 			}
 
 			var modelPtr *string
+			var fullnessPtr *float64
 			if msg.Model != "" {
 				modelPtr = stringPtr(msg.Model)
+				cw := models.ResolveContextWindow(msg.Model)
+				contextWindowPtr = &cw
+				if usage != nil && cw > 0 {
+					fn := models.CalculateContextFullness(usage.Total, cw)
+					fullnessPtr = &fn
+				}
 			}
 
 			var contentPtr *string
@@ -443,12 +483,14 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 				Timestamp: ts,
 				CWD:       cwd,
 				Data: types.TelemetryFrameData{
-					Role:           stringPtr("assistant"),
-					Content:        contentPtr,
-					Model:          modelPtr,
-					StopReason:     stopReason,
-					Usage:          usage,
-					RawHarnessCost: harnessCost,
+					Role:               stringPtr("assistant"),
+					Content:            contentPtr,
+					Model:              modelPtr,
+					ModelContextWindow: contextWindowPtr,
+					ContextFullness:    fullnessPtr,
+					StopReason:         stopReason,
+					Usage:              usage,
+					RawHarnessCost:     harnessCost,
 				},
 			})
 		}

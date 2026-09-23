@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/models"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/pricing"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/store"
@@ -358,6 +359,29 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 	}
 
 	isSubagent := frame.SubagentID != nil && *frame.SubagentID != ""
+
+	// Update Model, Context Window & Context Fullness
+	if !isSubagent {
+		if frame.Data.Model != nil && strings.TrimSpace(*frame.Data.Model) != "" {
+			m := strings.TrimSpace(*frame.Data.Model)
+			agent.Activity.Model = &m
+		}
+		if frame.Data.ModelContextWindow != nil && *frame.Data.ModelContextWindow > 0 {
+			cw := *frame.Data.ModelContextWindow
+			agent.Activity.ContextWindow = &cw
+		} else if agent.Activity.Model != nil && *agent.Activity.Model != "" {
+			cw := models.ResolveContextWindow(*agent.Activity.Model)
+			if cw > 0 {
+				agent.Activity.ContextWindow = &cw
+			}
+		}
+		if frame.Data.ContextFullness != nil {
+			agent.Activity.ContextFullness = frame.Data.ContextFullness
+		} else if agent.Activity.ContextWindow != nil && *agent.Activity.ContextWindow > 0 && frame.Data.Usage != nil {
+			fn := models.CalculateContextFullness(frame.Data.Usage.Total, *agent.Activity.ContextWindow)
+			agent.Activity.ContextFullness = &fn
+		}
+	}
 
 	// Accumulate Usage & Cost
 	if frame.Data.Usage != nil {

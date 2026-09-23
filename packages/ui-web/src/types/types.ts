@@ -76,6 +76,9 @@ export interface IAgentActivity {
   question: string | null; // Active prompt when WAITING_QUESTION
   lastThinkingExcerpt: string | null;
   lastError: string | null;
+  model?: string | null;
+  contextWindow?: number | null;
+  contextFullness?: number | null;
   usage: ITokenUsage;
   cost: ICostInfo | null;
   subagentCount: number;
@@ -128,6 +131,8 @@ export interface ITelemetryFrameData {
   title: string | null;
   lastPrompt: string | null;
   model: string | null;
+  modelContextWindow?: number | null;
+  contextFullness?: number | null;
   toolName: string | null;
   toolCallId: string | null;
   toolInput: Record<string, unknown> | null;

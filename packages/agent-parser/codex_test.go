@@ -415,8 +415,14 @@ func TestParseCodexLine(t *testing.T) {
 		if u == nil {
 			t.Fatalf("expected non-nil Usage")
 		}
-		if u.Input != 600 || u.Output != 200 || u.CacheRead != 100 || u.Reasoning != 50 || u.Total != 800 {
+		if u.Input != 500 || u.Output != 200 || u.CacheRead != 100 || u.Reasoning != 50 || u.Total != 800 {
 			t.Errorf("Usage mismatch: %+v", u)
+		}
+		if evs[0].Data.ModelContextWindow == nil || *evs[0].Data.ModelContextWindow != 128000 {
+			t.Errorf("ModelContextWindow = %v, want 128000", evs[0].Data.ModelContextWindow)
+		}
+		if evs[0].Data.ContextFullness == nil {
+			t.Errorf("expected non-nil ContextFullness")
 		}
 	})
 

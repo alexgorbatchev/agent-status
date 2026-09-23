@@ -431,6 +431,11 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
           className="text-[11px] text-slate-500 font-mono"
         >
           {activity.usage.total.toLocaleString()} tokens
+          {typeof activity.contextFullness === "number" && (
+            <span data-testid="AgentCard--context-fullness" className="ml-1.5 text-[10px] text-slate-400">
+              ({(activity.contextFullness * 100).toFixed(0)}%)
+            </span>
+          )}
         </div>
       </div>
     </div>

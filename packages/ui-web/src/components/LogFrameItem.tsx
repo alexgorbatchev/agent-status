@@ -179,7 +179,13 @@ export function LogFrameItem({ frame }: ILogFrameItemProps): React.JSX.Element {
         />
       )}
 
-      {frame.data.usage && <TokenUsageBar usage={frame.data.usage} />}
+      {frame.data.usage && (
+        <TokenUsageBar
+          usage={frame.data.usage}
+          contextWindow={frame.data.modelContextWindow}
+          contextFullness={frame.data.contextFullness}
+        />
+      )}
     </div>
   );
 }

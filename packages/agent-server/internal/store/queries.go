@@ -140,7 +140,8 @@ const selectAgentBaseQuery = `
 		a.cost_usd, a.subagent_count, a.active_subagents, a.first_started_at, a.updated_at,
 		e.label, e.hostname, e.platform, e.user, e.last_heartbeat_at,
 		r.pid, r.harness_version, r.started_at, r.ended_at,
-		a.is_hidden, a.hidden_at
+		a.is_hidden, a.hidden_at,
+		a.model, a.context_window, a.context_fullness
 	FROM agents a
 	INNER JOIN environments e ON a.environment_id = e.id
 	LEFT JOIN runs r ON a.current_run_id = r.id
@@ -178,6 +179,9 @@ func scanAgent(s agentRowScanner, nowMs int64) (*types.IAgentState, error) {
 		runStartedAt, runEndedAt                                      sql.NullInt64
 		isHidden                                                      int
 		hiddenAt                                                      sql.NullInt64
+		modelStr                                                      sql.NullString
+		contextWindow                                                 sql.NullInt64
+		contextFullness                                               sql.NullFloat64
 	)
 
 	err := s.Scan(
@@ -193,6 +197,7 @@ func scanAgent(s agentRowScanner, nowMs int64) (*types.IAgentState, error) {
 		&envLabel, &envHostname, &envPlatform, &envUser, &envLastHeartbeat,
 		&runPID, &runHarnessVersion, &runStartedAt, &runEndedAt,
 		&isHidden, &hiddenAt,
+		&modelStr, &contextWindow, &contextFullness,
 	)
 	if err != nil {
 		return nil, err
@@ -327,6 +332,18 @@ func scanAgent(s agentRowScanner, nowMs int64) (*types.IAgentState, error) {
 			FirstStartedAt: firstStartedAt,
 			UpdatedAt:      updatedAt,
 		},
+	}
+
+	if modelStr.Valid && modelStr.String != "" {
+		agent.Activity.Model = &modelStr.String
+	}
+	if contextWindow.Valid {
+		v := contextWindow.Int64
+		agent.Activity.ContextWindow = &v
+	}
+	if contextFullness.Valid {
+		v := contextFullness.Float64
+		agent.Activity.ContextFullness = &v
 	}
 
 	if activeSubagents.Valid && strings.TrimSpace(activeSubagents.String) != "" {

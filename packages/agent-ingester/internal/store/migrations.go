@@ -189,6 +189,35 @@ func Migrate(db *sql.DB) error {
 		if _, err := db.Exec("PRAGMA user_version = 4;"); err != nil {
 			return fmt.Errorf("updating user_version to 4: %w", err)
 		}
+		version = 4
+	}
+
+	if version < 5 {
+		tx, err := db.Begin()
+		if err != nil {
+			return fmt.Errorf("beginning migration v5 transaction: %w", err)
+		}
+		defer func() {
+			_ = tx.Rollback()
+		}()
+
+		if _, err := tx.Exec("ALTER TABLE agents ADD COLUMN model TEXT;"); err != nil {
+			return fmt.Errorf("executing migration v5 model: %w", err)
+		}
+		if _, err := tx.Exec("ALTER TABLE agents ADD COLUMN context_window INTEGER;"); err != nil {
+			return fmt.Errorf("executing migration v5 context_window: %w", err)
+		}
+		if _, err := tx.Exec("ALTER TABLE agents ADD COLUMN context_fullness REAL;"); err != nil {
+			return fmt.Errorf("executing migration v5 context_fullness: %w", err)
+		}
+
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("committing migration v5: %w", err)
+		}
+
+		if _, err := db.Exec("PRAGMA user_version = 5;"); err != nil {
+			return fmt.Errorf("updating user_version to 5: %w", err)
+		}
 	}
 
 	return nil
