@@ -88,7 +88,7 @@ export function StateHelpDialog({ onClose }: IStateHelpDialogProps): React.JSX.E
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 font-mono text-[11px]">
               <div className="p-2 rounded bg-slate-900 border border-slate-800">
-                <span className="font-bold text-blue-400 block mb-0.5">Active / Busy</span>
+                <span className="font-bold text-blue-400 block mb-0.5">Active / Working</span>
                 <span className="text-slate-400 text-[10px]">
                   Process alive + actively executing tools or reasoning
                 </span>

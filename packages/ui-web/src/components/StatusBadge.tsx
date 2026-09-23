@@ -7,7 +7,7 @@ import { AlertTriangle } from "lucide-react";
 const STATUS_CONFIGS: Record<LifecycleState, Record<ActivityState, IStatusBadgeConfig>> = {
   RUNNING: {
     BUSY: {
-      label: "Busy",
+      label: "Working",
       badgeClass: "bg-blue-900/60 text-blue-200 border border-blue-700/50",
       indicatorClass: "bg-blue-400 animate-pulse",
     },
@@ -75,7 +75,7 @@ export function StatusBadge({
         <IconWrapper size="xs" tone="warning">
           <AlertTriangle size={12} />
         </IconWrapper>
-        <span data-testid="StatusBadge--label">Busy{durationLabel}</span>
+        <span data-testid="StatusBadge--label">Working{durationLabel}</span>
       </span>
     );
   }

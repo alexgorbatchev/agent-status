@@ -42,11 +42,17 @@ function resolveCurrentTime(): number {
 export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps): React.JSX.Element {
   const [isFocusing, setIsFocusing] = useState<boolean>(false);
   const [focusError, setFocusError] = useState<string | null>(null);
+  const [showSubagents, setShowSubagents] = useState<boolean>(false);
   const { activity, environment, workspace, harness } = agent;
 
   const formattedCost = activity.cost ? `$${activity.cost.total.toFixed(4)}` : "—";
   const title = activity.title || "Untitled Agent Session";
-  const action = activity.action || (activity.activeTool ? `Executing ${activity.activeTool}` : "Idle");
+  const isIdleAction = !activity.action || activity.action.trim().toLowerCase() === "idle";
+  const action = !isIdleAction
+    ? activity.action
+    : activity.activity !== "IDLE" && activity.lifecycle !== "EXITED" && activity.activeTool
+      ? `Executing ${activity.activeTool}`
+      : "";
   const isFinished = activity.lifecycle === "EXITED";
   const now = resolveCurrentTime();
   const relativeTime = useRelativeTime(activity.updatedAt);
@@ -211,7 +217,7 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
         <p
           data-testid="AgentCard--action"
           data-action
-          className="text-xs text-slate-400 line-clamp-2 min-h-[2rem] mb-3"
+          className="text-xs text-slate-400 line-clamp-2 h-8 leading-4 mb-3"
         >
           {action}
         </p>
@@ -305,12 +311,17 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
           )}
 
           {activity.subagentCount > 0 && (
-            <div
+            <button
+              type="button"
               data-testid="AgentCard--subagents-badge"
               data-badge-type="subagents"
-              role="status"
               aria-label={`${activity.subagentCount} subagent${activity.subagentCount > 1 ? "s" : ""}`}
-              className="flex items-center gap-1 bg-purple-950/40 border border-purple-800/50 text-purple-300 px-2 py-0.5 rounded text-[11px]"
+              aria-expanded={showSubagents ? "true" : "false"}
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowSubagents((prev) => !prev);
+              }}
+              className="flex items-center gap-1 bg-purple-950/40 border border-purple-800/50 text-purple-300 px-2 py-0.5 rounded text-[11px] hover:bg-purple-900/40 hover:border-purple-700/60 cursor-pointer transition-colors"
             >
               <IconWrapper size="xs" tone="purple">
                 <Layers size={12} />
@@ -318,29 +329,27 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
               <span>
                 {activity.subagentCount} subagent{activity.subagentCount > 1 ? "s" : ""}
               </span>
-            </div>
+            </button>
           )}
 
-          <div
-            data-testid="AgentCard--last-active"
-            role="status"
-            aria-label={
-              sessionStalled ? `silent: ${silenceDuration}` : isRunningBusy ? `active: ${relativeTime}` : relativeTime
-            }
-            className="flex items-center gap-1 bg-slate-800/50 px-2 py-0.5 rounded border border-slate-700/50"
-            title={`Last active: ${exactTime}`}
-          >
-            <IconWrapper size="xs" tone={sessionStalled ? "warning" : "muted"}>
-              <Clock size={12} />
-            </IconWrapper>
-            {sessionStalled ? (
-              <span className="font-mono text-[11px] text-amber-300">Silent for {silenceDuration}</span>
-            ) : isRunningBusy ? (
-              <span className="font-mono text-[11px] text-slate-300">Active {relativeTime}</span>
-            ) : (
-              <span className="font-mono text-[11px] text-slate-300">{relativeTime}</span>
-            )}
-          </div>
+          {(!isRunningBusy || sessionStalled) && (
+            <div
+              data-testid="AgentCard--last-active"
+              role="status"
+              aria-label={sessionStalled ? `silent: ${silenceDuration}` : relativeTime}
+              className="flex items-center gap-1 bg-slate-800/50 px-2 py-0.5 rounded border border-slate-700/50"
+              title={`Last active: ${exactTime}`}
+            >
+              <IconWrapper size="xs" tone={sessionStalled ? "warning" : "muted"}>
+                <Clock size={12} />
+              </IconWrapper>
+              {sessionStalled ? (
+                <span className="font-mono text-[11px] text-amber-300">Silent for {silenceDuration}</span>
+              ) : (
+                <span className="font-mono text-[11px] text-slate-300">{relativeTime}</span>
+              )}
+            </div>
+          )}
 
           {stallTier === "notice" && formattedDuration && (
             <div
@@ -376,7 +385,7 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
         </div>
 
         {/* Active Subagents Chips */}
-        {activity.activeSubagents && activity.activeSubagents.length > 0 && (
+        {showSubagents && activity.activeSubagents && activity.activeSubagents.length > 0 && (
           <div data-testid="AgentCard--subagents" className="flex flex-wrap items-center gap-1.5 mb-3">
             {activity.activeSubagents.map((sub) => {
               const isCompleted =

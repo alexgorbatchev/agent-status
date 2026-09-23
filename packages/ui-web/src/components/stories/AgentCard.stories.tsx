@@ -24,7 +24,7 @@ export const Default: Story = {
     const card = canvas.getByTestId("AgentCard");
     await expect(card).toBeInTheDocument();
     await expect(canvas.getByTestId("AgentCard--title")).toHaveTextContent("Build agent-status dashboard");
-    await expect(canvas.getByTestId("AgentCard--last-active")).toBeInTheDocument();
+    await expect(canvas.queryByTestId("AgentCard--last-active")).not.toBeInTheDocument();
     await expect(card).toHaveAttribute("role", "button");
     await expect(card).toHaveAttribute("tabindex", "0");
     await expect(card).toHaveAttribute("aria-label", "View details for Build agent-status dashboard");
@@ -46,6 +46,7 @@ export const Exited: Story = {
     const card = canvas.getByTestId("AgentCard");
     await expect(card).toBeInTheDocument();
     await expect(canvas.getByTestId("AgentCard--title")).toHaveTextContent("Refactor telemetry pipeline");
+    await expect(canvas.getByTestId("AgentCard--last-active")).toBeInTheDocument();
     await expect(card).toHaveClass("opacity-60");
   },
 };

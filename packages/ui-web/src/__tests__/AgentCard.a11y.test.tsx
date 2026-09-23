@@ -1,5 +1,6 @@
 import { describe, it, expect } from "bun:test";
-import React from "react";
+import React, { act } from "react";
+import assert from "node:assert";
 import { AgentCard } from "../components/AgentCard";
 import { formatA11yTree } from "../utils/a11ySnapshot";
 import { setupMockDomEnvironment, mountComponent } from "./helpers";
@@ -157,7 +158,6 @@ describe("AgentCard Semantic Accessibility Snapshots", () => {
           "  ├─ Button: [Focus in Herdr]",
           "  ├─ Status: (RUNNING)",
           '  ├─ Heading: "Code review agent"',
-          '  ├─ Action: "Idle"',
           "  ├─ Badge: (work-macbook)",
           "  ├─ Badge: (branch: main)",
           "  ├─ Badge: (2m ago)",
@@ -283,10 +283,21 @@ describe("AgentCard Semantic Accessibility Snapshots", () => {
         <AgentCard agent={agentWithSubagents} onToggleHide={noop} />,
         mockDoc,
       );
-      const tree = formatA11yTree(container);
-      await unmount();
 
+      // By default subagents are hidden
+      let tree = formatA11yTree(container);
+      expect(tree).not.toContain("Badge: (sub-worker-1: bash)");
+
+      // Click subagents badge to expand
+      const badge = container.querySelector('[data-testid="AgentCard--subagents-badge"]') as HTMLElement | null;
+      assert(badge, "subagents badge must be present");
+      await act(async () => {
+        badge.click();
+      });
+
+      tree = formatA11yTree(container);
       expect(tree).toContain("Badge: (sub-worker-1: bash)");
+      await unmount();
     } finally {
       cleanup();
     }

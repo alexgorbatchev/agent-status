@@ -6,7 +6,7 @@ describe("StatusBadge Component", () => {
   it("renders RUNNING + BUSY status badge with pulsing blue indicator", () => {
     const html = renderToStaticMarkup(<StatusBadge lifecycle="RUNNING" activity="BUSY" />);
     expect(html).toBe(
-      '<span data-testid="StatusBadge" role="status" data-lifecycle="RUNNING" class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-900/60 text-blue-200 border border-blue-700/50"><span data-testid="StatusBadge--indicator" class="w-2 h-2 rounded-full bg-blue-400 animate-pulse"></span><span data-testid="StatusBadge--label">Busy</span></span>',
+      '<span data-testid="StatusBadge" role="status" data-lifecycle="RUNNING" class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-900/60 text-blue-200 border border-blue-700/50"><span data-testid="StatusBadge--indicator" class="w-2 h-2 rounded-full bg-blue-400 animate-pulse"></span><span data-testid="StatusBadge--label">Working</span></span>',
     );
   });
 

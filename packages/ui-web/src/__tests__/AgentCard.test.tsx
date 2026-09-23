@@ -29,6 +29,7 @@ describe("AgentCard Component", () => {
     expect(html).toContain("Compiling typescript and verifying bundles");
     expect(html).toContain("main");
     expect(html).toContain("2 subagents");
+    // fixture_agentStateRunning has a historical timestamp triggering the stall silence badge
     expect(html).toContain('data-testid="AgentCard--last-active"');
     expect(html).toContain("$0.0560");
     expect(html).toContain("7,300 tokens");
@@ -86,6 +87,37 @@ describe("AgentCard Component", () => {
     expect(html).toContain("Executing GrepSearch");
   });
 
+  it("does not display 'Idle' in AgentCard--action and reserves 2 rows", () => {
+    const idleAgent = factory_agentState({
+      activity: {
+        action: "Idle",
+        activeTool: null,
+      } as unknown as IAgentState["activity"],
+    });
+    const html = renderToStaticMarkup(<AgentCard agent={idleAgent} />);
+
+    const match = html.match(/<p[^>]*data-testid="AgentCard--action"[^>]*>(.*?)<\/p>/);
+    assert(match);
+    expect(match[1]).not.toContain("Idle");
+    expect(match[0]).toContain("h-8");
+    expect(match[0]).toContain("leading-4");
+    expect(match[0]).toContain("line-clamp-2");
+  });
+
+  it("does not display 'Idle' in AgentCard--action when action is empty and activeTool is absent", () => {
+    const emptyActionAgent = factory_agentState({
+      activity: {
+        action: "",
+        activeTool: null,
+      } as unknown as IAgentState["activity"],
+    });
+    const html = renderToStaticMarkup(<AgentCard agent={emptyActionAgent} />);
+
+    const match = html.match(/<p[^>]*data-testid="AgentCard--action"[^>]*>(.*?)<\/p>/);
+    assert(match);
+    expect(match[1]).not.toContain("Idle");
+  });
+
   it("invokes onOpenDrawer callback with agent when card is clicked", async () => {
     const { mockDoc, cleanup } = setupMockDomEnvironment();
     let receivedAgent: IAgentState | null = null;
@@ -130,10 +162,11 @@ describe("AgentCard Component", () => {
     expect(html).not.toContain("opacity-60");
   });
 
-  it("renders last active timestamp badge with relative time and title tooltip", () => {
+  it("renders last active timestamp badge with relative time and title tooltip for non-busy agent", () => {
     const agent = factory_agentState({
       activity: {
         ...fixture_agentStateRunning.activity,
+        activity: "IDLE",
         updatedAt: Date.now() - 30000,
       },
     });
@@ -144,10 +177,11 @@ describe("AgentCard Component", () => {
     expect(html).toContain(`title="Last active: ${new Date(agent.activity.updatedAt).toLocaleString()}"`);
   });
 
-  it("renders fallback '—' when updatedAt is 0 or negative", () => {
+  it("renders fallback '—' when updatedAt is 0 or negative for non-busy agent", () => {
     const agent = factory_agentState({
       activity: {
         ...fixture_agentStateRunning.activity,
+        activity: "IDLE",
         updatedAt: 0,
       },
     });
@@ -179,7 +213,7 @@ describe("AgentCard Component", () => {
     expect(html).toContain("Silent for 2m");
   });
 
-  it("renders Active relativeTime when running busy session is active < 120s", () => {
+  it("does not render last-active badge when running session is busy and not stalled, and displays 'Working' status", () => {
     const now = Date.now();
     const agent = factory_agentState({
       activity: {
@@ -194,10 +228,11 @@ describe("AgentCard Component", () => {
     const html = renderToStaticMarkup(<AgentCard agent={agent} />);
 
     expect(html).toContain('data-testid="StatusBadge"');
-    expect(html).toContain("Busy");
+    expect(html).toContain("Working");
+    expect(html).not.toContain("Busy");
     expect(html).not.toContain("Stalled");
-    expect(html).toContain('data-testid="AgentCard--last-active"');
-    expect(html).toContain("Active ");
+    expect(html).not.toContain('data-testid="AgentCard--last-active"');
+    expect(html).not.toContain("Active ");
   });
 
   it("renders hide button and calls onToggleHide without triggering onOpenDrawer", async () => {
@@ -407,32 +442,76 @@ describe("AgentCard Component", () => {
   });
 
   describe("Subagent status chips", () => {
-    it("renders subagent chips when activeSubagents is present", () => {
-      const agentWithSubagents: IAgentState = {
-        ...fixture_agentStateRunning,
-        activity: {
-          ...fixture_agentStateRunning.activity,
-          activeSubagents: [
-            {
-              id: "sub-1",
-              activity: "BUSY",
-              activeTool: "bash",
-              action: "npm test",
-            },
-            {
-              id: "sub-2",
-              activity: "ERROR",
-              lastError: "compile error",
-            },
-          ],
-        },
+    it("hides subagent chips by default and toggles visibility when subagents badge is clicked", async () => {
+      const { mockDoc, cleanup } = setupMockDomEnvironment();
+      let drawerOpened = false;
+      const onOpenDrawer = (): void => {
+        drawerOpened = true;
       };
-      const html = renderToStaticMarkup(<AgentCard agent={agentWithSubagents} />);
-      expect(html).toContain('data-testid="AgentCard--subagents"');
-      expect(html).toContain('data-testid="AgentCard--subagent-chip-sub-1"');
-      expect(html).toContain('data-testid="AgentCard--subagent-chip-sub-2"');
-      expect(html).toContain("sub-1");
-      expect(html).toContain("sub-2");
+
+      try {
+        const agentWithSubagents: IAgentState = {
+          ...fixture_agentStateRunning,
+          activity: {
+            ...fixture_agentStateRunning.activity,
+            subagentCount: 2,
+            activeSubagents: [
+              {
+                id: "sub-1",
+                activity: "BUSY",
+                activeTool: "bash",
+                action: "npm test",
+              },
+              {
+                id: "sub-2",
+                activity: "ERROR",
+                lastError: "compile error",
+              },
+            ],
+          },
+        };
+
+        // Static markup has subagents hidden by default
+        const staticHtml = renderToStaticMarkup(<AgentCard agent={agentWithSubagents} />);
+        expect(staticHtml).toContain('data-testid="AgentCard--subagents-badge"');
+        expect(staticHtml).not.toContain('data-testid="AgentCard--subagents"');
+
+        // Dynamic interactive mount
+        const { container, unmount } = await mountComponent(
+          <AgentCard agent={agentWithSubagents} onOpenDrawer={onOpenDrawer} />,
+          mockDoc,
+        );
+
+        // Hidden by default
+        expect(container.querySelector('[data-testid="AgentCard--subagents"]')).toBeNull();
+
+        const badge = container.querySelector('[data-testid="AgentCard--subagents-badge"]') as HTMLElement | null;
+        assert(badge, "subagents badge must be present");
+        expect(badge.getAttribute("aria-expanded")).toBe("false");
+
+        // Click badge to expand
+        await act(async () => {
+          badge.click();
+        });
+        expect(drawerOpened).toBe(false); // click must not propagate to onOpenDrawer
+        expect(badge.getAttribute("aria-expanded")).toBe("true");
+
+        const subagentsContainer = container.querySelector('[data-testid="AgentCard--subagents"]');
+        assert(subagentsContainer, "subagents container must be visible after click");
+        expect(container.querySelector('[data-testid="AgentCard--subagent-chip-sub-1"]')).not.toBeNull();
+        expect(container.querySelector('[data-testid="AgentCard--subagent-chip-sub-2"]')).not.toBeNull();
+
+        // Click badge again to collapse
+        await act(async () => {
+          badge.click();
+        });
+        expect(badge.getAttribute("aria-expanded")).toBe("false");
+        expect(container.querySelector('[data-testid="AgentCard--subagents"]')).toBeNull();
+
+        await unmount();
+      } finally {
+        cleanup();
+      }
     });
 
     it("renders subagents with distinct running vs completed status indicators and smooth transitions", () => {

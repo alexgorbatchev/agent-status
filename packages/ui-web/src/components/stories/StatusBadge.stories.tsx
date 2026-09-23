@@ -20,7 +20,7 @@ export const RunningBusy: Story = {
     const canvas = within(canvasElement);
     const badge = canvas.getByTestId("StatusBadge");
     await expect(badge).toBeInTheDocument();
-    await expect(canvas.getByText("Busy")).toBeInTheDocument();
+    await expect(canvas.getByText("Working")).toBeInTheDocument();
   },
 };
 
