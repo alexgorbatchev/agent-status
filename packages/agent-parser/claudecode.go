@@ -683,10 +683,11 @@ func parseClaudeCodeLineEvents(
 
 			// Decide whether to emit turn_end:
 			// A line containing only thinking (no text and no tool calls) is an intermediate block
-			// (e.g. apiBlockIndex: 0) of a streaming assistant turn. The actual tool call(s) or text
-			// response will arrive on subsequent line(s). Do not emit premature turn_end for pure thinking.
+			// if the model stopped for tool use or stop reason is not yet known (empty).
+			// If the stop reason is terminal (e.g. end_turn, max_tokens, stop_sequence, refusal),
+			// this is the terminal block of the response and must emit turn_end.
 			hasTerminalContent := len(textParts) > 0 || hasToolCall
-			isIntermediateThinking := !hasTerminalContent && (raw.Message.StopReason == "" || raw.APIBlockIndex != nil || raw.Message.StopReason == "tool_use" || raw.Message.StopReason == "toolUse")
+			isIntermediateThinking := !hasTerminalContent && (raw.Message.StopReason == "" || raw.Message.StopReason == "tool_use" || raw.Message.StopReason == "toolUse")
 
 			if !isIntermediateThinking {
 				isDuplicateRequest := false

@@ -1423,7 +1423,7 @@ func TestClaudeCodeParser_StreamedMultiBlockDeduplication(t *testing.T) {
 		p := NewClaudeCodeParser()
 		sessID := "stream-session-text"
 
-		line1 := `{"type":"assistant","requestId":"req_text_1","sessionId":"` + sessID + `","apiBlockIndex":0,"message":{"id":"msg_text_1","role":"assistant","model":"claude-3-7-sonnet","stop_reason":"end_turn","content":[{"type":"thinking","thinking":"Thinking about solution"}],"usage":{"input_tokens":10,"output_tokens":50}}}`
+		line1 := `{"type":"assistant","requestId":"req_text_1","sessionId":"` + sessID + `","apiBlockIndex":0,"message":{"id":"msg_text_1","role":"assistant","model":"claude-3-7-sonnet","stop_reason":"","content":[{"type":"thinking","thinking":"Thinking about solution"}],"usage":{"input_tokens":10,"output_tokens":50}}}`
 		line2 := `{"type":"assistant","requestId":"req_text_1","sessionId":"` + sessID + `","apiBlockIndex":1,"message":{"id":"msg_text_1","role":"assistant","model":"claude-3-7-sonnet","stop_reason":"end_turn","content":[{"type":"text","text":"I have completed the task."}],"usage":{"input_tokens":10,"output_tokens":50}}}`
 
 		evs1, err := p.ParseLine([]byte(line1))
@@ -1659,6 +1659,104 @@ func TestRequestDedup_FIFOOrderAndEviction(t *testing.T) {
 		}
 		if d.order[0] != "key_1" || d.order[1] != "key_2" {
 			t.Fatalf("expected order [key_1, key_2], got %v", d.order)
+		}
+	})
+}
+
+func TestClaudeCodeParser_ThinkingOnlyTerminalStopReasons(t *testing.T) {
+	cases := []struct {
+		name       string
+		stopReason string
+	}{
+		{"max_tokens truncation during thinking", "max_tokens"},
+		{"refusal during thinking", "refusal"},
+		{"end_turn when only thinking generated", "end_turn"},
+		{"stop_sequence during thinking", "stop_sequence"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := NewClaudeCodeParser()
+			line := fmt.Sprintf(`{"type":"assistant","requestId":"req_think_%s","sessionId":"sess_think","apiBlockIndex":0,"message":{"id":"msg_think_%s","role":"assistant","model":"claude-3-7-sonnet","stop_reason":"%s","content":[{"type":"thinking","thinking":"Thinking about problem"}],"usage":{"input_tokens":15,"output_tokens":120,"cache_read_input_tokens":500}}}`, tc.stopReason, tc.stopReason, tc.stopReason)
+
+			events, err := p.ParseLine([]byte(line))
+			if err != nil {
+				t.Fatalf("ParseLine failed: %v", err)
+			}
+
+			var thinkingCount, turnEndCount int
+			var turnEnd *ParsedEvent
+			for i := range events {
+				switch events[i].EventType {
+				case "thinking":
+					thinkingCount++
+				case "turn_end":
+					turnEndCount++
+					turnEnd = &events[i]
+				}
+			}
+
+			if thinkingCount != 1 {
+				t.Errorf("expected 1 thinking event, got %d", thinkingCount)
+			}
+			if turnEndCount != 1 {
+				t.Fatalf("expected exactly 1 turn_end event for terminal thinking block with stop_reason %q, got %d", tc.stopReason, turnEndCount)
+			}
+			if turnEnd == nil || turnEnd.Data.Usage == nil {
+				t.Fatalf("expected turn_end with usage, got nil")
+			}
+			if turnEnd.Data.Usage.Output != 120 {
+				t.Errorf("expected output tokens 120, got %d", turnEnd.Data.Usage.Output)
+			}
+			if turnEnd.Data.Usage.Input != 15 {
+				t.Errorf("expected input tokens 15, got %d", turnEnd.Data.Usage.Input)
+			}
+			if turnEnd.Data.Usage.Total != 635 {
+				t.Errorf("expected total tokens 635, got %d", turnEnd.Data.Usage.Total)
+			}
+			if turnEnd.Data.StopReason == nil || *turnEnd.Data.StopReason != tc.stopReason {
+				t.Errorf("expected stop_reason %q, got %v", tc.stopReason, turnEnd.Data.StopReason)
+			}
+		})
+	}
+
+	t.Run("multi-block streaming with intermediate tool_use thinking block", func(t *testing.T) {
+		p := NewClaudeCodeParser()
+		sessID := "sess_stream_tool"
+		line0 := `{"type":"assistant","requestId":"req_stream_tool","sessionId":"` + sessID + `","apiBlockIndex":0,"message":{"id":"msg_stream_tool","role":"assistant","model":"claude-3-7-sonnet","stop_reason":"tool_use","content":[{"type":"thinking","thinking":"Deciding tool call"}],"usage":{"input_tokens":10,"output_tokens":80}}}`
+		line1 := `{"type":"assistant","requestId":"req_stream_tool","sessionId":"` + sessID + `","apiBlockIndex":1,"message":{"id":"msg_stream_tool","role":"assistant","model":"claude-3-7-sonnet","stop_reason":"tool_use","content":[{"type":"tool_use","name":"Bash","id":"call_123","input":{"command":"echo test"}}],"usage":{"input_tokens":10,"output_tokens":80}}}`
+
+		evs0, err := p.ParseLine([]byte(line0))
+		if err != nil {
+			t.Fatalf("ParseLine line0 failed: %v", err)
+		}
+		var turnEnds0 int
+		for _, ev := range evs0 {
+			if ev.EventType == "turn_end" {
+				turnEnds0++
+			}
+		}
+		if turnEnds0 != 0 {
+			t.Fatalf("expected block 0 with stop_reason 'tool_use' to be intermediate (0 turn_end events), got %d", turnEnds0)
+		}
+
+		evs1, err := p.ParseLine([]byte(line1))
+		if err != nil {
+			t.Fatalf("ParseLine line1 failed: %v", err)
+		}
+		var turnEnds1 int
+		var turnEnd1 *ParsedEvent
+		for i := range evs1 {
+			if evs1[i].EventType == "turn_end" {
+				turnEnds1++
+				turnEnd1 = &evs1[i]
+			}
+		}
+		if turnEnds1 != 1 {
+			t.Fatalf("expected block 1 to emit exactly 1 turn_end event, got %d", turnEnds1)
+		}
+		if turnEnd1 == nil || turnEnd1.Data.Usage == nil || turnEnd1.Data.Usage.Output != 80 {
+			t.Errorf("expected block 1 turn_end to carry token usage (output=80), got %v", turnEnd1)
 		}
 	})
 }
