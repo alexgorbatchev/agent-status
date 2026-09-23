@@ -9,6 +9,7 @@ status: current
 This document contains step-by-step implementation instructions for an autonomous coding agent to build and verify `agent-status`.
 
 All development must be strictly grounded in:
+
 - `docs/prd.md` (System Architecture & Specification)
 - `docs/user-spec.md` (User Wishes & Scenarios)
 - `docs/lego-bricks.md` (Verified Go Library & Package Catalog)
@@ -39,6 +40,7 @@ All development must be strictly grounded in:
 ### Phase 0: Workspace Bootstrap, Shared Types & Pricing Seed
 
 #### 0.1. Root Workspace & Automation
+
 - [ ] Create root `.gitignore` (verifying ignore rules for `.tmp/`, `.cache/`, `dist/`, `*.sqlite-wal`, `node_modules/`).
 - [ ] Create root `justfile` providing recipes:
   - `just build-all`: Builds Go binaries to `packages/*/bin/` and bundles `packages/ui-web`.
@@ -46,6 +48,7 @@ All development must be strictly grounded in:
   - `just lint-all`: Runs `golangci-lint` and TypeScript type-checking (`bun x tsc --noEmit`).
 
 #### 0.2. Frontend Type Contract (`packages/ui-web`)
+
 - [ ] Initialize `packages/ui-web/package.json` with React, React DOM, Lucide React, and Tailwind v4.
 - [ ] Implement `packages/ui-web/src/types/index.ts` declaring exact TypeScript contracts from `docs/prd.md` §6:
   - `LifecycleState` (`"RUNNING" | "EXITED"`)
@@ -55,6 +58,7 @@ All development must be strictly grounded in:
   - `IEnvironmentInfo`, `IWorkspaceInfo`, `IProjectInfo`, `ITokenUsage`, `ICostInfo`, `IRunInfo`, `IAgentActivity`, `IAgentState`, `ITelemetryFrame`, `IServerEvent`.
 
 #### 0.3. Go Shared Types & Model Pricing Seed
+
 - [ ] Create `packages/agent-ingester/internal/pricing/models.json` containing the pre-filtered LiteLLM model pricing map (covering `claude-opus-5`, `claude-fable-5-1`, `claude-sonnet-5`, `claude-haiku-4-5`, `gemini-3.7-flash`).
 - [ ] Implement pricing loader `packages/agent-ingester/internal/pricing/pricing.go` with unit tests verifying calculations for standard turns and subagent roll-ups.
 
@@ -63,6 +67,7 @@ All development must be strictly grounded in:
 ### Phase 1: Vertical Slice (Claude Code Telemetry & Ingestion)
 
 #### 1.1. `packages/agent-observer` Core
+
 - [ ] Initialize Go module `packages/agent-observer/go.mod` (Go 1.23+).
 - [ ] Implement `internal/config/config.go` resolving environment identity (`IOPlatformUUID` on Darwin, `/etc/machine-id` on Linux, combined with UID to compute `envId = sha256(machine_id + ":" + uid)[:16]`).
 - [ ] Implement `internal/scanner/claudecode.go`:
@@ -82,6 +87,7 @@ All development must be strictly grounded in:
   - Reconnect loop using `github.com/cenkalti/backoff/v4` with seq/ack replay.
 
 #### 1.2. `packages/agent-ingester` Gateway & Store
+
 - [ ] Initialize Go module `packages/agent-ingester/go.mod`.
 - [ ] Implement `internal/store/store.go` and `internal/store/migrations.go` using `github.com/ncruces/go-sqlite3`:
   - Runs pragmas: WAL mode, synchronous NORMAL, busy timeout 5000, foreign keys ON, incremental auto vacuum.
@@ -95,6 +101,7 @@ All development must be strictly grounded in:
   - Unix domain socket listener at `${XDG_RUNTIME_DIR:-/tmp}/agent-status/notify.sock` (mode 0600) emitting `IServerEvent` lines.
 
 #### 1.3. `packages/agent-server` REST & SSE
+
 - [ ] Initialize Go module `packages/agent-server/go.mod`.
 - [ ] Implement `internal/store/queries.go` reading SQLite database read-only.
 - [ ] Implement `internal/stream/subscriber.go`:
@@ -104,6 +111,7 @@ All development must be strictly grounded in:
   - Streaming endpoints: `GET /api/v1/events` (SSE), `GET /ws/events` (WebSocket), `GET /api/v1/agents/:id/live-tail`.
 
 #### 1.4. `packages/ui-web` Initial Dashboard
+
 - [ ] Implement `src/hooks/useEventStream.ts` subscribing to `/api/v1/events` with auto-reconnect and snapshot hydration.
 - [ ] Implement `src/components/AgentCard.tsx` rendering agent status pills, token breakdown, and live timers.
 - [ ] Implement `src/server.ts` with `Bun.serve` hosting the dev server and production assets.
@@ -113,6 +121,7 @@ All development must be strictly grounded in:
 ### Phase 2: Pi Harness & Multi-Host Aggregation
 
 #### 2.1. Pi Discovery & Process Pairing
+
 - [ ] Implement `internal/scanner/pi.go` in `agent-observer`:
   - Scans `${PI_CODING_AGENT_DIR:-~/.pi/agent}/sessions/*/` and decodes directory names.
   - Uses `gopsutil/v4/process` (`libproc` on Darwin, `/proc` on Linux) to enumerate `pi` processes and extract process CWD in sub-millisecond time.
@@ -122,6 +131,7 @@ All development must be strictly grounded in:
   - Extracts Pi `isError` flags and tool call details.
 
 #### 2.2. Git Workspace & Worktree Resolver
+
 - [ ] Implement `internal/git/resolver.go` in `agent-observer`:
   - Resolves canonical root via `git rev-parse --path-format=absolute --git-common-dir`.
   - Normalizes remote origin URLs (`git remote get-url origin`) to `host/owner/repo`.
@@ -129,6 +139,7 @@ All development must be strictly grounded in:
   - Implements thread-safe in-memory cache with 30-second TTL.
 
 #### 2.3. Multi-Host Heartbeat & Staleness Detector
+
 - [ ] Implement observer 10-second heartbeat loop when idle.
 - [ ] Implement ingester background routine flagging environments as `isStale = true` if no heartbeat is received for >30 seconds.
 
@@ -137,6 +148,7 @@ All development must be strictly grounded in:
 ### Phase 3: AI Action Summarizer
 
 #### 3.1. Summarizer Pipeline
+
 - [ ] Implement `internal/summarizer/summarizer.go` in `agent-ingester`:
   - Token-bucket rate limiter via `golang.org/x/time/rate` enforcing 12-second debounce per active agent.
   - Unified multi-provider LLM client via `github.com/mozilla-ai/any-llm-go`.
@@ -153,6 +165,7 @@ All development must be strictly grounded in:
 ### Phase 4: Full Dashboard UI
 
 #### 4.1. Dashboard Views & Interactivity
+
 - [ ] Implement `src/components/Header.tsx`: Fleet overview, active count, attention count, and total fleet cost.
 - [ ] Implement `src/components/AttentionBanner.tsx`: Two-tier banner (`ACT NOW` live alerts with jump-to-card, `REVIEW` for recent exits <2h).
 - [ ] Implement `src/components/ProjectGroup.tsx` and `src/components/EnvironmentGroup.tsx`: Dual-grouping toggle persisted in `localStorage`.
@@ -163,6 +176,7 @@ All development must be strictly grounded in:
 ### Phase 5: Hardening & End-to-End Verification
 
 #### 5.1. Database Pruning & Pagination
+
 - [ ] Implement `internal/store/prune.go` in `agent-ingester`:
   - Hourly retention pruner enforcing 2,000 parent + 500 subagent event budget.
   - Purges `EXITED` agents untouched for >30 days.
@@ -170,6 +184,7 @@ All development must be strictly grounded in:
 - [ ] Implement keyset pagination with `before` cursor on `/api/v1/agents/:id/logs`.
 
 #### 5.2. End-to-End Integration Tests
+
 - [ ] Replay test: Terminate `agent-ingester` while observers are actively streaming, restart ingester, verify 100% replay without frame loss.
 - [ ] PID reuse test: Simulate recycled PID with distinct start timestamps; assert distinct agent rows are created.
 - [ ] Pi republish test: Simulate atomic session file replace; assert cursor detects prefix-hash mismatch and recovers cleanly.
@@ -179,12 +194,14 @@ All development must be strictly grounded in:
 ## 3. Comprehensive Acceptance Criteria
 
 ### Package Build & Quality Gates
+
 - [ ] `just build-all` successfully compiles `air-observer`, `air-ingester`, `air-server` binaries into `packages/*/bin/` and bundles `ui-web`.
 - [ ] `just test-all` executes all unit and integration test suites with zero failures.
 - [ ] Unit test coverage is $\ge 90\%$ across all Go packages.
 - [ ] TypeScript strict mode type-check (`bun x tsc --noEmit`) passes with zero errors.
 
 ### Observer Functionality
+
 - [ ] Accurately discovers Claude Code descriptors under symlinked `~/.claude/sessions` and `~/.local/share/ai-registry/claude-code/sessions`.
 - [ ] Resolves Darwin process CWD via native `libproc` in $<0.1\text{ ms}$ without spawning subprocesses.
 - [ ] Correctly tails nested Claude Code subagent transcripts (`<sessionId>/subagents/*.jsonl`).
@@ -192,6 +209,7 @@ All development must be strictly grounded in:
 - [ ] Replays dropped/unacknowledged frames upon WebSocket reconnection.
 
 ### Ingester & Server Functionality
+
 - [ ] Ingests frames over WebSocket with constant-time Bearer token validation.
 - [ ] Applies 0-ms deterministic state machine accurately classifying `(lifecycle, activity)`.
 - [ ] Computes exact 5-way token usages and dollar costs using the vendored LiteLLM pricing map.
@@ -199,6 +217,7 @@ All development must be strictly grounded in:
 - [ ] `agent-server` cold-resyncs snapshot from SQLite upon connection and broadcasts over SSE / WebSockets.
 
 ### Web Dashboard
+
 - [ ] Renders live updating agent cards without full page refreshes.
 - [ ] Sticky `ACT NOW` alert banner triggers immediately when an agent calls `AskUserQuestion` or hits an unhandled error.
 - [ ] Project grouping view accurately clusters agents working in `.workspaces/...` worktrees under the parent repository origin name.

@@ -35,16 +35,16 @@ It answers five questions without the engineer cycling through terminals:
 
 These are rejected during implementation review. Each has a stated reason and, where applicable, the condition under which it would be reconsidered.
 
-| Non-goal | Reason |
-|---|---|
-| **Codex support** | Deferred by product decision. `HarnessType` does not include it. Revisit after Phase 5. |
-| **OpenCode support** | Deferred by product decision. Its store (`~/.local/share/opencode/opencode.db`) is SQLite, not JSONL, and requires a separate tailer design. Revisit after Phase 5. |
-| **Windows hosts** | Agent liveness uses POSIX process semantics (`signal 0`, `/proc`, native Darwin `libproc`). `platform` is `"darwin" \| "linux"` only. |
-| **Permission-prompt detection** | No reliable on-disk or transcript signal for a *pending* permission prompt exists without intercepting IPC or mutating user settings. Stalled permission checks currently report as `BUSY`. See §11. |
-| **Answering a question from the dashboard** | The UI surfaces blocked agents; the engineer answers in the agent's own terminal. |
-| **Historical BI & multi-month time-series cost reporting** | Real-time usage and live cost roll-ups for active/recent agents are in scope; historical time-series analytics, budget alerting, and financial reporting across months are out of scope. |
-| **Agent control plane** | Out of scope entirely. This is an observability pane, not a remote execution or process management system. |
-| **UI bundle embedding in any Go binary** | Explicit product constraint. `ui-web` is served independently by Bun. |
+| Non-goal                                                   | Reason                                                                                                                                                                                               |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Codex support**                                          | Deferred by product decision. `HarnessType` does not include it. Revisit after Phase 5.                                                                                                              |
+| **OpenCode support**                                       | Deferred by product decision. Its store (`~/.local/share/opencode/opencode.db`) is SQLite, not JSONL, and requires a separate tailer design. Revisit after Phase 5.                                  |
+| **Windows hosts**                                          | Agent liveness uses POSIX process semantics (`signal 0`, `/proc`, native Darwin `libproc`). `platform` is `"darwin" \| "linux"` only.                                                                |
+| **Permission-prompt detection**                            | No reliable on-disk or transcript signal for a _pending_ permission prompt exists without intercepting IPC or mutating user settings. Stalled permission checks currently report as `BUSY`. See §11. |
+| **Answering a question from the dashboard**                | The UI surfaces blocked agents; the engineer answers in the agent's own terminal.                                                                                                                    |
+| **Historical BI & multi-month time-series cost reporting** | Real-time usage and live cost roll-ups for active/recent agents are in scope; historical time-series analytics, budget alerting, and financial reporting across months are out of scope.             |
+| **Agent control plane**                                    | Out of scope entirely. This is an observability pane, not a remote execution or process management system.                                                                                           |
+| **UI bundle embedding in any Go binary**                   | Explicit product constraint. `ui-web` is served independently by Bun.                                                                                                                                |
 
 ---
 
@@ -57,7 +57,26 @@ Everything in this section was verified against a live machine on 2026-09-18 and
 **Session descriptors.** Claude Code writes one JSON descriptor per live session to its `sessions` store directory, named `<pid>.json`:
 
 ```json
-{"pid":10554,"sessionId":"12b36299-805c-4fe0-b1cc-74a588fbf520","cwd":"/Users/agorbatchev/development/dotfiles-installer","startedAt":1789780883485,"procStart":"Sat Sep 19 01:21:23 2026","version":"2.1.277","peerProtocol":1,"peerFeatures":["notify_idle","reply_across_default_dirs","artifact_yield"],"kind":"interactive","entrypoint":"cli","pidDomain":"darwin","messagingSocketPath":"/tmp/cc-socks/10554.sock","name":"dotfiles-installer-e6","nameSource":"derived","nameSince":1789780883485,"status":"busy","updatedAt":1789784534686,"statusUpdatedAt":1789784534686}
+{
+  "pid": 10554,
+  "sessionId": "12b36299-805c-4fe0-b1cc-74a588fbf520",
+  "cwd": "/Users/agorbatchev/development/dotfiles-installer",
+  "startedAt": 1789780883485,
+  "procStart": "Sat Sep 19 01:21:23 2026",
+  "version": "2.1.277",
+  "peerProtocol": 1,
+  "peerFeatures": ["notify_idle", "reply_across_default_dirs", "artifact_yield"],
+  "kind": "interactive",
+  "entrypoint": "cli",
+  "pidDomain": "darwin",
+  "messagingSocketPath": "/tmp/cc-socks/10554.sock",
+  "name": "dotfiles-installer-e6",
+  "nameSource": "derived",
+  "nameSince": 1789780883485,
+  "status": "busy",
+  "updatedAt": 1789784534686,
+  "statusUpdatedAt": 1789784534686
+}
 ```
 
 The descriptor carries a coarse `status` (`busy` and `idle` observed), `statusUpdatedAt`, `cwd`, and a stable `sessionId`.
@@ -103,8 +122,15 @@ The encoding rule from Pi's `session-manager.ts` strips the leading path separat
 **Record types observed.** `session` (header), `message`, `model_change`, `thinking_level_change`, `custom_message`, `custom`, `compaction`, `branch_summary`, `label`, `session_info`.
 
 Entries form a tree via `{id, parentId}`. The first record is the header:
+
 ```json
-{"type":"session","version":3,"id":"01a0b64b-...","timestamp":"2026-09-18T20:53:30.007Z","cwd":"/Users/agorbatchev/development/ai-registry"}
+{
+  "type": "session",
+  "version": 3,
+  "id": "01a0b64b-...",
+  "timestamp": "2026-09-18T20:53:30.007Z",
+  "cwd": "/Users/agorbatchev/development/ai-registry"
+}
 ```
 
 **Message shapes.** `message.role` is one of `user`, `assistant`, `toolResult`. Assistant messages carry `model`, `provider`, `usage` (input, output, cacheRead, cacheWrite, reasoning, cost), and content blocks of type `text`, `thinking`, `toolCall`. Tool results carry `{role:"toolResult", toolCallId, toolName, content, isError, timestamp}`. Pi tool results contain `toolName` directly.
@@ -185,11 +211,13 @@ Runs as a lightweight background daemon on every developer machine. Discovers ru
 #### 4.1.1. Environment Identity
 
 An Environment is identified by **(machine_id + uid)**:
+
 - Darwin `machine_id`: Hardware platform UUID from `IOPlatformExpertDevice` (`IOPlatformUUID`).
 - Linux `machine_id`: `/etc/machine-id` (falling back to `/var/lib/dbus/machine-id`).
 - Unique ID: `env_id = sha256(machine_id + ":" + uid)[:16]`.
 
 Display label resolution (first match wins):
+
 1. `--env <name>` CLI flag
 2. `AI_ENV` environment variable
 3. `environment` in `~/.config/ai-registry/telemetry.json`
@@ -226,6 +254,7 @@ Scan interval: 2 seconds.
 #### 4.1.4. Git Workspace & Worktree Resolver
 
 For each agent's initial working directory:
+
 1. `git rev-parse --path-format=absolute --git-common-dir` determines the shared repository `.git` directory.
 2. Canonical root is the directory containing the shared `.git` folder (or parent if common dir is `.git`).
 3. Project identity (`projectId`):
@@ -363,14 +392,14 @@ Dedicated read-only API and real-time streaming broadcaster.
 
 #### 4.3.2. REST Endpoints
 
-| Method | Path | Description |
-|---|---|---|
-| GET | `/api/v1/status` | Health, environment statuses, active agent count, total fleet spend |
-| GET | `/api/v1/projects` | Grouped projects with active agents and recent agents (<2h) |
-| GET | `/api/v1/environments` | Environments with online/stale status, agent counts, and heartbeats |
-| GET | `/api/v1/agents` | Filterable agent list (`?project=...&environment=...&lifecycle=...&activity=...`) |
-| GET | `/api/v1/agents/:id` | Detailed agent record with full usage, cost, runs, and subagent summary |
-| GET | `/api/v1/agents/:id/logs` | Keyset-paginated events (`?limit=100&before=<event_id>&subagent=<agent_id>`) |
+| Method | Path                      | Description                                                                       |
+| ------ | ------------------------- | --------------------------------------------------------------------------------- |
+| GET    | `/api/v1/status`          | Health, environment statuses, active agent count, total fleet spend               |
+| GET    | `/api/v1/projects`        | Grouped projects with active agents and recent agents (<2h)                       |
+| GET    | `/api/v1/environments`    | Environments with online/stale status, agent counts, and heartbeats               |
+| GET    | `/api/v1/agents`          | Filterable agent list (`?project=...&environment=...&lifecycle=...&activity=...`) |
+| GET    | `/api/v1/agents/:id`      | Detailed agent record with full usage, cost, runs, and subagent summary           |
+| GET    | `/api/v1/agents/:id/logs` | Keyset-paginated events (`?limit=100&before=<event_id>&subagent=<agent_id>`)      |
 
 #### 4.3.3. Streaming Endpoints
 
@@ -505,19 +534,19 @@ agent-status/
 
 ### 5.2. Verified Go Library Matrix
 
-| Package | Purpose | Go Module / Library | Justification & Benchmark Reference |
-|---|---|---|---|
-| `agent-observer` | Process & CWD Introspection | `github.com/shirou/gopsutil/v4/process` | Pure-Go Darwin `libproc` (0.025 ms/call vs 50ms `lsof`), `/proc` on Linux, `CreateTime()` PID reuse guard. |
-| `agent-observer` | File Watching | `github.com/fsnotify/fsnotify` | De facto Go filesystem watcher for session directories and new file discovery. |
-| `agent-observer` | WebSocket Client & Backoff | `github.com/coder/websocket` + `github.com/cenkalti/backoff/v4` | Zero-allocation WebSocket framing, context-aware dialer, exponential jitter backoff. |
-| `agent-observer` | Unacknowledged Ring Buffer | `github.com/gammazero/deque` | Thread-safe circular ring buffer for 1,000 seq/ack unacknowledged frames. |
-| `agent-ingester` | WebSocket Server | `github.com/coder/websocket` | High-throughput server binding with bearer token auth on connection upgrade. |
-| `agent-ingester` | Unified LLM Summarizer | `github.com/mozilla-ai/any-llm-go` | Unified completion client wrapping OpenAI-compatible APIs (LiteLLM proxy `https://litellm.example.com`), Google Gemini, and Anthropic Claude. |
-| `agent-ingester` | Rate Limiter | `golang.org/x/time/rate` | 12-second debouncing token bucket per active agent. |
-| `agent-ingester` | SQLite Store & Migrations | `github.com/ncruces/go-sqlite3` | Pure-Go, Cgo-free Wasm-based SQLite driver with WAL mode, `PRAGMA user_version` migrations, and cross-compilation support. |
-| `agent-server` | HTTP Routing & Middleware | `github.com/go-chi/chi/v5` + `github.com/rs/cors` | 100% standard library `net/http` router with zero external abstraction overhead. |
-| `agent-server` | SSE & WebSockets | `github.com/tmaxmax/go-sse` + `github.com/coder/websocket` | Native HTTP event flushing and WebSocket multiplexing. |
-| All CLIs | CLI & Documentation | `github.com/spf13/cobra` + `github.com/spf13/pflag` | Industry-standard CLI structure with `doc.GenMarkdownTree` for automated command docs. |
+| Package          | Purpose                     | Go Module / Library                                             | Justification & Benchmark Reference                                                                                                       |
+| ---------------- | --------------------------- | --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `agent-observer` | Process & CWD Introspection | `github.com/shirou/gopsutil/v4/process`                         | Pure-Go Darwin `libproc` (0.025 ms/call vs 50ms `lsof`), `/proc` on Linux, `CreateTime()` PID reuse guard.                                |
+| `agent-observer` | File Watching               | `github.com/fsnotify/fsnotify`                                  | De facto Go filesystem watcher for session directories and new file discovery.                                                            |
+| `agent-observer` | WebSocket Client & Backoff  | `github.com/coder/websocket` + `github.com/cenkalti/backoff/v4` | Zero-allocation WebSocket framing, context-aware dialer, exponential jitter backoff.                                                      |
+| `agent-observer` | Unacknowledged Ring Buffer  | `github.com/gammazero/deque`                                    | Thread-safe circular ring buffer for 1,000 seq/ack unacknowledged frames.                                                                 |
+| `agent-ingester` | WebSocket Server            | `github.com/coder/websocket`                                    | High-throughput server binding with bearer token auth on connection upgrade.                                                              |
+| `agent-ingester` | Unified LLM Summarizer      | `github.com/mozilla-ai/any-llm-go`                              | Unified completion client wrapping OpenAI-compatible APIs (LiteLLM proxy `https://litellm.example.com`), Google Gemini, and Anthropic Claude. |
+| `agent-ingester` | Rate Limiter                | `golang.org/x/time/rate`                                        | 12-second debouncing token bucket per active agent.                                                                                       |
+| `agent-ingester` | SQLite Store & Migrations   | `github.com/ncruces/go-sqlite3`                                 | Pure-Go, Cgo-free Wasm-based SQLite driver with WAL mode, `PRAGMA user_version` migrations, and cross-compilation support.                |
+| `agent-server`   | HTTP Routing & Middleware   | `github.com/go-chi/chi/v5` + `github.com/rs/cors`               | 100% standard library `net/http` router with zero external abstraction overhead.                                                          |
+| `agent-server`   | SSE & WebSockets            | `github.com/tmaxmax/go-sse` + `github.com/coder/websocket`      | Native HTTP event flushing and WebSocket multiplexing.                                                                                    |
+| All CLIs         | CLI & Documentation         | `github.com/spf13/cobra` + `github.com/spf13/pflag`             | Industry-standard CLI structure with `doc.GenMarkdownTree` for automated command docs.                                                    |
 
 ---
 
@@ -537,12 +566,12 @@ export type HarnessType = "claude-code" | "pi" | "codex" | "opencode";
 export type AgentPhase = "planning" | "editing" | "testing" | "debugging" | "investigating";
 
 export interface IEnvironmentInfo {
-  id: string;          // sha256(machine_id + ":" + uid)[:16]
-  label: string;       // Mutable display name: e.g. "work-macbook"
+  id: string; // sha256(machine_id + ":" + uid)[:16]
+  label: string; // Mutable display name: e.g. "work-macbook"
   hostname: string;
   platform: "darwin" | "linux";
   user: string;
-  isStale: boolean;    // true if heartbeat > 30s
+  isStale: boolean; // true if heartbeat > 30s
   lastHeartbeatAt: number;
 }
 
@@ -555,8 +584,8 @@ export interface IWorkspaceInfo {
 }
 
 export interface IProjectInfo {
-  id: string;          // Normalized origin e.g. "github.com/alexgorbatchev/ai-registry"
-  name: string;        // Display name e.g. "ai-registry"
+  id: string; // Normalized origin e.g. "github.com/alexgorbatchev/ai-registry"
+  name: string; // Display name e.g. "ai-registry"
   canonicalRoot: string;
 }
 
@@ -566,12 +595,12 @@ export interface ITokenUsage {
   cacheRead: number;
   cacheWrite: number;
   reasoning: number;
-  total: number;       // Sum of all 5 components
+  total: number; // Sum of all 5 components
 }
 
 export interface ICostInfo {
   currency: "USD";
-  total: number;       // Direct + subagent cost in USD
+  total: number; // Direct + subagent cost in USD
   isEstimated: boolean;
 }
 
@@ -586,13 +615,13 @@ export interface IRunInfo {
 export interface IAgentActivity {
   lifecycle: LifecycleState;
   activity: ActivityState;
-  title: string;             // Harness rolling title or prompt summary
-  action: string;            // LLM generated 1-sentence current action
+  title: string; // Harness rolling title or prompt summary
+  action: string; // LLM generated 1-sentence current action
   actionStale: boolean;
   phase: AgentPhase | null;
   activeTool: string | null;
   activeTarget: string | null;
-  question: string | null;   // Active prompt when WAITING_QUESTION
+  question: string | null; // Active prompt when WAITING_QUESTION
   lastThinkingExcerpt: string | null;
   lastError: string | null;
   usage: ITokenUsage;
@@ -604,7 +633,7 @@ export interface IAgentActivity {
 }
 
 export interface IAgentState {
-  id: string;                // `${envId}:${harness}:${sessionId}`
+  id: string; // `${envId}:${harness}:${sessionId}`
   sessionId: string;
   harness: HarnessType;
   environment: IEnvironmentInfo;
@@ -624,7 +653,7 @@ export interface ITelemetryFrame {
   environment: IEnvironmentInfo;
   agentId: string;
   sessionId: string;
-  subagentId: string | null;  // Set if event belongs to a subagent
+  subagentId: string | null; // Set if event belongs to a subagent
   pid: number;
   harness: HarnessType;
   harnessVersion: string;
@@ -779,26 +808,28 @@ CREATE TABLE IF NOT EXISTS observer_cursors (
 
 ## 8. Security Model
 
-| Surface | Control |
-|---|---|
-| Observer to Ingester | `ws://` over private overlay network (Tailscale / WireGuard). Ingester binds overlay interface only. Bearer token on upgrade compared with `crypto/subtle.ConstantTimeCompare`. |
-| Ingester Notify Socket | Unix domain socket, mode `0600`, under `${XDG_RUNTIME_DIR:-/tmp}/agent-status/`. |
-| Server API & Streams | Binds `127.0.0.1:4502` and overlay interface. Bearer token required on all REST, SSE, and WS routes. CORS restricted to explicit allowlist. |
-| Database | Mode `0600`. Ingester is sole read-write connection; Server is strictly read-only. |
-| AI Summarizer Egress | Only `lastPrompt`, active tool names/targets, and truncated thought excerpts leave the network to LiteLLM / Gemini / Anthropic. File contents, tool outputs, and command results are never sent. `--no-summarize` disables all egress. |
-| Credential Protection | Claude Code `.key` files are never parsed, read, or shipped. `AGENT_STATUS_TOKEN` is never persisted in cursor files or database logs. |
+| Surface                | Control                                                                                                                                                                                                                                |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Observer to Ingester   | `ws://` over private overlay network (Tailscale / WireGuard). Ingester binds overlay interface only. Bearer token on upgrade compared with `crypto/subtle.ConstantTimeCompare`.                                                        |
+| Ingester Notify Socket | Unix domain socket, mode `0600`, under `${XDG_RUNTIME_DIR:-/tmp}/agent-status/`.                                                                                                                                                       |
+| Server API & Streams   | Binds `127.0.0.1:4502` and overlay interface. Bearer token required on all REST, SSE, and WS routes. CORS restricted to explicit allowlist.                                                                                            |
+| Database               | Mode `0600`. Ingester is sole read-write connection; Server is strictly read-only.                                                                                                                                                     |
+| AI Summarizer Egress   | Only `lastPrompt`, active tool names/targets, and truncated thought excerpts leave the network to LiteLLM / Gemini / Anthropic. File contents, tool outputs, and command results are never sent. `--no-summarize` disables all egress. |
+| Credential Protection  | Claude Code `.key` files are never parsed, read, or shipped. `AGENT_STATUS_TOKEN` is never persisted in cursor files or database logs.                                                                                                 |
 
 ---
 
 ## 9. Implementation Order
 
 ### Phase 0: Repository Foundation & Shared Schemas
+
 - [ ] Root `justfile` with `build-all`, `test-all`, `lint-all`.
 - [ ] TypeScript schemas in `packages/ui-web/src/types/index.ts`.
 - [ ] Go struct models in shared internal packages.
 - [ ] Vendored LiteLLM pricing seed file in `packages/agent-ingester/internal/pricing/models.json`.
 
 ### Phase 1: Vertical Slice (Claude Code + Host Telemetry)
+
 - [ ] Observer: Environment ID resolver (`IOPlatformUUID` / `/etc/machine-id` + `uid`).
 - [ ] Observer: Claude Code descriptor scanner and process liveness check (`Process.CreateTime()`).
 - [ ] Observer: Transcript resolver with symlink evaluation and slug encoding.
@@ -815,6 +846,7 @@ CREATE TABLE IF NOT EXISTS observer_cursors (
 - [ ] Verification: Live Claude Code run with subagents transitions `RUNNING/BUSY` to `RUNNING/IDLE` to `EXITED/IDLE` with accurate usage and cost.
 
 ### Phase 2: Pi Harness & Multi-Host Aggregation
+
 - [ ] Wave 1 Investigation: Execute `docs/internal/tickets/2026-09-18-wave-1-investigate-prior-art-agent-liveness-and-session-pairing.md`.
 - [ ] Observer: Pi session and process scanner via `gopsutil/v4/process` (`libproc` Darwin, `/proc` Linux), implementing verified process-to-session pairing.
 - [ ] Observer: Git worktree resolver normalizing project origin URLs with thread-safe TTL cache.
@@ -823,11 +855,13 @@ CREATE TABLE IF NOT EXISTS observer_cursors (
 - [ ] Verification: Multi-host aggregation with agents running on Darwin and Linux over overlay network.
 
 ### Phase 3: AI Action Summarizer
+
 - [ ] Ingester: Multi-provider client via `github.com/mozilla-ai/any-llm-go` supporting OpenAI-compatible endpoints (LiteLLM proxy e.g. `https://litellm.example.com` via `LITELLM_BASE_URL` and `LITELLM_API_KEY` / `LITELLM_KEY`), Google Gemini, and Anthropic Claude.
 - [ ] Ingester: 12-second debouncer (`golang.org/x/time/rate`) and event trigger scheduler.
 - [ ] Ingester: `--no-summarize` toggle (and `AIR_NO_SUMMARIZE=1`) verification.
 
 ### Phase 4: Full Dashboard UI
+
 - [ ] UI: Two-tier Attention Banner (`ACT NOW` live alerts vs `REVIEW` recent exits).
 - [ ] UI: Dual grouping views (By Project with project cost totals, By Environment with machine pills).
 - [ ] UI: Live Execution Drawer with streaming timeline and collapsible subagent traces.
@@ -835,6 +869,7 @@ CREATE TABLE IF NOT EXISTS observer_cursors (
 - [ ] UI: Stale environment and disconnected status indicators.
 
 ### Phase 5: Hardening & Retention
+
 - [ ] Ingester: Retention pruner enforcing per-agent event budgets (2,000 parent + 500/subagent) and 30-day agent cleanup.
 - [ ] Server: Keyset pagination on `/api/v1/agents/:id/logs`.
 - [ ] Reconnection resilience test: Ingester restart mid-run with zero frame loss.
@@ -854,7 +889,7 @@ CREATE TABLE IF NOT EXISTS observer_cursors (
 
 ## 11. Known Gaps
 
-1. **Permission-prompt detection**: No signal for a *pending* permission prompt exists in transcript logs. Investigated under Wave 1 (`docs/internal/tickets/2026-09-18-wave-1-investigate-prior-art-agent-liveness-and-session-pairing.md`). Until resolved, agents awaiting permission confirmation report as `BUSY`.
+1. **Permission-prompt detection**: No signal for a _pending_ permission prompt exists in transcript logs. Investigated under Wave 1 (`docs/internal/tickets/2026-09-18-wave-1-investigate-prior-art-agent-liveness-and-session-pairing.md`). Until resolved, agents awaiting permission confirmation report as `BUSY`.
 2. **Pi question tool name**: To be verified against live Pi sessions during Wave 1 investigation.
 3. **Claude Code IPC socket unused**: Socket `/tmp/cc-socks/<pid>.sock` and `.key` credentials remain unparsed in favor of file-based transcript observation.
 4. **Claude Code hooks not configured**: Global hooks (`settings.json`) avoided to prevent modifying user configuration and to maintain parity with non-hook harnesses.

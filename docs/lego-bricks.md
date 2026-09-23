@@ -16,22 +16,22 @@ Every building block in this document was manually reviewed by inspecting source
 
 The following source checkouts are retained on disk:
 
-| Repository / Module | Disk Location | Key Subdirectories & Files Inspected |
-|---|---|---|
-| `github.com/shirou/gopsutil` | `.tmp/gitsnip/gopsutil/process` | `process_darwin.go`, `process_linux.go`, `process.go` |
-| `github.com/ProjAnvil/claude-agent-sdk-golang` | `.tmp/gitsnip/claude-agent-sdk-golang` | `sessions.go`, `parser.go`, `types.go` |
-| `github.com/sonnes/chitragupt` | `.tmp/gitsnip/chitragupt` | `reader/claude/claude.go`, `core/transcript.go`, `core/session_entry.go` |
-| `github.com/bpowers/go-claudecode` | `.tmp/gitsnip/go-claudecode` | `transcript.go`, `messages.go`, `sessions.go` |
-| `github.com/janekbaraniewski/openusage` | `.tmp/gitsnip/openusage/internal` | `detect/claude_code.go`, `providers/claude_code/`, `providers/pi/` |
-| `github.com/valpere/session-indexer` | `.tmp/gitsnip/session-indexer` | `internal/mine/parse.go`, `internal/mine/mine.go` |
-| `github.com/robzolkos/claude-session-export` | `.tmp/gitsnip/claude-session-export` | `internal/session/discover.go`, `internal/session/parse.go` |
-| `github.com/nicknisi/sessions` | `.tmp/gitsnip/nicknisi-sessions/src` | `pi-tree.ts`, `opencode.ts`, `report/parsers/` |
-| `github.com/neochoon/agenthud` | `.tmp/gitsnip/agenthud` | `src/data/sessionLiveness.ts`, `src/data/providers/claude.ts` |
-| `github.com/KyleAMathews/claude-code-ui` | `.tmp/gitsnip/claude-code-ui` | `packages/daemon/src/status-machine.ts`, `summarizer.ts` |
-| `github.com/joe-re/eyes-on-claude-code` | `.tmp/gitsnip/eyes-on-claude-code` | `src-tauri/src/events.rs` |
-| `github.com/markojak/harness` | `.tmp/gitsnip/harness` | `packages/daemon/src/providers/` |
-| `github.com/nxadm/tail` | `.tmp/gitsnip/tail` | `tail.go`, `watch/` |
-| `github.com/Magic-Man-us/cc-session-core` | `.tmp/gitsnip/cc-session-core` | `src/cc_session_core/models.py`, `tests/fixtures/` |
+| Repository / Module                            | Disk Location                          | Key Subdirectories & Files Inspected                                     |
+| ---------------------------------------------- | -------------------------------------- | ------------------------------------------------------------------------ |
+| `github.com/shirou/gopsutil`                   | `.tmp/gitsnip/gopsutil/process`        | `process_darwin.go`, `process_linux.go`, `process.go`                    |
+| `github.com/ProjAnvil/claude-agent-sdk-golang` | `.tmp/gitsnip/claude-agent-sdk-golang` | `sessions.go`, `parser.go`, `types.go`                                   |
+| `github.com/sonnes/chitragupt`                 | `.tmp/gitsnip/chitragupt`              | `reader/claude/claude.go`, `core/transcript.go`, `core/session_entry.go` |
+| `github.com/bpowers/go-claudecode`             | `.tmp/gitsnip/go-claudecode`           | `transcript.go`, `messages.go`, `sessions.go`                            |
+| `github.com/janekbaraniewski/openusage`        | `.tmp/gitsnip/openusage/internal`      | `detect/claude_code.go`, `providers/claude_code/`, `providers/pi/`       |
+| `github.com/valpere/session-indexer`           | `.tmp/gitsnip/session-indexer`         | `internal/mine/parse.go`, `internal/mine/mine.go`                        |
+| `github.com/robzolkos/claude-session-export`   | `.tmp/gitsnip/claude-session-export`   | `internal/session/discover.go`, `internal/session/parse.go`              |
+| `github.com/nicknisi/sessions`                 | `.tmp/gitsnip/nicknisi-sessions/src`   | `pi-tree.ts`, `opencode.ts`, `report/parsers/`                           |
+| `github.com/neochoon/agenthud`                 | `.tmp/gitsnip/agenthud`                | `src/data/sessionLiveness.ts`, `src/data/providers/claude.ts`            |
+| `github.com/KyleAMathews/claude-code-ui`       | `.tmp/gitsnip/claude-code-ui`          | `packages/daemon/src/status-machine.ts`, `summarizer.ts`                 |
+| `github.com/joe-re/eyes-on-claude-code`        | `.tmp/gitsnip/eyes-on-claude-code`     | `src-tauri/src/events.rs`                                                |
+| `github.com/markojak/harness`                  | `.tmp/gitsnip/harness`                 | `packages/daemon/src/providers/`                                         |
+| `github.com/nxadm/tail`                        | `.tmp/gitsnip/tail`                    | `tail.go`, `watch/`                                                      |
+| `github.com/Magic-Man-us/cc-session-core`      | `.tmp/gitsnip/cc-session-core`         | `src/cc_session_core/models.py`, `tests/fixtures/`                       |
 
 ---
 
@@ -40,6 +40,7 @@ The following source checkouts are retained on disk:
 ### 2.1. Process Introspection & Darwin/Linux CWD Resolution
 
 #### Chosen Building Block: `github.com/shirou/gopsutil/v4/process`
+
 - **Location on Disk**: `.tmp/gitsnip/gopsutil/process`
 - **Adoption**: 12k+ stars, standard cross-platform system metrics library in Go.
 - **Why Chosen**:
@@ -57,6 +58,7 @@ The following source checkouts are retained on disk:
 ### 2.2. Claude Code Discovery & Transcript Parsers
 
 #### Direct Prior Art in Go:
+
 1. **Session & Transcript Parser**: `github.com/sonnes/chitragupt` & `github.com/ProjAnvil/claude-agent-sdk-golang`
    - **Locations on Disk**: `.tmp/gitsnip/chitragupt/reader/claude/claude.go` and `.tmp/gitsnip/claude-agent-sdk-golang/sessions.go`
    - **Why Chosen**: Provides a complete Go struct model mirroring the exact Claude Code JSONL transcript record types:
@@ -92,6 +94,7 @@ The following source checkouts are retained on disk:
 ### 2.3. Pi Session Discovery & Tree Parsing
 
 #### Reference Prior Art: `github.com/nicknisi/sessions` & `github.com/janekbaraniewski/openusage`
+
 - **Locations on Disk**: `.tmp/gitsnip/nicknisi-sessions/src/pi-tree.ts` and `.tmp/gitsnip/openusage/internal/providers/pi/session.go`
 - **Why Chosen**:
   - Authoritatively documents and implements Pi's tree structure where entries contain `id` and `parentId`.
@@ -121,6 +124,7 @@ The following source checkouts are retained on disk:
 ### 2.4. File Watching & Prefix-Hash Byte-Offset Tailer
 
 #### Chosen Libraries: `github.com/fsnotify/fsnotify` + Custom Atomic Cursor Engine
+
 - **Location on Disk**: `.tmp/gitsnip/tail` (reference implementation)
 - **Adoption**: `fsnotify` is the standard Go filesystem event watcher (10k+ stars).
 - **Implementation Strategy**:
@@ -137,6 +141,7 @@ The following source checkouts are retained on disk:
 ### 2.5. Git Root & Worktree Resolver
 
 #### Chosen Building Block: Standard Library `os/exec` + In-Memory Mutex TTL Cache
+
 - **Adoption**: Standard Library (`os/exec`, `sync.RWMutex`).
 - **Why Chosen**:
   - Branch resolution for Claude Code requires zero subprocesses because `gitBranch` is present on every transcript line.
@@ -151,6 +156,7 @@ The following source checkouts are retained on disk:
 ### 2.6. Observer-to-Ingester WebSocket Transport
 
 #### Chosen Building Blocks:
+
 1. **WebSocket Framing**: `github.com/coder/websocket` (formerly `nhooyr.io/websocket`)
    - **Adoption**: 5k+ stars. Modern, context-first, zero-allocation Go WebSocket client/server.
    - **Features**: Custom upgrade HTTP headers (`Authorization: Bearer <token>`), native Ping/Pong, structured message reader/writer.
@@ -168,6 +174,7 @@ The following source checkouts are retained on disk:
 ### 3.1. Gateway & Deterministic Classifier
 
 #### Chosen Building Blocks:
+
 1. **WebSocket Ingest Server**: `github.com/coder/websocket`
    - Binds exclusively to the private overlay network interface IP.
    - Validates Bearer token using constant-time comparison: `crypto/subtle.ConstantTimeCompare([]byte(token), []byte(expected)) == 1`.
@@ -188,6 +195,7 @@ The following source checkouts are retained on disk:
 ### 3.2. Debounced AI Summarizer
 
 #### Chosen Building Blocks:
+
 1. **Unified Multi-Provider Completion Client**: `github.com/mozilla-ai/any-llm-go`
    - **Adoption**: Mozilla.ai open-source Go library providing normalized multi-provider interfaces.
    - **Providers Configured**:
@@ -203,6 +211,7 @@ The following source checkouts are retained on disk:
 ### 3.3. SQLite Store & Migrations
 
 #### Chosen Building Block: `github.com/ncruces/go-sqlite3`
+
 - **Adoption**: Modern pure-Go / Wasm-based SQLite driver providing complete Cgo-free execution across Darwin and Linux.
 - **Why Chosen**: Eliminates Cgo build toolchain requirements and cross-compilation headaches while supporting native WAL mode, high concurrency, and standard `database/sql` interfaces.
 - **Connection Configuration**:
@@ -234,6 +243,7 @@ The following source checkouts are retained on disk:
 ### 3.4. Ingester-to-Server IPC Notify Publisher
 
 #### Chosen Building Block: Standard Library `net.Listen("unix", ...)`
+
 - **Socket Path**: `${XDG_RUNTIME_DIR:-/tmp}/agent-status/notify.sock` (permissions `0600`).
 - **Protocol**: Newline-delimited JSON envelopes (`IServerEvent`).
 - **Resilience**: Non-blocking broadcast channel per subscriber; drops and closes connection if client buffer is saturated for $>2$ seconds.
@@ -245,6 +255,7 @@ The following source checkouts are retained on disk:
 ### 4.1. HTTP API & CORS
 
 #### Chosen Building Blocks:
+
 1. **HTTP Router**: `github.com/go-chi/chi/v5`
    - **Adoption**: 18k+ stars, 100% compatible with `net/http` standard handlers.
    - **Endpoints**:
@@ -262,6 +273,7 @@ The following source checkouts are retained on disk:
 ### 4.2. Streaming Broadcaster (SSE & WebSockets)
 
 #### Chosen Building Blocks:
+
 1. **Server-Sent Events (SSE)**: `github.com/tmaxmax/go-sse` or native `http.Flusher`
    - Broadcasts `snapshot` (synthesized from SQLite on connect), `agent_upsert`, `agent_removed`, `environment_upsert`, and `log_append`.
    - Sends SSE heartbeat comment every 15 seconds (`: heartbeat\n\n`).
@@ -273,6 +285,7 @@ The following source checkouts are retained on disk:
 ## 5. CLI Architecture & Tooling
 
 ### Chosen Building Blocks: `github.com/spf13/cobra` + `github.com/spf13/pflag`
+
 - **Adoption**: 44k+ stars, industry standard Go CLI framework.
 - **Used In**: `cmd/air-observer/main.go`, `cmd/air-ingester/main.go`, `cmd/air-server/main.go`.
 - **Help Tree Generation**: `github.com/spf13/cobra/doc` generates structured markdown command trees, enabling `just help` to render full CLI surfaces.
