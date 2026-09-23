@@ -41,6 +41,7 @@ const markdownComponents = {
 export function LogFrameItem({ frame }: ILogFrameItemProps): React.JSX.Element {
   const isSubagent = Boolean(frame.subagentId);
   const isUser = (frame.data.role === "user" || frame.eventType === "turn_start") && frame.eventType !== "tool_result";
+  // Intermediate tool-use turn_end frames render as API RESPONSE matching air-debug spec (#50, #66, #82)
   const isIntermediateToolTurnEnd =
     frame.eventType === "turn_end" &&
     (frame.data.stopReason === "tool_use" ||

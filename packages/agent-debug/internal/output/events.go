@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/db"
 	"github.com/olekukonko/tablewriter"
 )
@@ -79,12 +80,27 @@ func FormatEventSummary(rec db.EventRecord) string {
 		return "run exited"
 
 	case "turn_end":
-		if rec.Data.Usage != nil {
-			tokens := rec.Data.Usage.Total
+		isIntermediate := IsIntermediateToolTurnEnd(rec)
+		usage := rec.Data.Usage
+		if usage == nil && rec.DataJSON != "" {
+			var d types.TelemetryFrameData
+			if err := json.Unmarshal([]byte(rec.DataJSON), &d); err == nil && d.Usage != nil {
+				usage = d.Usage
+			}
+		}
+
+		if usage != nil {
+			tokens := usage.Total
 			if tokens == 0 {
-				tokens = rec.Data.Usage.Input + rec.Data.Usage.Output
+				tokens = usage.Input + usage.Output
+			}
+			if isIntermediate {
+				return fmt.Sprintf("(api_response) tokens=%d", tokens)
 			}
 			return fmt.Sprintf("tokens=%d", tokens)
+		}
+		if isIntermediate {
+			return "(api_response)"
 		}
 		return "turn ended"
 
@@ -180,6 +196,44 @@ func FormatEventSummary(rec db.EventRecord) string {
 	}
 }
 
+// IsIntermediateToolTurnEnd reports whether a turn_end event stopped for tool use.
+func IsIntermediateToolTurnEnd(rec db.EventRecord) bool {
+	if rec.EventType != "turn_end" {
+		return false
+	}
+	var reason string
+	if rec.Data.StopReason != nil {
+		reason = *rec.Data.StopReason
+	} else if rec.DataJSON != "" {
+		var raw map[string]interface{}
+		if err := json.Unmarshal([]byte(rec.DataJSON), &raw); err == nil {
+			if r, ok := raw["stopReason"].(string); ok {
+				reason = r
+			} else if r, ok := raw["stop_reason"].(string); ok {
+				reason = r
+			}
+		}
+	}
+	switch reason {
+	case "tool_use", "toolUse", "tool_calls", "tool_call":
+		return true
+	default:
+		return false
+	}
+}
+
+// FormatEventLabel returns the canonical display label for a telemetry event according to the UI/CLI specification
+// (e.g. "API RESPONSE" for intermediate tool turns, "USER PROMPT" for user messages, or the event type).
+func FormatEventLabel(rec db.EventRecord) string {
+	if IsIntermediateToolTurnEnd(rec) {
+		return "API RESPONSE"
+	}
+	if (rec.EventType == "turn_start" || (rec.Data.Role != nil && *rec.Data.Role == "user")) && rec.EventType != "tool_result" {
+		return "USER PROMPT"
+	}
+	return rec.EventType
+}
+
 // RenderEventsTable writes events in tabular format (human) or key-value format (agent).
 func RenderEventsTable(w io.Writer, events []db.EventRecord, agentMode bool) error {
 	if agentMode {
@@ -210,10 +264,14 @@ func RenderEventsTable(w io.Writer, events []db.EventRecord, agentMode bool) err
 			subagentStr = *rec.SubagentID
 		}
 		summary := FormatEventSummary(rec)
+		eventType := rec.EventType
+		if IsIntermediateToolTurnEnd(rec) {
+			eventType = "turn_end (API RESPONSE)"
+		}
 		_ = table.Append([]string{
 			fmt.Sprintf("%d", rec.ID),
 			tsUTC,
-			rec.EventType,
+			eventType,
 			subagentStr,
 			summary,
 		})
@@ -270,7 +328,11 @@ func RenderEventDetail(w io.Writer, rec db.EventRecord, agentMode bool) error {
 	if rec.PID > 0 {
 		_, _ = fmt.Fprintf(w, "PID:             %d\n", rec.PID)
 	}
-	_, _ = fmt.Fprintf(w, "Event Type:      %s\n", rec.EventType)
+	eventType := rec.EventType
+	if IsIntermediateToolTurnEnd(rec) {
+		eventType = "turn_end (API RESPONSE)"
+	}
+	_, _ = fmt.Fprintf(w, "Event Type:      %s\n", eventType)
 	_, _ = fmt.Fprintf(w, "Timestamp:       %s UTC (%d)\n", tsUTC, rec.Timestamp)
 	_, _ = fmt.Fprintf(w, "Subagent:        %s\n", subagentStr)
 	_, _ = fmt.Fprintf(w, "Summary:         %s\n", summary)

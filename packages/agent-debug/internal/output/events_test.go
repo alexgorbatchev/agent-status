@@ -51,6 +51,99 @@ func TestFormatEventSummary(t *testing.T) {
 		}
 	})
 
+	t.Run("turn_end intermediate tool-use with usage", func(t *testing.T) {
+		toolReasons := []string{"tool_use", "toolUse", "tool_calls", "tool_call"}
+		for _, reason := range toolReasons {
+			t.Run(reason, func(t *testing.T) {
+				rec := db.EventRecord{
+					EventType: "turn_end",
+					Data: types.TelemetryFrameData{
+						StopReason: strPtr(reason),
+						Usage:      &types.ITokenUsage{Total: 1500},
+					},
+				}
+				if !IsIntermediateToolTurnEnd(rec) {
+					t.Errorf("expected IsIntermediateToolTurnEnd=true for stopReason=%s", reason)
+				}
+				summary := FormatEventSummary(rec)
+				if summary != "(api_response) tokens=1500" {
+					t.Errorf("got %q, want '(api_response) tokens=1500'", summary)
+				}
+				if label := FormatEventLabel(rec); label != "API RESPONSE" {
+					t.Errorf("got %q, want 'API RESPONSE'", label)
+				}
+			})
+		}
+	})
+
+	t.Run("turn_end intermediate tool-use without usage", func(t *testing.T) {
+		rec := db.EventRecord{
+			EventType: "turn_end",
+			Data: types.TelemetryFrameData{
+				StopReason: strPtr("tool_use"),
+			},
+		}
+		if !IsIntermediateToolTurnEnd(rec) {
+			t.Errorf("expected IsIntermediateToolTurnEnd=true")
+		}
+		summary := FormatEventSummary(rec)
+		if summary != "(api_response)" {
+			t.Errorf("got %q, want '(api_response)'", summary)
+		}
+		if label := FormatEventLabel(rec); label != "API RESPONSE" {
+			t.Errorf("got %q, want 'API RESPONSE'", label)
+		}
+	})
+
+	t.Run("turn_end intermediate tool-use from DataJSON", func(t *testing.T) {
+		rec := db.EventRecord{
+			EventType: "turn_end",
+			DataJSON:  `{"stopReason": "tool_calls", "usage": {"total": 3500}}`,
+		}
+		if !IsIntermediateToolTurnEnd(rec) {
+			t.Errorf("expected IsIntermediateToolTurnEnd=true for DataJSON")
+		}
+		summary := FormatEventSummary(rec)
+		if summary != "(api_response) tokens=3500" {
+			t.Errorf("got %q, want '(api_response) tokens=3500'", summary)
+		}
+	})
+
+	t.Run("turn_end terminal stop reasons", func(t *testing.T) {
+		terminalReasons := []*string{
+			strPtr("end_turn"),
+			strPtr("max_tokens"),
+			strPtr("stop_sequence"),
+			strPtr("refusal"),
+			nil,
+		}
+		for _, reason := range terminalReasons {
+			name := "nil"
+			if reason != nil {
+				name = *reason
+			}
+			t.Run(name, func(t *testing.T) {
+				rec := db.EventRecord{
+					EventType: "turn_end",
+					Data: types.TelemetryFrameData{
+						StopReason: reason,
+						Usage:      &types.ITokenUsage{Total: 2000},
+					},
+				}
+				if IsIntermediateToolTurnEnd(rec) {
+					t.Errorf("expected IsIntermediateToolTurnEnd=false for %s", name)
+				}
+				summary := FormatEventSummary(rec)
+				if summary != "tokens=2000" {
+					t.Errorf("got %q, want 'tokens=2000'", summary)
+				}
+				if label := FormatEventLabel(rec); label != "turn_end" {
+					t.Errorf("got %q, want 'turn_end'", label)
+				}
+			})
+		}
+	})
+
 	t.Run("tool_result success", func(t *testing.T) {
 		isErr := false
 		exitCode := 0
@@ -345,6 +438,46 @@ func TestRenderEventsTable(t *testing.T) {
 		}
 	})
 
+	t.Run("intermediate tool turn_end renders API RESPONSE badge", func(t *testing.T) {
+		turnEndEvents := []db.EventRecord{
+			{
+				ID:        18590,
+				SessionID: "ses-1",
+				AgentID:   "env:pi:ses-1",
+				EventType: "turn_end",
+				Timestamp: 1758490295000,
+				Data: types.TelemetryFrameData{
+					StopReason: strPtr("tool_use"),
+					Usage:      &types.ITokenUsage{Total: 4200},
+				},
+			},
+		}
+
+		var bufHuman bytes.Buffer
+		if err := RenderEventsTable(&bufHuman, turnEndEvents, false); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		humanOut := bufHuman.String()
+		if !strings.Contains(humanOut, "turn_end (API RESPONSE)") {
+			t.Errorf("expected 'turn_end (API RESPONSE)' in human table, got: %s", humanOut)
+		}
+		if !strings.Contains(humanOut, "(api_response) tokens=4200") {
+			t.Errorf("expected '(api_response) tokens=4200' in human table summary, got: %s", humanOut)
+		}
+
+		var bufAgent bytes.Buffer
+		if err := RenderEventsTable(&bufAgent, turnEndEvents, true); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		agentOut := bufAgent.String()
+		if !strings.Contains(agentOut, "type:turn_end") {
+			t.Errorf("expected 'type:turn_end' in agent mode, got: %s", agentOut)
+		}
+		if !strings.Contains(agentOut, `summary:"(api_response) tokens=4200"`) {
+			t.Errorf("expected summary with (api_response) in agent mode, got: %s", agentOut)
+		}
+	})
+
 	t.Run("empty events human mode", func(t *testing.T) {
 		var buf bytes.Buffer
 		err := RenderEventsTable(&buf, nil, false)
@@ -380,6 +513,32 @@ func TestRenderEventDetail(t *testing.T) {
 		}
 		if !strings.Contains(out, "run_exited") {
 			t.Errorf("missing event type in detail: %s", out)
+		}
+	})
+
+	t.Run("intermediate tool turn_end detail card", func(t *testing.T) {
+		recTurn := db.EventRecord{
+			ID:        18591,
+			SessionID: "ses-1",
+			AgentID:   "env:pi:ses-1",
+			EventType: "turn_end",
+			Timestamp: 1758490296000,
+			Data: types.TelemetryFrameData{
+				StopReason: strPtr("tool_use"),
+				Usage:      &types.ITokenUsage{Total: 3000},
+			},
+		}
+
+		var buf bytes.Buffer
+		if err := RenderEventDetail(&buf, recTurn, false); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, "turn_end (API RESPONSE)") {
+			t.Errorf("expected 'turn_end (API RESPONSE)' in detail card event type, got: %s", out)
+		}
+		if !strings.Contains(out, "(api_response) tokens=3000") {
+			t.Errorf("expected '(api_response) tokens=3000' in detail card summary, got: %s", out)
 		}
 	})
 
