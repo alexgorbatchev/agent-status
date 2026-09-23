@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -31,138 +33,9 @@ func newRootCmd(cfg *config.Config) *cobra.Command {
 		Use:   "air-ingester",
 		Short: "Agent Status Central Telemetry Ingestion Daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			var fileCfg *logging.FileConfig
-			if cfg.LogFile != "" || cfg.LogDir != "" {
-				fc := logging.LoadFileConfigFromEnv("ingester")
-				if cfg.LogFile != "" {
-					fc.Filename = cfg.LogFile
-				}
-				if cfg.LogDir != "" {
-					fc.Dir = cfg.LogDir
-				}
-				fileCfg = &fc
-			}
-			logging.SetupWithOptions(logging.SetupOptions{
-				Service:    "ingester",
-				Level:      cfg.LogLevel,
-				FileConfig: fileCfg,
-			})
-			defer func() {
-				_ = logging.Close()
-			}()
-
-			logging.Info("server_starting", "addr", cfg.Addr, "db", cfg.DBPath, "notifySock", cfg.NotifySock, "noSummarize", cfg.NoSummarize)
-
-			syncNoSummarizeSource(cmd, cfg)
-
-			st, err := store.Open(cfg.DBPath)
-			if err != nil {
-				return fmt.Errorf("opening store: %w", err)
-			}
-			defer func() {
-				_ = st.Close()
-			}()
-
-			priceEngine, err := pricing.NewPricingEngine()
-			if err != nil {
-				return fmt.Errorf("initializing pricing engine: %w", err)
-			}
-
-			sumEngine, err := summarizer.New(summarizer.Config{
-				NoSummarize:       cfg.NoSummarize,
-				NoSummarizeByFlag: cfg.NoSummarizeByFlag,
-				NoSummarizeByEnv:  cfg.NoSummarizeByEnv,
-				NoSummarizeSource: cfg.NoSummarizeSource,
-				LiteLLMBaseURL:    cfg.LiteLLMBaseURL,
-				LiteLLMAPIKey:     cfg.LiteLLMAPIKey,
-				LiteLLMModel:      cfg.SummarizerModel,
-				GeminiAPIKey:      cfg.GeminiAPIKey,
-				GeminiModel:       cfg.SummarizerModel,
-				AnthropicAPIKey:   cfg.AnthropicAPIKey,
-				AnthropicModel:    cfg.SummarizerModel,
-			})
-			if err != nil {
-				return fmt.Errorf("initializing summarizer engine: %w", err)
-			}
-			logSummarizerStartup(cfg, sumEngine)
-
-			pub, err := notify.NewPublisher(cfg.NotifySock)
-			if err != nil {
-				return fmt.Errorf("initializing notify publisher: %w", err)
-			}
-			defer func() {
-				_ = pub.Close()
-			}()
-
-			cls := classifier.New(st, priceEngine, sumEngine)
-			defer func() {
-				_ = cls.Close()
-			}()
-			cls.SetOnUpdate(func(agent *types.IAgentState) {
-				if pub != nil && agent != nil {
-					pub.Publish(types.IServerEvent{
-						Type:  "agent_upsert",
-						At:    time.Now().UnixMilli(),
-						Agent: agent,
-					})
-				}
-			})
-			rcv := receiver.New(st, cls, pub, cfg.BearerToken)
-
-			mux := http.NewServeMux()
-			mux.Handle("/ws/ingest", rcv)
-			mux.HandleFunc("PATCH /api/v1/internal/agents/{id}/visibility", rcv.HandleSetVisibility)
-			mux.HandleFunc("POST /api/v1/internal/agents/{id}/focus", rcv.HandleFocusAgent)
-			mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte("ok\n"))
-			})
-
-			srv := &http.Server{
-				Addr:              cfg.Addr,
-				Handler:           mux,
-				ReadHeaderTimeout: 10 * time.Second,
-			}
-
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
-
-			// Process reconciliation on startup for local environment
-			rec := reconciler.New(st, pub)
-			_, _ = runReconciliationSweep(ctx, rec, "startup")
-
-			// Periodic process reconciliation sweep (every 30 seconds)
-			go startPeriodicReconciler(ctx, rec, 30*time.Second)
-
-			// Hourly retention pruner
-			go func() {
-				ticker := time.NewTicker(1 * time.Hour)
-				defer ticker.Stop()
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					case <-ticker.C:
-						now := time.Now().UnixMilli()
-						retentionCutoff := now - (48 * 3600 * 1000)
-						exitedCutoff := now - (30 * 24 * 3600 * 1000)
-						_ = st.PruneOldEventsAndExitedAgents(retentionCutoff, exitedCutoff)
-					}
-				}
-			}()
-
-			go func() {
-				if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-					logging.Error("server_listen_error", "err", err)
-				}
-			}()
-
-			<-ctx.Done()
-			logging.Info("server_shutting_down")
-
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			return srv.Shutdown(shutdownCtx)
+			return runServer(ctx, cmd, cfg)
 		},
 	}
 
@@ -184,6 +57,177 @@ func newRootCmd(cfg *config.Config) *cobra.Command {
 	cobrahelptree.Setup(rootCmd)
 
 	return rootCmd
+}
+
+func runServer(ctx context.Context, cmd *cobra.Command, cfg *config.Config, ready ...chan<- string) error {
+	var fileCfg *logging.FileConfig
+	if cfg.LogFile != "" || cfg.LogDir != "" {
+		fc := logging.LoadFileConfigFromEnv("ingester")
+		if cfg.LogFile != "" {
+			fc.Filename = cfg.LogFile
+		}
+		if cfg.LogDir != "" {
+			fc.Dir = cfg.LogDir
+		}
+		fileCfg = &fc
+	}
+
+	var logWriter io.Writer = os.Stderr
+	if cmd != nil && cmd.ErrOrStderr() != nil {
+		logWriter = cmd.ErrOrStderr()
+	}
+
+	logging.SetupWithOptions(logging.SetupOptions{
+		Service:    "ingester",
+		Level:      cfg.LogLevel,
+		Writer:     logWriter,
+		FileConfig: fileCfg,
+	})
+	defer func() {
+		_ = logging.Close()
+	}()
+
+	logging.Info("server_starting", "addr", cfg.Addr, "db", cfg.DBPath, "notifySock", cfg.NotifySock, "noSummarize", cfg.NoSummarize)
+
+	syncNoSummarizeSource(cmd, cfg)
+
+	st, err := store.Open(cfg.DBPath)
+	if err != nil {
+		return fmt.Errorf("opening store: %w", err)
+	}
+	defer func() {
+		_ = st.Close()
+	}()
+
+	priceEngine, err := pricing.NewPricingEngine()
+	if err != nil {
+		return fmt.Errorf("initializing pricing engine: %w", err)
+	}
+
+	sumEngine, err := summarizer.New(summarizer.Config{
+		NoSummarize:       cfg.NoSummarize,
+		NoSummarizeByFlag: cfg.NoSummarizeByFlag,
+		NoSummarizeByEnv:  cfg.NoSummarizeByEnv,
+		NoSummarizeSource: cfg.NoSummarizeSource,
+		LiteLLMBaseURL:    cfg.LiteLLMBaseURL,
+		LiteLLMAPIKey:     cfg.LiteLLMAPIKey,
+		LiteLLMModel:      cfg.SummarizerModel,
+		GeminiAPIKey:      cfg.GeminiAPIKey,
+		GeminiModel:       cfg.SummarizerModel,
+		AnthropicAPIKey:   cfg.AnthropicAPIKey,
+		AnthropicModel:    cfg.SummarizerModel,
+	})
+	if err != nil {
+		return fmt.Errorf("initializing summarizer engine: %w", err)
+	}
+	logSummarizerStartup(cfg, sumEngine)
+
+	pub, err := notify.NewPublisher(cfg.NotifySock)
+	if err != nil {
+		return fmt.Errorf("initializing notify publisher: %w", err)
+	}
+	defer func() {
+		_ = pub.Close()
+	}()
+
+	cls := classifier.New(st, priceEngine, sumEngine)
+	defer func() {
+		_ = cls.Close()
+	}()
+	cls.SetOnUpdate(func(agent *types.IAgentState) {
+		if pub != nil && agent != nil {
+			pub.Publish(types.IServerEvent{
+				Type:  "agent_upsert",
+				At:    time.Now().UnixMilli(),
+				Agent: agent,
+			})
+		}
+	})
+	rcv := receiver.New(st, cls, pub, cfg.BearerToken)
+
+	mux := http.NewServeMux()
+	mux.Handle("/ws/ingest", rcv)
+	mux.HandleFunc("PATCH /api/v1/internal/agents/{id}/visibility", rcv.HandleSetVisibility)
+	mux.HandleFunc("POST /api/v1/internal/agents/{id}/focus", rcv.HandleFocusAgent)
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok\n"))
+	})
+
+	ln, err := net.Listen("tcp", cfg.Addr)
+	if err != nil {
+		return fmt.Errorf("listening on %s: %w", cfg.Addr, err)
+	}
+	defer func() {
+		_ = ln.Close()
+	}()
+
+	boundAddr := ln.Addr().String()
+	if len(ready) > 0 && ready[0] != nil {
+		ready[0] <- boundAddr
+	}
+
+	srv := &http.Server{
+		Addr:              boundAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	// Process reconciliation on startup for local environment
+	rec := reconciler.New(st, pub)
+	_, _ = runReconciliationSweep(ctx, rec, "startup")
+
+	// Periodic process reconciliation sweep (every 30 seconds)
+	go startPeriodicReconciler(ctx, rec, 30*time.Second)
+
+	// Hourly retention pruner
+	go startPeriodicPruner(ctx, st, 1*time.Hour)
+
+	go func() {
+		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+			logging.Error("server_listen_error", "err", err)
+		}
+	}()
+
+	<-ctx.Done()
+	logging.Info("server_shutting_down")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return srv.Shutdown(shutdownCtx)
+}
+
+type prunerStore interface {
+	PruneOldEventsAndExitedAgents(retentionCutoffMs int64, exitedCutoffMs int64) error
+}
+
+func runPrunerSweep(ctx context.Context, st prunerStore) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	now := time.Now().UnixMilli()
+	retentionCutoff := now - (48 * 3600 * 1000)
+	exitedCutoff := now - (30 * 24 * 3600 * 1000)
+	if err := st.PruneOldEventsAndExitedAgents(retentionCutoff, exitedCutoff); err != nil {
+		if ctx.Err() == nil {
+			logging.Warn("prune_cleanup_failed", "err", err)
+		}
+		return err
+	}
+	return nil
+}
+
+func startPeriodicPruner(ctx context.Context, st prunerStore, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			_ = runPrunerSweep(ctx, st)
+		}
+	}
 }
 
 type reconcilerRunner interface {

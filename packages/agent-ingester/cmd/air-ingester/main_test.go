@@ -5,6 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -703,5 +706,377 @@ func TestPeriodicReconciliationSweep(t *testing.T) {
 		}
 	})
 }
+
+type countingPruner struct {
+	mu            sync.Mutex
+	calls         int
+	lastRetention int64
+	lastExited    int64
+	err           error
+}
+
+func (p *countingPruner) PruneOldEventsAndExitedAgents(retentionCutoffMs int64, exitedCutoffMs int64) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.calls++
+	p.lastRetention = retentionCutoffMs
+	p.lastExited = exitedCutoffMs
+	return p.err
+}
+
+func TestPeriodicPruner(t *testing.T) {
+	origLogger := logging.Default()
+	t.Cleanup(func() {
+		logging.SetDefault(origLogger)
+	})
+
+	t.Run("runPrunerSweep executes prune with 48h and 30d cutoffs", func(t *testing.T) {
+		p := &countingPruner{}
+		ctx := context.Background()
+		before := time.Now().UnixMilli()
+		if err := runPrunerSweep(ctx, p); err != nil {
+			t.Fatalf("runPrunerSweep failed: %v", err)
+		}
+		after := time.Now().UnixMilli()
+
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if p.calls != 1 {
+			t.Fatalf("expected 1 prune call, got %d", p.calls)
+		}
+		expectedRetentionMin := before - (48 * 3600 * 1000)
+		expectedRetentionMax := after - (48 * 3600 * 1000)
+		if p.lastRetention < expectedRetentionMin || p.lastRetention > expectedRetentionMax {
+			t.Errorf("lastRetention %d not in [%d, %d]", p.lastRetention, expectedRetentionMin, expectedRetentionMax)
+		}
+		expectedExitedMin := before - (30 * 24 * 3600 * 1000)
+		expectedExitedMax := after - (30 * 24 * 3600 * 1000)
+		if p.lastExited < expectedExitedMin || p.lastExited > expectedExitedMax {
+			t.Errorf("lastExited %d not in [%d, %d]", p.lastExited, expectedExitedMin, expectedExitedMax)
+		}
+	})
+
+	t.Run("runPrunerSweep logs warning on failure", func(t *testing.T) {
+		buf := new(bytes.Buffer)
+		logging.SetDefault(logging.NewWithMode(buf, "test-ingester", "info", true))
+
+		p := &countingPruner{err: errors.New("disk is full")}
+		ctx := context.Background()
+		err := runPrunerSweep(ctx, p)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		out := buf.String()
+		if !strings.Contains(out, "prune_cleanup_failed") {
+			t.Errorf("expected prune_cleanup_failed in log, got: %s", out)
+		}
+		if !strings.Contains(out, "disk is full") {
+			t.Errorf("expected error detail in log, got: %s", out)
+		}
+	})
+
+	t.Run("runPrunerSweep respects canceled context", func(t *testing.T) {
+		p := &countingPruner{}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		err := runPrunerSweep(ctx, p)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got %v", err)
+		}
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if p.calls != 0 {
+			t.Errorf("prune should not have been called on canceled context")
+		}
+	})
+
+	t.Run("startPeriodicPruner executes on ticker and exits on context cancel", func(t *testing.T) {
+		p := &countingPruner{}
+		ctx, cancel := context.WithCancel(context.Background())
+
+		done := make(chan struct{})
+		go func() {
+			startPeriodicPruner(ctx, p, 5*time.Millisecond)
+			close(done)
+		}()
+
+		time.Sleep(25 * time.Millisecond)
+		cancel()
+
+		select {
+		case <-done:
+			// Clean exit
+		case <-time.After(1 * time.Second):
+			t.Fatal("startPeriodicPruner did not exit after context cancellation")
+		}
+
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if p.calls == 0 {
+			t.Errorf("expected at least one prune call, got 0")
+		}
+	})
+}
+
+func TestRunServer(t *testing.T) {
+	origLogger := logging.Default()
+	t.Cleanup(func() {
+		logging.SetDefault(origLogger)
+	})
+
+	t.Run("lifecycle with ephemeral port and clean shutdown", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "agent-status.db")
+		sockPath := filepath.Join(tmpDir, "notify.sock")
+
+		buf := new(bytes.Buffer)
+		cfg := &config.Config{
+			Addr:        "127.0.0.1:0",
+			DBPath:      dbPath,
+			NotifySock:  sockPath,
+			NoSummarize: true,
+			BearerToken: "test-secret-token",
+			LogLevel:    "info",
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cmd := newRootCmd(cfg)
+		cmd.SetErr(buf)
+
+		ready := make(chan string, 1)
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- runServer(ctx, cmd, cfg, ready)
+		}()
+
+		var boundAddr string
+		select {
+		case boundAddr = <-ready:
+		case err := <-errCh:
+			cancel()
+			t.Fatalf("runServer failed before ready: %v", err)
+		case <-time.After(5 * time.Second):
+			cancel()
+			t.Fatal("timed out waiting for server to bind ephemeral port")
+		}
+
+		// Verify /healthz responds
+		healthURL := fmt.Sprintf("http://%s/healthz", boundAddr)
+		resp, err := http.Get(healthURL)
+		if err != nil {
+			cancel()
+			t.Fatalf("GET /healthz failed: %v", err)
+		}
+		defer func() {
+			_ = resp.Body.Close()
+		}()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("expected 200 OK, got %d", resp.StatusCode)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		if string(body) != "ok\n" {
+			t.Errorf("expected 'ok\\n', got %q", string(body))
+		}
+
+		// Also verify internal endpoints routed through rcv
+		visURL := fmt.Sprintf("http://%s/api/v1/internal/agents/agent-123/visibility", boundAddr)
+		req, _ := http.NewRequest(http.MethodPatch, visURL, strings.NewReader(`{"isHidden":true}`))
+		req.Header.Set("Authorization", "Bearer test-secret-token")
+		visResp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Logf("PATCH visibility failed: %v", err)
+		} else {
+			_ = visResp.Body.Close()
+		}
+
+		focusURL := fmt.Sprintf("http://%s/api/v1/internal/agents/agent-123/focus", boundAddr)
+		focusReq, _ := http.NewRequest(http.MethodPost, focusURL, nil)
+		focusReq.Header.Set("Authorization", "Bearer test-secret-token")
+		focusResp, err := http.DefaultClient.Do(focusReq)
+		if err != nil {
+			t.Logf("POST focus failed: %v", err)
+		} else {
+			_ = focusResp.Body.Close()
+		}
+
+		// Cancel context to initiate graceful shutdown
+		cancel()
+
+		select {
+		case err := <-errCh:
+			if err != nil {
+				t.Fatalf("runServer returned error: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("runServer did not shut down within timeout")
+		}
+
+		out := buf.String()
+		if !strings.Contains(out, "server_starting") {
+			t.Errorf("expected server_starting in log, got: %s", out)
+		}
+		if !strings.Contains(out, "server_shutting_down") {
+			t.Errorf("expected server_shutting_down in log, got: %s", out)
+		}
+	})
+
+	t.Run("store open error", func(t *testing.T) {
+		cfg := &config.Config{
+			Addr:        "127.0.0.1:0",
+			DBPath:      "/invalid-nonexistent-dir/sub/path/agent.db",
+			NotifySock:  "/tmp/agent-test.sock",
+			NoSummarize: true,
+			LogLevel:    "info",
+		}
+		ctx := context.Background()
+		cmd := newRootCmd(cfg)
+		err := runServer(ctx, cmd, cfg)
+		if err == nil {
+			t.Fatal("expected error opening invalid store path, got nil")
+		}
+		if !strings.Contains(err.Error(), "opening store") {
+			t.Errorf("expected 'opening store' error context, got: %v", err)
+		}
+	})
+
+	t.Run("notify publisher error", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "agent-status.db")
+		cfg := &config.Config{
+			Addr:        "127.0.0.1:0",
+			DBPath:      dbPath,
+			NotifySock:  "/invalid-nonexistent-dir/sub/path/notify.sock",
+			NoSummarize: true,
+			LogLevel:    "info",
+		}
+		ctx := context.Background()
+		cmd := newRootCmd(cfg)
+		err := runServer(ctx, cmd, cfg)
+		if err == nil {
+			t.Fatal("expected error initializing notify publisher, got nil")
+		}
+		if !strings.Contains(err.Error(), "initializing notify publisher") {
+			t.Errorf("expected 'initializing notify publisher' error context, got: %v", err)
+		}
+	})
+
+	t.Run("listen error on invalid address", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "agent-status.db")
+		sockPath := filepath.Join(tmpDir, "notify.sock")
+		cfg := &config.Config{
+			Addr:        "999.999.999.999:9999",
+			DBPath:      dbPath,
+			NotifySock:  sockPath,
+			NoSummarize: true,
+			LogLevel:    "info",
+		}
+		ctx := context.Background()
+		cmd := newRootCmd(cfg)
+		err := runServer(ctx, cmd, cfg)
+		if err == nil {
+			t.Fatal("expected error listening on invalid address, got nil")
+		}
+		if !strings.Contains(err.Error(), "listening on") {
+			t.Errorf("expected 'listening on' error context, got: %v", err)
+		}
+	})
+
+	t.Run("log file and log dir config", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "agent-status.db")
+		sockPath := filepath.Join(tmpDir, "notify.sock")
+		logDir := filepath.Join(tmpDir, "logs")
+		logFile := filepath.Join(logDir, "test-ingester.log")
+
+		cfg := &config.Config{
+			Addr:        "127.0.0.1:0",
+			DBPath:      dbPath,
+			NotifySock:  sockPath,
+			NoSummarize: true,
+			LogLevel:    "info",
+			LogDir:      logDir,
+			LogFile:     logFile,
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cmd := newRootCmd(cfg)
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- runServer(ctx, cmd, cfg)
+		}()
+
+		// Wait briefly then cancel
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+
+		select {
+		case err := <-errCh:
+			if err != nil {
+				t.Fatalf("runServer with file logging failed: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("runServer did not shut down in time")
+		}
+	})
+}
+
+func TestNewRootCmd_Execution(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "agent-status.db")
+	sockPath := filepath.Join(tmpDir, "notify.sock")
+
+	cfg := &config.Config{}
+	cmd := newRootCmd(cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd.SetArgs([]string{
+		"--addr", "127.0.0.1:0",
+		"--db", dbPath,
+		"--notify-sock", sockPath,
+		"--token", "test-token",
+		"--no-summarize",
+		"--log-level", "info",
+		"--litellm-url", "http://localhost:4000",
+		"--litellm-key", "sk-test",
+		"--summarizer-model", "test-model",
+	})
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- cmd.ExecuteContext(ctx)
+	}()
+
+	// Wait briefly for server startup then cancel
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("cmd.ExecuteContext failed: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("cmd.ExecuteContext did not exit after cancel")
+	}
+
+	if cfg.BearerToken != "test-token" {
+		t.Errorf("expected BearerToken 'test-token', got %q", cfg.BearerToken)
+	}
+	if cfg.LiteLLMBaseURL != "http://localhost:4000" {
+		t.Errorf("expected LiteLLMBaseURL 'http://localhost:4000', got %q", cfg.LiteLLMBaseURL)
+	}
+}
+
+func TestMain_Version(t *testing.T) {
+	origArgs := os.Args
+	t.Cleanup(func() {
+		os.Args = origArgs
+	})
+	os.Args = []string{"air-ingester", "--version"}
+	main()
+}
+
+
 
 
