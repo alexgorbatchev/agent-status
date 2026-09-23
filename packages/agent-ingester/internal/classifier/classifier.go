@@ -213,10 +213,8 @@ func (c *Classifier) flushTrailingCandidateLocked(agentID string) {
 		res := c.summarizer.Summarize(context.Background(), input)
 		agent, err := c.store.GetAgent(agentID)
 		if err == nil && agent != nil && agent.Activity.Lifecycle != types.LifecycleExited && (agent.Activity.CurrentRun == nil || agent.Activity.CurrentRun.EndedAt == nil) {
-			agent.Activity.Action = res.Action
-			agent.Activity.Phase = res.Phase
-			if agent.Activity.ActiveTool != nil && res.ActiveTarget != nil && *res.ActiveTarget != "" {
-				agent.Activity.ActiveTarget = res.ActiveTarget
+			if shouldApplySummary(&agent.Activity, res) {
+				applySummary(&agent.Activity, res)
 			}
 			agent.Activity.ActionStale = false
 			_ = c.store.SaveAgentState(*agent)
@@ -975,16 +973,8 @@ func (c *Classifier) updateSummarization(agent *types.IAgentState, forceTrigger 
 			c.mu.Unlock()
 			res := c.summarizer.Summarize(context.Background(), input)
 			c.mu.Lock()
-			isDup := summarizer.IsNearDuplicate(agent.Activity.Action, res.Action, summarizer.DefaultSimilarityThreshold)
-			phaseSame := (agent.Activity.Phase == nil && res.Phase == nil) || (agent.Activity.Phase != nil && res.Phase != nil && *agent.Activity.Phase == *res.Phase)
-			targetSame := (agent.Activity.ActiveTarget == nil && res.ActiveTarget == nil) || (agent.Activity.ActiveTarget != nil && res.ActiveTarget != nil && *agent.Activity.ActiveTarget == *res.ActiveTarget)
-
-			if !isDup || !phaseSame || !targetSame {
-				agent.Activity.Action = res.Action
-				agent.Activity.Phase = res.Phase
-				if agent.Activity.ActiveTool != nil && res.ActiveTarget != nil && *res.ActiveTarget != "" {
-					agent.Activity.ActiveTarget = res.ActiveTarget
-				}
+			if shouldApplySummary(&agent.Activity, res) {
+				applySummary(&agent.Activity, res)
 			}
 			agent.Activity.ActionStale = false
 			return nil
@@ -1024,16 +1014,8 @@ func (c *Classifier) updateSummarization(agent *types.IAgentState, forceTrigger 
 			c.mu.Unlock()
 			res := c.summarizer.Summarize(context.Background(), input)
 			c.mu.Lock()
-			isDup := summarizer.IsNearDuplicate(agent.Activity.Action, res.Action, summarizer.DefaultSimilarityThreshold)
-			phaseSame := (agent.Activity.Phase == nil && res.Phase == nil) || (agent.Activity.Phase != nil && res.Phase != nil && *agent.Activity.Phase == *res.Phase)
-			targetSame := (agent.Activity.ActiveTarget == nil && res.ActiveTarget == nil) || (agent.Activity.ActiveTarget != nil && res.ActiveTarget != nil && *agent.Activity.ActiveTarget == *res.ActiveTarget)
-
-			if !isDup || !phaseSame || !targetSame {
-				agent.Activity.Action = res.Action
-				agent.Activity.Phase = res.Phase
-				if agent.Activity.ActiveTool != nil && res.ActiveTarget != nil && *res.ActiveTarget != "" {
-					agent.Activity.ActiveTarget = res.ActiveTarget
-				}
+			if shouldApplySummary(&agent.Activity, res) {
+				applySummary(&agent.Activity, res)
 			}
 			agent.Activity.ActionStale = false
 			return nil
@@ -1146,11 +1128,7 @@ func (c *Classifier) processSummaryJob(agentID string, job summaryJob) {
 	}
 
 	// Deduplication check: reject near-duplicates when phase and target are unchanged
-	isDup := summarizer.IsNearDuplicate(agent.Activity.Action, res.Action, summarizer.DefaultSimilarityThreshold)
-	phaseSame := (agent.Activity.Phase == nil && res.Phase == nil) || (agent.Activity.Phase != nil && res.Phase != nil && *agent.Activity.Phase == *res.Phase)
-	targetSame := (agent.Activity.ActiveTarget == nil && res.ActiveTarget == nil) || (agent.Activity.ActiveTarget != nil && res.ActiveTarget != nil && *agent.Activity.ActiveTarget == *res.ActiveTarget)
-
-	if isDup && phaseSame && targetSame {
+	if !shouldApplySummary(&agent.Activity, res) {
 		if agent.Activity.ActionStale {
 			agent.Activity.ActionStale = false
 			_ = c.store.SaveAgentState(*agent)
@@ -1159,11 +1137,7 @@ func (c *Classifier) processSummaryJob(agentID string, job summaryJob) {
 	}
 
 	// Apply updated summary
-	agent.Activity.Action = res.Action
-	agent.Activity.Phase = res.Phase
-	if agent.Activity.ActiveTool != nil && res.ActiveTarget != nil && *res.ActiveTarget != "" {
-		agent.Activity.ActiveTarget = res.ActiveTarget
-	}
+	applySummary(&agent.Activity, res)
 	agent.Activity.ActionStale = false
 	agent.Activity.UpdatedAt = time.Now().UnixMilli()
 
@@ -1370,3 +1344,36 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 		}
 	}
 }
+
+// equalPtr returns true if both pointers are nil or both are non-nil and point to equal values.
+func equalPtr[T comparable](a, b *T) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a != nil && b != nil {
+		return *a == *b
+	}
+	return false
+}
+
+// shouldApplySummary determines whether a new summary result changes the current agent activity.
+// It returns true if the action is not a near-duplicate, or if either phase or target differs.
+func shouldApplySummary(current *types.IAgentActivity, res summarizer.SummaryResult) bool {
+	if current == nil {
+		return true
+	}
+	isDup := summarizer.IsNearDuplicate(current.Action, res.Action, summarizer.DefaultSimilarityThreshold)
+	phaseSame := equalPtr(current.Phase, res.Phase)
+	targetSame := equalPtr(current.ActiveTarget, res.ActiveTarget)
+	return !isDup || !phaseSame || !targetSame
+}
+
+// applySummary updates the current agent activity fields from a summary result.
+func applySummary(current *types.IAgentActivity, res summarizer.SummaryResult) {
+	current.Action = res.Action
+	current.Phase = res.Phase
+	if current.ActiveTool != nil && res.ActiveTarget != nil && *res.ActiveTarget != "" {
+		current.ActiveTarget = res.ActiveTarget
+	}
+}
+

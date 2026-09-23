@@ -5323,4 +5323,300 @@ func TestClassifier_RootActivityNotOverwrittenByIdempotentRunStarted(t *testing.
 	}
 }
 
+func TestClassifier_EqualPtr(t *testing.T) {
+	str1 := "test"
+	str2 := "test"
+	str3 := "other"
+
+	if !equalPtr[string](nil, nil) {
+		t.Errorf("equalPtr(nil, nil) want true, got false")
+	}
+	if equalPtr(&str1, nil) {
+		t.Errorf("equalPtr(&str1, nil) want false, got true")
+	}
+	if equalPtr(nil, &str1) {
+		t.Errorf("equalPtr(nil, &str1) want false, got true")
+	}
+	if !equalPtr(&str1, &str2) {
+		t.Errorf("equalPtr(&str1, &str2) with same value want true, got false")
+	}
+	if equalPtr(&str1, &str3) {
+		t.Errorf("equalPtr(&str1, &str3) with diff value want false, got true")
+	}
+
+	int1 := 42
+	int2 := 42
+	int3 := 99
+	if !equalPtr(&int1, &int2) {
+		t.Errorf("equalPtr(&int1, &int2) with same int want true, got false")
+	}
+	if equalPtr(&int1, &int3) {
+		t.Errorf("equalPtr(&int1, &int3) with diff int want false, got true")
+	}
+}
+
+func TestClassifier_ShouldApplySummary(t *testing.T) {
+	strPtr := func(s string) *string { return &s }
+	phasePtr := func(p types.AgentPhase) *types.AgentPhase { return &p }
+
+	phaseA := phasePtr(types.PhaseEditing)
+	phaseB := phasePtr(types.PhaseTesting)
+	phaseSame := phasePtr(types.PhaseEditing)
+
+	targetA := strPtr("main.go")
+	targetB := strPtr("other.go")
+	targetSame := strPtr("main.go")
+
+	tests := []struct {
+		name      string
+		current   *types.IAgentActivity
+		res       summarizer.SummaryResult
+		wantApply bool
+	}{
+		{
+			name:      "nil current activity should apply",
+			current:   nil,
+			res:       summarizer.SummaryResult{Action: "Some action"},
+			wantApply: true,
+		},
+		{
+			name: "distinct new action: applies even if phase and target are identical",
+			current: &types.IAgentActivity{
+				Action:       "Running tests on server",
+				Phase:        phaseA,
+				ActiveTarget: targetA,
+			},
+			res: summarizer.SummaryResult{
+				Action:       "Editing handler endpoints",
+				Phase:        phaseA,
+				ActiveTarget: targetA,
+			},
+			wantApply: true,
+		},
+		{
+			name: "near duplicate action with identical non-nil phase and target: suppressed (should NOT apply)",
+			current: &types.IAgentActivity{
+				Action:       "Editing packages/agent-ingester/internal/classifier/classifier.go",
+				Phase:        phaseA,
+				ActiveTarget: targetA,
+			},
+			res: summarizer.SummaryResult{
+				Action:       "Editing packages/agent-ingester/internal/classifier/classifier.go",
+				Phase:        phaseSame,
+				ActiveTarget: targetSame,
+			},
+			wantApply: false,
+		},
+		{
+			name: "near duplicate action with identical nil phase and nil target: suppressed (should NOT apply)",
+			current: &types.IAgentActivity{
+				Action:       "Running test suite",
+				Phase:        nil,
+				ActiveTarget: nil,
+			},
+			res: summarizer.SummaryResult{
+				Action:       "Running test suite",
+				Phase:        nil,
+				ActiveTarget: nil,
+			},
+			wantApply: false,
+		},
+		{
+			name: "near duplicate action but phase differs (both non-nil): applies",
+			current: &types.IAgentActivity{
+				Action:       "Editing classifier.go implementation",
+				Phase:        phaseA,
+				ActiveTarget: targetA,
+			},
+			res: summarizer.SummaryResult{
+				Action:       "Editing classifier.go implementation",
+				Phase:        phaseB,
+				ActiveTarget: targetSame,
+			},
+			wantApply: true,
+		},
+		{
+			name: "near duplicate action but phase differs (nil vs non-nil): applies",
+			current: &types.IAgentActivity{
+				Action:       "Editing classifier.go implementation",
+				Phase:        nil,
+				ActiveTarget: targetA,
+			},
+			res: summarizer.SummaryResult{
+				Action:       "Editing classifier.go implementation",
+				Phase:        phaseA,
+				ActiveTarget: targetSame,
+			},
+			wantApply: true,
+		},
+		{
+			name: "near duplicate action but phase differs (non-nil vs nil): applies",
+			current: &types.IAgentActivity{
+				Action:       "Editing classifier.go implementation",
+				Phase:        phaseA,
+				ActiveTarget: targetA,
+			},
+			res: summarizer.SummaryResult{
+				Action:       "Editing classifier.go implementation",
+				Phase:        nil,
+				ActiveTarget: targetSame,
+			},
+			wantApply: true,
+		},
+		{
+			name: "near duplicate action but target differs (both non-nil): applies",
+			current: &types.IAgentActivity{
+				Action:       "Editing packages/agent-ingester file",
+				Phase:        phaseA,
+				ActiveTarget: targetA,
+			},
+			res: summarizer.SummaryResult{
+				Action:       "Editing packages/agent-ingester file",
+				Phase:        phaseSame,
+				ActiveTarget: targetB,
+			},
+			wantApply: true,
+		},
+		{
+			name: "near duplicate action but target differs (nil vs non-nil): applies",
+			current: &types.IAgentActivity{
+				Action:       "Editing packages/agent-ingester file",
+				Phase:        phaseA,
+				ActiveTarget: nil,
+			},
+			res: summarizer.SummaryResult{
+				Action:       "Editing packages/agent-ingester file",
+				Phase:        phaseSame,
+				ActiveTarget: targetA,
+			},
+			wantApply: true,
+		},
+		{
+			name: "near duplicate action but target differs (non-nil vs nil): applies",
+			current: &types.IAgentActivity{
+				Action:       "Editing packages/agent-ingester file",
+				Phase:        phaseA,
+				ActiveTarget: targetA,
+			},
+			res: summarizer.SummaryResult{
+				Action:       "Editing packages/agent-ingester file",
+				Phase:        phaseSame,
+				ActiveTarget: nil,
+			},
+			wantApply: true,
+		},
+		{
+			name: "near duplicate action with matching phase and matching target: suppressed",
+			current: &types.IAgentActivity{
+				Action:       "Processing telemetry frame batch for session",
+				Phase:        phaseA,
+				ActiveTarget: targetA,
+			},
+			res: summarizer.SummaryResult{
+				Action:       "Processing telemetry frame batch for session",
+				Phase:        phaseSame,
+				ActiveTarget: targetSame,
+			},
+			wantApply: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shouldApplySummary(tt.current, tt.res)
+			if got != tt.wantApply {
+				t.Errorf("shouldApplySummary() = %v, want %v", got, tt.wantApply)
+			}
+		})
+	}
+}
+
+func TestClassifier_ApplySummary(t *testing.T) {
+	strPtr := func(s string) *string { return &s }
+	phasePtr := func(p types.AgentPhase) *types.AgentPhase { return &p }
+
+	t.Run("updates action and phase, and updates activeTarget when activeTool is non-nil", func(t *testing.T) {
+		act := types.IAgentActivity{
+			Action:       "Old action",
+			Phase:        phasePtr(types.PhasePlanning),
+			ActiveTool:   strPtr("edit"),
+			ActiveTarget: strPtr("old.go"),
+		}
+		res := summarizer.SummaryResult{
+			Action:       "New action",
+			Phase:        phasePtr(types.PhaseEditing),
+			ActiveTarget: strPtr("new.go"),
+		}
+
+		applySummary(&act, res)
+
+		if act.Action != "New action" {
+			t.Errorf("Action = %q, want %q", act.Action, "New action")
+		}
+		if act.Phase == nil || *act.Phase != types.PhaseEditing {
+			t.Errorf("Phase = %v, want %v", act.Phase, types.PhaseEditing)
+		}
+		if act.ActiveTarget == nil || *act.ActiveTarget != "new.go" {
+			t.Errorf("ActiveTarget = %v, want new.go", act.ActiveTarget)
+		}
+	})
+
+	t.Run("does not update activeTarget when activeTool is nil", func(t *testing.T) {
+		act := types.IAgentActivity{
+			Action:       "Old action",
+			Phase:        phasePtr(types.PhasePlanning),
+			ActiveTool:   nil,
+			ActiveTarget: strPtr("old.go"),
+		}
+		res := summarizer.SummaryResult{
+			Action:       "New action",
+			Phase:        phasePtr(types.PhaseEditing),
+			ActiveTarget: strPtr("new.go"),
+		}
+
+		applySummary(&act, res)
+
+		if act.Action != "New action" {
+			t.Errorf("Action = %q, want %q", act.Action, "New action")
+		}
+		if act.Phase == nil || *act.Phase != types.PhaseEditing {
+			t.Errorf("Phase = %v, want %v", act.Phase, types.PhaseEditing)
+		}
+		if act.ActiveTarget == nil || *act.ActiveTarget != "old.go" {
+			t.Errorf("ActiveTarget = %v, want old.go (unchanged when ActiveTool is nil)", act.ActiveTarget)
+		}
+	})
+
+	t.Run("does not update activeTarget when res.ActiveTarget is empty or nil", func(t *testing.T) {
+		act := types.IAgentActivity{
+			Action:       "Old action",
+			Phase:        phasePtr(types.PhasePlanning),
+			ActiveTool:   strPtr("bash"),
+			ActiveTarget: strPtr("original.go"),
+		}
+		emptyTarget := ""
+		res := summarizer.SummaryResult{
+			Action:       "New action",
+			Phase:        phasePtr(types.PhaseEditing),
+			ActiveTarget: &emptyTarget,
+		}
+
+		applySummary(&act, res)
+
+		if act.ActiveTarget == nil || *act.ActiveTarget != "original.go" {
+			t.Errorf("ActiveTarget = %v, want original.go (unchanged when res.ActiveTarget is empty)", act.ActiveTarget)
+		}
+
+		resNil := summarizer.SummaryResult{
+			Action:       "New action 2",
+			Phase:        phasePtr(types.PhaseTesting),
+			ActiveTarget: nil,
+		}
+		applySummary(&act, resNil)
+		if act.ActiveTarget == nil || *act.ActiveTarget != "original.go" {
+			t.Errorf("ActiveTarget = %v, want original.go (unchanged when res.ActiveTarget is nil)", act.ActiveTarget)
+		}
+	})
+}
+
 
