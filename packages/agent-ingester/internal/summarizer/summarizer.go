@@ -1012,7 +1012,7 @@ func FallbackSummary(input SummaryInput) SummaryResult {
 			} else if len(input.RecentTools) > 0 {
 				last := input.RecentTools[len(input.RecentTools)-1]
 				action, phase = resolveToolSummary(last.ToolName, last.Target)
-			} else if input.LastThinkingExcerpt != "" {
+			} else if input.LastThinkingExcerpt != "" || input.CurrentAction == "Thinking" {
 				p := types.PhasePlanning
 				phase = &p
 				action = "Thinking"

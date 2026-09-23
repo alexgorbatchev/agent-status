@@ -6060,4 +6060,351 @@ func TestClassifier_ModelAndContextFullnessTracking(t *testing.T) {
 	}
 }
 
+func TestClassifier_InFlightFloor_SilentToolRuns_60sAnd5m(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, s := newTestClassifier(t, sum)
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{
+		ID:       "env-1",
+		Hostname: "host",
+		Platform: "linux",
+	}
+	ws := types.IWorkspaceInfo{CWD: "/workspace"}
+	proj := types.IProjectInfo{ID: "proj-1", Name: "repo"}
+	agentID := "env-1:pi:sess-flight-floor"
+
+	baseFrame := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       "env-1",
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-flight-floor",
+		PID:         1000,
+		Harness:     types.HarnessPi,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   1000,
+		EventType:   "run_started",
+	}
+
+	if _, err := c.ProcessFrame(baseFrame); err != nil {
+		t.Fatalf("ProcessFrame(run_started) failed: %v", err)
+	}
+
+	// 1. User prompts agent
+	fPrompt := baseFrame
+	fPrompt.Seq = 2
+	fPrompt.Timestamp = 2000
+	fPrompt.EventType = "turn_start"
+	if _, err := c.ProcessFrame(fPrompt); err != nil {
+		t.Fatalf("ProcessFrame(turn_start) failed: %v", err)
+	}
+
+	// 2. Model emits tool_call (e.g. running tests)
+	toolBash := "Bash"
+	fTool := baseFrame
+	fTool.Seq = 3
+	fTool.Timestamp = 3000
+	fTool.EventType = "tool_call"
+	fTool.Data = types.TelemetryFrameData{
+		ToolName:  &toolBash,
+		ToolInput: map[string]interface{}{"command": "go test -v ./..."},
+	}
+	agent, err := c.ProcessFrame(fTool)
+	if err != nil {
+		t.Fatalf("ProcessFrame(tool_call) failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Fatalf("expected Activity to be BUSY, got %s", agent.Activity.Activity)
+	}
+	if agent.Activity.ActiveTool == nil || *agent.Activity.ActiveTool != "Bash" {
+		t.Fatalf("expected ActiveTool to be 'Bash', got %v", agent.Activity.ActiveTool)
+	}
+
+	// 3. Harness emits turn_end (with nil stop reason, e.g. Codex/Pi token/intermediate event) while tool is STILL executing
+	// In-Flight Floor (FlightFloor): session MUST remain latched to active BUSY (Executing Tool)
+	fTurnEnd := baseFrame
+	fTurnEnd.Seq = 4
+	fTurnEnd.Timestamp = 3100
+	fTurnEnd.EventType = "turn_end"
+	agent, err = c.ProcessFrame(fTurnEnd)
+	if err != nil {
+		t.Fatalf("ProcessFrame(turn_end) failed: %v", err)
+	}
+
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Fatalf("FlightFloor violated: expected Activity to remain BUSY after turn_end during open tool call, got %s", agent.Activity.Activity)
+	}
+	if agent.Activity.ActiveTool == nil || *agent.Activity.ActiveTool != "Bash" {
+		t.Fatalf("FlightFloor violated: expected ActiveTool to remain 'Bash', got %v", agent.Activity.ActiveTool)
+	}
+
+	// 4. Simulate 60 seconds of silent tool execution (no frames written to transcript)
+	t60s := int64(3000 + 60*1000)
+	persisted, err := s.GetAgent(agentID)
+	if err != nil || persisted == nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if persisted.Activity.Activity != types.ActivityBusy {
+		t.Errorf("expected agent in DB to remain BUSY after 60s silence, got %s", persisted.Activity.Activity)
+	}
+	if persisted.Activity.ActiveTool == nil || *persisted.Activity.ActiveTool != "Bash" {
+		t.Errorf("expected ActiveTool in DB to remain 'Bash' after 60s silence, got %v", persisted.Activity.ActiveTool)
+	}
+
+	// 5. Simulate 5 minutes of silent tool execution (no frames written to transcript)
+	t5m := int64(3000 + 5*60*1000)
+	persisted, err = s.GetAgent(agentID)
+	if err != nil || persisted == nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if persisted.Activity.Activity != types.ActivityBusy {
+		t.Errorf("expected agent in DB to remain BUSY after 5m silence, got %s", persisted.Activity.Activity)
+	}
+	if persisted.Activity.ActiveTool == nil || *persisted.Activity.ActiveTool != "Bash" {
+		t.Errorf("expected ActiveTool in DB to remain 'Bash' after 5m silence, got %v", persisted.Activity.ActiveTool)
+	}
+
+	// 6. Tool completion arrives at 5 minutes: tool_result
+	out := "PASS"
+	fResult := baseFrame
+	fResult.Seq = 5
+	fResult.Timestamp = t5m
+	fResult.EventType = "tool_result"
+	fResult.Data = types.TelemetryFrameData{
+		ToolOutput: &out,
+	}
+	agent, err = c.ProcessFrame(fResult)
+	if err != nil {
+		t.Fatalf("ProcessFrame(tool_result) failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Errorf("expected Activity to remain BUSY processing tool_result, got %s", agent.Activity.Activity)
+	}
+	if agent.Activity.ActiveTool != nil {
+		t.Errorf("expected ActiveTool cleared after tool_result, got %v", agent.Activity.ActiveTool)
+	}
+
+	_ = t60s
+}
+
+func TestClassifier_ThinkingFloor_TurnFloor_LatencyWindow(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, s := newTestClassifier(t, sum)
+	c.SetTurnFloor(20 * time.Second)
+	c.SetIdleGracePeriod(5 * time.Second)
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{ID: "env-1", Hostname: "host", Platform: "linux"}
+	ws := types.IWorkspaceInfo{CWD: "/workspace"}
+	proj := types.IProjectInfo{ID: "proj-1", Name: "repo"}
+	agentID := "env-1:claude-code:sess-turn-floor"
+
+	baseFrame := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       "env-1",
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-turn-floor",
+		PID:         1000,
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   1000,
+		EventType:   "run_started",
+	}
+
+	if _, err := c.ProcessFrame(baseFrame); err != nil {
+		t.Fatalf("ProcessFrame(run_started) failed: %v", err)
+	}
+
+	// 1. User prompts agent: turn_start establishes Thinking Floor (TurnFloor)
+	fPrompt := baseFrame
+	fPrompt.Seq = 2
+	fPrompt.Timestamp = 2000
+	fPrompt.EventType = "turn_start"
+	agent, err := c.ProcessFrame(fPrompt)
+	if err != nil {
+		t.Fatalf("ProcessFrame(turn_start) failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityBusy || agent.Activity.Action != "Thinking" {
+		t.Fatalf("expected BUSY Thinking on turn_start, got %s %s", agent.Activity.Activity, agent.Activity.Action)
+	}
+
+	// 2. Intermediate frame / premature turn_end arrives at T=3000 (within 20s inference latency window)
+	fIntermediateEnd := baseFrame
+	fIntermediateEnd.Seq = 3
+	fIntermediateEnd.Timestamp = 3000
+	fIntermediateEnd.EventType = "turn_end"
+	agent, err = c.ProcessFrame(fIntermediateEnd)
+	if err != nil {
+		t.Fatalf("ProcessFrame(turn_end) failed: %v", err)
+	}
+
+	// TurnFloor must keep session latched to active BUSY (Thinking)
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Fatalf("TurnFloor violated: expected Activity to remain BUSY during thinking floor, got %s", agent.Activity.Activity)
+	}
+	if agent.Activity.Action != "Thinking" {
+		t.Fatalf("TurnFloor violated: expected Action to remain 'Thinking', got %s", agent.Activity.Action)
+	}
+
+	persisted, err := s.GetAgent(agentID)
+	if err != nil || persisted == nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if persisted.Activity.Activity != types.ActivityBusy {
+		t.Errorf("expected agent in DB to remain BUSY during thinking floor, got %s", persisted.Activity.Activity)
+	}
+
+	// 3. At T=15000 (15 seconds, still within 20s window), tool_call arrives
+	toolBash := "Bash"
+	fTool := baseFrame
+	fTool.Seq = 4
+	fTool.Timestamp = 15000
+	fTool.EventType = "tool_call"
+	fTool.Data = types.TelemetryFrameData{
+		ToolName: &toolBash,
+	}
+	agent, err = c.ProcessFrame(fTool)
+	if err != nil {
+		t.Fatalf("ProcessFrame(tool_call) failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Errorf("expected Activity BUSY on tool_call, got %s", agent.Activity.Activity)
+	}
+	if agent.Activity.ActiveTool == nil || *agent.Activity.ActiveTool != "Bash" {
+		t.Errorf("expected ActiveTool 'Bash', got %v", agent.Activity.ActiveTool)
+	}
+}
+
+func TestClassifier_TurnSilenceTimeout_ExtendedWindow(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, s := newTestClassifier(t, sum)
+	silenceTimeout := 100 * time.Millisecond
+	c.SetTurnSilenceTimeout(silenceTimeout)
+	c.SetIdleGracePeriod(20 * time.Millisecond)
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{ID: "env-1", Hostname: "host", Platform: "linux"}
+	ws := types.IWorkspaceInfo{CWD: "/workspace"}
+	proj := types.IProjectInfo{ID: "proj-1", Name: "repo"}
+
+	t.Run("open in-flight tool remains active across short intervals and times out on silence timeout", func(t *testing.T) {
+		agentID := "env-1:pi:sess-silence-tool"
+		baseFrame := types.ITelemetryFrame{
+			Version:     "1.0",
+			EnvID:       "env-1",
+			Environment: env,
+			AgentID:     agentID,
+			SessionID:   "sess-silence-tool",
+			PID:         1000,
+			Harness:     types.HarnessPi,
+			Project:     proj,
+			Workspace:   ws,
+			Timestamp:   1000,
+			EventType:   "run_started",
+		}
+		if _, err := c.ProcessFrame(baseFrame); err != nil {
+			t.Fatalf("run_started failed: %v", err)
+		}
+
+		toolName := "Bash"
+		fTool := baseFrame
+		fTool.Seq = 2
+		fTool.Timestamp = 2000
+		fTool.EventType = "tool_call"
+		fTool.Data = types.TelemetryFrameData{
+			ToolName: &toolName,
+		}
+		if _, err := c.ProcessFrame(fTool); err != nil {
+			t.Fatalf("tool_call failed: %v", err)
+		}
+
+		// At 30ms (longer than 20ms idle grace period), open tool must STILL be BUSY
+		time.Sleep(30 * time.Millisecond)
+		agent, err := s.GetAgent(agentID)
+		if err != nil || agent == nil {
+			t.Fatalf("GetAgent failed: %v", err)
+		}
+		if agent.Activity.Activity != types.ActivityBusy {
+			t.Errorf("expected open tool to remain BUSY past idle grace period, got %s", agent.Activity.Activity)
+		}
+
+		// After full silence timeout (100ms), inactive session transitions to IDLE
+		time.Sleep(120 * time.Millisecond)
+		agent, err = s.GetAgent(agentID)
+		if err != nil || agent == nil {
+			t.Fatalf("GetAgent failed: %v", err)
+		}
+		if agent.Activity.Activity != types.ActivityIdle {
+			t.Errorf("expected inactive session to transition to IDLE after silence timeout, got %s", agent.Activity.Activity)
+		}
+	})
+
+	t.Run("truly finished turn transitions to idle via grace period without waiting for silence timeout", func(t *testing.T) {
+		agentID := "env-1:pi:sess-finished-turn"
+		baseFrame := types.ITelemetryFrame{
+			Version:     "1.0",
+			EnvID:       "env-1",
+			Environment: env,
+			AgentID:     agentID,
+			SessionID:   "sess-finished-turn",
+			PID:         1001,
+			Harness:     types.HarnessPi,
+			Project:     proj,
+			Workspace:   ws,
+			Timestamp:   1000,
+			EventType:   "run_started",
+		}
+		if _, err := c.ProcessFrame(baseFrame); err != nil {
+			t.Fatalf("run_started failed: %v", err)
+		}
+
+		fPrompt := baseFrame
+		fPrompt.Seq = 2
+		fPrompt.Timestamp = 2000
+		fPrompt.EventType = "turn_start"
+		if _, err := c.ProcessFrame(fPrompt); err != nil {
+			t.Fatalf("turn_start failed: %v", err)
+		}
+
+		// Finished turn: assistant sends response text with terminal stop reason
+		resp := "Here is the answer."
+		stopReason := "end_turn"
+		fEnd := baseFrame
+		fEnd.Seq = 3
+		fEnd.Timestamp = 3000
+		fEnd.EventType = "turn_end"
+		fEnd.Data = types.TelemetryFrameData{
+			Content:    &resp,
+			StopReason: &stopReason,
+		}
+		if _, err := c.ProcessFrame(fEnd); err != nil {
+			t.Fatalf("turn_end failed: %v", err)
+		}
+
+		// After idle grace period (20ms) but well before silence timeout (100ms):
+		time.Sleep(40 * time.Millisecond)
+		agent, err := s.GetAgent(agentID)
+		if err != nil || agent == nil {
+			t.Fatalf("GetAgent failed: %v", err)
+		}
+		if agent.Activity.Activity != types.ActivityIdle {
+			t.Errorf("expected truly finished turn to transition to IDLE via idle grace period, got %s", agent.Activity.Activity)
+		}
+	})
+}
+
+
 

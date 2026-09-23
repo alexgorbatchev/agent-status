@@ -23,12 +23,13 @@ type pendingSummaryCandidate struct {
 }
 
 type subagentState struct {
-	id         string
-	activity   types.ActivityState
-	activeTool *string
-	action     string
-	lastError  *string
-	question   *string
+	id           string
+	activity     types.ActivityState
+	activeTool   *string
+	action       string
+	lastError    *string
+	question     *string
+	inFlightTool bool
 }
 
 type agentContext struct {
@@ -46,6 +47,10 @@ type agentContext struct {
 	lastSummarizedToolKey   string
 	lastSummaryDispatchedAt int64
 	pendingCandidate        *pendingSummaryCandidate
+	inFlightTool            bool
+	inFlightToolName        string
+	inTurn                  bool
+	turnFloorUntil          int64
 }
 
 type summaryJob struct {
@@ -61,25 +66,30 @@ type agentWorker struct {
 }
 
 const (
-	DefaultIdleGracePeriod = 5 * time.Second
-	DefaultDebounceWindow  = 10 * time.Second
+	DefaultIdleGracePeriod    = 5 * time.Second
+	DefaultDebounceWindow     = 10 * time.Second
+	DefaultTurnFloor          = 20 * time.Second
+	DefaultTurnSilenceTimeout = 30 * time.Minute
 )
 
 type Classifier struct {
-	store           *store.Store
-	pricing         *pricing.Engine
-	summarizer      *summarizer.Summarizer
-	agentCtx        map[string]*agentContext
-	workers         map[string]*agentWorker
-	idleTimers      map[string]*time.Timer
-	trailingTimers  map[string]*time.Timer
-	idleGracePeriod time.Duration
-	debounceWindow  time.Duration
-	onUpdate        func(agent *types.IAgentState)
-	mu              sync.Mutex
-	wg              sync.WaitGroup
-	closed          bool
-	syncMode        bool
+	store              *store.Store
+	pricing            *pricing.Engine
+	summarizer         *summarizer.Summarizer
+	agentCtx           map[string]*agentContext
+	workers            map[string]*agentWorker
+	idleTimers         map[string]*time.Timer
+	trailingTimers     map[string]*time.Timer
+	silenceTimers      map[string]*time.Timer
+	idleGracePeriod    time.Duration
+	debounceWindow     time.Duration
+	turnFloor          time.Duration
+	turnSilenceTimeout time.Duration
+	onUpdate           func(agent *types.IAgentState)
+	mu                 sync.Mutex
+	wg                 sync.WaitGroup
+	closed             bool
+	syncMode           bool
 
 	beforeIdleSummarizeHook func(agentID string)
 }
@@ -90,15 +100,18 @@ func New(s *store.Store, p *pricing.Engine, sum *summarizer.Summarizer) *Classif
 		debounce = sum.DebounceWindow()
 	}
 	return &Classifier{
-		store:           s,
-		pricing:         p,
-		summarizer:      sum,
-		agentCtx:        make(map[string]*agentContext),
-		workers:         make(map[string]*agentWorker),
-		idleTimers:      make(map[string]*time.Timer),
-		trailingTimers:  make(map[string]*time.Timer),
-		idleGracePeriod: DefaultIdleGracePeriod,
-		debounceWindow:  debounce,
+		store:               s,
+		pricing:             p,
+		summarizer:          sum,
+		agentCtx:            make(map[string]*agentContext),
+		workers:             make(map[string]*agentWorker),
+		idleTimers:          make(map[string]*time.Timer),
+		trailingTimers:      make(map[string]*time.Timer),
+		silenceTimers:       make(map[string]*time.Timer),
+		idleGracePeriod:     DefaultIdleGracePeriod,
+		debounceWindow:      debounce,
+		turnFloor:           DefaultTurnFloor,
+		turnSilenceTimeout:  DefaultTurnSilenceTimeout,
 	}
 }
 
@@ -114,6 +127,20 @@ func (c *Classifier) SetIdleGracePeriod(d time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.idleGracePeriod = d
+}
+
+// SetTurnFloor sets the thinking latency floor during which an agent remains latched to BUSY (Thinking).
+func (c *Classifier) SetTurnFloor(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.turnFloor = d
+}
+
+// SetTurnSilenceTimeout sets the timeout window after which an inactive session transitions to IDLE.
+func (c *Classifier) SetTurnSilenceTimeout(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.turnSilenceTimeout = d
 }
 
 // SetOnUpdate registers a callback invoked when background summarization updates an agent state.
@@ -149,6 +176,10 @@ func (c *Classifier) Close() error {
 		t.Stop()
 		delete(c.trailingTimers, id)
 	}
+	for id, t := range c.silenceTimers {
+		t.Stop()
+		delete(c.silenceTimers, id)
+	}
 	c.mu.Unlock()
 
 	c.wg.Wait()
@@ -160,6 +191,23 @@ func (c *Classifier) cancelIdleTimerLocked(agentID string) {
 		t.Stop()
 		delete(c.idleTimers, agentID)
 	}
+}
+
+func (c *Classifier) cancelSilenceTimerLocked(agentID string) {
+	if t, exists := c.silenceTimers[agentID]; exists {
+		t.Stop()
+		delete(c.silenceTimers, agentID)
+	}
+}
+
+func (c *Classifier) scheduleSilenceTimerLocked(agentID string, scheduledGen uint64) {
+	c.cancelSilenceTimerLocked(agentID)
+	if c.turnSilenceTimeout <= 0 || c.syncMode {
+		return
+	}
+	c.silenceTimers[agentID] = time.AfterFunc(c.turnSilenceTimeout, func() {
+		c.handleSilenceTransition(agentID, scheduledGen)
+	})
 }
 
 func (c *Classifier) cancelTrailingTimerLocked(agentID string) {
@@ -512,6 +560,11 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		case "run_started":
 			c.mu.Lock()
 			c.cancelIdleTimerLocked(agent.ID)
+			c.cancelSilenceTimerLocked(agent.ID)
+			actx.inFlightTool = false
+			actx.inFlightToolName = ""
+			actx.inTurn = false
+			actx.turnFloorUntil = 0
 			c.mu.Unlock()
 
 			// Handle run_started idempotently: if an active run already exists with matching PID and unended lifecycle,
@@ -542,6 +595,11 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			c.mu.Lock()
 			c.cancelIdleTimerLocked(agent.ID)
 			c.cancelTrailingTimerLocked(agent.ID)
+			c.cancelSilenceTimerLocked(agent.ID)
+			actx.inFlightTool = false
+			actx.inFlightToolName = ""
+			actx.inTurn = false
+			actx.turnFloorUntil = 0
 			c.mu.Unlock()
 
 			agent.Activity.Lifecycle = types.LifecycleExited
@@ -567,6 +625,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		case "question_prompt":
 			c.mu.Lock()
 			c.cancelIdleTimerLocked(agent.ID)
+			c.cancelSilenceTimerLocked(agent.ID)
 			c.mu.Unlock()
 			agent.Activity.Activity = types.ActivityWaitingQuestion
 			agent.Activity.ActiveTool = nil
@@ -579,6 +638,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		case "error":
 			c.mu.Lock()
 			c.cancelIdleTimerLocked(agent.ID)
+			c.cancelSilenceTimerLocked(agent.ID)
 			c.mu.Unlock()
 			agent.Activity.Activity = types.ActivityError
 			agent.Activity.ActiveTool = nil
@@ -596,6 +656,9 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		case "tool_result":
 			c.mu.Lock()
 			c.cancelIdleTimerLocked(agent.ID)
+			actx.inFlightTool = false
+			actx.inFlightToolName = ""
+			c.scheduleSilenceTimerLocked(agent.ID, actx.rootGeneration)
 			c.mu.Unlock()
 			// Tool results (even non-zero exits) are a normal part of shell/agent workflows;
 			// the agent remains busy processing the result, not in an error state.
@@ -609,6 +672,12 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		case "tool_call":
 			c.mu.Lock()
 			c.cancelIdleTimerLocked(agent.ID)
+			actx.inFlightTool = true
+			actx.turnFloorUntil = 0
+			if frame.Data.ToolName != nil {
+				actx.inFlightToolName = *frame.Data.ToolName
+			}
+			c.scheduleSilenceTimerLocked(agent.ID, actx.rootGeneration)
 			c.mu.Unlock()
 			agent.Activity.Activity = types.ActivityBusy
 			agent.Activity.LastError = nil
@@ -661,6 +730,11 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			actx.recentTools = nil
 			actx.lastSummarizedToolKey = ""
 			actx.pendingCandidate = nil
+			actx.inFlightTool = false
+			actx.inFlightToolName = ""
+			actx.inTurn = true
+			actx.turnFloorUntil = now + c.turnFloor.Milliseconds()
+			c.scheduleSilenceTimerLocked(agent.ID, actx.rootGeneration)
 			c.mu.Unlock()
 			agent.Activity.Activity = types.ActivityBusy
 			agent.Activity.LastError = nil
@@ -675,6 +749,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			c.mu.Lock()
 			c.cancelIdleTimerLocked(agent.ID)
 			hasRecentTools := len(actx.recentTools) > 0
+			c.scheduleSilenceTimerLocked(agent.ID, actx.rootGeneration)
 			c.mu.Unlock()
 			agent.Activity.Activity = types.ActivityBusy
 			agent.Activity.LastError = nil
@@ -694,10 +769,17 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				actx.lastAssistantResponse = strings.TrimSpace(*frame.Data.Content)
 				c.mu.Unlock()
 			}
+
+			c.mu.Lock()
+			inFlight := actx.inFlightTool
+			inTurn := actx.inTurn
+			floorUntil := actx.turnFloorUntil
+			c.mu.Unlock()
+
 			isToolUse := false
-			if frame.Data.StopReason != nil {
+			if frame.Data.StopReason != nil && *frame.Data.StopReason != "" {
 				isToolUse = isToolUseStopReason(*frame.Data.StopReason)
-			} else if agent.Activity.ActiveTool != nil {
+			} else if inFlight || agent.Activity.ActiveTool != nil {
 				isToolUse = true
 			}
 
@@ -705,6 +787,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				c.mu.Lock()
 				c.cancelIdleTimerLocked(agent.ID)
 				c.cancelTrailingTimerLocked(agent.ID)
+				c.scheduleSilenceTimerLocked(agent.ID, actx.rootGeneration)
 				c.mu.Unlock()
 				if agent.Activity.Activity != types.ActivityWaitingQuestion {
 					agent.Activity.Activity = types.ActivityBusy
@@ -715,6 +798,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				c.mu.Lock()
 				c.cancelIdleTimerLocked(agent.ID)
 				c.cancelTrailingTimerLocked(agent.ID)
+				c.cancelSilenceTimerLocked(agent.ID)
 				c.mu.Unlock()
 				pendingJob = c.updateSummarization(agent, true)
 			} else if agent.Activity.Activity == types.ActivityError {
@@ -722,44 +806,67 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				c.mu.Lock()
 				c.cancelIdleTimerLocked(agent.ID)
 				c.cancelTrailingTimerLocked(agent.ID)
+				c.cancelSilenceTimerLocked(agent.ID)
 				c.mu.Unlock()
 				pendingJob = c.updateSummarization(agent, true)
 			} else {
-				// Turn ended without tool use.
-				// If the agent is BUSY and an idle grace period is configured, debounce the transition
-				// so pauses between API calls do not cause BUSY/IDLE flipping.
-				agent.Activity.ActiveTool = nil
-				agent.Activity.ActiveTarget = nil
-				agent.Activity.ActiveToolStartedAt = nil
-				agent.Activity.Question = nil
+				hasTerminalContent := frame.Data.Content != nil && strings.TrimSpace(*frame.Data.Content) != ""
+				isTerminalStop := frame.Data.StopReason != nil && (*frame.Data.StopReason == "end_turn" || *frame.Data.StopReason == "stop")
+				hasToolsRun := len(actx.recentTools) > 0
+				isTrulyFinished := hasTerminalContent || isTerminalStop || hasToolsRun
 
-				c.mu.Lock()
-				actx.lastToolArgs = ""
-				actx.recentTools = nil
-				actx.lastSummarizedToolKey = ""
-				actx.pendingCandidate = nil
-				c.cancelTrailingTimerLocked(agent.ID)
-				gracePeriod := c.idleGracePeriod
-				isSync := c.syncMode
-				c.mu.Unlock()
+				isWithinTurnFloor := inTurn && now < floorUntil && !isTrulyFinished
 
-				if gracePeriod <= 0 || isSync || agent.Activity.Activity != types.ActivityBusy {
+				if isWithinTurnFloor {
+					agent.Activity.Activity = types.ActivityBusy
+					agent.Activity.Action = "Thinking"
+					p := types.PhasePlanning
+					agent.Activity.Phase = &p
 					c.mu.Lock()
 					c.cancelIdleTimerLocked(agent.ID)
-					c.mu.Unlock()
-					agent.Activity.Activity = types.ActivityIdle
-					pendingJob = c.updateSummarization(agent, true)
-				} else {
-					// Keep agent BUSY during grace period and schedule transition to IDLE if no new events arrive.
-					c.mu.Lock()
-					c.cancelIdleTimerLocked(agent.ID)
-					targetAgentID := agent.ID
-					scheduledGen := actx.rootGeneration
-					c.idleTimers[targetAgentID] = time.AfterFunc(gracePeriod, func() {
-						c.handleIdleTransition(targetAgentID, scheduledGen)
-					})
+					c.scheduleSilenceTimerLocked(agent.ID, actx.rootGeneration)
 					c.mu.Unlock()
 					pendingJob = c.updateSummarization(agent, false)
+				} else {
+					// Turn ended without tool use.
+					// If the agent is BUSY and an idle grace period is configured, debounce the transition
+					// so pauses between API calls do not cause BUSY/IDLE flipping.
+					agent.Activity.ActiveTool = nil
+					agent.Activity.ActiveTarget = nil
+					agent.Activity.ActiveToolStartedAt = nil
+					agent.Activity.Question = nil
+
+					c.mu.Lock()
+					actx.inTurn = false
+					actx.turnFloorUntil = 0
+					actx.lastToolArgs = ""
+					actx.recentTools = nil
+					actx.lastSummarizedToolKey = ""
+					actx.pendingCandidate = nil
+					c.cancelTrailingTimerLocked(agent.ID)
+					c.cancelSilenceTimerLocked(agent.ID)
+					gracePeriod := c.idleGracePeriod
+					isSync := c.syncMode
+					c.mu.Unlock()
+
+					if gracePeriod <= 0 || isSync || agent.Activity.Activity != types.ActivityBusy {
+						c.mu.Lock()
+						c.cancelIdleTimerLocked(agent.ID)
+						c.mu.Unlock()
+						agent.Activity.Activity = types.ActivityIdle
+						pendingJob = c.updateSummarization(agent, true)
+					} else {
+						// Keep agent BUSY during grace period and schedule transition to IDLE if no new events arrive.
+						c.mu.Lock()
+						c.cancelIdleTimerLocked(agent.ID)
+						targetAgentID := agent.ID
+						scheduledGen := actx.rootGeneration
+						c.idleTimers[targetAgentID] = time.AfterFunc(gracePeriod, func() {
+							c.handleIdleTransition(targetAgentID, scheduledGen)
+						})
+						c.mu.Unlock()
+						pendingJob = c.updateSummarization(agent, false)
+					}
 				}
 			}
 		}
@@ -811,6 +918,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				} else {
 					sub.activity = types.ActivityBusy
 					sub.activeTool = frame.Data.ToolName
+					sub.inFlightTool = true
 					if frame.Data.ToolName != nil {
 						sub.action = "Running " + *frame.Data.ToolName
 					}
@@ -818,6 +926,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 					sub.question = nil
 				}
 			case "tool_result":
+				sub.inFlightTool = false
 				if frame.Data.IsError != nil && *frame.Data.IsError {
 					sub.activity = types.ActivityError
 					if frame.Data.ToolOutput != nil {
@@ -833,6 +942,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 					sub.activeTool = nil
 				}
 			case "error":
+				sub.inFlightTool = false
 				sub.activity = types.ActivityError
 				if frame.Data.Content != nil {
 					out := *frame.Data.Content
@@ -843,6 +953,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				}
 				sub.activeTool = nil
 			case "question_prompt", "waiting_question":
+				sub.inFlightTool = false
 				sub.activity = types.ActivityWaitingQuestion
 				if frame.Data.Question != nil && strings.TrimSpace(*frame.Data.Question) != "" {
 					q := strings.TrimSpace(*frame.Data.Question)
@@ -1200,6 +1311,18 @@ func (c *Classifier) handleIdleTransition(agentID string, scheduledGen uint64) {
 		c.mu.Unlock()
 		return
 	}
+
+	// In-Flight Floor (FlightFloor): do not drop to idle while a tool is in flight
+	if actx.inFlightTool {
+		c.mu.Unlock()
+		return
+	}
+
+	// Thinking Floor (TurnFloor): do not drop to idle during turn floor latency window
+	if actx.inTurn && time.Now().UnixMilli() < actx.turnFloorUntil {
+		c.mu.Unlock()
+		return
+	}
 	c.mu.Unlock()
 
 	agent, err := c.store.GetAgent(agentID)
@@ -1232,6 +1355,12 @@ func (c *Classifier) handleIdleTransition(agentID string, scheduledGen uint64) {
 		return
 	}
 
+	c.cancelSilenceTimerLocked(agentID)
+	actx.inFlightTool = false
+	actx.inFlightToolName = ""
+	actx.inTurn = false
+	actx.turnFloorUntil = 0
+
 	var job *summaryJob
 	if !c.summarizer.IsNoSummarize() {
 		job = c.dispatchSummaryLocked(agent, actx, input, currentToolKey, true)
@@ -1257,6 +1386,83 @@ func (c *Classifier) handleIdleTransition(agentID string, scheduledGen uint64) {
 	c.mu.Lock()
 	cb := c.onUpdate
 	c.mu.Unlock()
+
+	if cb != nil {
+		cb(agent)
+	}
+}
+
+func (c *Classifier) handleSilenceTransition(agentID string, scheduledGen uint64) {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return
+	}
+	delete(c.silenceTimers, agentID)
+
+	actx, ok := c.agentCtx[agentID]
+	if !ok || actx.rootGeneration != scheduledGen || actx.rootActivity != types.ActivityBusy {
+		c.mu.Unlock()
+		return
+	}
+	c.mu.Unlock()
+
+	agent, err := c.store.GetAgent(agentID)
+	if err != nil || agent == nil {
+		return
+	}
+
+	// Only transition to IDLE if agent is still running
+	if agent.Activity.Lifecycle != types.LifecycleRunning {
+		return
+	}
+
+	agent.Activity.Activity = types.ActivityIdle
+	agent.Activity.ActiveTool = nil
+	agent.Activity.ActiveTarget = nil
+	agent.Activity.Question = nil
+	agent.Activity.UpdatedAt = time.Now().UnixMilli()
+
+	input, currentToolKey := c.prepareSummaryInput(agent)
+
+	c.mu.Lock()
+	actx, ok = c.agentCtx[agentID]
+	if !ok || actx.rootGeneration != scheduledGen || actx.rootActivity != types.ActivityBusy {
+		c.mu.Unlock()
+		return
+	}
+
+	actx.inFlightTool = false
+	actx.inFlightToolName = ""
+	actx.inTurn = false
+	actx.turnFloorUntil = 0
+
+	var job *summaryJob
+	if !c.summarizer.IsNoSummarize() {
+		job = c.dispatchSummaryLocked(agent, actx, input, currentToolKey, true)
+	} else {
+		agent.Activity.ActionStale = false
+	}
+
+	actx.rootActivity = types.ActivityIdle
+	actx.rootAction = agent.Activity.Action
+	actx.rootQuestion = nil
+	c.rollupActivityLocked(agent, actx)
+	c.mu.Unlock()
+
+	if err := c.store.SaveAgentState(*agent); err != nil {
+		logging.Error("saving_silent_idle_agent_failed", "err", err, "agentId", agentID)
+		return
+	}
+
+	if job != nil {
+		c.enqueueJob(agent.ID, job.input, job.timestamp, job.force)
+	}
+
+	c.mu.Lock()
+	cb := c.onUpdate
+	c.mu.Unlock()
+
 	if cb != nil {
 		cb(agent)
 	}
