@@ -1,10 +1,11 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Terminal, Copy, Check } from "lucide-react";
 import type { IToolExecutionBlockProps } from "./types";
 import { AnsiText } from "./AnsiText";
 import { DiffViewer } from "./DiffViewer";
 import { IconWrapper } from "./IconWrapper";
 import { isFileModification, parseFileModification } from "../utils/diffUtils";
+import { stripEmbeddedLineNumbers } from "../utils";
 
 const SHELL_TOOLS = new Set(["bash", "sh", "exec", "run_command", "shell", "terminal"]);
 const PARAM_TOOLS = new Set([
@@ -85,10 +86,10 @@ export function ToolExecutionBlock({
   };
 
   const handleCopyOutput = async (): Promise<void> => {
-    if (!toolOutput) return;
+    if (!cleanedOutput) return;
     try {
       if (typeof navigator !== "undefined" && navigator.clipboard) {
-        await navigator.clipboard.writeText(toolOutput);
+        await navigator.clipboard.writeText(cleanedOutput);
         setHasCopiedOutput(true);
         setTimeout(() => setHasCopiedOutput(false), 2000);
       }
@@ -97,7 +98,11 @@ export function ToolExecutionBlock({
     }
   };
 
-  const outputLines = toolOutput ? toolOutput.split("\n") : [];
+  const {
+    cleanedOutput,
+    startLine,
+    lines: outputLines,
+  } = useMemo(() => stripEmbeddedLineNumbers(toolOutput ?? ""), [toolOutput]);
   const lineCount = outputLines.length;
   const streamType = isFailure ? "STDERR" : "OUTPUT";
 
@@ -191,7 +196,7 @@ export function ToolExecutionBlock({
           {/* Terminal Command */}
           <pre
             data-testid="ToolExecutionBlock--input"
-            className="p-2.5 bg-slate-950 text-slate-200 font-mono text-[11px] overflow-x-auto whitespace-pre-wrap break-all [overflow-wrap:anywhere] min-w-0 max-w-full"
+            className="p-2.5 bg-slate-950 text-slate-200 font-mono text-[11px] overflow-x-auto whitespace-pre min-w-0 max-w-full"
           >
             <span className="text-emerald-400 select-none mr-1.5 font-bold" aria-hidden="true">
               $
@@ -234,7 +239,7 @@ export function ToolExecutionBlock({
             ) : (
               <pre
                 data-testid="ToolExecutionBlock--input"
-                className="mt-1 p-2 rounded bg-slate-950 text-slate-400 text-[10px] overflow-x-auto whitespace-pre-wrap break-all [overflow-wrap:anywhere] min-w-0 max-w-full"
+                className="mt-1 p-2 rounded bg-slate-950 text-slate-400 text-[10px] overflow-x-auto whitespace-pre min-w-0 max-w-full"
               >
                 {JSON.stringify(toolInput, null, 2)}
               </pre>
@@ -300,15 +305,15 @@ export function ToolExecutionBlock({
                 className="select-none py-2 pl-2.5 pr-2 text-right text-slate-600 bg-slate-950 border-r border-slate-800/80 shrink-0 font-mono text-[10px] leading-relaxed sticky left-0 z-10"
               >
                 {outputLines.map((_, idx) => (
-                  <div key={idx}>{idx + 1}</div>
+                  <div key={idx}>{idx + startLine}</div>
                 ))}
               </div>
             )}
             <pre
               data-testid="ToolExecutionBlock--output"
-              className="flex-1 p-2 rounded-r bg-slate-950/80 text-slate-300 font-mono text-[10px] whitespace-pre-wrap break-all [overflow-wrap:anywhere] min-w-0 max-w-full leading-relaxed"
+              className="flex-1 p-2 rounded-r bg-slate-950/80 text-slate-300 font-mono text-[10px] whitespace-pre min-w-0 max-w-full leading-relaxed"
             >
-              <AnsiText text={toolOutput} />
+              <AnsiText text={cleanedOutput} />
             </pre>
           </div>
         </div>

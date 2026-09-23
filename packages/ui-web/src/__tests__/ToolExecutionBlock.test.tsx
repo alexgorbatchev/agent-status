@@ -20,15 +20,53 @@ describe("ToolExecutionBlock Component", () => {
     expect(html).toContain("1 pass, 0 fail");
   });
 
-  it("renders multi-line output with pre tag and whitespace-pre-wrap preserving line breaks", () => {
+  it("renders multi-line output with pre tag and whitespace-pre without wrapping text", () => {
     const multilineOutput = "Line 1: starting build\nLine 2: compilation finished\nLine 3: 0 errors";
     const html = renderToString(<ToolExecutionBlock toolName="Build" toolOutput={multilineOutput} />);
 
     expect(html).toContain('data-testid="ToolExecutionBlock--output"');
-    // Output must be rendered inside a pre element with whitespace-pre-wrap to avoid collapsing into a wall of text
     expect(html).toContain("<pre");
-    expect(html).toContain("whitespace-pre-wrap");
+    expect(html).toContain("whitespace-pre");
+    expect(html).not.toContain("whitespace-pre-wrap");
+    expect(html).not.toContain("break-all");
     expect(html).toContain(multilineOutput);
+  });
+
+  it("does not wrap text in terminal command and raw JSON inputs", () => {
+    const htmlCmd = renderToString(<ToolExecutionBlock toolName="Bash" toolInput={{ command: "long command line" }} />);
+    const inputMatchCmd = htmlCmd.match(/<pre[^>]*data-testid="ToolExecutionBlock--input"[^>]*>/)?.[0] ?? "";
+    expect(inputMatchCmd).toContain("whitespace-pre");
+    expect(inputMatchCmd).not.toContain("whitespace-pre-wrap");
+    expect(inputMatchCmd).not.toContain("break-all");
+
+    const htmlJson = renderToString(
+      <ToolExecutionBlock toolName="CustomTool" toolInput={{ key: "very long raw parameter value" }} />,
+    );
+    const inputMatchJson = htmlJson.match(/<pre[^>]*data-testid="ToolExecutionBlock--input"[^>]*>/)?.[0] ?? "";
+    expect(inputMatchJson).toContain("whitespace-pre");
+    expect(inputMatchJson).not.toContain("whitespace-pre-wrap");
+    expect(inputMatchJson).not.toContain("break-all");
+  });
+
+  it("strips embedded line numbers from tool output and offsets gutter line numbers", () => {
+    const rawOutput =
+      "39\thost.mu.Lock()\n40\thost.requests = append(host.requests, cargoHostRequest{\n41\t    path: r.URL.Path,\n42\t})";
+    const html = renderToString(<ToolExecutionBlock toolName="ReadFile" toolOutput={rawOutput} />);
+
+    // Output pre should contain cleaned code without embedded line numbers
+    const outputMatch =
+      html.match(/<pre[^>]*data-testid="ToolExecutionBlock--output"[^>]*>([\s\S]*?)<\/pre>/)?.[1] ?? "";
+    expect(outputMatch).not.toContain("39\t");
+    expect(outputMatch).not.toContain("40\thost.requests");
+    expect(outputMatch).toContain("host.mu.Lock()");
+    expect(outputMatch).toContain("host.requests = append");
+
+    // Line gutter should show real starting file line numbers 39..42
+    expect(html).toContain('data-testid="ToolExecutionBlock--line-gutter"');
+    expect(html).toContain("<div>39</div>");
+    expect(html).toContain("<div>40</div>");
+    expect(html).toContain("<div>41</div>");
+    expect(html).toContain("<div>42</div>");
   });
 
   it("renders output when toolName is not provided", () => {
@@ -63,26 +101,26 @@ describe("ToolExecutionBlock Component", () => {
     expect(html).not.toContain("31m");
   });
 
-  it("applies overflow-wrap, break-all, min-w-0, and max-w-full to pre elements on unbroken payloads", () => {
+  it("applies whitespace-pre, min-w-0, and max-w-full to pre elements without wrapping text", () => {
     const unbrokenInput = { payload: "a".repeat(500) };
     const unbrokenOutput = "x".repeat(500);
     const html = renderToString(
       <ToolExecutionBlock toolName="RunCommand" toolInput={unbrokenInput} toolOutput={unbrokenOutput} />,
     );
 
-    // Input pre element must have overflow breaking styles and containment
-    expect(html).toMatch(/data-testid="ToolExecutionBlock--input"[^>]*class="[^"]*break-all[^"]*"/);
-    expect(html).toMatch(/data-testid="ToolExecutionBlock--input"[^>]*class="[^"]*\[overflow-wrap:anywhere\][^"]*"/);
+    // Input pre element must use whitespace-pre and not wrap text
+    expect(html).toMatch(/data-testid="ToolExecutionBlock--input"[^>]*class="[^"]*whitespace-pre[^"]*"/);
     expect(html).toMatch(/data-testid="ToolExecutionBlock--input"[^>]*class="[^"]*min-w-0[^"]*"/);
     expect(html).toMatch(/data-testid="ToolExecutionBlock--input"[^>]*class="[^"]*max-w-full[^"]*"/);
-    expect(html).not.toMatch(/data-testid="ToolExecutionBlock--input"[^>]*class="[^"]*break-words[^"]*"/);
+    expect(html).not.toMatch(/data-testid="ToolExecutionBlock--input"[^>]*class="[^"]*break-all[^"]*"/);
+    expect(html).not.toMatch(/data-testid="ToolExecutionBlock--input"[^>]*class="[^"]*whitespace-pre-wrap[^"]*"/);
 
-    // Output pre element must have overflow breaking styles and containment
-    expect(html).toMatch(/data-testid="ToolExecutionBlock--output"[^>]*class="[^"]*break-all[^"]*"/);
-    expect(html).toMatch(/data-testid="ToolExecutionBlock--output"[^>]*class="[^"]*\[overflow-wrap:anywhere\][^"]*"/);
+    // Output pre element must use whitespace-pre and not wrap text
+    expect(html).toMatch(/data-testid="ToolExecutionBlock--output"[^>]*class="[^"]*whitespace-pre[^"]*"/);
     expect(html).toMatch(/data-testid="ToolExecutionBlock--output"[^>]*class="[^"]*min-w-0[^"]*"/);
     expect(html).toMatch(/data-testid="ToolExecutionBlock--output"[^>]*class="[^"]*max-w-full[^"]*"/);
-    expect(html).not.toMatch(/data-testid="ToolExecutionBlock--output"[^>]*class="[^"]*break-words[^"]*"/);
+    expect(html).not.toMatch(/data-testid="ToolExecutionBlock--output"[^>]*class="[^"]*break-all[^"]*"/);
+    expect(html).not.toMatch(/data-testid="ToolExecutionBlock--output"[^>]*class="[^"]*whitespace-pre-wrap[^"]*"/);
   });
 
   it("constrains scroll container with max-h-64 and overflow-auto so gutter and output scroll together without empty space", () => {

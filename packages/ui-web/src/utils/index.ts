@@ -8,3 +8,4 @@ export * from "./getLogFrameKey";
 export * from "./groupingUtils";
 export * from "./LogBuffer";
 export * from "./rehypeAnsi";
+export * from "./stripEmbeddedLineNumbers";
