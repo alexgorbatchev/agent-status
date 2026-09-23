@@ -163,11 +163,36 @@ func TestLogSummarizerStartup(t *testing.T) {
 		logging.SetDefault(logging.NewWithMode(buf, "test-ingester", "info", true))
 
 		cfg := &config.Config{NoSummarize: true}
-		logSummarizerStartup(cfg, nil)
+		sumEngine, err := summarizer.New(summarizer.Config{NoSummarize: true})
+		if err != nil {
+			t.Fatalf("summarizer.New failed: %v", err)
+		}
+		logSummarizerStartup(cfg, sumEngine)
 
 		out := buf.String()
 		if !strings.Contains(out, "summarizer_disabled") {
 			t.Errorf("expected summarizer_disabled log, got: %s", out)
+		}
+		if !strings.Contains(out, "flag --no-summarize was provided") {
+			t.Errorf("expected reason in log, got: %s", out)
+		}
+	})
+
+	t.Run("disabled by sumEngine DisabledByFlag", func(t *testing.T) {
+		buf := new(bytes.Buffer)
+		logging.SetDefault(logging.NewWithMode(buf, "test-ingester", "info", true))
+
+		// cfg has NoSummarize: false, but sumEngine has NoSummarize: true
+		cfg := &config.Config{NoSummarize: false}
+		sumEngine, err := summarizer.New(summarizer.Config{NoSummarize: true})
+		if err != nil {
+			t.Fatalf("summarizer.New failed: %v", err)
+		}
+		logSummarizerStartup(cfg, sumEngine)
+
+		out := buf.String()
+		if !strings.Contains(out, "summarizer_disabled") {
+			t.Errorf("expected summarizer_disabled log when sumEngine.DisabledByFlag() is true, got: %s", out)
 		}
 		if !strings.Contains(out, "flag --no-summarize was provided") {
 			t.Errorf("expected reason in log, got: %s", out)
@@ -179,7 +204,7 @@ func TestLogSummarizerStartup(t *testing.T) {
 		logging.SetDefault(logging.NewWithMode(buf, "test-ingester", "info", true))
 
 		cfg := &config.Config{NoSummarize: false}
-		sumEngine, err := summarizer.New(summarizer.Config{NoSummarize: true})
+		sumEngine, err := summarizer.New(summarizer.Config{NoSummarize: false})
 		if err != nil {
 			t.Fatalf("summarizer.New failed: %v", err)
 		}

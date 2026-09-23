@@ -707,4 +707,92 @@ func TestReconciler_SkipsExitedLifecycle(t *testing.T) {
 	}
 }
 
+type raceListThenLoadStore struct {
+	*store.Store
+	targetAgentID string
+	now           int64
+}
+
+func (s *raceListThenLoadStore) GetRunningAgents(envID string) ([]types.IAgentState, error) {
+	// Simulate list-then-load race:
+	// Agent was selected as running by the initial query, but its run ends before GetAgent loads it.
+	if err := s.EndCurrentRun(s.targetAgentID, s.now); err != nil {
+		return nil, err
+	}
+	// Calling the real Store.GetAgent returns the agent with Lifecycle == LifecycleExited
+	agent, err := s.GetAgent(s.targetAgentID)
+	if err != nil {
+		return nil, err
+	}
+	if agent == nil {
+		return nil, fmt.Errorf("agent %s not found", s.targetAgentID)
+	}
+	return []types.IAgentState{*agent}, nil
+}
+
+func TestReconciler_ListThenLoadExitedRace(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "race_test.db")
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("store.Open failed: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	now := time.Now().UnixMilli()
+	localHost := "macbook.local"
+
+	// Create an agent that has an active run and an older UpdatedAt that would trigger
+	// the abandoned check if the LifecycleExited guard did not skip it.
+	agent := types.IAgentState{
+		ID:        "agent-race-1",
+		SessionID: "sess-race-1",
+		Harness:   types.HarnessPi,
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-local",
+			Hostname: localHost,
+			Platform: "darwin",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle:      types.LifecycleRunning,
+			Activity:       types.ActivityBusy,
+			FirstStartedAt: now - 3600000,
+			UpdatedAt:      now - 1800000, // 30 minutes old (> 5m abandoned limit)
+			CurrentRun: &types.IRunInfo{
+				ID:        "run-race-1",
+				PID:       0, // PID 0 so it would fall into the abandoned check
+				StartedAt: now - 3600000,
+			},
+		},
+	}
+	if err := st.SaveAgentState(agent); err != nil {
+		t.Fatalf("SaveAgentState failed: %v", err)
+	}
+
+	rStore := &raceListThenLoadStore{
+		Store:         st,
+		targetAgentID: agent.ID,
+		now:           now,
+	}
+
+	broadcaster := &mockBroadcaster{}
+	rec := New(
+		rStore,
+		broadcaster,
+		WithLocalHostname(localHost),
+		WithAbandonedLimit(5*time.Minute),
+	)
+
+	count, err := rec.Reconcile(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Reconcile failed: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("expected 0 reconciled agents because raced exited agent was skipped, got %d", count)
+	}
+	if len(broadcaster.getEvents()) != 0 {
+		t.Errorf("expected 0 broadcast events, got %d", len(broadcaster.getEvents()))
+	}
+}
+
+
 

@@ -121,7 +121,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, envID string) (int, error) {
 		default:
 		}
 
-		// Skip agents whose lifecycle is already EXITED
+		// Skip agents whose lifecycle is already EXITED.
+		// In steady-state, GetRunningAgents filters to active runs with ended_at IS NULL.
+		// However, this guard protects against the list-then-load race condition where a
+		// running agent exits between the initial ID query in GetRunningAgents and the
+		// subsequent GetAgent call, causing the loaded agent to have LifecycleExited.
 		if agent.Activity.Lifecycle == types.LifecycleExited {
 			continue
 		}

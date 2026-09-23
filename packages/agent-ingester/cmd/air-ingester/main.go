@@ -222,7 +222,7 @@ func startPeriodicReconciler(ctx context.Context, rec reconcilerRunner, interval
 }
 
 func logSummarizerStartup(cfg *config.Config, sumEngine *summarizer.Summarizer) {
-	if cfg.NoSummarize {
+	if sumEngine != nil && sumEngine.DisabledByFlag() {
 		logging.Info("summarizer_disabled", "reason", "flag --no-summarize was provided; running with deterministic fallback heuristics")
 		return
 	}
