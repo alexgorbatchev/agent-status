@@ -62,7 +62,9 @@ export function encodePiSessionDir(cwd: string): string {
  */
 export function extractPiSessionId(filenameOrPath: string): string {
   const filename = filenameOrPath.split("/").pop() ?? filenameOrPath;
-  const match = filename.match(/(?:^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_\d{3}Z_|^[^_]+_)?([0-9a-fA-F-]+)\.jsonl$/);
+  const match = filename.match(
+    /(?:^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}_\d{3}Z_|^[^_]+_)?([0-9a-fA-F-]+)\.jsonl$/,
+  );
   if (match && match[1]) {
     return match[1];
   }
@@ -191,7 +193,14 @@ export type PiContentBlock = IPiTextContent | IPiThinkingContent | IPiImageConte
 // ============================================================================
 
 /** Terminal reason why the assistant stopped generating tokens. */
-export type PiStopReason = "stop" | "length" | "toolUse" | "error" | "aborted" | "deferred" | "pending";
+export type PiStopReason =
+  | "stop"
+  | "length"
+  | "toolUse"
+  | "error"
+  | "aborted"
+  | "deferred"
+  | "pending";
 
 /**
  * User prompt message.
@@ -624,7 +633,9 @@ export function isPiModelChangeEntry(entry: PiSessionEntry): entry is IPiModelCh
 /**
  * Type guard checking if an entry is a thinking level change.
  */
-export function isPiThinkingLevelChangeEntry(entry: PiSessionEntry): entry is IPiThinkingLevelChangeEntry {
+export function isPiThinkingLevelChangeEntry(
+  entry: PiSessionEntry,
+): entry is IPiThinkingLevelChangeEntry {
   return entry.type === "thinking_level_change";
 }
 
@@ -666,7 +677,9 @@ export function isPiSessionInfoEntry(entry: PiSessionEntry): entry is IPiSession
  * @param entries - Array of session entries.
  * @returns Map keyed by entry ID.
  */
-export function buildPiEntryIndex(entries: readonly PiSessionEntry[]): ReadonlyMap<string, PiSessionEntry> {
+export function buildPiEntryIndex(
+  entries: readonly PiSessionEntry[],
+): ReadonlyMap<string, PiSessionEntry> {
   const index = new Map<string, PiSessionEntry>();
   for (const entry of entries) {
     index.set(entry.id, entry);
@@ -719,7 +732,9 @@ export function getPiBranchPath(
  * @returns Concatenated plain text representation.
  */
 export function extractPiTextContent(
-  content: string | readonly (IPiTextContent | IPiThinkingContent | IPiImageContent | IPiToolCall)[],
+  content:
+    | string
+    | readonly (IPiTextContent | IPiThinkingContent | IPiImageContent | IPiToolCall)[],
 ): string {
   if (typeof content === "string") {
     return content;

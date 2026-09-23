@@ -74,7 +74,9 @@ export interface ICodexRolloutFilenameInfo {
  */
 export function parseCodexRolloutPath(filePath: string): ICodexRolloutFilenameInfo | null {
   const normalized = filePath.replace(/\\/g, "/");
-  const match = normalized.match(/\/sessions\/(\d{4})\/(\d{2})\/(\d{2})\/rollout-([^/]+)-([0-9a-fA-F-]+)\.jsonl$/);
+  const match = normalized.match(
+    /\/sessions\/(\d{4})\/(\d{2})\/(\d{2})\/rollout-([^/]+)-([0-9a-fA-F-]+)\.jsonl$/,
+  );
   if (!match || !match[1] || !match[2] || !match[3] || !match[4] || !match[5]) {
     // Fallback for flat or non-standard paths
     const filenameMatch = normalized.match(/rollout-([^/]+)-([0-9a-fA-F-]+)\.jsonl$/);

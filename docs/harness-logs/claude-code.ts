@@ -1165,7 +1165,9 @@ export function isClaudeAiTitleRecord(entry: IClaudeLogEntry): entry is IClaudeA
   return entry.type === "ai-title";
 }
 
-export function isClaudeCustomTitleRecord(entry: IClaudeLogEntry): entry is IClaudeCustomTitleRecord {
+export function isClaudeCustomTitleRecord(
+  entry: IClaudeLogEntry,
+): entry is IClaudeCustomTitleRecord {
   return entry.type === "custom-title";
 }
 
@@ -1174,13 +1176,13 @@ export function isClaudeLastPromptRecord(entry: IClaudeLogEntry): entry is IClau
 }
 
 export function isClaudePermissionModeRecord(
-  entry: IClaudeLogEntry
+  entry: IClaudeLogEntry,
 ): entry is IClaudePermissionModeRecord {
   return entry.type === "permission-mode";
 }
 
 export function isClaudeFileHistorySnapshotRecord(
-  entry: IClaudeLogEntry
+  entry: IClaudeLogEntry,
 ): entry is IClaudeFileHistorySnapshotRecord {
   return entry.type === "file-history-snapshot";
 }
@@ -1197,6 +1199,8 @@ export function isClaudeToolUseBlock(block: IClaudeContentBlock): block is IClau
   return block.type === "tool_use";
 }
 
-export function isClaudeToolResultBlock(block: IClaudeContentBlock): block is IClaudeToolResultBlock {
+export function isClaudeToolResultBlock(
+  block: IClaudeContentBlock,
+): block is IClaudeToolResultBlock {
   return block.type === "tool_result";
 }

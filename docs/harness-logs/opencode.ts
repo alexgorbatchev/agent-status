@@ -454,6 +454,8 @@ export function isOpencodeTextPart(part: OpencodePartData): part is IOpencodeTex
 /**
  * Checks if a part represents reasoning/thinking.
  */
-export function isOpencodeReasoningPart(part: OpencodePartData): part is IOpencodeReasoningPartData {
+export function isOpencodeReasoningPart(
+  part: OpencodePartData,
+): part is IOpencodeReasoningPartData {
   return part.type === "reasoning";
 }
