@@ -55,12 +55,17 @@ export interface IRunInfo {
   endedAt: number | null;
 }
 
+export type SubagentStatus = "running" | "completed" | "settling";
+
 export interface ISubagentSummary {
   id: string;
   activity: ActivityState;
   activeTool?: string | null;
   action?: string;
   lastError?: string | null;
+  status?: SubagentStatus;
+  startedAt?: number;
+  completedAt?: number | null;
 }
 
 export interface IAgentActivity {

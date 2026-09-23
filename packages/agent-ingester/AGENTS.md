@@ -26,6 +26,7 @@ Central telemetry ingestion daemon (`air-ingester`) that receives agent events, 
 - Subagent frames must not cancel the root idle timer; idle-timer validity is keyed by `agentContext.rootGeneration`, not `UpdatedAt` (`internal/classifier/classifier.go`, #64).
 - `current_run_id` in SQLite is non-NULL only for unended runs, and an exited agent reloads with `CurrentRun == nil` (`internal/store/store.go`, `internal/classifier/classifier.go`, #69, #73).
 - Root activity context (`actx.rootActivity`) is strictly isolated from subagent composite/rolled-up activity so a busy subagent cannot pin the root to BUSY after subagent completion (`internal/classifier/classifier.go`, #97).
+- Minimum visibility dwell smoothing preserves completed short-lived subagents in `ActiveSubagents` for a configurable dwell threshold (`DefaultSubagentDwell = 30s`, `SetSubagentDwell`), tracking `StartedAt`, `CompletedAt`, and `Status` ("running" vs "completed") before eviction (`internal/classifier/classifier.go`, #98).
 - Active state floors preserve BUSY during long tool runs and model inference: Thinking Floor (TurnFloor) latches BUSY across inference latency windows, In-Flight Floor (FlightFloor) latches BUSY while a registered tool awaits `tool_result`, and silence timers distinguish open in-flight tools from finished turns with a 30-minute turn silence timeout (`internal/classifier/classifier.go`, #100).
 
 ## Boundaries

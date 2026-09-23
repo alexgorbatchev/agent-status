@@ -255,6 +255,7 @@ func TestAgentActivityJSON(t *testing.T) {
 		StartedAt:      1700000000000,
 	}
 
+	completed := int64(1700000008000)
 	activity := IAgentActivity{
 		Lifecycle:           LifecycleRunning,
 		Activity:            ActivityBusy,
@@ -271,6 +272,15 @@ func TestAgentActivityJSON(t *testing.T) {
 			Input: 1000,
 			Total: 1000,
 		},
+		ActiveSubagents: []ISubagentSummary{
+			{
+				ID:          "sub-1",
+				Activity:    ActivityIdle,
+				Status:      SubagentCompleted,
+				StartedAt:   1700000002000,
+				CompletedAt: &completed,
+			},
+		},
 		Cost:           &cost,
 		SubagentCount:  2,
 		CurrentRun:     &run,
@@ -286,6 +296,19 @@ func TestAgentActivityJSON(t *testing.T) {
 	var decoded IAgentActivity
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("json.Unmarshal failed: %v", err)
+	}
+
+	if len(decoded.ActiveSubagents) != 1 {
+		t.Fatalf("expected 1 ActiveSubagent, got %d", len(decoded.ActiveSubagents))
+	}
+	if decoded.ActiveSubagents[0].Status != SubagentCompleted {
+		t.Fatalf("expected SubagentCompleted, got %v", decoded.ActiveSubagents[0].Status)
+	}
+	if decoded.ActiveSubagents[0].StartedAt != 1700000002000 {
+		t.Fatalf("expected StartedAt 1700000002000, got %d", decoded.ActiveSubagents[0].StartedAt)
+	}
+	if decoded.ActiveSubagents[0].CompletedAt == nil || *decoded.ActiveSubagents[0].CompletedAt != completed {
+		t.Fatalf("expected CompletedAt %d, got %v", completed, decoded.ActiveSubagents[0].CompletedAt)
 	}
 
 	if decoded.Lifecycle != LifecycleRunning || decoded.Activity != ActivityBusy {

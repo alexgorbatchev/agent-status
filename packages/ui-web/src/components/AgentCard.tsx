@@ -379,26 +379,51 @@ export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps
         {activity.activeSubagents && activity.activeSubagents.length > 0 && (
           <div data-testid="AgentCard--subagents" className="flex flex-wrap items-center gap-1.5 mb-3">
             {activity.activeSubagents.map((sub) => {
+              const isCompleted =
+                sub.status === "completed" ||
+                sub.status === "settling" ||
+                (sub.completedAt !== null && sub.completedAt !== undefined);
+              const subStatus = isCompleted ? (sub.status === "settling" ? "settling" : "completed") : "running";
+
               const statusTone =
                 sub.activity === "ERROR"
                   ? "bg-red-950/40 border-red-800/50 text-red-300"
                   : sub.activity === "WAITING_QUESTION"
                     ? "bg-amber-950/40 border-amber-800/50 text-amber-300"
-                    : sub.activity === "BUSY"
-                      ? "bg-blue-950/40 border-blue-800/50 text-blue-300"
-                      : "bg-slate-800/50 border-slate-700/50 text-slate-400";
+                    : isCompleted
+                      ? "bg-slate-800/40 border-slate-700/40 text-slate-400 opacity-75 hover:opacity-100"
+                      : sub.activity === "BUSY"
+                        ? "bg-blue-950/40 border-blue-800/50 text-blue-300"
+                        : "bg-slate-800/50 border-slate-700/50 text-slate-400";
+
               const label = sub.activeTool ? `${sub.id}: ${sub.activeTool}` : `${sub.id}: ${sub.activity}`;
+
               return (
                 <span
                   key={sub.id}
                   data-testid={`AgentCard--subagent-chip-${sub.id}`}
                   data-subagent-id={sub.id}
                   data-subagent-activity={sub.activity}
+                  data-subagent-status={subStatus}
                   data-badge-type="subagent"
                   role="status"
                   aria-label={label}
-                  className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono border ${statusTone}`}
+                  className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono border transition-all duration-300 ease-in-out ${statusTone}`}
                 >
+                  <span
+                    data-testid={`AgentCard--subagent-status-${sub.id}`}
+                    className={clsx(
+                      "w-1.5 h-1.5 rounded-full mr-1.5 shrink-0",
+                      isCompleted
+                        ? "bg-emerald-400/80"
+                        : sub.activity === "ERROR"
+                          ? "bg-red-400"
+                          : sub.activity === "WAITING_QUESTION"
+                            ? "bg-amber-400"
+                            : "bg-blue-400 animate-pulse",
+                    )}
+                    aria-hidden="true"
+                  />
                   {label}
                 </span>
               );

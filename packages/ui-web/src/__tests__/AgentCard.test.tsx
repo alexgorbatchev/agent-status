@@ -434,6 +434,44 @@ describe("AgentCard Component", () => {
       expect(html).toContain("sub-1");
       expect(html).toContain("sub-2");
     });
+
+    it("renders subagents with distinct running vs completed status indicators and smooth transitions", () => {
+      const agentWithDwellSubagents: IAgentState = {
+        ...fixture_agentStateRunning,
+        activity: {
+          ...fixture_agentStateRunning.activity,
+          activeSubagents: [
+            {
+              id: "sub-running",
+              activity: "BUSY",
+              activeTool: "Grep",
+              status: "running",
+              startedAt: 1000,
+            },
+            {
+              id: "sub-settling",
+              activity: "IDLE",
+              status: "completed",
+              startedAt: 1000,
+              completedAt: 3000,
+            },
+          ],
+        },
+      };
+
+      const html = renderToStaticMarkup(<AgentCard agent={agentWithDwellSubagents} />);
+
+      // Chip status attributes
+      expect(html).toContain('data-subagent-status="running"');
+      expect(html).toContain('data-subagent-status="completed"');
+
+      // Status indicator element per chip
+      expect(html).toContain('data-testid="AgentCard--subagent-status-sub-running"');
+      expect(html).toContain('data-testid="AgentCard--subagent-status-sub-settling"');
+
+      // Smooth transition classes on completed subagent chip
+      expect(html).toContain("transition-all");
+    });
   });
 
   describe("Focus in Herdr button", () => {

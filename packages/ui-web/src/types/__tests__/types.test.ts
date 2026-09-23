@@ -4,6 +4,7 @@ import type {
   ActivityState,
   HarnessType,
   AgentPhase,
+  SubagentStatus,
   IEnvironmentInfo,
   IWorkspaceInfo,
   IProjectInfo,
@@ -37,6 +38,11 @@ describe("TypeScript Shared Contracts", () => {
   it("verifies AgentPhase values", () => {
     const phases: AgentPhase[] = ["planning", "editing", "testing", "debugging", "investigating"];
     expect(phases.length).toBe(5);
+  });
+
+  it("verifies SubagentStatus values", () => {
+    const statuses: SubagentStatus[] = ["running", "completed", "settling"];
+    expect(statuses.length).toBe(3);
   });
 
   it("constructs full IAgentState hierarchy", () => {

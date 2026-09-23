@@ -30,6 +30,9 @@ type subagentState struct {
 	lastError    *string
 	question     *string
 	inFlightTool bool
+	startedAt    int64
+	completedAt  *int64
+	status       types.SubagentStatus
 }
 
 type agentContext struct {
@@ -70,6 +73,7 @@ const (
 	DefaultDebounceWindow     = 10 * time.Second
 	DefaultTurnFloor          = 20 * time.Second
 	DefaultTurnSilenceTimeout = 30 * time.Minute
+	DefaultSubagentDwell      = 30 * time.Second
 )
 
 type Classifier struct {
@@ -81,10 +85,12 @@ type Classifier struct {
 	idleTimers         map[string]*time.Timer
 	trailingTimers     map[string]*time.Timer
 	silenceTimers      map[string]*time.Timer
+	subagentTimers     map[string]*time.Timer
 	idleGracePeriod    time.Duration
 	debounceWindow     time.Duration
 	turnFloor          time.Duration
 	turnSilenceTimeout time.Duration
+	subagentDwell      time.Duration
 	onUpdate           func(agent *types.IAgentState)
 	mu                 sync.Mutex
 	wg                 sync.WaitGroup
@@ -108,10 +114,12 @@ func New(s *store.Store, p *pricing.Engine, sum *summarizer.Summarizer) *Classif
 		idleTimers:          make(map[string]*time.Timer),
 		trailingTimers:      make(map[string]*time.Timer),
 		silenceTimers:       make(map[string]*time.Timer),
+		subagentTimers:      make(map[string]*time.Timer),
 		idleGracePeriod:     DefaultIdleGracePeriod,
 		debounceWindow:      debounce,
 		turnFloor:           DefaultTurnFloor,
 		turnSilenceTimeout:  DefaultTurnSilenceTimeout,
+		subagentDwell:       DefaultSubagentDwell,
 	}
 }
 
@@ -134,6 +142,13 @@ func (c *Classifier) SetTurnFloor(d time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.turnFloor = d
+}
+
+// SetSubagentDwell sets the minimum visibility dwell window for short-lived subagents.
+func (c *Classifier) SetSubagentDwell(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.subagentDwell = d
 }
 
 // SetTurnSilenceTimeout sets the timeout window after which an inactive session transitions to IDLE.
@@ -180,6 +195,10 @@ func (c *Classifier) Close() error {
 		t.Stop()
 		delete(c.silenceTimers, id)
 	}
+	for id, t := range c.subagentTimers {
+		t.Stop()
+		delete(c.subagentTimers, id)
+	}
 	c.mu.Unlock()
 
 	c.wg.Wait()
@@ -197,6 +216,98 @@ func (c *Classifier) cancelSilenceTimerLocked(agentID string) {
 	if t, exists := c.silenceTimers[agentID]; exists {
 		t.Stop()
 		delete(c.silenceTimers, agentID)
+	}
+}
+
+func (c *Classifier) cancelSubagentTimerLocked(agentID, subID string) {
+	key := fmt.Sprintf("%s:%s", agentID, subID)
+	if t, exists := c.subagentTimers[key]; exists {
+		t.Stop()
+		delete(c.subagentTimers, key)
+	}
+}
+
+func (c *Classifier) cancelAllSubagentTimersLocked(agentID string) {
+	prefix := agentID + ":"
+	for key, t := range c.subagentTimers {
+		if strings.HasPrefix(key, prefix) {
+			t.Stop()
+			delete(c.subagentTimers, key)
+		}
+	}
+}
+
+func (c *Classifier) scheduleSubagentDwellTimerLocked(agentID, subID string, sub *subagentState, now int64) {
+	c.cancelSubagentTimerLocked(agentID, subID)
+	if c.subagentDwell <= 0 || c.syncMode {
+		return
+	}
+	dwellMs := int64(c.subagentDwell / time.Millisecond)
+	targetTime := sub.startedAt + dwellMs
+	delayMs := targetTime - now
+	if delayMs <= 0 {
+		delayMs = 1
+	}
+	key := fmt.Sprintf("%s:%s", agentID, subID)
+	c.subagentTimers[key] = time.AfterFunc(time.Duration(delayMs)*time.Millisecond, func() {
+		c.handleSubagentDwellExpired(agentID, subID)
+	})
+}
+
+func (c *Classifier) handleSubagentDwellExpired(agentID, subID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return
+	}
+	key := fmt.Sprintf("%s:%s", agentID, subID)
+	delete(c.subagentTimers, key)
+	actx := c.agentCtx[agentID]
+	if actx == nil {
+		return
+	}
+	sub, ok := actx.subagents[subID]
+	if !ok || sub.completedAt == nil {
+		return
+	}
+	now := time.Now().UnixMilli()
+	dwellMs := int64(c.subagentDwell / time.Millisecond)
+	if now < sub.startedAt+dwellMs {
+		return
+	}
+	delete(actx.subagents, subID)
+
+	if c.store == nil {
+		return
+	}
+	agent, err := c.store.GetAgent(agentID)
+	if err != nil || agent == nil || agent.Activity.Lifecycle == types.LifecycleExited {
+		return
+	}
+	c.rollupActivityLocked(agent, actx)
+	_ = c.store.SaveAgentState(*agent)
+	cb := c.onUpdate
+	if cb != nil {
+		go cb(agent)
+	}
+}
+
+func (c *Classifier) pruneExpiredSubagentsLocked(agentID string, actx *agentContext, now int64) {
+	if c.subagentDwell <= 0 {
+		for id, sub := range actx.subagents {
+			if sub.completedAt != nil {
+				c.cancelSubagentTimerLocked(agentID, id)
+				delete(actx.subagents, id)
+			}
+		}
+		return
+	}
+	dwellMs := int64(c.subagentDwell / time.Millisecond)
+	for id, sub := range actx.subagents {
+		if sub.completedAt != nil && now >= sub.startedAt+dwellMs {
+			c.cancelSubagentTimerLocked(agentID, id)
+			delete(actx.subagents, id)
+		}
 	}
 }
 
@@ -489,12 +600,23 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		if !exists {
 			subagentsMap := make(map[string]*subagentState)
 			for _, summary := range agent.Activity.ActiveSubagents {
+				st := summary.Status
+				if st == "" {
+					if summary.Activity == types.ActivityBusy {
+						st = types.SubagentRunning
+					} else {
+						st = types.SubagentCompleted
+					}
+				}
 				subagentsMap[summary.ID] = &subagentState{
-					id:         summary.ID,
-					activity:   summary.Activity,
-					activeTool: summary.ActiveTool,
-					action:     summary.Action,
-					lastError:  summary.LastError,
+					id:          summary.ID,
+					activity:    summary.Activity,
+					activeTool:  summary.ActiveTool,
+					action:      summary.Action,
+					lastError:   summary.LastError,
+					startedAt:   summary.StartedAt,
+					completedAt: summary.CompletedAt,
+					status:      st,
 				}
 				preloaded[summary.ID] = struct{}{}
 			}
@@ -596,6 +718,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			c.cancelIdleTimerLocked(agent.ID)
 			c.cancelTrailingTimerLocked(agent.ID)
 			c.cancelSilenceTimerLocked(agent.ID)
+			c.cancelAllSubagentTimersLocked(agent.ID)
 			actx.inFlightTool = false
 			actx.inFlightToolName = ""
 			actx.inTurn = false
@@ -888,12 +1011,29 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			}
 			sub, ok := actx.subagents[subID]
 			if !ok {
-				sub = &subagentState{id: subID, activity: types.ActivityBusy}
+				sub = &subagentState{
+					id:        subID,
+					activity:  types.ActivityBusy,
+					startedAt: now,
+					status:    types.SubagentRunning,
+				}
 				actx.subagents[subID] = sub
+			} else {
+				if sub.startedAt == 0 {
+					sub.startedAt = now
+				}
+				if frame.EventType != "turn_end" && frame.EventType != "run_exited" {
+					sub.completedAt = nil
+					sub.status = types.SubagentRunning
+					c.cancelSubagentTimerLocked(agent.ID, subID)
+				}
 			}
 
 			switch frame.EventType {
 			case "tool_call":
+				sub.completedAt = nil
+				sub.status = types.SubagentRunning
+				c.cancelSubagentTimerLocked(agent.ID, subID)
 				if frame.Data.ToolName != nil && *frame.Data.ToolName == "AskUserQuestion" {
 					sub.activity = types.ActivityWaitingQuestion
 					sub.activeTool = nil
@@ -967,9 +1107,19 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				sub.activity = types.ActivityBusy
 				sub.activeTool = nil
 				sub.lastError = nil
-			case "turn_end":
+				sub.completedAt = nil
+				sub.status = types.SubagentRunning
+				c.cancelSubagentTimerLocked(agent.ID, subID)
+			case "turn_end", "run_exited":
 				sub.activity = types.ActivityIdle
 				sub.activeTool = nil
+				sub.inFlightTool = false
+				if sub.completedAt == nil {
+					comp := now
+					sub.completedAt = &comp
+				}
+				sub.status = types.SubagentCompleted
+				c.scheduleSubagentDwellTimerLocked(agent.ID, subID, sub, now)
 			}
 		}
 		c.mu.Unlock()
@@ -987,6 +1137,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		actx.rootLastError = agent.Activity.LastError
 	}
 	if agent.Activity.Lifecycle != types.LifecycleExited {
+		c.pruneExpiredSubagentsLocked(agent.ID, actx, now)
 		c.rollupActivityLocked(agent, actx)
 	} else {
 		agent.Activity.ActiveSubagents = nil
@@ -1506,11 +1657,14 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 	var summaries []types.ISubagentSummary
 	for _, sub := range actx.subagents {
 		summaries = append(summaries, types.ISubagentSummary{
-			ID:         sub.id,
-			Activity:   sub.activity,
-			ActiveTool: sub.activeTool,
-			Action:     sub.action,
-			LastError:  sub.lastError,
+			ID:          sub.id,
+			Activity:    sub.activity,
+			ActiveTool:  sub.activeTool,
+			Action:      sub.action,
+			LastError:   sub.lastError,
+			Status:      sub.status,
+			StartedAt:   sub.startedAt,
+			CompletedAt: sub.completedAt,
 		})
 	}
 	sort.Slice(summaries, func(i, j int) bool {

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -6405,6 +6406,459 @@ func TestClassifier_TurnSilenceTimeout_ExtendedWindow(t *testing.T) {
 		}
 	})
 }
+
+func TestClassifier_Subagent_MinimumVisibilityDwell(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, s := newTestClassifier(t, sum)
+	c.SetSyncMode(true)
+	c.SetSubagentDwell(30 * time.Second)
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{ID: "env-1", Label: "host", Platform: "linux"}
+	proj := types.IProjectInfo{ID: "repo", Name: "repo", CanonicalRoot: "/repo"}
+	ws := types.IWorkspaceInfo{Branch: "main", CWD: "/repo"}
+	agentID := "env-1:claude-code:sess-subagent-dwell"
+
+	baseFrame := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       "env-1",
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-subagent-dwell",
+		PID:         1001,
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   1000,
+		EventType:   "run_started",
+	}
+	if _, err := c.ProcessFrame(baseFrame); err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+
+	subID := "sub-quick-search"
+	toolName := "Grep"
+	fSubStart := baseFrame
+	fSubStart.Seq = 2
+	fSubStart.SubagentID = &subID
+	fSubStart.Timestamp = 1000
+	fSubStart.EventType = "tool_call"
+	fSubStart.Data = types.TelemetryFrameData{
+		ToolName: &toolName,
+		Usage: &types.ITokenUsage{
+			Input: 50,
+			Total: 50,
+		},
+	}
+	agent, err := c.ProcessFrame(fSubStart)
+	if err != nil {
+		t.Fatalf("subagent tool_call failed: %v", err)
+	}
+
+	if len(agent.Activity.ActiveSubagents) != 1 {
+		t.Fatalf("expected 1 active subagent at start, got %d", len(agent.Activity.ActiveSubagents))
+	}
+	subSummary := agent.Activity.ActiveSubagents[0]
+	if subSummary.StartedAt != 1000 {
+		t.Errorf("expected StartedAt 1000, got %d", subSummary.StartedAt)
+	}
+	if subSummary.Status != types.SubagentRunning {
+		t.Errorf("expected subagent Status %q, got %q", types.SubagentRunning, subSummary.Status)
+	}
+	if subSummary.CompletedAt != nil {
+		t.Errorf("expected CompletedAt nil while running, got %v", *subSummary.CompletedAt)
+	}
+
+	// 2. Subagent completes rapidly at timestamp 3000 (2s execution) with turn_end
+	fSubEnd := baseFrame
+	fSubEnd.Seq = 3
+	fSubEnd.SubagentID = &subID
+	fSubEnd.Timestamp = 3000
+	fSubEnd.EventType = "turn_end"
+	fSubEnd.Data = types.TelemetryFrameData{
+		Usage: &types.ITokenUsage{
+			Output: 100,
+			Total:  100,
+		},
+	}
+	agent, err = c.ProcessFrame(fSubEnd)
+	if err != nil {
+		t.Fatalf("subagent turn_end failed: %v", err)
+	}
+
+	// Subagent MUST remain visible in active subagents roster during dwell window
+	if len(agent.Activity.ActiveSubagents) != 1 {
+		t.Fatalf("expected subagent to remain visible during dwell window at t=3000, got %d active subagents", len(agent.Activity.ActiveSubagents))
+	}
+	subSummary = agent.Activity.ActiveSubagents[0]
+	if subSummary.Status != types.SubagentCompleted {
+		t.Errorf("expected subagent Status %q after turn_end during dwell, got %q", types.SubagentCompleted, subSummary.Status)
+	}
+	if subSummary.CompletedAt == nil || *subSummary.CompletedAt != 3000 {
+		t.Errorf("expected CompletedAt 3000, got %v", subSummary.CompletedAt)
+	}
+
+	// 3. Frame arrives at t=15000 (14s since start, well within 30s dwell)
+	fIntermediate := baseFrame
+	fIntermediate.Seq = 4
+	fIntermediate.Timestamp = 15000
+	fIntermediate.EventType = "thinking"
+	agent, err = c.ProcessFrame(fIntermediate)
+	if err != nil {
+		t.Fatalf("intermediate frame failed: %v", err)
+	}
+	if len(agent.Activity.ActiveSubagents) != 1 {
+		t.Fatalf("expected subagent to still remain in ActiveSubagents at t=15000 within dwell window, got %d", len(agent.Activity.ActiveSubagents))
+	}
+
+	// 4. Frame arrives at t=35000 (34s since start, exceeding 30s dwell)
+	fAfterDwell := baseFrame
+	fAfterDwell.Seq = 5
+	fAfterDwell.Timestamp = 35000
+	fAfterDwell.EventType = "turn_end"
+	agent, err = c.ProcessFrame(fAfterDwell)
+	if err != nil {
+		t.Fatalf("after dwell frame failed: %v", err)
+	}
+
+	// Subagent MUST now be evicted from active subagent roster!
+	if len(agent.Activity.ActiveSubagents) != 0 {
+		t.Errorf("expected subagent to be evicted after dwell window elapsed at t=35000, got %d active subagents", len(agent.Activity.ActiveSubagents))
+	}
+
+	// Usage and SubagentCount remain attributed to parent agent
+	if agent.Activity.Usage.Total != 150 {
+		t.Errorf("expected accumulated usage 150 on parent agent, got %d", agent.Activity.Usage.Total)
+	}
+	if agent.Activity.SubagentCount != 1 {
+		t.Errorf("expected SubagentCount 1 on parent agent, got %d", agent.Activity.SubagentCount)
+	}
+
+	// Verify persistence in store
+	reloaded, err := s.GetAgent(agentID)
+	if err != nil || reloaded == nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if len(reloaded.Activity.ActiveSubagents) != 0 {
+		t.Errorf("expected store ActiveSubagents to be empty after dwell expiration, got %d", len(reloaded.Activity.ActiveSubagents))
+	}
+	if reloaded.Activity.Usage.Total != 150 {
+		t.Errorf("expected store Usage 150, got %d", reloaded.Activity.Usage.Total)
+	}
+}
+
+func TestClassifier_Subagent_DwellTimerEvictionAsync(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, s := newTestClassifier(t, sum)
+	c.SetSyncMode(false)
+	c.SetSubagentDwell(40 * time.Millisecond)
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{ID: "env-1", Label: "host", Platform: "linux"}
+	proj := types.IProjectInfo{ID: "repo", Name: "repo", CanonicalRoot: "/repo"}
+	ws := types.IWorkspaceInfo{Branch: "main", CWD: "/repo"}
+	agentID := "env-1:claude-code:sess-subagent-async-dwell"
+
+	baseFrame := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       "env-1",
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-subagent-async-dwell",
+		PID:         1002,
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   time.Now().UnixMilli(),
+		EventType:   "run_started",
+	}
+	if _, err := c.ProcessFrame(baseFrame); err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+
+	subID := "sub-timer"
+	toolName := "Read"
+	fSubStart := baseFrame
+	fSubStart.Seq = 2
+	fSubStart.SubagentID = &subID
+	fSubStart.Timestamp = time.Now().UnixMilli()
+	fSubStart.EventType = "tool_call"
+	fSubStart.Data = types.TelemetryFrameData{ToolName: &toolName}
+	if _, err := c.ProcessFrame(fSubStart); err != nil {
+		t.Fatalf("subagent tool_call failed: %v", err)
+	}
+
+	// Subagent completes immediately
+	fSubEnd := baseFrame
+	fSubEnd.Seq = 3
+	fSubEnd.SubagentID = &subID
+	fSubEnd.Timestamp = time.Now().UnixMilli()
+	fSubEnd.EventType = "turn_end"
+	agent, err := c.ProcessFrame(fSubEnd)
+	if err != nil {
+		t.Fatalf("subagent turn_end failed: %v", err)
+	}
+	if len(agent.Activity.ActiveSubagents) != 1 {
+		t.Fatalf("expected 1 subagent during dwell, got %d", len(agent.Activity.ActiveSubagents))
+	}
+
+	// Wait for dwell timer to fire (dwell is 40ms, wait 80ms)
+	time.Sleep(80 * time.Millisecond)
+
+	reloaded, err := s.GetAgent(agentID)
+	if err != nil || reloaded == nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if len(reloaded.Activity.ActiveSubagents) != 0 {
+		t.Errorf("expected subagent to be evicted by async dwell timer, got %d", len(reloaded.Activity.ActiveSubagents))
+	}
+}
+
+func TestClassifier_Subagent_ResumedDuringDwell(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, _ := newTestClassifier(t, sum)
+	c.SetSyncMode(true)
+	c.SetSubagentDwell(30 * time.Second)
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{ID: "env-1", Label: "host", Platform: "linux"}
+	proj := types.IProjectInfo{ID: "repo", Name: "repo", CanonicalRoot: "/repo"}
+	ws := types.IWorkspaceInfo{Branch: "main", CWD: "/repo"}
+	agentID := "env-1:claude-code:sess-subagent-resume"
+
+	baseFrame := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       "env-1",
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-subagent-resume",
+		PID:         1003,
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   1000,
+		EventType:   "run_started",
+	}
+	if _, err := c.ProcessFrame(baseFrame); err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+
+	subID := "sub-resumed"
+	toolName := "Edit"
+	fSubStart := baseFrame
+	fSubStart.Seq = 2
+	fSubStart.SubagentID = &subID
+	fSubStart.Timestamp = 1000
+	fSubStart.EventType = "tool_call"
+	fSubStart.Data = types.TelemetryFrameData{ToolName: &toolName}
+	if _, err := c.ProcessFrame(fSubStart); err != nil {
+		t.Fatalf("tool_call failed: %v", err)
+	}
+
+	fSubEnd := baseFrame
+	fSubEnd.Seq = 3
+	fSubEnd.SubagentID = &subID
+	fSubEnd.Timestamp = 2000
+	fSubEnd.EventType = "turn_end"
+	if _, err := c.ProcessFrame(fSubEnd); err != nil {
+		t.Fatalf("turn_end failed: %v", err)
+	}
+
+	// New activity arrives at t=3000 during dwell
+	tool2 := "Bash"
+	fSubResume := baseFrame
+	fSubResume.Seq = 4
+	fSubResume.SubagentID = &subID
+	fSubResume.Timestamp = 3000
+	fSubResume.EventType = "tool_call"
+	fSubResume.Data = types.TelemetryFrameData{ToolName: &tool2}
+	agent, err := c.ProcessFrame(fSubResume)
+	if err != nil {
+		t.Fatalf("subagent resume tool_call failed: %v", err)
+	}
+
+	if len(agent.Activity.ActiveSubagents) != 1 {
+		t.Fatalf("expected 1 active subagent, got %d", len(agent.Activity.ActiveSubagents))
+	}
+	sub := agent.Activity.ActiveSubagents[0]
+	if sub.Status != types.SubagentRunning {
+		t.Errorf("expected subagent status RUNNING after resume, got %s", sub.Status)
+	}
+	if sub.CompletedAt != nil {
+		t.Errorf("expected CompletedAt to be cleared on resume, got %v", *sub.CompletedAt)
+	}
+}
+
+func TestClassifier_Subagent_ZeroDwellImmediateEviction(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, _ := newTestClassifier(t, sum)
+	c.SetSyncMode(true)
+	c.SetSubagentDwell(0) // Zero dwell threshold
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{ID: "env-1", Label: "host", Platform: "linux"}
+	proj := types.IProjectInfo{ID: "repo", Name: "repo", CanonicalRoot: "/repo"}
+	ws := types.IWorkspaceInfo{Branch: "main", CWD: "/repo"}
+	agentID := "env-1:claude-code:sess-subagent-zero-dwell"
+
+	baseFrame := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       "env-1",
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-subagent-zero-dwell",
+		PID:         1004,
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   1000,
+		EventType:   "run_started",
+	}
+	if _, err := c.ProcessFrame(baseFrame); err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+
+	subID := "sub-zero"
+	toolName := "Read"
+	fStart := baseFrame
+	fStart.Seq = 2
+	fStart.SubagentID = &subID
+	fStart.Timestamp = 1000
+	fStart.EventType = "tool_call"
+	fStart.Data = types.TelemetryFrameData{ToolName: &toolName}
+	agent, err := c.ProcessFrame(fStart)
+	if err != nil {
+		t.Fatalf("tool_call failed: %v", err)
+	}
+	if len(agent.Activity.ActiveSubagents) != 1 {
+		t.Fatalf("expected 1 active subagent while running with zero dwell, got %d", len(agent.Activity.ActiveSubagents))
+	}
+
+	// Subagent completes
+	fEnd := baseFrame
+	fEnd.Seq = 3
+	fEnd.SubagentID = &subID
+	fEnd.Timestamp = 1100
+	fEnd.EventType = "turn_end"
+	agent, err = c.ProcessFrame(fEnd)
+	if err != nil {
+		t.Fatalf("turn_end failed: %v", err)
+	}
+
+	// With zero dwell, subagent should be evicted immediately on turn_end
+	if len(agent.Activity.ActiveSubagents) != 0 {
+		t.Errorf("expected 0 active subagents immediately after turn_end with zero dwell, got %d", len(agent.Activity.ActiveSubagents))
+	}
+}
+
+func TestClassifier_Subagent_DwellTimer_OnUpdateAndEdgeCases(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, _ := newTestClassifier(t, sum)
+	c.SetSyncMode(false)
+	c.SetSubagentDwell(25 * time.Millisecond)
+	defer func() { _ = c.Close() }()
+
+	var updateReceived atomic.Bool
+	c.SetOnUpdate(func(a *types.IAgentState) {
+		if a != nil && len(a.Activity.ActiveSubagents) == 0 {
+			updateReceived.Store(true)
+		}
+	})
+
+	env := types.IEnvironmentInfo{ID: "env-1", Label: "host", Platform: "linux"}
+	proj := types.IProjectInfo{ID: "repo", Name: "repo", CanonicalRoot: "/repo"}
+	ws := types.IWorkspaceInfo{Branch: "main", CWD: "/repo"}
+	agentID := "env-1:claude-code:sess-subagent-onupdate"
+
+	baseFrame := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       "env-1",
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-subagent-onupdate",
+		PID:         1005,
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   time.Now().UnixMilli(),
+		EventType:   "run_started",
+	}
+	if _, err := c.ProcessFrame(baseFrame); err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+
+	subID := "sub-update"
+	toolName := "Grep"
+	fStart := baseFrame
+	fStart.Seq = 2
+	fStart.SubagentID = &subID
+	fStart.Timestamp = time.Now().UnixMilli()
+	fStart.EventType = "tool_call"
+	fStart.Data = types.TelemetryFrameData{ToolName: &toolName}
+	if _, err := c.ProcessFrame(fStart); err != nil {
+		t.Fatalf("tool_call failed: %v", err)
+	}
+
+	fEnd := baseFrame
+	fEnd.Seq = 3
+	fEnd.SubagentID = &subID
+	fEnd.Timestamp = time.Now().UnixMilli()
+	fEnd.EventType = "turn_end"
+	if _, err := c.ProcessFrame(fEnd); err != nil {
+		t.Fatalf("turn_end failed: %v", err)
+	}
+
+	// Wait up to 1 second for onUpdate callback to receive the dwell expiration
+	deadline := time.Now().Add(1 * time.Second)
+	for !updateReceived.Load() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !updateReceived.Load() {
+		t.Errorf("expected onUpdate callback to be invoked after subagent dwell expiration")
+	}
+
+	// Exercise defensive branches in handleSubagentDwellExpired:
+	// 1. Unknown agentID
+	c.handleSubagentDwellExpired("nonexistent-agent", "sub-1")
+
+	// 2. Unknown subID
+	c.handleSubagentDwellExpired(agentID, "nonexistent-sub")
+
+	// 3. Subagent not completed
+	c.mu.Lock()
+	actx := c.agentCtx[agentID]
+	if actx != nil {
+		actx.subagents["sub-running-edge"] = &subagentState{
+			id:        "sub-running-edge",
+			activity:  types.ActivityBusy,
+			startedAt: time.Now().UnixMilli(),
+		}
+	}
+	c.mu.Unlock()
+	c.handleSubagentDwellExpired(agentID, "sub-running-edge")
+
+	// 4. Closed classifier
+	c.mu.Lock()
+	c.closed = true
+	c.mu.Unlock()
+	c.handleSubagentDwellExpired(agentID, "sub-update")
+}
+
 
 
 

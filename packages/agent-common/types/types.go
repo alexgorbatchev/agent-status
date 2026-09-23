@@ -82,12 +82,23 @@ type IRunInfo struct {
 	EndedAt        *int64 `json:"endedAt"`
 }
 
+type SubagentStatus string
+
+const (
+	SubagentRunning   SubagentStatus = "running"
+	SubagentCompleted SubagentStatus = "completed"
+	SubagentSettling  SubagentStatus = "settling"
+)
+
 type ISubagentSummary struct {
-	ID         string        `json:"id"`
-	Activity   ActivityState `json:"activity"`
-	ActiveTool *string       `json:"activeTool,omitempty"`
-	Action     string        `json:"action,omitempty"`
-	LastError  *string       `json:"lastError,omitempty"`
+	ID          string         `json:"id"`
+	Activity    ActivityState  `json:"activity"`
+	ActiveTool  *string        `json:"activeTool,omitempty"`
+	Action      string         `json:"action,omitempty"`
+	LastError   *string        `json:"lastError,omitempty"`
+	Status      SubagentStatus `json:"status,omitempty"`
+	StartedAt   int64          `json:"startedAt,omitempty"`
+	CompletedAt *int64         `json:"completedAt,omitempty"`
 }
 
 type IAgentActivity struct {

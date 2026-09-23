@@ -119,3 +119,44 @@ export const StallAttention: Story = {
     await expect(canvas.getByTestId("AgentCard--stall-warning")).toBeInTheDocument();
   },
 };
+
+export const SubagentsDwell: Story = {
+  args: {
+    agent: {
+      ...fixture_agentStateRunning,
+      activity: {
+        ...fixture_agentStateRunning.activity,
+        lifecycle: "RUNNING",
+        activity: "BUSY",
+        subagentCount: 2,
+        activeSubagents: [
+          {
+            id: "sub-1",
+            activity: "BUSY",
+            activeTool: "Grep",
+            status: "running",
+            startedAt: Date.now() - 10000,
+          },
+          {
+            id: "sub-2",
+            activity: "IDLE",
+            status: "completed",
+            startedAt: Date.now() - 25000,
+            completedAt: Date.now() - 5000,
+          },
+        ],
+      },
+    },
+    onOpenDrawer,
+  },
+  async play({ canvasElement }) {
+    const canvas = within(canvasElement);
+    const card = canvas.getByTestId("AgentCard");
+    await expect(card).toBeInTheDocument();
+    await expect(canvas.getByTestId("AgentCard--subagents")).toBeInTheDocument();
+    await expect(canvas.getByTestId("AgentCard--subagent-chip-sub-1")).toBeInTheDocument();
+    await expect(canvas.getByTestId("AgentCard--subagent-chip-sub-2")).toBeInTheDocument();
+    await expect(canvas.getByTestId("AgentCard--subagent-status-sub-1")).toBeInTheDocument();
+    await expect(canvas.getByTestId("AgentCard--subagent-status-sub-2")).toBeInTheDocument();
+  },
+};
