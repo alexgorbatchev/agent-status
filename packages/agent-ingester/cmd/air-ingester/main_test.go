@@ -925,7 +925,7 @@ func TestRunServer(t *testing.T) {
 		cfg := &config.Config{
 			Addr:        "127.0.0.1:0",
 			DBPath:      "/invalid-nonexistent-dir/sub/path/agent.db",
-			NotifySock:  "/tmp/agent-test.sock",
+			NotifySock:  filepath.Join(t.TempDir(), "agent-test.sock"),
 			NoSummarize: true,
 			LogLevel:    "info",
 		}
@@ -1022,6 +1022,11 @@ func TestRunServer(t *testing.T) {
 }
 
 func TestNewRootCmd_Execution(t *testing.T) {
+	origLogger := logging.Default()
+	t.Cleanup(func() {
+		logging.SetDefault(origLogger)
+	})
+
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "agent-status.db")
 	sockPath := filepath.Join(tmpDir, "notify.sock")
@@ -1076,7 +1081,3 @@ func TestMain_Version(t *testing.T) {
 	os.Args = []string{"air-ingester", "--version"}
 	main()
 }
-
-
-
-
