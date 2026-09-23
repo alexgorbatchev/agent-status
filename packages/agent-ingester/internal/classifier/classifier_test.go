@@ -5619,4 +5619,261 @@ func TestClassifier_ApplySummary(t *testing.T) {
 	})
 }
 
+func TestClassifier_HandleIdleTransition_AbortedGenerationDoesNotDropPendingSummary(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]interface{}{
+			"id":      "chatcmpl-test",
+			"object":  "chat.completion",
+			"created": time.Now().Unix(),
+			"model":   "gpt-4o-mini",
+			"choices": []map[string]interface{}{
+				{
+					"index": 0,
+					"message": map[string]interface{}{
+						"role":    "assistant",
+						"content": `{"action":"Working on task","phase":"editing"}`,
+					},
+					"finish_reason": "stop",
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(mockServer.Close)
 
+	p, err := openai.New(
+		anyllm.WithBaseURL(mockServer.URL+"/v1"),
+		anyllm.WithAPIKey("test-key"),
+	)
+	if err != nil {
+		t.Fatalf("openai.New() failed: %v", err)
+	}
+
+	sum, err := summarizer.New(summarizer.Config{
+		Providers: []summarizer.ProviderConfig{
+			{Name: "mock", Provider: p, Model: "gpt-4o-mini"},
+		},
+		DebounceWindow: 10 * time.Second,
+		Timeout:        2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+
+	c, _ := newTestClassifier(t, sum)
+	c.syncMode = false
+	c.SetDebounceWindow(10 * time.Second)
+	c.SetIdleGracePeriod(100 * time.Millisecond)
+	defer func() { _ = c.Close() }()
+
+	proj := types.IProjectInfo{
+		ID:            "proj-race",
+		Name:          "repo",
+		CanonicalRoot: "/repo",
+	}
+	ws := types.IWorkspaceInfo{
+		Branch:     "main",
+		IsDetached: false,
+		IsWorktree: false,
+		CWD:        "/repo",
+	}
+	env := types.IEnvironmentInfo{
+		ID:       "env-race",
+		Hostname: "workstation",
+		Label:    "workstation",
+		Platform: "linux",
+	}
+
+	agentID := "env-race:claude-code:sess-race"
+	baseFrame := types.ITelemetryFrame{
+		Version:        "1.0",
+		EnvID:          env.ID,
+		Environment:    env,
+		AgentID:        agentID,
+		SessionID:      "sess-race",
+		PID:            100,
+		Harness:        types.HarnessClaudeCode,
+		HarnessVersion: "1.0.0",
+		Project:        proj,
+		Workspace:      ws,
+		Timestamp:      1000,
+	}
+
+	// 1. Session starts
+	fStart := baseFrame
+	fStart.Seq = 1
+	fStart.EventType = "session_start"
+	if _, err := c.ProcessFrame(fStart); err != nil {
+		t.Fatalf("session_start failed: %v", err)
+	}
+
+	// 2. User prompt starts a turn -> agent becomes BUSY
+	prompt := "Write tests"
+	fPrompt := baseFrame
+	fPrompt.Seq = 2
+	fPrompt.Timestamp = 1010
+	fPrompt.EventType = "turn_start"
+	fPrompt.Data = types.TelemetryFrameData{
+		Title:   &prompt,
+		Content: &prompt,
+	}
+	if _, err := c.ProcessFrame(fPrompt); err != nil {
+		t.Fatalf("turn_start failed: %v", err)
+	}
+
+	// 3. Root turn_end arrives (no tool use). Agent enters idle grace period.
+	stopReason := "end_turn"
+	respText := "I will write tests"
+	fEnd := baseFrame
+	fEnd.Seq = 3
+	fEnd.Timestamp = 1020
+	fEnd.EventType = "turn_end"
+	fEnd.Data = types.TelemetryFrameData{
+		StopReason: &stopReason,
+		Content:    &respText,
+	}
+	if _, err := c.ProcessFrame(fEnd); err != nil {
+		t.Fatalf("turn_end failed: %v", err)
+	}
+
+	// Capture the scheduled generation from agent context
+	c.mu.Lock()
+	actx := c.agentCtx[agentID]
+	if actx == nil {
+		c.mu.Unlock()
+		t.Fatalf("expected agentContext to exist")
+	}
+	scheduledGen := actx.rootGeneration
+	// Set lastSummaryDispatchedAt to now so subsequent tool_call falls within the 10s debounce window
+	actx.lastSummaryDispatchedAt = time.Now().UnixMilli()
+	c.mu.Unlock()
+
+	// 4. Set hook: between GetAgent and second check, inject a new root frame (tool_call within debounce window)
+	hookCalled := false
+	c.beforeIdleSummarizeHook = func(id string) {
+		hookCalled = true
+		toolName := "Edit"
+		toolPath := "file.go"
+		fTool := baseFrame
+		fTool.Seq = 4
+		fTool.Timestamp = time.Now().UnixMilli()
+		fTool.EventType = "tool_call"
+		fTool.Data = types.TelemetryFrameData{
+			ToolName: &toolName,
+			ToolInput: map[string]interface{}{
+				"file_path": toolPath,
+			},
+		}
+		if _, err := c.ProcessFrame(fTool); err != nil {
+			t.Fatalf("ProcessFrame inside hook failed: %v", err)
+		}
+
+		c.mu.Lock()
+		inHookCtx := c.agentCtx[agentID]
+		if inHookCtx.pendingCandidate == nil {
+			c.mu.Unlock()
+			t.Fatalf("expected tool_call to buffer pendingCandidate during hook")
+		}
+		if c.trailingTimers[agentID] == nil {
+			c.mu.Unlock()
+			t.Fatalf("expected tool_call to schedule trailing timer during hook")
+		}
+		c.mu.Unlock()
+	}
+
+	// 5. Trigger handleIdleTransition with the scheduled generation
+	c.handleIdleTransition(agentID, scheduledGen)
+
+	if !hookCalled {
+		t.Fatalf("expected beforeIdleSummarizeHook to be called")
+	}
+
+	// 6. Verify that the aborted idle transition did NOT destroy the newer frame's pendingCandidate or cancel its trailing timer!
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	finalCtx := c.agentCtx[agentID]
+	if finalCtx == nil {
+		t.Fatalf("expected agentContext to exist")
+	}
+
+	if finalCtx.pendingCandidate == nil {
+		t.Errorf("FAIL: aborted idle transition destroyed pendingCandidate of newer frame!")
+	}
+	if c.trailingTimers[agentID] == nil {
+		t.Errorf("FAIL: aborted idle transition canceled trailing timer of newer frame!")
+	}
+	if finalCtx.rootGeneration <= scheduledGen {
+		t.Errorf("expected rootGeneration > scheduledGen, got %d <= %d", finalCtx.rootGeneration, scheduledGen)
+	}
+}
+
+func TestClassifier_PrepareSummaryInput_NoSideEffects(t *testing.T) {
+	c, _ := newTestClassifier(t, nil)
+	defer func() { _ = c.Close() }()
+
+	agentID := "env-1:claude-code:sess-prepare-test"
+	prompt := "What is the capital of France?"
+	ans := "Paris"
+	toolName := "Grep"
+	toolArg := "test-arg"
+
+	c.mu.Lock()
+	actx := &agentContext{
+		seenSubagents:           make(map[string]struct{}),
+		lastPrompt:              prompt,
+		lastAssistantResponse:   ans,
+		lastToolArgs:            toolArg,
+		lastSummaryDispatchedAt: 12345678,
+		rootGeneration:          5,
+		pendingCandidate: &pendingSummaryCandidate{
+			timestamp: 12345678,
+			toolKey:   "Grep|target|test-arg",
+		},
+	}
+	c.agentCtx[agentID] = actx
+	c.mu.Unlock()
+
+	agent := &types.IAgentState{
+		ID: agentID,
+		Activity: types.IAgentActivity{
+			Activity:   types.ActivityBusy,
+			Action:     "Old Action",
+			ActiveTool: &toolName,
+		},
+	}
+
+	input, toolKey := c.prepareSummaryInput(agent)
+
+	// Verify input fields
+	if input.AgentID != agentID {
+		t.Errorf("input.AgentID = %q, want %q", input.AgentID, agentID)
+	}
+	if input.LastPrompt != prompt {
+		t.Errorf("input.LastPrompt = %q, want %q", input.LastPrompt, prompt)
+	}
+	if input.LastAssistantResponse != ans {
+		t.Errorf("input.LastAssistantResponse = %q, want %q", input.LastAssistantResponse, ans)
+	}
+	if toolKey != "Grep||test-arg" {
+		t.Errorf("toolKey = %q, want Grep||test-arg", toolKey)
+	}
+
+	// Verify agent activity got fallback summary applied
+	if agent.Activity.Action == "Old Action" {
+		t.Errorf("expected agent.Activity.Action to be updated by fallback, got %q", agent.Activity.Action)
+	}
+
+	// Verify actx side-effects: NONE!
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if actx.pendingCandidate == nil {
+		t.Errorf("prepareSummaryInput must not clear pendingCandidate")
+	}
+	if actx.lastSummaryDispatchedAt != 12345678 {
+		t.Errorf("prepareSummaryInput must not alter lastSummaryDispatchedAt: got %d, want 12345678", actx.lastSummaryDispatchedAt)
+	}
+	if actx.rootGeneration != 5 {
+		t.Errorf("prepareSummaryInput must not alter rootGeneration: got %d, want 5", actx.rootGeneration)
+	}
+}

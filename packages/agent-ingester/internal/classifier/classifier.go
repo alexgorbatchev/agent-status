@@ -79,6 +79,8 @@ type Classifier struct {
 	wg              sync.WaitGroup
 	closed          bool
 	syncMode        bool
+
+	beforeIdleSummarizeHook func(agentID string)
 }
 
 func New(s *store.Store, p *pricing.Engine, sum *summarizer.Summarizer) *Classifier {
@@ -876,7 +878,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 	return agent, nil
 }
 
-func (c *Classifier) updateSummarization(agent *types.IAgentState, forceTrigger bool) *summaryJob {
+func (c *Classifier) prepareSummaryInput(agent *types.IAgentState) (summarizer.SummaryInput, string) {
 	c.mu.Lock()
 	actx := c.agentCtx[agent.ID]
 	var lastPrompt string
@@ -890,7 +892,6 @@ func (c *Classifier) updateSummarization(agent *types.IAgentState, forceTrigger 
 		recentTools = make([]summarizer.ToolExecution, len(actx.recentTools))
 		copy(recentTools, actx.recentTools)
 	}
-	isSync := c.syncMode
 	c.mu.Unlock()
 
 	var thinking string
@@ -926,18 +927,6 @@ func (c *Classifier) updateSummarization(agent *types.IAgentState, forceTrigger 
 		agent.Activity.ActiveTarget = fb.ActiveTarget
 	}
 
-	// If external LLM summarization is disabled or summarizer is nil, run deterministic fallback immediately
-	if c.summarizer.IsNoSummarize() {
-		agent.Activity.ActionStale = false
-		return nil
-	}
-
-	eventTime := time.Now()
-	if agent.Activity.UpdatedAt > 0 {
-		eventTime = time.UnixMilli(agent.Activity.UpdatedAt)
-	}
-	nowMs := eventTime.UnixMilli()
-
 	currentToolKey := ""
 	if agent.Activity.ActiveTool != nil {
 		targetStr := ""
@@ -947,21 +936,22 @@ func (c *Classifier) updateSummarization(agent *types.IAgentState, forceTrigger 
 		currentToolKey = fmt.Sprintf("%s|%s|%s", *agent.Activity.ActiveTool, targetStr, lastToolArgs)
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	return input, currentToolKey
+}
 
-	actx = c.agentCtx[agent.ID]
-	if actx == nil {
-		actx = &agentContext{seenSubagents: make(map[string]struct{})}
-		c.agentCtx[agent.ID] = actx
+func (c *Classifier) dispatchSummaryLocked(agent *types.IAgentState, actx *agentContext, input summarizer.SummaryInput, currentToolKey string, forceTrigger bool) *summaryJob {
+	eventTime := time.Now()
+	if agent.Activity.UpdatedAt > 0 {
+		eventTime = time.UnixMilli(agent.Activity.UpdatedAt)
 	}
+	nowMs := eventTime.UnixMilli()
 
 	windowMs := c.debounceWindow.Milliseconds()
 	if windowMs <= 0 {
 		windowMs = DefaultDebounceWindow.Milliseconds()
 	}
 
-	// 1. Force trigger (e.g. AskUserQuestion, error, turn_end)
+	// 1. Force trigger (e.g. AskUserQuestion, error, turn_end, idle transition)
 	if forceTrigger {
 		c.cancelTrailingTimerLocked(agent.ID)
 		actx.pendingCandidate = nil
@@ -969,7 +959,7 @@ func (c *Classifier) updateSummarization(agent *types.IAgentState, forceTrigger 
 		actx.lastSummarizedToolKey = currentToolKey
 		c.summarizer.AllowAt(agent.ID, eventTime)
 
-		if isSync {
+		if c.syncMode {
 			c.mu.Unlock()
 			res := c.summarizer.Summarize(context.Background(), input)
 			c.mu.Lock()
@@ -1010,7 +1000,7 @@ func (c *Classifier) updateSummarization(agent *types.IAgentState, forceTrigger 
 		actx.lastSummarizedToolKey = currentToolKey
 		c.summarizer.AllowAt(agent.ID, eventTime)
 
-		if isSync {
+		if c.syncMode {
 			c.mu.Unlock()
 			res := c.summarizer.Summarize(context.Background(), input)
 			c.mu.Lock()
@@ -1043,6 +1033,27 @@ func (c *Classifier) updateSummarization(agent *types.IAgentState, forceTrigger 
 	c.scheduleTrailingTimerLocked(agent.ID, remaining)
 
 	return nil
+}
+
+func (c *Classifier) updateSummarization(agent *types.IAgentState, forceTrigger bool) *summaryJob {
+	input, currentToolKey := c.prepareSummaryInput(agent)
+
+	// If external LLM summarization is disabled or summarizer is nil, run deterministic fallback immediately
+	if c.summarizer.IsNoSummarize() {
+		agent.Activity.ActionStale = false
+		return nil
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	actx := c.agentCtx[agent.ID]
+	if actx == nil {
+		actx = &agentContext{seenSubagents: make(map[string]struct{})}
+		c.agentCtx[agent.ID] = actx
+	}
+
+	return c.dispatchSummaryLocked(agent, actx, input, currentToolKey, forceTrigger)
 }
 
 func (c *Classifier) enqueueJob(agentID string, input summarizer.SummaryInput, timestamp int64, force bool) {
@@ -1186,13 +1197,25 @@ func (c *Classifier) handleIdleTransition(agentID string, scheduledGen uint64) {
 	agent.Activity.Question = nil
 	agent.Activity.UpdatedAt = time.Now().UnixMilli()
 
-	job := c.updateSummarization(agent, true)
+	// Compute fallback summary purely without mutating agentContext or cancelling trailing timers
+	input, currentToolKey := c.prepareSummaryInput(agent)
+
+	if c.beforeIdleSummarizeHook != nil {
+		c.beforeIdleSummarizeHook(agentID)
+	}
 
 	c.mu.Lock()
 	actx, ok = c.agentCtx[agentID]
-	if !ok || actx.rootGeneration != scheduledGen {
+	if !ok || actx.rootGeneration != scheduledGen || actx.rootActivity != types.ActivityBusy {
 		c.mu.Unlock()
 		return
+	}
+
+	var job *summaryJob
+	if !c.summarizer.IsNoSummarize() {
+		job = c.dispatchSummaryLocked(agent, actx, input, currentToolKey, true)
+	} else {
+		agent.Activity.ActionStale = false
 	}
 
 	actx.rootActivity = types.ActivityIdle
