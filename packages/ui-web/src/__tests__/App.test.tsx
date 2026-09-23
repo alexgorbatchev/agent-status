@@ -87,11 +87,14 @@ describe("App Layout & Session Visibility", () => {
     assert(agentCountEl, "agent count element must exist");
     expect(agentCountEl.textContent).toContain("1 Agent (1 hidden)");
 
-    // Toggle button should exist and have cursor-pointer
+    // Toggle button should exist and have cursor-pointer and matching ViewSwitcher styling
     const toggleBtn = container.querySelector('[data-testid="App--toggle-show-hidden"]');
     assert(toggleBtn, "toggle show hidden button must exist when hidden agents exist");
     expect(toggleBtn.textContent).toContain("Show 1 hidden");
     expect(toggleBtn.getAttribute("class")).toContain("cursor-pointer");
+    expect(toggleBtn.getAttribute("class")).toContain("px-3");
+    expect(toggleBtn.getAttribute("class")).toContain("py-1.5");
+    expect(toggleBtn.getAttribute("class")).toContain("font-semibold");
 
     // Click toggle button to reveal hidden agents inside act
     await act(async () => {

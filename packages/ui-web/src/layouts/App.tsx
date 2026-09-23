@@ -10,6 +10,7 @@ import { StateHelpDialog } from "../components/StateHelpDialog";
 import { groupAgentsByProject, groupAgentsByEnvironment } from "../utils/groupingUtils";
 import { filterActiveAgents } from "../utils/agentUtils";
 import { ViewSwitcher } from "../components/ViewSwitcher";
+import { IconWrapper } from "../components/IconWrapper";
 import { Layers, Server, Eye, EyeOff, Activity } from "lucide-react";
 import { DEFAULT_DEV_TOKEN, resolveApiBaseUrl } from "../utils/config";
 import { clsx } from "clsx";
@@ -128,13 +129,13 @@ export function App({ apiBaseUrl, token = DEFAULT_DEV_TOKEN }: IAppProps = {}): 
                 data-testid="App--toggle-show-hidden"
                 onClick={() => setShowHidden((prev) => !prev)}
                 className={clsx(
-                  "flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg border font-mono transition-colors cursor-pointer",
+                  "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer border",
                   showHidden
-                    ? "bg-slate-800 text-slate-200 border-slate-700"
-                    : "bg-slate-900/60 text-slate-400 border-slate-800 hover:text-slate-200 hover:border-slate-700",
+                    ? "bg-blue-600 text-white border-blue-500 shadow-md shadow-blue-600/30"
+                    : "bg-slate-900 text-slate-400 hover:text-slate-200 border-slate-800",
                 )}
               >
-                {showHidden ? <Eye size={13} /> : <EyeOff size={13} />}
+                <IconWrapper size="sm">{showHidden ? <Eye size={14} /> : <EyeOff size={14} />}</IconWrapper>
                 <span>{showHidden ? `Hide ${hiddenCount} hidden` : `Show ${hiddenCount} hidden`}</span>
               </button>
             )}
