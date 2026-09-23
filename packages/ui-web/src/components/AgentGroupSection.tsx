@@ -42,11 +42,14 @@ export function AgentGroupSection({
           </h2>
           <span className="text-xs text-slate-500 font-mono">{subtitle}</span>
           {badges}
-          {activeCount > 0 && (
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-950 text-blue-300 border border-blue-800/60">
-              {`${activeCount} active`}
-            </span>
-          )}
+          <span
+            className={`px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-950 text-blue-300 border border-blue-800/60 ${
+              activeCount > 0 ? "visible" : "invisible select-none"
+            }`}
+            aria-hidden={activeCount === 0 ? "true" : undefined}
+          >
+            {`${activeCount} active`}
+          </span>
         </div>
 
         <div data-testid={`${prefix}--spend`} className="flex items-center gap-1 text-xs font-mono text-emerald-400">
