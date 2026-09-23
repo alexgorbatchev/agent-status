@@ -5877,3 +5877,118 @@ func TestClassifier_PrepareSummaryInput_NoSideEffects(t *testing.T) {
 		t.Errorf("prepareSummaryInput must not alter rootGeneration: got %d, want 5", actx.rootGeneration)
 	}
 }
+
+func TestIsToolUseStopReason(t *testing.T) {
+	tests := []struct {
+		reason string
+		want   bool
+	}{
+		{"tool_use", true},
+		{"toolUse", true},
+		{"tool_calls", true},
+		{"tool_call", true},
+		{"end_turn", false},
+		{"stop", false},
+		{"max_tokens", false},
+		{"stop_sequence", false},
+		{"refusal", false},
+		{"", false},
+		{"unknown", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.reason, func(t *testing.T) {
+			got := isToolUseStopReason(tt.reason)
+			if got != tt.want {
+				t.Errorf("isToolUseStopReason(%q) = %v, want %v", tt.reason, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClassifier_TurnEndToolUseStopReasons(t *testing.T) {
+	toolStopReasons := []string{"tool_use", "toolUse", "tool_calls", "tool_call"}
+
+	for _, stopReason := range toolStopReasons {
+		t.Run("preserves active tool and busy state for "+stopReason, func(t *testing.T) {
+			sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+			if err != nil {
+				t.Fatalf("summarizer.New() failed: %v", err)
+			}
+			c, _ := newTestClassifier(t, sum)
+
+			env := types.IEnvironmentInfo{
+				ID:       "env-1",
+				Hostname: "host",
+				Platform: "linux",
+			}
+			ws := types.IWorkspaceInfo{CWD: "/workspace"}
+			proj := types.IProjectInfo{ID: "proj-1", Name: "repo"}
+
+			agentID := fmt.Sprintf("env-1:pi:sess-%s", stopReason)
+			baseFrame := types.ITelemetryFrame{
+				Version:     "1.0",
+				EnvID:       "env-1",
+				Environment: env,
+				AgentID:     agentID,
+				SessionID:   "sess-" + stopReason,
+				PID:         1000,
+				Harness:     types.HarnessPi,
+				Project:     proj,
+				Workspace:   ws,
+				Timestamp:   1000,
+				EventType:   "run_started",
+			}
+
+			if _, err := c.ProcessFrame(baseFrame); err != nil {
+				t.Fatalf("ProcessFrame(run_started) failed: %v", err)
+			}
+
+			// Send tool_call to set active tool
+			toolName := "Bash"
+			fTool := baseFrame
+			fTool.Seq = 2
+			fTool.Timestamp = 1100
+			fTool.EventType = "tool_call"
+			fTool.Data = types.TelemetryFrameData{
+				ToolName: &toolName,
+			}
+			agent, err := c.ProcessFrame(fTool)
+			if err != nil {
+				t.Fatalf("ProcessFrame(tool_call) failed: %v", err)
+			}
+			if agent.Activity.ActiveTool == nil || *agent.Activity.ActiveTool != "Bash" {
+				t.Fatalf("expected ActiveTool to be Bash, got %v", agent.Activity.ActiveTool)
+			}
+
+			// Send turn_end with tool stop reason
+			sr := stopReason
+			fEnd := baseFrame
+			fEnd.Seq = 3
+			fEnd.Timestamp = 1200
+			fEnd.EventType = "turn_end"
+			fEnd.Data = types.TelemetryFrameData{
+				StopReason: &sr,
+			}
+
+			agent, err = c.ProcessFrame(fEnd)
+			if err != nil {
+				t.Fatalf("ProcessFrame(turn_end) failed: %v", err)
+			}
+
+			if agent.Activity.Activity != types.ActivityBusy {
+				t.Errorf("expected Activity to be BUSY for stopReason %q, got %s", stopReason, agent.Activity.Activity)
+			}
+			if agent.Activity.ActiveTool == nil || *agent.Activity.ActiveTool != "Bash" {
+				t.Errorf("expected ActiveTool to be preserved as 'Bash' for stopReason %q, got %v", stopReason, agent.Activity.ActiveTool)
+			}
+
+			c.mu.Lock()
+			_, hasIdleTimer := c.idleTimers[agentID]
+			c.mu.Unlock()
+			if hasIdleTimer {
+				t.Errorf("expected no idle timer scheduled for tool stopReason %q, but idle timer was active", stopReason)
+			}
+		})
+	}
+}
+

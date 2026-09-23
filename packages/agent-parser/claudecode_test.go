@@ -1672,6 +1672,7 @@ func TestClaudeCodeParser_ThinkingOnlyTerminalStopReasons(t *testing.T) {
 		{"refusal during thinking", "refusal"},
 		{"end_turn when only thinking generated", "end_turn"},
 		{"stop_sequence during thinking", "stop_sequence"},
+		{"toolUse non-Claude stop reason during thinking", "toolUse"},
 	}
 
 	for _, tc := range cases {

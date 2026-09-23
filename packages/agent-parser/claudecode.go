@@ -687,7 +687,7 @@ func parseClaudeCodeLineEvents(
 			// If the stop reason is terminal (e.g. end_turn, max_tokens, stop_sequence, refusal),
 			// this is the terminal block of the response and must emit turn_end.
 			hasTerminalContent := len(textParts) > 0 || hasToolCall
-			isIntermediateThinking := !hasTerminalContent && (raw.Message.StopReason == "" || raw.Message.StopReason == "tool_use" || raw.Message.StopReason == "toolUse")
+			isIntermediateThinking := !hasTerminalContent && (raw.Message.StopReason == "" || raw.Message.StopReason == "tool_use")
 
 			if !isIntermediateThinking {
 				isDuplicateRequest := false

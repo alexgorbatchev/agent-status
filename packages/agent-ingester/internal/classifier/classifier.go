@@ -672,10 +672,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			}
 			isToolUse := false
 			if frame.Data.StopReason != nil {
-				reason := *frame.Data.StopReason
-				if reason == "tool_use" || reason == "toolUse" || reason == "tool_calls" {
-					isToolUse = true
-				}
+				isToolUse = isToolUseStopReason(*frame.Data.StopReason)
 			} else if agent.Activity.ActiveTool != nil {
 				isToolUse = true
 			}
@@ -1397,6 +1394,17 @@ func applySummary(current *types.IAgentActivity, res summarizer.SummaryResult) {
 	current.Phase = res.Phase
 	if current.ActiveTool != nil && res.ActiveTarget != nil && *res.ActiveTarget != "" {
 		current.ActiveTarget = res.ActiveTarget
+	}
+}
+
+// isToolUseStopReason reports whether a stop reason string indicates the model stopped to call a tool.
+// Supported values across harnesses: "tool_use" (Claude Code), "toolUse" (Pi), and "tool_calls"/"tool_call" (OpenAI/Codex/OpenCode).
+func isToolUseStopReason(reason string) bool {
+	switch reason {
+	case "tool_use", "toolUse", "tool_calls", "tool_call":
+		return true
+	default:
+		return false
 	}
 }
 
