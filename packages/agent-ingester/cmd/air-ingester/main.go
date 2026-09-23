@@ -123,27 +123,10 @@ func newRootCmd(cfg *config.Config) *cobra.Command {
 
 			// Process reconciliation on startup for local environment
 			rec := reconciler.New(st, pub)
-			if recCount, rErr := rec.Reconcile(ctx, ""); rErr != nil {
-				logging.Warn("process_reconciliation_startup_failed", "err", rErr)
-			} else if recCount > 0 {
-				logging.Info("process_reconciliation_startup_complete", "reconciledCount", recCount)
-			}
+			_, _ = runReconciliationSweep(ctx, rec, "startup")
 
 			// Periodic process reconciliation sweep (every 30 seconds)
-			go func() {
-				ticker := time.NewTicker(30 * time.Second)
-				defer ticker.Stop()
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					case <-ticker.C:
-						if _, pErr := rec.Reconcile(ctx, ""); pErr != nil && ctx.Err() == nil {
-							logging.Warn("process_reconciliation_periodic_failed", "err", pErr)
-						}
-					}
-				}
-			}()
+			go startPeriodicReconciler(ctx, rec, 30*time.Second)
 
 			// Hourly retention pruner
 			go func() {
@@ -195,6 +178,47 @@ func newRootCmd(cfg *config.Config) *cobra.Command {
 	cobrahelptree.Setup(rootCmd)
 
 	return rootCmd
+}
+
+type reconcilerRunner interface {
+	Reconcile(ctx context.Context, envID string) (int, error)
+}
+
+func runReconciliationSweep(ctx context.Context, rec reconcilerRunner, sweepType string) (int, error) {
+	recCount, err := rec.Reconcile(ctx, "")
+	if err != nil {
+		if ctx.Err() == nil {
+			switch sweepType {
+			case "startup":
+				logging.Warn("process_reconciliation_startup_failed", "err", err)
+			case "periodic":
+				logging.Warn("process_reconciliation_periodic_failed", "err", err)
+			}
+		}
+		return 0, err
+	}
+	if recCount > 0 {
+		switch sweepType {
+		case "startup":
+			logging.Info("process_reconciliation_startup_complete", "reconciledCount", recCount)
+		case "periodic":
+			logging.Info("process_reconciliation_periodic_complete", "reconciledCount", recCount)
+		}
+	}
+	return recCount, nil
+}
+
+func startPeriodicReconciler(ctx context.Context, rec reconcilerRunner, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			_, _ = runReconciliationSweep(ctx, rec, "periodic")
+		}
+	}
 }
 
 func logSummarizerStartup(cfg *config.Config, sumEngine *summarizer.Summarizer) {
