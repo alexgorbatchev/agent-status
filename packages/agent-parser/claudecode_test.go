@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -1512,5 +1513,155 @@ func TestClaudeCodeParser_StructFieldAcronymCasing(t *testing.T) {
 		t.Errorf("rawMessage contains mixed-case acronym field ApiErrorStatus, should be renamed")
 	}
 }
+
+func TestClaudeCodeParser_FIFOEvictionPreservesActiveStreamingRequest(t *testing.T) {
+	// In unpatched code, map eviction is random.
+	// When capacity is exceeded and eviction triggers, random iteration can evict
+	// a recently started streaming request whose remaining blocks have not finished arriving.
+	// Under deterministic FIFO eviction, only the oldest keys are evicted, so a recently
+	// started request is guaranteed to remain in dedup state.
+	failedCount := 0
+	trials := 50
+
+	for trial := 0; trial < trials; trial++ {
+		p := NewClaudeCodeParser()
+		sessID := fmt.Sprintf("session-fifo-%d", trial)
+
+		// 1. Feed 80 distinct requests (160 keys: reqID + msgID)
+		for i := 0; i < 80; i++ {
+			line := fmt.Sprintf(`{"type":"assistant","requestId":"req_fill_%d","sessionId":"%s","apiBlockIndex":0,"message":{"id":"msg_fill_%d","role":"assistant","model":"claude-3-7-sonnet","stop_reason":"end_turn","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":10,"output_tokens":10}}}`, i, sessID, i)
+			if _, err := p.ParseLine([]byte(line)); err != nil {
+				t.Fatalf("ParseLine fill %d failed: %v", i, err)
+			}
+		}
+
+		// 2. Stream block 0 of the active request (tool call, records keys req_active and msg_active)
+		activeReqID := fmt.Sprintf("req_active_%d", trial)
+		activeMsgID := fmt.Sprintf("msg_active_%d", trial)
+		b0 := fmt.Sprintf(`{"type":"assistant","requestId":"%s","sessionId":"%s","apiBlockIndex":0,"message":{"id":"%s","role":"assistant","model":"claude-3-7-sonnet","stop_reason":"tool_use","content":[{"type":"tool_use","name":"Bash","id":"c1","input":{"command":"pwd"}}],"usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":5000}}}`, activeReqID, sessID, activeMsgID)
+		evs0, err := p.ParseLine([]byte(b0))
+		if err != nil {
+			t.Fatalf("ParseLine b0 failed: %v", err)
+		}
+
+		// 3. Feed 30 more requests (e.g. from subagents/tool turns).
+		// This pushes total keys to 160 + 2 + 60 = 222 > 200, triggering eviction of 100 keys.
+		// In unpatched code, random eviction can delete activeReqID / activeMsgID.
+		for i := 80; i < 110; i++ {
+			line := fmt.Sprintf(`{"type":"assistant","requestId":"req_fill_%d","sessionId":"%s","apiBlockIndex":0,"message":{"id":"msg_fill_%d","role":"assistant","model":"claude-3-7-sonnet","stop_reason":"end_turn","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":10,"output_tokens":10}}}`, i, sessID, i)
+			if _, err := p.ParseLine([]byte(line)); err != nil {
+				t.Fatalf("ParseLine intermediate %d failed: %v", i, err)
+			}
+		}
+
+		// 4. Stream remaining block 1 of the active request.
+		b1 := fmt.Sprintf(`{"type":"assistant","requestId":"%s","sessionId":"%s","apiBlockIndex":1,"message":{"id":"%s","role":"assistant","model":"claude-3-7-sonnet","stop_reason":"tool_use","content":[{"type":"tool_use","name":"Bash","id":"c2","input":{"command":"ls"}}],"usage":{"input_tokens":100,"output_tokens":50,"cache_read_input_tokens":5000}}}`, activeReqID, sessID, activeMsgID)
+		evs1, err := p.ParseLine([]byte(b1))
+		if err != nil {
+			t.Fatalf("ParseLine b1 failed: %v", err)
+		}
+
+		// Count turn_end usage emitted for the active request
+		var activeUsageCount int
+		for _, ev := range append(evs0, evs1...) {
+			if ev.EventType == "turn_end" && ev.Data.Usage != nil && ev.Data.Usage.Output == 50 {
+				activeUsageCount++
+			}
+		}
+
+		if activeUsageCount != 1 {
+			failedCount++
+		}
+	}
+
+	if failedCount > 0 {
+		t.Fatalf("active streaming request double-counted usage in %d out of %d trials due to arbitrary map eviction", failedCount, trials)
+	}
+}
+
+func TestRequestDedup_FIFOOrderAndEviction(t *testing.T) {
+	t.Run("nil and empty handling", func(t *testing.T) {
+		var nilDedup *requestDedup
+		if nilDedup.has("any") {
+			t.Error("nil requestDedup should report false for has")
+		}
+		nilDedup.record("any") // must not panic
+		recordSeenRequest(nilDedup, "any") // must not panic
+
+		d := newRequestDedup()
+		if d.has("nonexistent") {
+			t.Error("new requestDedup should report false for nonexistent key")
+		}
+	})
+
+	t.Run("records up to maxSeenRequests without evicting", func(t *testing.T) {
+		d := newRequestDedup()
+		for i := 0; i < maxSeenRequests; i++ {
+			k := fmt.Sprintf("key_%d", i)
+			d.record(k)
+		}
+		if len(d.order) != maxSeenRequests {
+			t.Fatalf("expected order length %d, got %d", maxSeenRequests, len(d.order))
+		}
+		for i := 0; i < maxSeenRequests; i++ {
+			k := fmt.Sprintf("key_%d", i)
+			if !d.has(k) {
+				t.Fatalf("expected key %s to be present", k)
+			}
+		}
+	})
+
+	t.Run("evicts oldest evictBatchSize entries in strict FIFO order", func(t *testing.T) {
+		d := newRequestDedup()
+		for i := 0; i < maxSeenRequests; i++ {
+			d.record(fmt.Sprintf("key_%d", i))
+		}
+
+		// Insert one more key to trigger batch eviction
+		d.record("key_overflow")
+
+		// Keys 0..evictBatchSize-1 must be evicted
+		for i := 0; i < evictBatchSize; i++ {
+			k := fmt.Sprintf("key_%d", i)
+			if d.has(k) {
+				t.Errorf("expected key %s (oldest) to be evicted, but it is still present", k)
+			}
+		}
+
+		// Keys evictBatchSize..maxSeenRequests-1 must still be present
+		for i := evictBatchSize; i < maxSeenRequests; i++ {
+			k := fmt.Sprintf("key_%d", i)
+			if !d.has(k) {
+				t.Errorf("expected key %s (newer) to still be present, but was evicted", k)
+			}
+		}
+
+		// The newly added key must be present
+		if !d.has("key_overflow") {
+			t.Errorf("expected key_overflow to be present")
+		}
+
+		// Total order length must be (maxSeenRequests - evictBatchSize + 1)
+		expectedLen := maxSeenRequests - evictBatchSize + 1
+		if len(d.order) != expectedLen {
+			t.Errorf("expected order length %d, got %d", expectedLen, len(d.order))
+		}
+	})
+
+	t.Run("duplicate record calls are idempotent and do not duplicate in order", func(t *testing.T) {
+		d := newRequestDedup()
+		d.record("key_1")
+		d.record("key_2")
+		d.record("key_1") // duplicate
+
+		if len(d.order) != 2 {
+			t.Fatalf("expected order length 2, got %d", len(d.order))
+		}
+		if d.order[0] != "key_1" || d.order[1] != "key_2" {
+			t.Fatalf("expected order [key_1, key_2], got %v", d.order)
+		}
+	})
+}
+
 
 

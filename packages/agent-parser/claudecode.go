@@ -270,6 +270,65 @@ func makeClaudeCodeRunStartedEvent(raw rawJSONLine, ts int64) ParsedEvent {
 	}
 }
 
+const (
+	maxSeenRequests = 200
+	evictBatchSize  = 100
+)
+
+// requestDedup provides deterministic FIFO-evicted request deduplication.
+type requestDedup struct {
+	set   map[string]bool
+	order []string
+}
+
+func newRequestDedup() *requestDedup {
+	return &requestDedup{
+		set:   make(map[string]bool),
+		order: make([]string, 0, maxSeenRequests),
+	}
+}
+
+func (d *requestDedup) has(key string) bool {
+	if d == nil || d.set == nil {
+		return false
+	}
+	return d.set[key]
+}
+
+func (d *requestDedup) record(key string) {
+	if d == nil {
+		return
+	}
+	if d.set == nil {
+		d.set = make(map[string]bool)
+	}
+	// If already recorded, preserve existing FIFO position and avoid duplicate keys in order.
+	if d.set[key] {
+		return
+	}
+
+	if len(d.order) >= maxSeenRequests {
+		batch := evictBatchSize
+		if batch > len(d.order) {
+			batch = len(d.order)
+		}
+		for i := 0; i < batch; i++ {
+			delete(d.set, d.order[i])
+		}
+		copy(d.order, d.order[batch:])
+		d.order = d.order[:len(d.order)-batch]
+	}
+
+	d.set[key] = true
+	d.order = append(d.order, key)
+}
+
+func recordSeenRequest(seenRequests *requestDedup, key string) {
+	if seenRequests != nil {
+		seenRequests.record(key)
+	}
+}
+
 // ClaudeCodeParser maintains session stream state when parsing Claude Code transcripts.
 type ClaudeCodeParser struct {
 	mu             sync.Mutex
@@ -278,7 +337,7 @@ type ClaudeCodeParser struct {
 	explicitTitles map[string]bool
 	sessionTitles  map[string]string
 	lastTimestamp  int64
-	seenRequests   map[string]bool
+	seenRequests   *requestDedup
 }
 
 // NewClaudeCodeParser creates a new stateful parser stream for Claude Code transcripts.
@@ -287,7 +346,7 @@ func NewClaudeCodeParser() *ClaudeCodeParser {
 		seenSessions:   make(map[string]bool),
 		explicitTitles: make(map[string]bool),
 		sessionTitles:  make(map[string]string),
-		seenRequests:   make(map[string]bool),
+		seenRequests:   newRequestDedup(),
 	}
 }
 
@@ -300,7 +359,7 @@ func (p *ClaudeCodeParser) Reset() {
 	p.explicitTitles = make(map[string]bool)
 	p.sessionTitles = make(map[string]string)
 	p.lastTimestamp = 0
-	p.seenRequests = make(map[string]bool)
+	p.seenRequests = newRequestDedup()
 }
 
 // ParseLine parses a single line of Claude Code JSONL log output in a session stream.
@@ -348,26 +407,12 @@ func (p *ClaudeCodeParser) ParseLine(line []byte) ([]ParsedEvent, error) {
 	return events, nil
 }
 
-func recordSeenRequest(seenRequests map[string]bool, key string) {
-	if len(seenRequests) > 200 {
-		count := 0
-		for k := range seenRequests {
-			delete(seenRequests, k)
-			count++
-			if count >= 100 {
-				break
-			}
-		}
-	}
-	seenRequests[key] = true
-}
-
 func parseClaudeCodeLineEvents(
 	raw rawJSONLine,
 	ts int64,
 	explicitTitles map[string]bool,
 	sessionTitles map[string]string,
-	seenRequests map[string]bool,
+	seenRequests *requestDedup,
 ) []ParsedEvent {
 	var events []ParsedEvent
 	isSubagent := raw.IsSidechain || raw.AgentID != ""
@@ -646,10 +691,10 @@ func parseClaudeCodeLineEvents(
 			if !isIntermediateThinking {
 				isDuplicateRequest := false
 				if seenRequests != nil {
-					if reqID != "" && seenRequests[sessKey+":req:"+reqID] {
+					if reqID != "" && seenRequests.has(sessKey+":req:"+reqID) {
 						isDuplicateRequest = true
 					}
-					if msgID != "" && seenRequests[sessKey+":msg:"+msgID] {
+					if msgID != "" && seenRequests.has(sessKey+":msg:"+msgID) {
 						isDuplicateRequest = true
 					}
 					if reqID != "" {
