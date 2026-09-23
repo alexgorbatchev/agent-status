@@ -2011,6 +2011,561 @@ func TestClassifier_DiscardStaleSummaryOnStateTransition(t *testing.T) {
 	}
 }
 
+func TestClassifier_DiscardInFlightSummaryOnRunExited(t *testing.T) {
+	var mu sync.Mutex
+	var updates []*types.IAgentState
+	serverCalled := make(chan struct{})
+	serverHold := make(chan struct{})
+	serverDone := make(chan struct{})
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case serverCalled <- struct{}{}:
+		default:
+		}
+		<-serverHold // hold response until agent exits
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]interface{}{
+			"id":     "chatcmpl-stale-exit",
+			"object": "chat.completion",
+			"choices": []map[string]interface{}{
+				{
+					"index": 0,
+					"message": map[string]interface{}{
+						"role":    "assistant",
+						"content": `{"action":"In-flight summary that should be discarded","phase":"editing","activeTarget":"file.go"}`,
+					},
+					"finish_reason": "stop",
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+		select {
+		case serverDone <- struct{}{}:
+		default:
+		}
+	}))
+	t.Cleanup(mockServer.Close)
+	defer func() {
+		// make sure serverHold is never left unclosed if test fails early
+		select {
+		case <-serverHold:
+		default:
+			close(serverHold)
+		}
+	}()
+
+	p, err := openai.New(
+		anyllm.WithBaseURL(mockServer.URL+"/v1"),
+		anyllm.WithAPIKey("test-key"),
+	)
+	if err != nil {
+		t.Fatalf("openai.New() failed: %v", err)
+	}
+
+	sum, err := summarizer.New(summarizer.Config{
+		Providers: []summarizer.ProviderConfig{
+			{
+				Name:     "mock-openai",
+				Provider: p,
+				Model:    "gpt-4o-mini",
+			},
+		},
+		DebounceWindow: 1 * time.Millisecond,
+		Timeout:        2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+
+	c, s := newTestClassifier(t, sum)
+	c.syncMode = false
+	defer func() { _ = c.Close() }()
+
+	c.SetOnUpdate(func(a *types.IAgentState) {
+		mu.Lock()
+		copied := *a
+		updates = append(updates, &copied)
+		mu.Unlock()
+	})
+
+	env := types.IEnvironmentInfo{
+		ID:              "env-exit",
+		Label:           "testbox",
+		Hostname:        "testbox",
+		Platform:        "linux",
+		User:            "tester",
+		LastHeartbeatAt: time.Now().UnixMilli(),
+	}
+	proj := types.IProjectInfo{
+		ID:            "github.com/org/repo",
+		Name:          "repo",
+		CanonicalRoot: "/workspace",
+	}
+	ws := types.IWorkspaceInfo{Branch: "main", CWD: "/workspace"}
+	agentID := "env-exit:claude:sess-exit"
+
+	// 1. Start run
+	fStart := types.ITelemetryFrame{
+		Version:        "1.0",
+		Seq:            1,
+		EnvID:          "env-exit",
+		Environment:    env,
+		AgentID:        agentID,
+		SessionID:      "sess-exit",
+		PID:            101,
+		Harness:        types.HarnessClaudeCode,
+		HarnessVersion: "2.0.0",
+		Project:        proj,
+		Workspace:      ws,
+		Timestamp:      1000,
+		EventType:      "run_started",
+	}
+	if _, err := c.ProcessFrame(fStart); err != nil {
+		t.Fatalf("ProcessFrame run_started failed: %v", err)
+	}
+
+	// 2. Tool call enqueues background job which blocks on serverHold
+	toolName := "Edit"
+	fTool := types.ITelemetryFrame{
+		Version:        "1.0",
+		Seq:            2,
+		EnvID:          "env-exit",
+		Environment:    env,
+		AgentID:        agentID,
+		SessionID:      "sess-exit",
+		PID:            101,
+		Harness:        types.HarnessClaudeCode,
+		HarnessVersion: "2.0.0",
+		Project:        proj,
+		Workspace:      ws,
+		Timestamp:      1001,
+		EventType:      "tool_call",
+		Data: types.TelemetryFrameData{
+			ToolName: &toolName,
+			ToolInput: map[string]interface{}{
+				"file_path": "file.go",
+			},
+		},
+	}
+	if _, err := c.ProcessFrame(fTool); err != nil {
+		t.Fatalf("ProcessFrame tool_call failed: %v", err)
+	}
+
+	// Wait until mockServer is entered
+	select {
+	case <-serverCalled:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for summarizer to call mockServer")
+	}
+
+	// 3. Process run_exited while LLM summary is in flight
+	fExit := types.ITelemetryFrame{
+		Version:        "1.0",
+		Seq:            3,
+		EnvID:          "env-exit",
+		Environment:    env,
+		AgentID:        agentID,
+		SessionID:      "sess-exit",
+		PID:            101,
+		Harness:        types.HarnessClaudeCode,
+		HarnessVersion: "2.0.0",
+		Project:        proj,
+		Workspace:      ws,
+		Timestamp:      1002,
+		EventType:      "run_exited",
+	}
+	if _, err := c.ProcessFrame(fExit); err != nil {
+		t.Fatalf("ProcessFrame run_exited failed: %v", err)
+	}
+
+	// Verify agent has exited in store and capture state
+	agentExited, err := s.GetAgent(agentID)
+	if err != nil || agentExited == nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if agentExited.Activity.Lifecycle != types.LifecycleExited {
+		t.Fatalf("expected Lifecycle to be EXITED, got %s", agentExited.Activity.Lifecycle)
+	}
+	expectedAction := agentExited.Activity.Action
+	expectedUpdatedAt := agentExited.Activity.UpdatedAt
+
+	mu.Lock()
+	updatesCountAtExit := len(updates)
+	mu.Unlock()
+
+	// 4. Release mockServer so in-flight summary completes
+	serverHold <- struct{}{}
+
+	select {
+	case <-serverDone:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for mockServer to respond")
+	}
+
+	// Give background worker time to process (and discard) the completed summary
+	time.Sleep(100 * time.Millisecond)
+
+	// 5. Verify agent state in store was NOT modified by the in-flight summary
+	agentFinal, err := s.GetAgent(agentID)
+	if err != nil || agentFinal == nil {
+		t.Fatalf("GetAgent final failed: %v", err)
+	}
+	if agentFinal.Activity.Lifecycle != types.LifecycleExited {
+		t.Errorf("expected Lifecycle to remain EXITED, got %s", agentFinal.Activity.Lifecycle)
+	}
+	if agentFinal.Activity.Action != expectedAction {
+		t.Errorf("expected Action to remain %q, got overwritten with %q", expectedAction, agentFinal.Activity.Action)
+	}
+	if agentFinal.Activity.UpdatedAt != expectedUpdatedAt {
+		t.Errorf("expected UpdatedAt to remain %d, got %d", expectedUpdatedAt, agentFinal.Activity.UpdatedAt)
+	}
+
+	// 6. Verify onUpdate was NOT called with the discarded summary
+	mu.Lock()
+	defer mu.Unlock()
+	if len(updates) > updatesCountAtExit {
+		t.Errorf("expected no onUpdate calls after exit, got %d new update(s)", len(updates)-updatesCountAtExit)
+		for i := updatesCountAtExit; i < len(updates); i++ {
+			t.Logf("unexpected post-exit update: action=%q, phase=%v, updated_at=%d",
+				updates[i].Activity.Action, updates[i].Activity.Phase, updates[i].Activity.UpdatedAt)
+		}
+	}
+}
+
+func TestClassifier_SyncFlushTrailingCandidate_DiscardOnRunExited(t *testing.T) {
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]interface{}{
+			"id":     "chatcmpl-sync-exit",
+			"object": "chat.completion",
+			"choices": []map[string]interface{}{
+				{
+					"index": 0,
+					"message": map[string]interface{}{
+						"role":    "assistant",
+						"content": `{"action":"Sync trailing summary that should be discarded","phase":"editing"}`,
+					},
+					"finish_reason": "stop",
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(mockServer.Close)
+
+	p, err := openai.New(
+		anyllm.WithBaseURL(mockServer.URL+"/v1"),
+		anyllm.WithAPIKey("test-key"),
+	)
+	if err != nil {
+		t.Fatalf("openai.New() failed: %v", err)
+	}
+
+	sum, err := summarizer.New(summarizer.Config{
+		Providers: []summarizer.ProviderConfig{
+			{
+				Name:     "mock-openai",
+				Provider: p,
+				Model:    "gpt-4o-mini",
+			},
+		},
+		DebounceWindow: 10 * time.Second, // trailing debounce window
+		Timeout:        2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+
+	c, s := newTestClassifier(t, sum)
+	c.syncMode = true
+	defer func() { _ = c.Close() }()
+
+	var updates []*types.IAgentState
+	var mu sync.Mutex
+	c.SetOnUpdate(func(a *types.IAgentState) {
+		mu.Lock()
+		copied := *a
+		updates = append(updates, &copied)
+		mu.Unlock()
+	})
+
+	env := types.IEnvironmentInfo{
+		ID:              "env-sync-exit",
+		Label:           "testbox",
+		Hostname:        "testbox",
+		Platform:        "linux",
+		User:            "tester",
+		LastHeartbeatAt: time.Now().UnixMilli(),
+	}
+	proj := types.IProjectInfo{
+		ID:            "github.com/org/repo",
+		Name:          "repo",
+		CanonicalRoot: "/workspace",
+	}
+	ws := types.IWorkspaceInfo{Branch: "main", CWD: "/workspace"}
+	agentID := "env-sync-exit:claude:sess-sync"
+
+	// 1. Start run
+	fStart := types.ITelemetryFrame{
+		Version:        "1.0",
+		Seq:            1,
+		EnvID:          "env-sync-exit",
+		Environment:    env,
+		AgentID:        agentID,
+		SessionID:      "sess-sync",
+		PID:            202,
+		Harness:        types.HarnessClaudeCode,
+		HarnessVersion: "2.0.0",
+		Project:        proj,
+		Workspace:      ws,
+		Timestamp:      1000,
+		EventType:      "run_started",
+	}
+	if _, err := c.ProcessFrame(fStart); err != nil {
+		t.Fatalf("ProcessFrame run_started failed: %v", err)
+	}
+
+	// 2. First tool call to establish lastSummarizedToolKey
+	toolName1 := "Read"
+	fTool1 := types.ITelemetryFrame{
+		Version:        "1.0",
+		Seq:            2,
+		EnvID:          "env-sync-exit",
+		Environment:    env,
+		AgentID:        agentID,
+		SessionID:      "sess-sync",
+		PID:            202,
+		Harness:        types.HarnessClaudeCode,
+		HarnessVersion: "2.0.0",
+		Project:        proj,
+		Workspace:      ws,
+		Timestamp:      1001,
+		EventType:      "tool_call",
+		Data: types.TelemetryFrameData{
+			ToolName: &toolName1,
+			ToolInput: map[string]interface{}{
+				"file_path": "read.go",
+			},
+		},
+	}
+	if _, err := c.ProcessFrame(fTool1); err != nil {
+		t.Fatalf("ProcessFrame tool_call 1 failed: %v", err)
+	}
+
+	// 3. Second tool call within 10s debounce window buffers as trailing candidate
+	toolName2 := "Edit"
+	fTool2 := types.ITelemetryFrame{
+		Version:        "1.0",
+		Seq:            3,
+		EnvID:          "env-sync-exit",
+		Environment:    env,
+		AgentID:        agentID,
+		SessionID:      "sess-sync",
+		PID:            202,
+		Harness:        types.HarnessClaudeCode,
+		HarnessVersion: "2.0.0",
+		Project:        proj,
+		Workspace:      ws,
+		Timestamp:      1002,
+		EventType:      "tool_call",
+		Data: types.TelemetryFrameData{
+			ToolName: &toolName2,
+			ToolInput: map[string]interface{}{
+				"file_path": "edit.go",
+			},
+		},
+	}
+	if _, err := c.ProcessFrame(fTool2); err != nil {
+		t.Fatalf("ProcessFrame tool_call 2 failed: %v", err)
+	}
+
+	// Now simulate the agent having exited in store while actx still has pendingCandidate
+	now := int64(1003)
+	if err := s.EndCurrentRun(agentID, now); err != nil {
+		t.Fatalf("EndCurrentRun failed: %v", err)
+	}
+	agent, err := s.GetAgent(agentID)
+	if err != nil || agent == nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	agent.Activity.Lifecycle = types.LifecycleExited
+	if agent.Activity.CurrentRun != nil {
+		agent.Activity.CurrentRun.EndedAt = &now
+	}
+	if err := s.SaveAgentState(*agent); err != nil {
+		t.Fatalf("SaveAgentState failed: %v", err)
+	}
+
+	expectedAction := agent.Activity.Action
+	mu.Lock()
+	updatesCountBeforeFlush := len(updates)
+	mu.Unlock()
+
+	// Flush the candidate
+	c.Flush(agentID)
+
+	agentFinal, err := s.GetAgent(agentID)
+	if err != nil || agentFinal == nil {
+		t.Fatalf("GetAgent final failed: %v", err)
+	}
+	if agentFinal.Activity.Action != expectedAction {
+		t.Errorf("expected Action to remain %q, got %q", expectedAction, agentFinal.Activity.Action)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(updates) > updatesCountBeforeFlush {
+		t.Errorf("expected no onUpdate calls on flush for exited agent, got %d updates", len(updates)-updatesCountBeforeFlush)
+	}
+}
+
+func TestClassifier_CoverageEdgeCases(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+
+	c, s := newTestClassifier(t, sum)
+	defer func() { _ = c.Close() }()
+
+	// 1. ensureAction with non-empty action returns nil
+	st := &types.IAgentState{
+		ID: "agent-ensure",
+		Activity: types.IAgentActivity{
+			Action: "Existing action",
+		},
+	}
+	if job := c.ensureAction(st); job != nil {
+		t.Errorf("expected ensureAction to return nil for non-empty action")
+	}
+
+	// 2. processSummaryJob with empty action
+	c.processSummaryJob("non-existent", summaryJob{
+		input: summarizer.SummaryInput{},
+	})
+
+	// 3. processSummaryJob with non-existent agent in store
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]interface{}{
+			"id":     "chatcmpl-test",
+			"object": "chat.completion",
+			"choices": []map[string]interface{}{
+				{
+					"index": 0,
+					"message": map[string]interface{}{
+						"role":    "assistant",
+						"content": `{"action":"Some action","phase":"editing"}`,
+					},
+					"finish_reason": "stop",
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(mockServer.Close)
+
+	p, err := openai.New(
+		anyllm.WithBaseURL(mockServer.URL+"/v1"),
+		anyllm.WithAPIKey("test-key"),
+	)
+	if err != nil {
+		t.Fatalf("openai.New() failed: %v", err)
+	}
+
+	mockSum, err := summarizer.New(summarizer.Config{
+		Providers: []summarizer.ProviderConfig{
+			{Name: "mock", Provider: p, Model: "gpt-4o-mini"},
+		},
+		DebounceWindow: 1 * time.Millisecond,
+		Timeout:        2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+
+	c2, s2 := newTestClassifier(t, mockSum)
+	defer func() { _ = c2.Close() }()
+
+	// Non-existent agent in store
+	c2.processSummaryJob("non-existent-agent-id", summaryJob{
+		input: summarizer.SummaryInput{CurrentAction: "Some action"},
+	})
+
+	// Near-duplicate with ActionStale == true
+	agentID := "agent-dup-stale"
+	agentState := types.IAgentState{
+		ID:        agentID,
+		SessionID: "sess-dup",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-1",
+			Platform: "linux",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle:   types.LifecycleRunning,
+			Activity:    types.ActivityBusy,
+			Action:      "Some action",
+			ActionStale: true,
+			CurrentRun: &types.IRunInfo{
+				ID:  "run-dup",
+				PID: 1234,
+			},
+		},
+	}
+	if err := s2.SaveAgentState(agentState); err != nil {
+		t.Fatalf("SaveAgentState failed: %v", err)
+	}
+	c2.processSummaryJob(agentID, summaryJob{
+		input: summarizer.SummaryInput{
+			Activity:      types.ActivityBusy,
+			CurrentAction: "Some action",
+		},
+	})
+	reloaded, err := s2.GetAgent(agentID)
+	if err != nil || reloaded == nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if reloaded.Activity.ActionStale {
+		t.Errorf("expected ActionStale to be cleared on near duplicate match")
+	}
+
+	// 4. flushTrailingCandidateLocked duplicate toolKey suppression
+	c2.mu.Lock()
+	c2.agentCtx[agentID] = &agentContext{
+		lastSummarizedToolKey: "tool:Read:file.go",
+		pendingCandidate: &pendingSummaryCandidate{
+			toolKey:   "tool:Read:file.go",
+			timestamp: time.Now().UnixMilli(),
+		},
+	}
+	c2.flushTrailingCandidateLocked(agentID)
+	c2.mu.Unlock()
+
+	// 5. handleIdleTransition with non-running agent
+	c.mu.Lock()
+	c.agentCtx["agent-idle-exited"] = &agentContext{
+		rootGeneration: 1,
+		rootActivity:   types.ActivityBusy,
+	}
+	c.mu.Unlock()
+	exitedAgent := types.IAgentState{
+		ID:        "agent-idle-exited",
+		SessionID: "sess-idle",
+		Harness:   types.HarnessClaudeCode,
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleExited,
+			Activity:  types.ActivityBusy,
+		},
+	}
+	_ = s.SaveAgentState(exitedAgent)
+	c.handleIdleTransition("agent-idle-exited", 1)
+
+	// handleIdleTransition with generation mismatch
+	c.handleIdleTransition("agent-idle-exited", 999)
+}
+
 func TestClassifier_IdleDebounceDuringAPIPauses(t *testing.T) {
 	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
 	if err != nil {

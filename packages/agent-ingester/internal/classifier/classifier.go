@@ -212,7 +212,7 @@ func (c *Classifier) flushTrailingCandidateLocked(agentID string) {
 		c.mu.Unlock()
 		res := c.summarizer.Summarize(context.Background(), input)
 		agent, err := c.store.GetAgent(agentID)
-		if err == nil && agent != nil {
+		if err == nil && agent != nil && agent.Activity.Lifecycle != types.LifecycleExited && (agent.Activity.CurrentRun == nil || agent.Activity.CurrentRun.EndedAt == nil) {
 			agent.Activity.Action = res.Action
 			agent.Activity.Phase = res.Phase
 			if agent.Activity.ActiveTool != nil && res.ActiveTarget != nil && *res.ActiveTarget != "" {
@@ -317,6 +317,16 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				FirstStartedAt: now,
 				UpdatedAt:      now,
 			},
+		}
+		if frame.EventType != "run_exited" {
+			runID := fmt.Sprintf("%s:%d:%d", agent.ID, frame.PID, now)
+			agent.Activity.CurrentRun = &types.IRunInfo{
+				ID:             runID,
+				PID:            frame.PID,
+				HarnessVersion: frame.HarnessVersion,
+				StartedAt:      now,
+				EndedAt:        nil,
+			}
 		}
 	} else {
 		// Update mutable workspace/environment metadata
@@ -1105,7 +1115,7 @@ func (c *Classifier) processSummaryJob(agentID string, job summaryJob) {
 	}
 
 	// Discard stale summary if agent has exited or transitioned to another activity state
-	if agent.Activity.CurrentRun != nil && agent.Activity.CurrentRun.EndedAt != nil {
+	if agent.Activity.Lifecycle == types.LifecycleExited || (agent.Activity.CurrentRun != nil && agent.Activity.CurrentRun.EndedAt != nil) {
 		return
 	}
 	if agent.Activity.Activity != job.input.Activity {
