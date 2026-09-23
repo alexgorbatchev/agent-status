@@ -16,9 +16,7 @@ export type Action = (typeof VALID_ACTIONS)[number];
 
 export function getAction(argv: string[] = process.argv): string {
   const args =
-    argv.length >= 2 && !argv[0].startsWith("-") && !argv[1].startsWith("-")
-      ? argv.slice(2)
-      : argv;
+    argv.length >= 2 && !argv[0].startsWith("-") && !argv[1].startsWith("-") ? argv.slice(2) : argv;
 
   const { positionals } = parseArgs({
     args,
@@ -34,7 +32,9 @@ export function getAction(argv: string[] = process.argv): string {
 
   const rawAction = positionals[0] || "start";
   if (!VALID_ACTIONS.includes(rawAction as Action)) {
-    throw new Error(`Unknown action: "${rawAction}". Valid actions are: ${VALID_ACTIONS.join(", ")}`);
+    throw new Error(
+      `Unknown action: "${rawAction}". Valid actions are: ${VALID_ACTIONS.join(", ")}`,
+    );
   }
 
   return rawAction;
@@ -72,7 +72,7 @@ export interface IBuildOptions {
   isAgent?: boolean;
   spawnFn?: (
     cmd: string[],
-    options: { cwd?: string; stdout?: "pipe" | "inherit"; stderr?: "pipe" | "inherit" }
+    options: { cwd?: string; stdout?: "pipe" | "inherit"; stderr?: "pipe" | "inherit" },
   ) => {
     exited: Promise<number>;
     stdout?: ReadableStream<Uint8Array> | null;
@@ -154,9 +154,7 @@ function isAgentMode(): boolean {
 
 export function getLogLevel(argv: string[] = process.argv): string {
   const args =
-    argv.length >= 2 && !argv[0].startsWith("-") && !argv[1].startsWith("-")
-      ? argv.slice(2)
-      : argv;
+    argv.length >= 2 && !argv[0].startsWith("-") && !argv[1].startsWith("-") ? argv.slice(2) : argv;
   if (args.includes("--debug") || args.includes("-d")) {
     return "debug";
   }
@@ -335,19 +333,22 @@ async function startStack() {
   if (!agent) {
     console.log("   [2/4] Starting air-server (:4502)...");
   }
-  const server = Bun.spawn([serverBin, "--cors-origin", "http://localhost:3000", "--log-level", logLevel], {
-    cwd: rootDir,
-    env: {
-      ...process.env,
-      AIR_SERVER_ADDR: ":4502",
-      AGENT_STATUS_TOKEN: "dev-secret-token",
-      AIR_NOTIFY_SOCK: notifySock,
-      XDG_DATA_HOME: dbDir,
-      XDG_RUNTIME_DIR: "/tmp",
+  const server = Bun.spawn(
+    [serverBin, "--cors-origin", "http://localhost:3000", "--log-level", logLevel],
+    {
+      cwd: rootDir,
+      env: {
+        ...process.env,
+        AIR_SERVER_ADDR: ":4502",
+        AGENT_STATUS_TOKEN: "dev-secret-token",
+        AIR_NOTIFY_SOCK: notifySock,
+        XDG_DATA_HOME: dbDir,
+        XDG_RUNTIME_DIR: "/tmp",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
     },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  );
   pids.push(server.pid);
   procs.push(server);
   pipeOutput(server.stdout, serverPrefix);
@@ -359,16 +360,27 @@ async function startStack() {
   if (!agent) {
     console.log("   [3/4] Starting air-observer...");
   }
-  const observer = Bun.spawn([observerBin, "--token", "dev-secret-token", "--ingester-url", "ws://127.0.0.1:4501/ws/ingest", "--log-level", logLevel], {
-    cwd: rootDir,
-    env: {
-      ...process.env,
-      AGENT_STATUS_TOKEN: "dev-secret-token",
-      XDG_CACHE_HOME: resolve(runDir, "cache"),
+  const observer = Bun.spawn(
+    [
+      observerBin,
+      "--token",
+      "dev-secret-token",
+      "--ingester-url",
+      "ws://127.0.0.1:4501/ws/ingest",
+      "--log-level",
+      logLevel,
+    ],
+    {
+      cwd: rootDir,
+      env: {
+        ...process.env,
+        AGENT_STATUS_TOKEN: "dev-secret-token",
+        XDG_CACHE_HOME: resolve(runDir, "cache"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
     },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  );
   pids.push(observer.pid);
   procs.push(observer);
   pipeOutput(observer.stdout, observerPrefix);
