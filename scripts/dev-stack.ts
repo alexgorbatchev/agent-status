@@ -178,7 +178,7 @@ export async function buildBinaries(options: IBuildOptions = {}): Promise<IBuild
   }
 
   const spawn = options.spawnFn ?? Bun.spawn;
-  const buildProc = spawn(["just", "build-all"], {
+  const buildProc = spawn(["just", "build-stack"], {
     cwd: targetRootDir,
     stdout: "pipe",
     stderr: "pipe",

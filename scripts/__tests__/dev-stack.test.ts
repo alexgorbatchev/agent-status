@@ -42,6 +42,26 @@ describe("dev-stack build controls (#72)", () => {
       expect(logs.some((l) => l.toLowerCase().includes("skipping binary build"))).toBe(true);
     });
 
+    it("spawns just build-stack instead of build-all (#84)", async () => {
+      let capturedCmd: string[] = [];
+
+      await buildBinaries({
+        noBuild: false,
+        rootDir: "/mock/root",
+        spawnFn: (cmd) => {
+          capturedCmd = [...cmd];
+          return {
+            exited: Promise.resolve(0),
+            stdout: new Response("").body,
+            stderr: new Response("").body,
+          };
+        },
+        logFn: () => {},
+      });
+
+      expect(capturedCmd).toEqual(["just", "build-stack"]);
+    });
+
     it("buffers build output on successful build without dumping stdout to console", async () => {
       const logs: string[] = [];
       const errors: string[] = [];

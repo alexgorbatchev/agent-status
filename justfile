@@ -36,6 +36,14 @@ debug *args:
 run-debug *args:
     @just debug {{args}}
 
+# Build only dev stack binaries and bundle ui-web (omitting agent-debug)
+build-stack:
+    @mkdir -p packages/agent-observer/bin packages/agent-ingester/bin packages/agent-server/bin
+    cd packages/agent-observer && just build
+    cd packages/agent-ingester && just build
+    cd packages/agent-server && just build
+    cd packages/ui-web && just build
+
 # Build all Go binaries and bundle ui-web
 build-all:
     @mkdir -p packages/agent-observer/bin packages/agent-ingester/bin packages/agent-server/bin packages/agent-debug/bin
