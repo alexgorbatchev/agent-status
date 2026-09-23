@@ -5,6 +5,7 @@ Centralized monitoring dashboard and telemetry aggregation pipeline for AI codin
 Designed for monitoring long-running agent sessions across minutes and hours, not for sub-second twitch debugging. Semantic clarity, high-level LLM task summarization (1–3s inference latency is expected and intended), and stall detection supersede micro-second telemetry mirroring.
 
 ## Shared commands
+
 - Install: `bun install --cwd packages/ui-web`
 - Start dev stack: `just start`
 - Stop dev stack: `just stop`
@@ -19,6 +20,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - Start Storybook: `just storybook-web`
 
 ## Workspace map
+
 - `packages/agent-common/` -> `packages/agent-common/AGENTS.md`
 - `packages/agent-parser/` -> `packages/agent-parser/AGENTS.md`
 - `packages/agent-observer/` -> `packages/agent-observer/AGENTS.md`
@@ -29,6 +31,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - `docs/harness-logs/` -> `docs/harness-logs/AGENTS.md`
 
 ## Shared gotchas
+
 - Port collisions on 3000, 4501, or 4502 -> Run `just stop` to terminate orphaned processes and clean up `.tmp/dev-stack/pids.json`.
 - Dev stack execution -> Running `just start` directly in a synchronous tool call blocks indefinitely because `scripts/dev-stack.ts start` streams logs in the foreground and never exits; use background process management or let the user run it.
 - SQLite database concurrency -> `air-server` opens SQLite strictly in read-only mode (`?mode=ro`); all mutations occur through `air-ingester`.
@@ -36,6 +39,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - Daemon disk logs -> Stored at `~/.local/state/agent-status/logs/{observer,ingester,server}.log` (or `$AIR_LOG_DIR`). Active logs rotate at 10 MB with 5 backups, 14-day retention, and gzip compression. Tail with `just logs` or view directly on disk.
 
 ## Shared boundaries
+
 - Always: automatically record all new instructions in the most appropriate `AGENTS.md` file immediately upon receipt (check with user if existing instructions conflict)
 - Always: when resolving GitHub issues, follow the `.agents/skills/fix-github-issue` workflow
 - Always: design dashboard UX, activity summarization, and telemetry pipelines for long-running agent sessions rather than sub-second realtime mirroring (LLM inference latency of 1–3s and ~10s debounced summarization cadences are primary and intended; prioritize semantic stability, high-level intent, and stall detection over micro-second state churn)
@@ -50,6 +54,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - Never: write directly to agent harness storage directories or mutate active harness logs
 
 ## References
+
 - Architecture & concepts: `CONTEXT.md`
 - Dev stack orchestrator: `scripts/dev-stack.ts`
 - Root task runner: `justfile`
