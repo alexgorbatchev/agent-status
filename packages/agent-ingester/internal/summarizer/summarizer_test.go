@@ -1131,6 +1131,117 @@ func TestSummarizer_ConfiguredProvider(t *testing.T) {
 	}
 }
 
+func TestSummarizer_EndpointSanitization(t *testing.T) {
+	cases := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "clean https URL",
+			input:    "https://proxy.example.com/v1",
+			expected: "https://proxy.example.com/v1",
+		},
+		{
+			name:     "URL with user and password",
+			input:    "https://user:secret@proxy.example.com/v1",
+			expected: "https://proxy.example.com/v1",
+		},
+		{
+			name:     "URL with query params and fragment",
+			input:    "https://proxy.example.com/v1?api_key=secret-token&debug=true#access_token=xyz",
+			expected: "https://proxy.example.com/v1",
+		},
+		{
+			name:     "URL with userinfo, port, query params, and fragment",
+			input:    "https://admin:pass123@proxy.example.com:8443/v1/chat?token=abc#section",
+			expected: "https://proxy.example.com:8443/v1/chat",
+		},
+		{
+			name:     "empty URL",
+			input:    "",
+			expected: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, err := New(Config{
+				LiteLLMBaseURL: tc.input,
+				LiteLLMAPIKey:  "dummy-key",
+			})
+			if err != nil {
+				t.Fatalf("New() failed: %v", err)
+			}
+			providers := s.ActiveProviders()
+			if len(providers) != 1 {
+				t.Fatalf("expected 1 provider, got %d", len(providers))
+			}
+			if providers[0].Endpoint != tc.expected {
+				t.Errorf("ActiveProviders()[0].Endpoint = %q, want %q", providers[0].Endpoint, tc.expected)
+			}
+		})
+	}
+}
+
+func TestSanitizeEndpoint(t *testing.T) {
+	cases := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "standard https URL",
+			input:    "https://api.openai.com/v1",
+			expected: "https://api.openai.com/v1",
+		},
+		{
+			name:     "URL with credentials",
+			input:    "https://alice:secret123@myproxy.internal:8000/v1/models",
+			expected: "https://myproxy.internal:8000/v1/models",
+		},
+		{
+			name:     "URL with username only",
+			input:    "https://admin@myproxy.internal/v1",
+			expected: "https://myproxy.internal/v1",
+		},
+		{
+			name:     "URL with query parameters",
+			input:    "https://myproxy.internal/v1?token=secret-token&model=claude",
+			expected: "https://myproxy.internal/v1",
+		},
+		{
+			name:     "URL with credentials and query parameters and fragment",
+			input:    "https://admin:pass@myproxy.internal:4000/v1?token=secret#top",
+			expected: "https://myproxy.internal:4000/v1",
+		},
+		{
+			name:     "URL without scheme with credentials",
+			input:    "user:password@localhost:8000/v1",
+			expected: "localhost:8000/v1",
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "",
+		},
+		{
+			name:     "unparseable control chars",
+			input:    "https://api.openai.com/\x7f",
+			expected: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := SanitizeEndpoint(tc.input)
+			if got != tc.expected {
+				t.Errorf("SanitizeEndpoint(%q) = %q, want %q", tc.input, got, tc.expected)
+			}
+		})
+	}
+}
+
 func TestSummarizer_ActiveProvidersAndStatus(t *testing.T) {
 	// 1. Disabled by flag
 	sDisabled, err := New(Config{

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -121,7 +122,15 @@ func New(cfg Config) (*Summarizer, error) {
 	}
 
 	if len(cfg.Providers) > 0 {
-		s.providers = cfg.Providers
+		s.providers = make([]ProviderConfig, len(cfg.Providers))
+		for i, p := range cfg.Providers {
+			s.providers[i] = ProviderConfig{
+				Name:     p.Name,
+				Provider: p.Provider,
+				Model:    p.Model,
+				Endpoint: SanitizeEndpoint(p.Endpoint),
+			}
+		}
 		return s, nil
 	}
 
@@ -150,7 +159,7 @@ func New(cfg Config) (*Summarizer, error) {
 				Name:     "openai",
 				Provider: p,
 				Model:    model,
-				Endpoint: liteLLMBaseURL,
+				Endpoint: SanitizeEndpoint(liteLLMBaseURL),
 			})
 		}
 	}
@@ -192,6 +201,32 @@ func New(cfg Config) (*Summarizer, error) {
 	return s, nil
 }
 
+// SanitizeEndpoint parses rawURL and strips userinfo (credentials), query strings, and fragments,
+// returning only scheme, host, and path. If rawURL is empty or fails to parse, it returns an empty string.
+func SanitizeEndpoint(rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
+	hasScheme := strings.Contains(rawURL, "://")
+	parseTarget := rawURL
+	if !hasScheme {
+		parseTarget = "http://" + rawURL
+	}
+
+	u, err := url.Parse(parseTarget)
+	if err != nil {
+		return ""
+	}
+	u.User = nil
+	u.RawQuery = ""
+	u.Fragment = ""
+
+	if !hasScheme {
+		return strings.TrimPrefix(u.String(), "http://")
+	}
+	return u.String()
+}
+
 // ActiveProviders returns metadata for all configured providers.
 func (s *Summarizer) ActiveProviders() []ProviderInfo {
 	if s == nil {
@@ -204,7 +239,7 @@ func (s *Summarizer) ActiveProviders() []ProviderInfo {
 		res[i] = ProviderInfo{
 			Name:     p.Name,
 			Model:    p.Model,
-			Endpoint: p.Endpoint,
+			Endpoint: SanitizeEndpoint(p.Endpoint),
 		}
 	}
 	return res
