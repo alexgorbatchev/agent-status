@@ -1131,6 +1131,117 @@ func TestObserver_StartupSessionReconciliation(t *testing.T) {
 	}
 }
 
+func TestObserverTranscriptRunStartedOnlyCommitsCursorOffset(t *testing.T) {
+	t.Setenv("AGENT_STATUS_TEST_MOCK_PROC", "1")
+
+	tmpDir := t.TempDir()
+	cursorPath := filepath.Join(tmpDir, "cursors.json")
+	piSessionsDir := filepath.Join(tmpDir, "pi-sessions")
+	claudeDir := filepath.Join(tmpDir, "claude-sessions")
+	codexDir := filepath.Join(tmpDir, "codex-sessions")
+	opencodeDb := filepath.Join(tmpDir, "opencode.db")
+
+	_ = os.MkdirAll(piSessionsDir, 0755)
+	_ = os.MkdirAll(claudeDir, 0755)
+	_ = os.MkdirAll(codexDir, 0755)
+
+	sessionCWD := filepath.Join(tmpDir, "my-project")
+	_ = os.MkdirAll(sessionCWD, 0755)
+
+	encodedCWD := scanner.EncodePiCWD(sessionCWD)
+	projectSessionsDir := filepath.Join(piSessionsDir, encodedCWD)
+	if err := os.MkdirAll(projectSessionsDir, 0755); err != nil {
+		t.Fatalf("creating projectSessionsDir: %v", err)
+	}
+
+	sessionID := "01a0c530-run-started-cursor-test"
+	transcriptPath := filepath.Join(projectSessionsDir, "2026-09-21T18-00-00-000Z_"+sessionID+".jsonl")
+
+	sessionLine := []byte(`{"type":"session","version":3,"id":"` + sessionID + `","timestamp":"2026-09-21T18:00:00.000Z","cwd":"` + sessionCWD + `"}` + "\n")
+	if err := os.WriteFile(transcriptPath, sessionLine, 0644); err != nil {
+		t.Fatalf("writing transcript: %v", err)
+	}
+
+	mockIngester := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close(websocket.StatusNormalClosure, "done") }()
+		for {
+			_, data, err := conn.Read(r.Context())
+			if err != nil {
+				return
+			}
+			var msg types.IObserverMessage
+			if err := json.Unmarshal(data, &msg); err == nil && msg.Type == "frames" && len(msg.Frames) > 0 {
+				lastSeq := msg.Frames[len(msg.Frames)-1].Seq
+				ack := types.IIngesterMessage{
+					Type: "ack",
+					UpTo: lastSeq,
+				}
+				ackBytes, _ := json.Marshal(ack)
+				_ = conn.Write(r.Context(), websocket.MessageText, ackBytes)
+			}
+		}
+	}))
+	defer mockIngester.Close()
+
+	opts := observerOptions{
+		ingesterURL:       "ws" + strings.TrimPrefix(mockIngester.URL, "http") + "/ws/ingest",
+		cursorPath:        cursorPath,
+		claudeSessionsDir: claudeDir,
+		piSessionsDir:     piSessionsDir,
+		codexSessionsDir:  codexDir,
+		opencodeDBPath:    opencodeDb,
+		scanInterval:      50 * time.Millisecond,
+		envFlag:           "test-env",
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runObserverContext(ctx, opts)
+	}()
+
+	// Wait for observer to scan and tail the file
+	time.Sleep(300 * time.Millisecond)
+
+	cancel()
+	if err := <-errCh; err != nil {
+		t.Fatalf("runObserverContext error: %v", err)
+	}
+
+	// Verify that cursorPath was created and has committed the offset for the transcript line
+	rawJSON, err := os.ReadFile(cursorPath)
+	if err != nil {
+		t.Fatalf("reading cursors.json: %v", err)
+	}
+
+	var savedCursors map[string]*tailer.Cursor
+	if err := json.Unmarshal(rawJSON, &savedCursors); err != nil {
+		t.Fatalf("parsing cursors.json: %v", err)
+	}
+
+	var foundCursor *tailer.Cursor
+	for _, c := range savedCursors {
+		if c.Path == transcriptPath {
+			foundCursor = c
+			break
+		}
+	}
+	if foundCursor == nil {
+		t.Fatalf("expected cursor with path %q in flushed store, but found none in %+v", transcriptPath, savedCursors)
+	}
+
+	expectedOffset := int64(len(sessionLine))
+	if foundCursor.Offset != expectedOffset {
+		t.Errorf("expected cursor offset %d, got %d", expectedOffset, foundCursor.Offset)
+	}
+}
+
 
 
 

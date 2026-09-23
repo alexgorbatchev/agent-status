@@ -338,19 +338,22 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 				return nil
 			}
 
-			if len(events) == 0 {
+			// Filter out run_started events: session and subagent run_started frames are emitted
+			// upon discovery by the scanner. Parser-synthesized run_started events in transcripts
+			// are ignored by the tailer to prevent duplicate lifecycle frames.
+			var filtered []parser.ParsedEvent
+			for _, ev := range events {
+				if ev.EventType != "run_started" {
+					filtered = append(filtered, ev)
+				}
+			}
+
+			if len(filtered) == 0 {
 				_ = t.Commit(offset)
 				return nil
 			}
 
-			for i, ev := range events {
-				if ev.EventType == "run_started" {
-					// Session and subagent run_started frames are emitted upon discovery
-					// by the scanner. Parser-synthesized run_started events in transcripts
-					// are ignored by the tailer to prevent duplicate lifecycle frames.
-					continue
-				}
-
+			for i, ev := range filtered {
 				eventCWD := ev.CWD
 				if eventCWD == "" {
 					eventCWD = cwd
@@ -377,7 +380,7 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 					Data:           ev.Data,
 				}
 				var onAck shipper.AckCallback
-				if i == len(events)-1 {
+				if i == len(filtered)-1 {
 					onAck = func() {
 						_ = t.Commit(offset)
 					}
