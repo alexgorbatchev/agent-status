@@ -77,6 +77,7 @@ air-debug events 01a0b64b-b517-7569-9c97-dac1d07ce4dd --limit 10
 ```
 
 Sample Output:
+
 ```
 --------------------------------------------------------------------------------
 Session Replay Summary (pi)
@@ -101,69 +102,69 @@ Session Replay Summary (pi)
 
 ### `air-debug session replay`
 
-| Flag | Short | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `--harness <name>` | (none) | `""` | Explicit harness override (`claude-code`, `pi`, `codex`, `opencode`) |
-| `--session-id <id>` | (none) | `""` | OpenCode session ID to replay (required if database has multiple sessions) |
-| `--cwd <path>` | (none) | `""` | Override transcript working directory for local Git resolution |
-| `--diff` | (none) | `false` | Display turn-by-turn state mutations during replay |
-| `--db <path>` | (none) | `""` | Path to `agent-status.db` for discrepancy comparison (or `auto`) |
-| `--until-line <N>` | (none) | `0` | Halt replay after processing source line N |
-| `--until-event <type>` | (none) | `""` | Halt replay after encountering event type |
-| `--stop-on-error` | (none) | `false` | Halt immediately on first parse or state machine error |
-| `--json` | (none) | `false` | Output final state and verification results as JSON |
-| `--export-db <path>` | (none) | `""` | Path to save populated SQLite database on disk |
-| `--summarize` | (none) | `false` | Enable live LLM summarizer provider verification |
-| `--env <label>` | (none) | `debug` | Environment label override |
+| Flag                   | Short  | Default | Description                                                                |
+| :--------------------- | :----- | :------ | :------------------------------------------------------------------------- |
+| `--harness <name>`     | (none) | `""`    | Explicit harness override (`claude-code`, `pi`, `codex`, `opencode`)       |
+| `--session-id <id>`    | (none) | `""`    | OpenCode session ID to replay (required if database has multiple sessions) |
+| `--cwd <path>`         | (none) | `""`    | Override transcript working directory for local Git resolution             |
+| `--diff`               | (none) | `false` | Display turn-by-turn state mutations during replay                         |
+| `--db <path>`          | (none) | `""`    | Path to `agent-status.db` for discrepancy comparison (or `auto`)           |
+| `--until-line <N>`     | (none) | `0`     | Halt replay after processing source line N                                 |
+| `--until-event <type>` | (none) | `""`    | Halt replay after encountering event type                                  |
+| `--stop-on-error`      | (none) | `false` | Halt immediately on first parse or state machine error                     |
+| `--json`               | (none) | `false` | Output final state and verification results as JSON                        |
+| `--export-db <path>`   | (none) | `""`    | Path to save populated SQLite database on disk                             |
+| `--summarize`          | (none) | `false` | Enable live LLM summarizer provider verification                           |
+| `--env <label>`        | (none) | `debug` | Environment label override                                                 |
 
 ### `air-debug session validate`
 
-| Flag | Short | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `--harness <name>` | (none) | `""` | Explicit harness override (`claude-code`, `pi`, `codex`, `opencode`) |
-| `--session-id <id>` | (none) | `""` | OpenCode session ID to validate |
-| `--cwd <path>` | (none) | `""` | Override transcript working directory for local Git resolution |
-| `--db <path>` | (none) | `""` | Path to `agent-status.db` for discrepancy comparison (or `auto`) |
-| `--json` | (none) | `false` | Output validation report as JSON |
-| `--env <label>` | (none) | `debug` | Environment label override |
+| Flag                | Short  | Default | Description                                                          |
+| :------------------ | :----- | :------ | :------------------------------------------------------------------- |
+| `--harness <name>`  | (none) | `""`    | Explicit harness override (`claude-code`, `pi`, `codex`, `opencode`) |
+| `--session-id <id>` | (none) | `""`    | OpenCode session ID to validate                                      |
+| `--cwd <path>`      | (none) | `""`    | Override transcript working directory for local Git resolution       |
+| `--db <path>`       | (none) | `""`    | Path to `agent-status.db` for discrepancy comparison (or `auto`)     |
+| `--json`            | (none) | `false` | Output validation report as JSON                                     |
+| `--env <label>`     | (none) | `debug` | Environment label override                                           |
 
 ### `air-debug session view`
 
-| Flag | Short | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `--harness <name>` | (none) | `""` | Explicit harness override (`claude-code`, `pi`, `codex`, `opencode`) |
-| `--session-id <id>` | (none) | `""` | OpenCode session ID to view |
-| `--cwd <path>` | (none) | `""` | Override transcript working directory for local Git resolution |
-| `--env <label>` | (none) | `debug` | Environment label override |
-| `--until-line <N>` | (none) | `0` | Halt replay after processing source line N |
-| `--until-event <type>` | (none) | `""` | Halt replay after encountering event type |
-| `--json` | (none) | `false` | Output final agent state as JSON |
+| Flag                   | Short  | Default | Description                                                          |
+| :--------------------- | :----- | :------ | :------------------------------------------------------------------- |
+| `--harness <name>`     | (none) | `""`    | Explicit harness override (`claude-code`, `pi`, `codex`, `opencode`) |
+| `--session-id <id>`    | (none) | `""`    | OpenCode session ID to view                                          |
+| `--cwd <path>`         | (none) | `""`    | Override transcript working directory for local Git resolution       |
+| `--env <label>`        | (none) | `debug` | Environment label override                                           |
+| `--until-line <N>`     | (none) | `0`     | Halt replay after processing source line N                           |
+| `--until-event <type>` | (none) | `""`    | Halt replay after encountering event type                            |
+| `--json`               | (none) | `false` | Output final agent state as JSON                                     |
 
 ### `air-debug db inspect`
 
-| Flag | Short | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `--db <path>` | (none) | `auto` | Path to `agent-status.db` (auto-detects if omitted) |
-| `--json` | (none) | `false` | Output persisted session record as JSON |
+| Flag          | Short  | Default | Description                                         |
+| :------------ | :----- | :------ | :-------------------------------------------------- |
+| `--db <path>` | (none) | `auto`  | Path to `agent-status.db` (auto-detects if omitted) |
+| `--json`      | (none) | `false` | Output persisted session record as JSON             |
 
 ### `air-debug events`
 
-| Flag | Short | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `--db <path>` | (none) | `auto` | Path to `agent-status.db` (or auto-detect) |
-| `--limit <N>` | (none) | `20` | Maximum number of telemetry events to retrieve |
-| `--type <types>` | (none) | `""` | Filter by comma-separated event types (e.g. `run_started,run_exited`) |
-| `--subagent-id <id>` | (none) | `""` | Filter by specific subagent ID |
-| `--include-subagents` | (none) | `true` | Include events from subagents |
-| `--json` | (none) | `false` | Output events as JSON |
-| `--desc` | (none) | `true` | Order events by ID descending (newest first) |
-| `--asc` | (none) | `false` | Order events by ID ascending (oldest first) |
-| `--id <id>` | (none) | `0` | Inspect specific telemetry event by ID |
+| Flag                  | Short  | Default | Description                                                           |
+| :-------------------- | :----- | :------ | :-------------------------------------------------------------------- |
+| `--db <path>`         | (none) | `auto`  | Path to `agent-status.db` (or auto-detect)                            |
+| `--limit <N>`         | (none) | `20`    | Maximum number of telemetry events to retrieve                        |
+| `--type <types>`      | (none) | `""`    | Filter by comma-separated event types (e.g. `run_started,run_exited`) |
+| `--subagent-id <id>`  | (none) | `""`    | Filter by specific subagent ID                                        |
+| `--include-subagents` | (none) | `true`  | Include events from subagents                                         |
+| `--json`              | (none) | `false` | Output events as JSON                                                 |
+| `--desc`              | (none) | `true`  | Order events by ID descending (newest first)                          |
+| `--asc`               | (none) | `false` | Order events by ID ascending (oldest first)                           |
+| `--id <id>`           | (none) | `0`     | Inspect specific telemetry event by ID                                |
 
 ### `air-debug scanner audit` / `air-debug process list`
 
-| Flag | Short | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `--harness <name>` | (none) | `""` | Filter audit by harness (`claude`, `pi`, `codex`, `opencode`) |
-| `--cwd <path>` | (none) | `""` | Filter audit by working directory |
-| `--json` | (none) | `false` | Output audit results as JSON |
+| Flag               | Short  | Default | Description                                                   |
+| :----------------- | :----- | :------ | :------------------------------------------------------------ |
+| `--harness <name>` | (none) | `""`    | Filter audit by harness (`claude`, `pi`, `codex`, `opencode`) |
+| `--cwd <path>`     | (none) | `""`    | Filter audit by working directory                             |
+| `--json`           | (none) | `false` | Output audit results as JSON                                  |
