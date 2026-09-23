@@ -124,7 +124,7 @@ func TestDetectHarness(t *testing.T) {
 
 	t.Run("fallback parser trial", func(t *testing.T) {
 		fallbackFile := filepath.Join(tmpDir, "fallback.jsonl")
-		// A line without keywords that ParseClaudeCodeLine still parses
+		// A line without keywords that ClaudeCodeParser still parses
 		content := `{"type":"unknown_type_fallback"}` + "\n"
 		_ = os.WriteFile(fallbackFile, []byte(content), 0644)
 		_, err := DetectHarness(fallbackFile)

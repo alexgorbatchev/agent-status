@@ -119,7 +119,7 @@ func DetectHarness(filePath string) (types.HarnessType, error) {
 	// 4. Fallback parser trial
 	// Test parse first line with each parser
 	firstLine := sampleLines[0]
-	if evs, err := parser.ParseClaudeCodeLine(firstLine); err == nil && len(evs) > 0 {
+	if evs, err := parser.NewClaudeCodeParser().ParseLine(firstLine); err == nil && len(evs) > 0 {
 		return types.HarnessClaudeCode, nil
 	}
 	if evs, err := parser.ParsePiLine(firstLine, ""); err == nil && len(evs) > 0 {

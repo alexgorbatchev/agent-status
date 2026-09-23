@@ -110,16 +110,22 @@ func TestParseClaudeContentBlocks(t *testing.T) {
 	})
 }
 
-func TestParseClaudeCodeLine(t *testing.T) {
+func TestClaudeCodeParser_ParseLine_Cases(t *testing.T) {
+	parseLine := func(line string) ([]ParsedEvent, error) {
+		p := NewClaudeCodeParser()
+		p.hasStarted = true
+		return p.ParseLine([]byte(line))
+	}
+
 	t.Run("empty line", func(t *testing.T) {
-		evs, err := ParseClaudeCodeLine([]byte(""))
+		evs, err := parseLine("")
 		if err != nil || len(evs) != 0 {
 			t.Errorf("expected nil, nil for empty line, got %v, %v", evs, err)
 		}
 	})
 
 	t.Run("invalid json", func(t *testing.T) {
-		_, err := ParseClaudeCodeLine([]byte("{invalid"))
+		_, err := parseLine("{invalid")
 		if err == nil {
 			t.Errorf("expected error for invalid json")
 		}
@@ -127,7 +133,7 @@ func TestParseClaudeCodeLine(t *testing.T) {
 
 	t.Run("ai-title with aiTitle field", func(t *testing.T) {
 		line := `{"type":"ai-title","aiTitle":"Optimized Title","timestamp":"2026-09-19T10:00:00.000Z","cwd":"/repo","gitBranch":"main"}`
-		evs, err := ParseClaudeCodeLine([]byte(line))
+		evs, err := parseLine(line)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -141,7 +147,7 @@ func TestParseClaudeCodeLine(t *testing.T) {
 
 	t.Run("title with content fallback", func(t *testing.T) {
 		line := `{"type":"title","content":[{"text":"Content Title"}],"timestamp":"2026-09-19T10:00:00.000Z"}`
-		evs, err := ParseClaudeCodeLine([]byte(line))
+		evs, err := parseLine(line)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -152,18 +158,18 @@ func TestParseClaudeCodeLine(t *testing.T) {
 
 	t.Run("last-prompt with lastPrompt and content", func(t *testing.T) {
 		line1 := `{"type":"last-prompt","lastPrompt":"Fix bugs","timestamp":"2026-09-19T10:00:00.000Z"}`
-		evs1, err := ParseClaudeCodeLine([]byte(line1))
+		evs1, err := parseLine(line1)
 		if err != nil {
-			t.Fatalf("ParseClaudeCodeLine failed: %v", err)
+			t.Fatalf("parseLine failed: %v", err)
 		}
 		if len(evs1) != 0 {
 			t.Errorf("expected 0 events for last-prompt line1, got %d: %+v", len(evs1), evs1)
 		}
 
 		line2 := `{"type":"last-prompt","content":"Prompt via content","timestamp":"2026-09-19T10:00:00.000Z"}`
-		evs2, err := ParseClaudeCodeLine([]byte(line2))
+		evs2, err := parseLine(line2)
 		if err != nil {
-			t.Fatalf("ParseClaudeCodeLine failed: %v", err)
+			t.Fatalf("parseLine failed: %v", err)
 		}
 		if len(evs2) != 0 {
 			t.Errorf("expected 0 events for last-prompt line2, got %d: %+v", len(evs2), evs2)
@@ -186,7 +192,7 @@ func TestParseClaudeCodeLine(t *testing.T) {
 
 	t.Run("user prompt text", func(t *testing.T) {
 		line := `{"type":"user","uuid":"u-1","timestamp":"2026-09-19T10:00:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Please fix the bug in server.go"}]}}`
-		evs, err := ParseClaudeCodeLine([]byte(line))
+		evs, err := parseLine(line)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -200,7 +206,7 @@ func TestParseClaudeCodeLine(t *testing.T) {
 
 	t.Run("user prompt raw string content", func(t *testing.T) {
 		line := `{"type":"user","uuid":"u-raw","timestamp":"2026-09-19T10:00:00.000Z","message":{"role":"user","content":"How do I fix this build error?"}}`
-		evs, err := ParseClaudeCodeLine([]byte(line))
+		evs, err := parseLine(line)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -215,7 +221,7 @@ func TestParseClaudeCodeLine(t *testing.T) {
 	t.Run("user tool_result with is_error false and ID fallback", func(t *testing.T) {
 		isErr := false
 		line := `{"type":"user","uuid":"u-2","timestamp":"2026-09-19T10:00:05.000Z","message":{"role":"user","content":[{"type":"tool_result","id":"call_999","text":"success output","is_error":false}]}}`
-		evs, err := ParseClaudeCodeLine([]byte(line))
+		evs, err := parseLine(line)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -258,7 +264,7 @@ func TestParseClaudeCodeLine(t *testing.T) {
 				}
 			}
 		}`
-		evs, err := ParseClaudeCodeLine([]byte(line))
+		evs, err := parseLine(line)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -317,7 +323,7 @@ func TestParseClaudeCodeLine(t *testing.T) {
 				}
 			}
 		}`
-		evs, err := ParseClaudeCodeLine([]byte(line))
+		evs, err := parseLine(line)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -358,7 +364,7 @@ func TestParseClaudeCodeLine(t *testing.T) {
 				}
 			}
 		}`
-		evs, err := ParseClaudeCodeLine([]byte(line))
+		evs, err := parseLine(line)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -391,7 +397,7 @@ func TestParseClaudeCodeLine(t *testing.T) {
 			"timestamp": "2026-09-19T10:00:04.000Z",
 			"error": "rate_limit_exceeded"
 		}`
-		evs, err := ParseClaudeCodeLine([]byte(line))
+		evs, err := parseLine(line)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -424,7 +430,7 @@ func TestParseClaudeCodeLine(t *testing.T) {
 				]
 			}
 		}`
-		evs, err := ParseClaudeCodeLine([]byte(line))
+		evs, err := parseLine(line)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -456,7 +462,7 @@ func TestParseClaudeCodeLine(t *testing.T) {
 				"error": "connection_reset_by_peer"
 			}
 		}`
-		evs, err := ParseClaudeCodeLine([]byte(line))
+		evs, err := parseLine(line)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -484,7 +490,7 @@ func TestParseClaudeCodeLine(t *testing.T) {
 				]
 			}
 		}`
-		evs, err := ParseClaudeCodeLine([]byte(line))
+		evs, err := parseLine(line)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -497,7 +503,7 @@ func TestParseClaudeCodeLine(t *testing.T) {
 	})
 
 	t.Run("invalid json", func(t *testing.T) {
-		_, err := ParseClaudeCodeLine([]byte("{invalid"))
+		_, err := parseLine("{invalid")
 		if err == nil {
 			t.Error("expected error for invalid json")
 		}
@@ -550,20 +556,17 @@ func TestClaudeCodeParser_EmitsRunStartedOnFirstLine(t *testing.T) {
 	}
 }
 
-func TestParseClaudeCodeLine_EmitsRunStartedForSession(t *testing.T) {
-	ResetClaudeCodeSessions()
-	t.Cleanup(func() {
-		ResetClaudeCodeSessions()
-	})
+func TestClaudeCodeParser_EmitsRunStartedForSession(t *testing.T) {
+	p := NewClaudeCodeParser()
 
 	sessA := "session-aaa-111"
 	sessB := "session-bbb-222"
 
 	// 1. First line of session A -> MUST emit run_started
 	lineA1 := `{"sessionId":"` + sessA + `","type":"user","timestamp":"2026-09-21T10:00:00.000Z","cwd":"/repo/a","gitBranch":"main","message":{"role":"user","content":"Task A"}}`
-	evsA1, err := ParseClaudeCodeLine([]byte(lineA1))
+	evsA1, err := p.ParseLine([]byte(lineA1))
 	if err != nil {
-		t.Fatalf("ParseClaudeCodeLine(lineA1) failed: %v", err)
+		t.Fatalf("p.ParseLine(lineA1) failed: %v", err)
 	}
 	if len(evsA1) < 2 {
 		t.Fatalf("expected at least 2 events on first line of session A, got %d", len(evsA1))
@@ -574,9 +577,9 @@ func TestParseClaudeCodeLine_EmitsRunStartedForSession(t *testing.T) {
 
 	// 2. Second line of session A -> MUST NOT emit run_started
 	lineA2 := `{"sessionId":"` + sessA + `","type":"assistant","timestamp":"2026-09-21T10:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Working on A"}]}}`
-	evsA2, err := ParseClaudeCodeLine([]byte(lineA2))
+	evsA2, err := p.ParseLine([]byte(lineA2))
 	if err != nil {
-		t.Fatalf("ParseClaudeCodeLine(lineA2) failed: %v", err)
+		t.Fatalf("p.ParseLine(lineA2) failed: %v", err)
 	}
 	for _, ev := range evsA2 {
 		if ev.EventType == "run_started" {
@@ -586,9 +589,9 @@ func TestParseClaudeCodeLine_EmitsRunStartedForSession(t *testing.T) {
 
 	// 3. First line of session B -> MUST emit run_started for session B
 	lineB1 := `{"sessionId":"` + sessB + `","type":"ai-title","aiTitle":"Title B","timestamp":"2026-09-21T11:00:00.000Z","cwd":"/repo/b"}`
-	evsB1, err := ParseClaudeCodeLine([]byte(lineB1))
+	evsB1, err := p.ParseLine([]byte(lineB1))
 	if err != nil {
-		t.Fatalf("ParseClaudeCodeLine(lineB1) failed: %v", err)
+		t.Fatalf("p.ParseLine(lineB1) failed: %v", err)
 	}
 	if len(evsB1) < 2 {
 		t.Fatalf("expected at least 2 events on first line of session B, got %d", len(evsB1))
@@ -600,24 +603,14 @@ func TestParseClaudeCodeLine_EmitsRunStartedForSession(t *testing.T) {
 		t.Errorf("expected second event of session B to be title_change, got %q", evsB1[1].EventType)
 	}
 
-	// 4. After ResetClaudeCodeSessions(), session A emits run_started on next first line
-	ResetClaudeCodeSessions()
-	evsA3, err := ParseClaudeCodeLine([]byte(lineA1))
+	// 4. After p.Reset(), session A emits run_started on next first line
+	p.Reset()
+	evsA3, err := p.ParseLine([]byte(lineA1))
 	if err != nil {
-		t.Fatalf("ParseClaudeCodeLine(lineA1 after reset) failed: %v", err)
+		t.Fatalf("p.ParseLine(lineA1 after reset) failed: %v", err)
 	}
 	if len(evsA3) < 2 || evsA3[0].EventType != "run_started" {
 		t.Errorf("expected run_started after reset, got %+v", evsA3)
-	}
-
-	// 5. Test ResetClaudeCodeSession individual
-	ResetClaudeCodeSession(sessA)
-	evsA4, err := ParseClaudeCodeLine([]byte(lineA1))
-	if err != nil {
-		t.Fatalf("ParseClaudeCodeLine(lineA1 after individual reset) failed: %v", err)
-	}
-	if len(evsA4) < 2 || evsA4[0].EventType != "run_started" {
-		t.Errorf("expected run_started after ResetClaudeCodeSession, got %+v", evsA4)
 	}
 }
 
@@ -1073,9 +1066,6 @@ func TestExtractClaudeCodeTitleFromPrompt(t *testing.T) {
 }
 
 func TestClaudeCode_TitleFromUserPromptAndLastPrompt(t *testing.T) {
-	ResetClaudeCodeSessions()
-	defer ResetClaudeCodeSessions()
-
 	t.Run("user prompt sets title on turn_start", func(t *testing.T) {
 		p := NewClaudeCodeParser()
 		line := []byte(`{"type":"user","sessionId":"ses-title-1","message":{"role":"user","content":"Implement dark mode"}}`)
@@ -1314,32 +1304,52 @@ func TestClaudeCodeParser_StreamedMultiBlockDeduplication(t *testing.T) {
 		}
 	})
 
-	t.Run("ParseClaudeCodeLine package-level deduplicates streamed blocks with same requestId", func(t *testing.T) {
-		ResetClaudeCodeSessions()
-		sessID := "stream-session-pkg"
+	t.Run("two independent ClaudeCodeParser instances fed the same requestId each emit usage once", func(t *testing.T) {
+		p1 := NewClaudeCodeParser()
+		p2 := NewClaudeCodeParser()
 
-		line1 := `{"type":"assistant","requestId":"req_pkg_1","sessionId":"` + sessID + `","apiBlockIndex":0,"message":{"id":"msg_pkg_1","role":"assistant","model":"claude-3-7-sonnet","stop_reason":"tool_use","content":[{"type":"thinking","thinking":"Processing"}],"usage":{"input_tokens":5,"output_tokens":100,"cache_read_input_tokens":1000,"cache_creation_input_tokens":0}}}`
-		line2 := `{"type":"assistant","requestId":"req_pkg_1","sessionId":"` + sessID + `","apiBlockIndex":1,"message":{"id":"msg_pkg_1","role":"assistant","model":"claude-3-7-sonnet","stop_reason":"tool_use","content":[{"type":"tool_use","name":"Bash","id":"call_pkg","input":{"command":"ls"}}],"usage":{"input_tokens":5,"output_tokens":100,"cache_read_input_tokens":1000,"cache_creation_input_tokens":0}}}`
+		line := `{"type":"assistant","requestId":"req_shared_iso","sessionId":"stream-session-iso","apiBlockIndex":0,"message":{"id":"msg_shared_iso","role":"assistant","model":"claude-3-7-sonnet","stop_reason":"end_turn","content":[{"type":"text","text":"Done"}],"usage":{"input_tokens":5,"output_tokens":100,"cache_read_input_tokens":1000,"cache_creation_input_tokens":0}}}`
 
-		evs1, err := ParseClaudeCodeLine([]byte(line1))
+		evs1, err := p1.ParseLine([]byte(line))
 		if err != nil {
-			t.Fatalf("ParseClaudeCodeLine line1 failed: %v", err)
+			t.Fatalf("p1.ParseLine failed: %v", err)
 		}
-		evs2, err := ParseClaudeCodeLine([]byte(line2))
-		if err != nil {
-			t.Fatalf("ParseClaudeCodeLine line2 failed: %v", err)
-		}
-
-		allEvents := append(evs1, evs2...)
-		var turnEndEvents []ParsedEvent
-		for _, ev := range allEvents {
-			if ev.EventType == "turn_end" {
-				turnEndEvents = append(turnEndEvents, ev)
+		var p1TurnEnd *ParsedEvent
+		for i := range evs1 {
+			if evs1[i].EventType == "turn_end" {
+				p1TurnEnd = &evs1[i]
+				break
 			}
 		}
+		if p1TurnEnd == nil || p1TurnEnd.Data.Usage == nil || p1TurnEnd.Data.Usage.Output != 100 {
+			t.Fatalf("expected p1 to emit turn_end with usage output=100, got: %+v", p1TurnEnd)
+		}
 
-		if len(turnEndEvents) != 1 {
-			t.Fatalf("expected exactly 1 turn_end event for requestId, got %d", len(turnEndEvents))
+		evs2, err := p2.ParseLine([]byte(line))
+		if err != nil {
+			t.Fatalf("p2.ParseLine failed: %v", err)
+		}
+		var p2TurnEnd *ParsedEvent
+		for i := range evs2 {
+			if evs2[i].EventType == "turn_end" {
+				p2TurnEnd = &evs2[i]
+				break
+			}
+		}
+		if p2TurnEnd == nil || p2TurnEnd.Data.Usage == nil || p2TurnEnd.Data.Usage.Output != 100 {
+			t.Fatalf("expected p2 to also emit turn_end with usage output=100 due to isolated state, got: %+v", p2TurnEnd)
+		}
+
+		// A second line with the same requestId sent to p1 must have usage deduplicated (nil usage)
+		lineDup := `{"type":"assistant","requestId":"req_shared_iso","sessionId":"stream-session-iso","apiBlockIndex":1,"message":{"id":"msg_shared_iso","role":"assistant","model":"claude-3-7-sonnet","stop_reason":"end_turn","content":[{"type":"text","text":"More"}],"usage":{"input_tokens":5,"output_tokens":100,"cache_read_input_tokens":1000,"cache_creation_input_tokens":0}}}`
+		evs1Dup, err := p1.ParseLine([]byte(lineDup))
+		if err != nil {
+			t.Fatalf("p1.ParseLine lineDup failed: %v", err)
+		}
+		for _, ev := range evs1Dup {
+			if ev.EventType == "turn_end" && ev.Data.Usage != nil {
+				t.Fatalf("expected p1 to deduplicate usage on second line with same requestId, but got usage: %+v", ev.Data.Usage)
+			}
 		}
 	})
 
@@ -1390,8 +1400,7 @@ func TestClaudeCodeParser_StreamedMultiBlockDeduplication(t *testing.T) {
 			}
 		}
 
-		// Now reset and check individual session reset
-		ResetClaudeCodeSession(sessID)
+		// Now reset and check session reset
 		p.Reset()
 
 		evsAfterReset, err := p.ParseLine([]byte(t1b1))

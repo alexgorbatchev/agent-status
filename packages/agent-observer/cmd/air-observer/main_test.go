@@ -231,7 +231,7 @@ func TestParserDispatchForHarnessTypes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			events, pErr := parseLineForHarness(tt.harness, tt.line, tt.cwd)
+			events, pErr := parseLineForHarness(tt.harness, tt.line, tt.cwd, nil)
 
 			if (pErr != nil) != tt.wantErr {
 				t.Fatalf("parseLineForHarness(%v) error = %v, wantErr %v", tt.harness, pErr, tt.wantErr)

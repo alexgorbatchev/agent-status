@@ -98,10 +98,13 @@ func main() {
 	}
 }
 
-func parseLineForHarness(harness types.HarnessType, line []byte, cwd string) ([]parser.ParsedEvent, error) {
+func parseLineForHarness(harness types.HarnessType, line []byte, cwd string, ccParser *parser.ClaudeCodeParser) ([]parser.ParsedEvent, error) {
 	switch harness {
 	case types.HarnessClaudeCode:
-		return parser.ParseClaudeCodeLine(line)
+		if ccParser == nil {
+			ccParser = parser.NewClaudeCodeParser()
+		}
+		return ccParser.ParseLine(line)
 	case types.HarnessPi:
 		return parser.ParsePiLine(line, cwd)
 	case types.HarnessCodex:
@@ -321,9 +324,14 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 		}
 
 		tailCtx, tailCancel := context.WithCancel(ctx)
+		var ccParser *parser.ClaudeCodeParser
+		if harness == types.HarnessClaudeCode {
+			ccParser = parser.NewClaudeCodeParser()
+		}
+
 		var t *tailer.Tailer
 		t, err := tailer.NewTailerWithOffsetHandler(path, cursorStore, func(line []byte, offset int64) error {
-			events, pErr := parseLineForHarness(harness, line, cwd)
+			events, pErr := parseLineForHarness(harness, line, cwd, ccParser)
 			if pErr != nil {
 				logging.Warn("transcript_line_parse_failed", "harness", harness, "path", path, "err", pErr)
 				_ = t.Commit(offset)
@@ -336,6 +344,13 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 			}
 
 			for i, ev := range events {
+				if ev.EventType == "run_started" {
+					// Session and subagent run_started frames are emitted upon discovery
+					// by the scanner. Parser-synthesized run_started events in transcripts
+					// are ignored by the tailer to prevent duplicate lifecycle frames.
+					continue
+				}
+
 				eventCWD := ev.CWD
 				if eventCWD == "" {
 					eventCWD = cwd

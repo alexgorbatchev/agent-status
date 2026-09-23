@@ -334,88 +334,11 @@ func (p *ClaudeCodeParser) ParseLine(line []byte) ([]ParsedEvent, error) {
 			p.hasStarted = true
 			emitRunStarted = true
 		}
-	} else if !p.hasStarted {
+	} else if !p.hasStarted && len(events) > 0 {
 		p.hasStarted = true
 		emitRunStarted = true
 	}
 	p.mu.Unlock()
-
-	if emitRunStarted {
-		runStarted := makeClaudeCodeRunStartedEvent(raw, ts)
-		events = append([]ParsedEvent{runStarted}, events...)
-	}
-
-	return events, nil
-}
-
-var (
-	defaultClaudeMu             sync.Mutex
-	defaultClaudeSessions       = make(map[string]bool)
-	defaultClaudeExplicitTitles = make(map[string]bool)
-	defaultClaudeTitles         = make(map[string]string)
-	defaultClaudeLastTS         int64
-	defaultClaudeRequests       = make(map[string]bool)
-)
-
-// ResetClaudeCodeSessions clears tracked sessions for the package-level ParseClaudeCodeLine.
-func ResetClaudeCodeSessions() {
-	defaultClaudeMu.Lock()
-	defer defaultClaudeMu.Unlock()
-	defaultClaudeSessions = make(map[string]bool)
-	defaultClaudeExplicitTitles = make(map[string]bool)
-	defaultClaudeTitles = make(map[string]string)
-	defaultClaudeLastTS = 0
-	defaultClaudeRequests = make(map[string]bool)
-}
-
-// ResetClaudeCodeSession clears a specific tracked session ID.
-func ResetClaudeCodeSession(sessionID string) {
-	defaultClaudeMu.Lock()
-	defer defaultClaudeMu.Unlock()
-	delete(defaultClaudeSessions, sessionID)
-	delete(defaultClaudeExplicitTitles, sessionID)
-	delete(defaultClaudeTitles, sessionID)
-	prefix := sessionID + ":"
-	for k := range defaultClaudeRequests {
-		if strings.HasPrefix(k, prefix) {
-			delete(defaultClaudeRequests, k)
-		}
-	}
-}
-
-// ParseClaudeCodeLine parses a single line of Claude Code JSONL log output into ParsedEvent structs.
-// If the line contains a SessionID and run_started has not yet been emitted for that session,
-// a run_started event is synthesized and prepended.
-func ParseClaudeCodeLine(line []byte) ([]ParsedEvent, error) {
-	if len(line) == 0 {
-		return nil, nil
-	}
-
-	var raw rawJSONLine
-	if err := json.Unmarshal(line, &raw); err != nil {
-		return nil, fmt.Errorf("unmarshaling jsonl line: %w", err)
-	}
-
-	defaultClaudeMu.Lock()
-	var ts int64
-	if raw.Timestamp == nil && defaultClaudeLastTS > 0 {
-		ts = defaultClaudeLastTS
-	} else {
-		ts = parseTimestamp(raw.Timestamp)
-		if raw.Timestamp != nil && ts > 0 {
-			defaultClaudeLastTS = ts
-		}
-	}
-
-	events := parseClaudeCodeLineEvents(raw, ts, defaultClaudeExplicitTitles, defaultClaudeTitles, defaultClaudeRequests)
-	emitRunStarted := false
-	if raw.SessionID != "" {
-		if !defaultClaudeSessions[raw.SessionID] {
-			defaultClaudeSessions[raw.SessionID] = true
-			emitRunStarted = true
-		}
-	}
-	defaultClaudeMu.Unlock()
 
 	if emitRunStarted {
 		runStarted := makeClaudeCodeRunStartedEvent(raw, ts)
