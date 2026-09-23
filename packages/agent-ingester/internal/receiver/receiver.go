@@ -206,7 +206,7 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 					r.setEnvName(frame.EnvID, frameEnvName)
 				}
 
-				logging.Info("frame_ingested",
+				logging.Debug("frame_ingested",
 					"project", frame.Project.Name,
 					"env", frameEnvName,
 					"envId", frame.EnvID,

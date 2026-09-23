@@ -1071,7 +1071,7 @@ func (b *safeBuffer) String() string {
 	return b.buf.String()
 }
 
-func TestReceiver_FramesBatchReceivedLogLevel(t *testing.T) {
+func TestReceiver_FramesBatchReceivedAndFrameIngestedLogLevel(t *testing.T) {
 	rcv, _, _ := newTestReceiver(t)
 
 	mux := http.NewServeMux()
@@ -1156,9 +1156,12 @@ func TestReceiver_FramesBatchReceivedLogLevel(t *testing.T) {
 		t.Fatalf("expected ack message, got %+v", ackMsg)
 	}
 
-	// frames_batch_received must NOT appear in INFO level logs
+	// frames_batch_received and frame_ingested must NOT appear in INFO level logs
 	if strings.Contains(infoBuf.String(), "frames_batch_received") {
 		t.Errorf("frames_batch_received should not be logged at INFO level, got:\n%s", infoBuf.String())
+	}
+	if strings.Contains(infoBuf.String(), "frame_ingested") {
+		t.Errorf("frame_ingested should not be logged at INFO level, got:\n%s", infoBuf.String())
 	}
 
 	// Now capture logs at DEBUG level
@@ -1187,13 +1190,16 @@ func TestReceiver_FramesBatchReceivedLogLevel(t *testing.T) {
 		t.Fatalf("expected second ack message, got %+v", ackMsg)
 	}
 
-	// frames_batch_received MUST appear in DEBUG level logs with count=1
+	// frames_batch_received and frame_ingested MUST appear in DEBUG level logs
 	debugOutput := debugBuf.String()
 	if !strings.Contains(debugOutput, "frames_batch_received") {
 		t.Errorf("expected frames_batch_received in DEBUG level logs, got:\n%s", debugOutput)
 	}
 	if !strings.Contains(debugOutput, "count=1") {
 		t.Errorf("expected count=1 in DEBUG level logs, got:\n%s", debugOutput)
+	}
+	if !strings.Contains(debugOutput, "frame_ingested") {
+		t.Errorf("expected frame_ingested in DEBUG level logs, got:\n%s", debugOutput)
 	}
 }
 
