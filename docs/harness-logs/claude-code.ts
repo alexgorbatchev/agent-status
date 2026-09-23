@@ -830,6 +830,10 @@ export interface IClaudeConversationalBase {
 
 /**
  * Assistant record: The primary turn response from Claude.
+ *
+ * In streamed multi-block turns (e.g. thinking followed by tool_use or text), Claude Code
+ * writes each content block as a separate JSONL line. All streamed block records for the same
+ * API response share identical `message.id`, `requestId`, `message.stop_reason`, and cumulative `message.usage`.
  */
 export interface IClaudeAssistantRecord extends IClaudeConversationalBase {
   type: "assistant";
@@ -841,15 +845,21 @@ export interface IClaudeAssistantRecord extends IClaudeConversationalBase {
     model: string;
     /** Ordered content blocks (thinking, text, tool_use) */
     content: IClaudeContentBlock[];
-    /** Stop reason */
+    /** Stop reason describing the entire API response outcome */
     stop_reason: ClaudeStopReason;
     /** Matched stop sequence string if applicable */
     stop_sequence?: string | null;
-    /** Token usage breakdown */
+    /** Token usage breakdown (cumulative for the request, identical across streamed blocks) */
     usage: IClaudeUsageMetadata;
   };
   effort?: string;
   requestId?: string;
+  /**
+   * 0-based index of the content block in streamed multi-block assistant responses.
+   * When present, Claude Code outputs each content block (e.g. thinking at block 0, tool_use or text
+   * at block 1+) as a distinct JSONL line sharing `message.id`, `requestId`, `stop_reason`, and `usage`.
+   */
+  apiBlockIndex?: number;
   apiErrorStatus?: number;
   error?: string;
   isApiErrorMessage?: boolean;

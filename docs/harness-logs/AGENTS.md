@@ -1,6 +1,6 @@
 ---
 created_on: 2026-09-20 03:20
-last_modified: 2026-09-20 03:20
+last_modified: 2026-09-22 16:58
 status: current
 ---
 
@@ -71,6 +71,9 @@ bun x tsc --noEmit docs/harness-logs/opencode.ts
   - Tool call parameters accept both `arguments` (JSON string) and `input` (raw or parsed parameter payload).
 - **Pi Coding Agent**:
   - Content block and message role types accept both camelCase and snake_case variants: `toolCall` | `tool_call` and `toolResult` | `tool_result`.
+
+### 6. Streamed Per-Block Assistant Lines (Claude Code)
+Claude Code streams multi-block assistant turns by writing each content block as a separate JSONL record line rather than outputting the full response at once. Each block line includes `apiBlockIndex` (0-based integer index, e.g. block 0 for thinking, block 1 for tool_use or text). Crucially, all streaming block lines belonging to a single API response share identical `message.id`, `requestId`, `message.stop_reason`, and cumulative `message.usage`. Parsers and consumers must count usage only once per request rather than summing usage across streaming block lines (#67, #81).
 
 ---
 
