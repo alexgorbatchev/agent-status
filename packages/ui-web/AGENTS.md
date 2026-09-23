@@ -22,6 +22,7 @@ Web frontend dashboard for agent-status built with React 19, Tailwind CSS v4, Lu
 - Agent card ordering and grouping: session cards maintain stable order without changing places based on recent activity, new sessions are appended, and sessions are grouped by busy/idle/finished in that order without subtitles, separated by double vertical gap (`gap-8`) with each category starting on its own row.
 - Subagent chips in `AgentCard` render visual status indicators (`data-subagent-status` "running" vs "completed"/"settling") with smooth exit transitions during their dwell window (#98).
 - Sessions can be hidden/unhidden via `PATCH /api/v1/agents/{id}`, filtered out by default with a UI toggle to inspect and unhide them.
+- Finished sessions are hidden by default on load, with a UI toggle (`App--toggle-show-finished`) next to show/hide hidden to show/hide finished sessions without state persistence.
 - ToolExecutionBlock multiline output container must constrain height (`max-h-64`) and handle overflow (`overflow-auto`) on the flex scroll container wrapping the line gutter and pre output, ensuring line numbers and output content scroll together without empty space.
 - Custom scrollbars matching page colors (standard `scrollbar-width: thin`, `scrollbar-color: #334155 transparent` and WebKit `#334155` slate-700 thumb on transparent track) must be defined in `src/theme.css` across all scrollable elements.
 - Enforce strict TypeScript: no `any`, no type assertions (`as Type`), explicit return types on public functions.

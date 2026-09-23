@@ -27,15 +27,29 @@ export function App({ apiBaseUrl, token = DEFAULT_DEV_TOKEN }: IAppProps = {}): 
   const [selectedAgent, setSelectedAgent] = useState<IAgentState | null>(null);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [showHidden, setShowHidden] = useState<boolean>(false);
+  const [showFinished, setShowFinished] = useState<boolean>(false);
   const [isActiveFilter, setIsActiveFilter] = useState<boolean>(false);
 
   const hiddenCount = useMemo(() => {
     return agents.filter((a) => a.isHidden).length;
   }, [agents]);
 
+  const finishedCount = useMemo(() => {
+    return agents.filter((a) => !a.isHidden && a.activity.lifecycle === "EXITED").length;
+  }, [agents]);
+
   const visibleAgents = useMemo(() => {
-    return agents.filter((a) => showHidden || !a.isHidden);
-  }, [agents, showHidden]);
+    return agents.filter((a) => {
+      if (a.isHidden) {
+        return showHidden;
+      }
+      const isFinished = a.activity.lifecycle === "EXITED";
+      if (isFinished) {
+        return showFinished;
+      }
+      return true;
+    });
+  }, [agents, showHidden, showFinished]);
 
   const displayedAgents = useMemo(() => {
     if (!isActiveFilter) return visibleAgents;
@@ -137,6 +151,23 @@ export function App({ apiBaseUrl, token = DEFAULT_DEV_TOKEN }: IAppProps = {}): 
               >
                 <IconWrapper size="sm">{showHidden ? <Eye size={14} /> : <EyeOff size={14} />}</IconWrapper>
                 <span>{showHidden ? `Hide ${hiddenCount} hidden` : `Show ${hiddenCount} hidden`}</span>
+              </button>
+            )}
+
+            {finishedCount > 0 && (
+              <button
+                type="button"
+                data-testid="App--toggle-show-finished"
+                onClick={() => setShowFinished((prev) => !prev)}
+                className={clsx(
+                  "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer border",
+                  showFinished
+                    ? "bg-blue-600 text-white border-blue-500 shadow-md shadow-blue-600/30"
+                    : "bg-slate-900 text-slate-400 hover:text-slate-200 border-slate-800",
+                )}
+              >
+                <IconWrapper size="sm">{showFinished ? <Eye size={14} /> : <EyeOff size={14} />}</IconWrapper>
+                <span>{showFinished ? `Hide ${finishedCount} finished` : `Show ${finishedCount} finished`}</span>
               </button>
             )}
           </div>

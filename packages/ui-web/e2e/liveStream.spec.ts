@@ -24,10 +24,17 @@ test.describe("Live Stream & Fleet Hydration", () => {
     // Verify Active count and Total spend calculations
     await expect(page.getByTestId("Header--active-agents")).toContainText("Active:1");
     await expect(page.getByTestId("Header--environments")).toContainText("Environments:1/1");
-    await expect(page.getByTestId("App--agent-count")).toContainText("2 Agents");
 
-    // Verify agent cards rendered
+    // Finished agent is hidden by default: 1 visible, toggle finished button visible
+    await expect(page.getByTestId("App--toggle-show-finished")).toContainText("Show 1 finished");
+    await expect(page.getByTestId("App--agent-count")).toContainText("1 Agent");
     await expect(page.getByText("Build agent-status dashboard")).toBeVisible();
+    await expect(page.getByText("Refactor telemetry pipeline")).not.toBeVisible();
+
+    // Reveal finished sessions
+    await page.getByTestId("App--toggle-show-finished").click();
+    await expect(page.getByTestId("App--toggle-show-finished")).toContainText("Hide 1 finished");
+    await expect(page.getByTestId("App--agent-count")).toContainText("2 Agents");
     await expect(page.getByText("Refactor telemetry pipeline")).toBeVisible();
 
     // Verify action line on running card
@@ -90,7 +97,8 @@ test.describe("Live Stream & Fleet Hydration", () => {
 
     await page.goto("/");
 
-    // Both agents are initially visible
+    // Reveal finished sessions so both agents are visible
+    await page.getByTestId("App--toggle-show-finished").click();
     await expect(page.getByText("Build agent-status dashboard")).toBeVisible();
     await expect(page.getByText("Refactor telemetry pipeline")).toBeVisible();
     await expect(page.getByTestId("App--agent-count")).toContainText("2 Agents");

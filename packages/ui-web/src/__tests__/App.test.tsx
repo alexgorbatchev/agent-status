@@ -3,7 +3,7 @@ import assert from "node:assert";
 import React, { act } from "react";
 import { App } from "../layouts/App";
 import { setupMockDomEnvironment, mountComponent } from "./helpers";
-import { fixture_agentStateRunning, fixture_agentStateWaitingQuestion } from "./fixtures";
+import { fixture_agentStateRunning, fixture_agentStateWaitingQuestion, fixture_agentStateExited } from "./fixtures";
 import type { IAgentState, ServerEvent } from "../types";
 
 type CleanupFn = () => void;
@@ -105,6 +105,168 @@ describe("App Layout & Session Visibility", () => {
     // Now toggle button should say Hide 1 hidden
     expect(toggleBtn.textContent).toContain("Hide 1 hidden");
     expect(agentCountEl.textContent).toBe("2 Agents");
+
+    await unmount();
+  });
+
+  it("filters out finished sessions by default and displays toggle button next to hidden toggle", async () => {
+    const { mockDoc, cleanup } = setupMockDomEnvironment();
+    envCleanup = cleanup;
+
+    const runningAgent: IAgentState = {
+      ...fixture_agentStateRunning,
+      id: "agent-running-1",
+      isHidden: false,
+    };
+    const finishedAgent: IAgentState = {
+      ...fixture_agentStateExited,
+      id: "agent-finished-1",
+      isHidden: false,
+    };
+
+    const { container, unmount } = await mountComponent(<App />, mockDoc);
+
+    // Send initial snapshot via mock-sse-event inside act
+    await act(async () => {
+      const snapshotEvent = new CustomEvent<ServerEvent>("mock-sse-event", {
+        detail: {
+          type: "snapshot",
+          at: Date.now(),
+          agents: [runningAgent, finishedAgent],
+          environments: [runningAgent.environment],
+        },
+      });
+      window.dispatchEvent(snapshotEvent);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    // Agent count text should reflect 1 visible agent
+    const agentCountEl = container.querySelector('[data-testid="App--agent-count"]');
+    assert(agentCountEl, "agent count element must exist");
+    expect(agentCountEl.textContent).toBe("1 Agent");
+
+    // Finished agent should be hidden by default: only 1 AgentCard rendered
+    const agentCardsInitial = container.querySelectorAll('[data-testid="AgentCard"]');
+    expect(agentCardsInitial.length).toBe(1);
+
+    // Toggle finished button should exist with "Show 1 finished"
+    const toggleFinishedBtn = container.querySelector('[data-testid="App--toggle-show-finished"]');
+    assert(toggleFinishedBtn, "toggle show finished button must exist when finished agents exist");
+    expect(toggleFinishedBtn.textContent).toContain("Show 1 finished");
+    expect(toggleFinishedBtn.getAttribute("class")).toContain("cursor-pointer");
+    expect(toggleFinishedBtn.getAttribute("class")).toContain("px-3");
+    expect(toggleFinishedBtn.getAttribute("class")).toContain("py-1.5");
+    expect(toggleFinishedBtn.getAttribute("class")).toContain("font-semibold");
+
+    // Click toggle button to reveal finished sessions inside act
+    await act(async () => {
+      toggleFinishedBtn.click();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    // Now toggle button should say Hide 1 finished and both cards should be visible
+    expect(toggleFinishedBtn.textContent).toContain("Hide 1 finished");
+    expect(agentCountEl.textContent).toBe("2 Agents");
+    const agentCardsVisible = container.querySelectorAll('[data-testid="AgentCard"]');
+    expect(agentCardsVisible.length).toBe(2);
+
+    // Click toggle button again to hide finished sessions
+    await act(async () => {
+      toggleFinishedBtn.click();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    expect(toggleFinishedBtn.textContent).toContain("Show 1 finished");
+    expect(agentCountEl.textContent).toBe("1 Agent");
+    const agentCardsHiddenAgain = container.querySelectorAll('[data-testid="AgentCard"]');
+    expect(agentCardsHiddenAgain.length).toBe(1);
+
+    await unmount();
+  });
+
+  it("does not render App--toggle-show-finished when no finished agents exist", async () => {
+    const { mockDoc, cleanup } = setupMockDomEnvironment();
+    envCleanup = cleanup;
+
+    const runningAgent1: IAgentState = {
+      ...fixture_agentStateRunning,
+      id: "agent-running-1",
+      isHidden: false,
+    };
+    const runningAgent2: IAgentState = {
+      ...fixture_agentStateWaitingQuestion,
+      id: "agent-running-2",
+      isHidden: false,
+    };
+
+    const { container, unmount } = await mountComponent(<App />, mockDoc);
+
+    await act(async () => {
+      const snapshotEvent = new CustomEvent<ServerEvent>("mock-sse-event", {
+        detail: {
+          type: "snapshot",
+          at: Date.now(),
+          agents: [runningAgent1, runningAgent2],
+          environments: [runningAgent1.environment],
+        },
+      });
+      window.dispatchEvent(snapshotEvent);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    const toggleFinishedBtn = container.querySelector('[data-testid="App--toggle-show-finished"]');
+    expect(toggleFinishedBtn).toBeNull();
+
+    await unmount();
+  });
+
+  it("renders both toggle-show-hidden and toggle-show-finished side by side when both exist", async () => {
+    const { mockDoc, cleanup } = setupMockDomEnvironment();
+    envCleanup = cleanup;
+
+    const runningAgent: IAgentState = {
+      ...fixture_agentStateRunning,
+      id: "agent-running-1",
+      isHidden: false,
+    };
+    const hiddenAgent: IAgentState = {
+      ...fixture_agentStateWaitingQuestion,
+      id: "agent-hidden-1",
+      isHidden: true,
+      hiddenAt: Date.now(),
+    };
+    const finishedAgent: IAgentState = {
+      ...fixture_agentStateExited,
+      id: "agent-finished-1",
+      isHidden: false,
+    };
+
+    const { container, unmount } = await mountComponent(<App />, mockDoc);
+
+    await act(async () => {
+      const snapshotEvent = new CustomEvent<ServerEvent>("mock-sse-event", {
+        detail: {
+          type: "snapshot",
+          at: Date.now(),
+          agents: [runningAgent, hiddenAgent, finishedAgent],
+          environments: [runningAgent.environment],
+        },
+      });
+      window.dispatchEvent(snapshotEvent);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    const toggleHiddenBtn = container.querySelector('[data-testid="App--toggle-show-hidden"]');
+    const toggleFinishedBtn = container.querySelector('[data-testid="App--toggle-show-finished"]');
+    assert(toggleHiddenBtn, "toggle show hidden button must exist");
+    assert(toggleFinishedBtn, "toggle show finished button must exist");
+
+    expect(toggleHiddenBtn.textContent).toContain("Show 1 hidden");
+    expect(toggleFinishedBtn.textContent).toContain("Show 1 finished");
+
+    // Only running agent visible by default
+    const agentCards = container.querySelectorAll('[data-testid="AgentCard"]');
+    expect(agentCards.length).toBe(1);
 
     await unmount();
   });
