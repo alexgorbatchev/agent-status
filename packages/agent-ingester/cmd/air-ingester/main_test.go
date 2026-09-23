@@ -224,8 +224,11 @@ func TestLogSummarizerStartup(t *testing.T) {
 		if !strings.Contains(out, "summarizer_disabled") {
 			t.Errorf("expected summarizer_disabled log, got: %s", out)
 		}
-		if !strings.Contains(out, "flag --no-summarize was provided") {
-			t.Errorf("expected reason in log, got: %s", out)
+		if !strings.Contains(out, "source=flag") {
+			t.Errorf("expected source=flag in log, got: %s", out)
+		}
+		if strings.Contains(out, "flag --no-summarize was provided") || strings.Contains(out, "deterministic fallback heuristics") {
+			t.Errorf("did not expect prose sentence in log, got: %s", out)
 		}
 	})
 
@@ -245,8 +248,11 @@ func TestLogSummarizerStartup(t *testing.T) {
 		if !strings.Contains(out, "summarizer_disabled") {
 			t.Errorf("expected summarizer_disabled log when sumEngine.DisabledByFlag() is true, got: %s", out)
 		}
-		if !strings.Contains(out, "flag --no-summarize was provided") {
-			t.Errorf("expected reason in log, got: %s", out)
+		if !strings.Contains(out, "source=flag") {
+			t.Errorf("expected source=flag in log, got: %s", out)
+		}
+		if strings.Contains(out, "flag --no-summarize was provided") || strings.Contains(out, "deterministic fallback heuristics") {
+			t.Errorf("did not expect prose sentence in log, got: %s", out)
 		}
 	})
 
@@ -270,11 +276,14 @@ func TestLogSummarizerStartup(t *testing.T) {
 		if !strings.Contains(out, "summarizer_disabled") {
 			t.Errorf("expected summarizer_disabled log, got: %s", out)
 		}
-		if !strings.Contains(out, "AIR_NO_SUMMARIZE") {
-			t.Errorf("expected AIR_NO_SUMMARIZE in reason log, got: %s", out)
+		if !strings.Contains(out, "source=env") {
+			t.Errorf("expected source=env in log, got: %s", out)
 		}
-		if strings.Contains(out, "flag --no-summarize was provided") {
-			t.Errorf("did not expect flag reason when disabled by env var, got: %s", out)
+		if strings.Contains(out, "source=flag") {
+			t.Errorf("did not expect source=flag when disabled by env var, got: %s", out)
+		}
+		if strings.Contains(out, "AIR_NO_SUMMARIZE=1 was provided") || strings.Contains(out, "deterministic fallback heuristics") {
+			t.Errorf("did not expect prose sentence in log, got: %s", out)
 		}
 	})
 
@@ -396,8 +405,15 @@ func TestLogSummarizerStartup(t *testing.T) {
 		if !strings.Contains(out, "summarizer_unconfigured") {
 			t.Errorf("expected summarizer_unconfigured log, got: %s", out)
 		}
-		if !strings.Contains(out, "no LLM provider credentials found") {
-			t.Errorf("expected warning reason in log, got: %s", out)
+		if !strings.Contains(out, "reason=no_credentials") {
+			t.Errorf("expected reason=no_credentials in log, got: %s", out)
+		}
+		expectedCheckedEnv := "checked_env=LITELLM_BASE_URL,LITELLM_API_KEY,OPENAI_API_KEY,GEMINI_API_KEY,ANTHROPIC_API_KEY"
+		if !strings.Contains(out, expectedCheckedEnv) {
+			t.Errorf("expected %s in log, got: %s", expectedCheckedEnv, out)
+		}
+		if strings.Contains(out, "no LLM provider credentials found") || strings.Contains(out, "To enable, set") {
+			t.Errorf("did not expect prose sentence in log, got: %s", out)
 		}
 	})
 

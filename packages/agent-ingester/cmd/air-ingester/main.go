@@ -256,11 +256,11 @@ func logSummarizerStartup(cfg *config.Config, sumEngine *summarizer.Summarizer) 
 	}
 
 	if isDisabled {
+		source := "flag"
 		if isEnv {
-			logging.Info("summarizer_disabled", "reason", "env var AIR_NO_SUMMARIZE=1 was provided; running with deterministic fallback heuristics")
-		} else {
-			logging.Info("summarizer_disabled", "reason", "flag --no-summarize was provided; running with deterministic fallback heuristics")
+			source = "env"
 		}
+		logging.Info("summarizer_disabled", "source", source)
 		return
 	}
 
@@ -293,7 +293,7 @@ func logSummarizerStartup(cfg *config.Config, sumEngine *summarizer.Summarizer) 
 		}
 	}
 
-	logging.Warn("summarizer_unconfigured", "reason", "no LLM provider credentials found; AI action summarization is disabled. To enable, set LITELLM_BASE_URL and LITELLM_API_KEY (or LITELLM_KEY), OPENAI_API_KEY, GEMINI_API_KEY, or ANTHROPIC_API_KEY")
+	logging.Warn("summarizer_unconfigured", "reason", "no_credentials", "checked_env", "LITELLM_BASE_URL,LITELLM_API_KEY,OPENAI_API_KEY,GEMINI_API_KEY,ANTHROPIC_API_KEY")
 }
 
 func main() {
