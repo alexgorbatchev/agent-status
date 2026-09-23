@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -819,6 +820,34 @@ func TestPeriodicPruner(t *testing.T) {
 	})
 }
 
+// shortTestSockPath returns a Unix domain socket path short enough to fit within
+// OS sun_path length limits (104 bytes on Darwin, 108 on Linux), avoiding bind errors
+// caused by lengthy t.TempDir() subtest paths.
+func shortTestSockPath(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "air-sock-*")
+	if err != nil {
+		dir = t.TempDir()
+	} else {
+		t.Cleanup(func() {
+			_ = os.RemoveAll(dir)
+		})
+	}
+	return filepath.Join(dir, "notify.sock")
+}
+
+func TestShortTestSockPath(t *testing.T) {
+	sockPath := shortTestSockPath(t)
+	if len(sockPath) >= 104 {
+		t.Errorf("socket path %q length = %d, want < 104", sockPath, len(sockPath))
+	}
+	l, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("failed to bind test unix socket at %q: %v", sockPath, err)
+	}
+	_ = l.Close()
+}
+
 func TestRunServer(t *testing.T) {
 	origLogger := logging.Default()
 	t.Cleanup(func() {
@@ -828,7 +857,7 @@ func TestRunServer(t *testing.T) {
 	t.Run("lifecycle with ephemeral port and clean shutdown", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		dbPath := filepath.Join(tmpDir, "agent-status.db")
-		sockPath := filepath.Join(tmpDir, "notify.sock")
+		sockPath := shortTestSockPath(t)
 
 		buf := new(bytes.Buffer)
 		cfg := &config.Config{
@@ -925,7 +954,7 @@ func TestRunServer(t *testing.T) {
 		cfg := &config.Config{
 			Addr:        "127.0.0.1:0",
 			DBPath:      "/invalid-nonexistent-dir/sub/path/agent.db",
-			NotifySock:  filepath.Join(t.TempDir(), "agent-test.sock"),
+			NotifySock:  shortTestSockPath(t),
 			NoSummarize: true,
 			LogLevel:    "info",
 		}
@@ -964,7 +993,7 @@ func TestRunServer(t *testing.T) {
 	t.Run("listen error on invalid address", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		dbPath := filepath.Join(tmpDir, "agent-status.db")
-		sockPath := filepath.Join(tmpDir, "notify.sock")
+		sockPath := shortTestSockPath(t)
 		cfg := &config.Config{
 			Addr:        "999.999.999.999:9999",
 			DBPath:      dbPath,
@@ -986,7 +1015,7 @@ func TestRunServer(t *testing.T) {
 	t.Run("log file and log dir config", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		dbPath := filepath.Join(tmpDir, "agent-status.db")
-		sockPath := filepath.Join(tmpDir, "notify.sock")
+		sockPath := shortTestSockPath(t)
 		logDir := filepath.Join(tmpDir, "logs")
 		logFile := filepath.Join(logDir, "test-ingester.log")
 
@@ -1029,7 +1058,7 @@ func TestNewRootCmd_Execution(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "agent-status.db")
-	sockPath := filepath.Join(tmpDir, "notify.sock")
+	sockPath := shortTestSockPath(t)
 
 	cfg := &config.Config{}
 	cmd := newRootCmd(cfg)
