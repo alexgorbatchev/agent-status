@@ -148,6 +148,7 @@ export const SubagentsDwell: Story = {
         ],
       },
     },
+    defaultShowSubagents: true,
     onOpenDrawer,
   },
   async play({ canvasElement }) {

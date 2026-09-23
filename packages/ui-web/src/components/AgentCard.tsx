@@ -39,10 +39,15 @@ function resolveCurrentTime(): number {
   return Date.now();
 }
 
-export function AgentCard({ agent, onOpenDrawer, onToggleHide }: IAgentCardProps): React.JSX.Element {
+export function AgentCard({
+  agent,
+  onOpenDrawer,
+  onToggleHide,
+  defaultShowSubagents = false,
+}: IAgentCardProps): React.JSX.Element {
   const [isFocusing, setIsFocusing] = useState<boolean>(false);
   const [focusError, setFocusError] = useState<string | null>(null);
-  const [showSubagents, setShowSubagents] = useState<boolean>(false);
+  const [showSubagents, setShowSubagents] = useState<boolean>(defaultShowSubagents);
   const { activity, environment, workspace, harness } = agent;
 
   const formattedCost = activity.cost ? `$${activity.cost.total.toFixed(4)}` : "—";

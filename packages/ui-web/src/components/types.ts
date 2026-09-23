@@ -75,6 +75,7 @@ export interface IAgentCardProps {
   agent: IAgentState;
   onOpenDrawer?: (agent: IAgentState) => void;
   onToggleHide?: (agent: IAgentState) => void;
+  defaultShowSubagents?: boolean;
 }
 
 export interface IProjectGroupProps {

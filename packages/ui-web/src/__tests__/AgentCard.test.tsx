@@ -538,7 +538,7 @@ describe("AgentCard Component", () => {
         },
       };
 
-      const html = renderToStaticMarkup(<AgentCard agent={agentWithDwellSubagents} />);
+      const html = renderToStaticMarkup(<AgentCard agent={agentWithDwellSubagents} defaultShowSubagents />);
 
       // Chip status attributes
       expect(html).toContain('data-subagent-status="running"');
