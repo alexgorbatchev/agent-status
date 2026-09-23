@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
   buildBinaries,
   getIngesterArgs,
+  getLogLevel,
   getSummarizerStatus,
   shouldDisableSummarizer,
   shouldSkipBuild,
@@ -19,6 +20,30 @@ describe("dev-stack build controls (#72)", () => {
     it("returns true when --no-build is present in arguments", () => {
       expect(shouldSkipBuild(["bun", "scripts/dev-stack.ts", "start", "--no-build"])).toBe(true);
       expect(shouldSkipBuild(["bun", "scripts/dev-stack.ts", "--no-build"])).toBe(true);
+    });
+  });
+
+  describe("getLogLevel (#75)", () => {
+    it("defaults to info when no log level or debug flags are present", () => {
+      expect(getLogLevel(["node", "dev-stack.ts"])).toBe("info");
+      expect(getLogLevel([])).toBe("info");
+    });
+
+    it("detects --debug and -d flags", () => {
+      expect(getLogLevel(["node", "dev-stack.ts", "--debug"])).toBe("debug");
+      expect(getLogLevel(["node", "dev-stack.ts", "-d"])).toBe("debug");
+      expect(getLogLevel(["--debug"])).toBe("debug");
+      expect(getLogLevel(["-d"])).toBe("debug");
+    });
+
+    it("parses --log-level with space-separated argument", () => {
+      expect(getLogLevel(["node", "dev-stack.ts", "--log-level", "warn"])).toBe("warn");
+      expect(getLogLevel(["--log-level", "error"])).toBe("error");
+    });
+
+    it("parses --log-level=value syntax", () => {
+      expect(getLogLevel(["node", "dev-stack.ts", "--log-level=debug"])).toBe("debug");
+      expect(getLogLevel(["--log-level=trace"])).toBe("trace");
     });
   });
 
@@ -221,6 +246,16 @@ describe("dev-stack build controls (#72)", () => {
           ingesterBin: "/bin/air-ingester",
         });
         expect(args).toEqual(["/bin/air-ingester", "--no-summarize", "--log-level", "info"]);
+      });
+
+      it("derives log level from argv option regardless of process.argv (#75)", () => {
+        const args = getIngesterArgs({
+          argv: ["node", "dev-stack.ts", "--debug"],
+          env: { OPENAI_API_KEY: "sk-openai" },
+          ingesterBin: "/bin/air-ingester",
+        });
+        expect(args).toContain("--log-level");
+        expect(args[args.indexOf("--log-level") + 1]).toBe("debug");
       });
     });
 

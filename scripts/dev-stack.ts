@@ -214,8 +214,11 @@ function isAgentMode(): boolean {
   return agent === "1" || agent === "true" || agent === "yes";
 }
 
-function getLogLevel(): string {
-  const args = process.argv.slice(2);
+export function getLogLevel(argv: string[] = process.argv): string {
+  const args =
+    argv.length >= 2 && !argv[0].startsWith("-") && !argv[1].startsWith("-")
+      ? argv.slice(2)
+      : argv;
   if (args.includes("--debug") || args.includes("-d")) {
     return "debug";
   }
@@ -348,7 +351,7 @@ async function startStack() {
   const pids: number[] = [];
   const procs: Subprocess[] = [];
 
-  const logLevel = getLogLevel();
+  const logLevel = getLogLevel(process.argv);
   const dbDir = resolve(runDir, "data");
   mkdirSync(dbDir, { recursive: true });
   const notifySock = "/tmp/agent-status/notify.sock";

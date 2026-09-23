@@ -75,6 +75,10 @@ storybook-web *args:
 test:
     @just test-all
 
+# Typecheck dev stack scripts
+lint-scripts:
+    bun x tsc -p scripts/tsconfig.json
+
 # Lint all packages (Go vet + golangci-lint, Bun typecheck + linter)
 lint-all:
     cd packages/agent-common && just lint
@@ -84,6 +88,7 @@ lint-all:
     cd packages/agent-server && just lint
     cd packages/agent-debug && just lint
     cd packages/ui-web && just lint
+    just lint-scripts
 
 # Typecheck and lint
 lint:
