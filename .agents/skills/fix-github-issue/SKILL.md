@@ -10,7 +10,7 @@ description: >-
 author: alexgorbatchev
 metadata:
   created_on: 2026-09-22 14:38
-  last_modified: 2026-09-22 15:35
+  last_modified: 2026-09-23 00:30
   status: current
 ---
 
@@ -18,7 +18,7 @@ metadata:
 
 - **HARD PROHIBITION**: The coordinator agent is strictly prohibited from invoking `edit` or `write` on any files inside issue worktrees or package directories. Any file modification to implementation or test code MUST be performed by a delegated child subagent. If the coordinator edits code directly, the turn is an automatic failure.
 - **Coordinator Boundary**: The parent/main agent manages queue ordering, provisions worktrees, receives clean review notifications from subagents, merges verified worktrees into `issues-dev`, tears down worktrees, and closes GitHub issues. The main agent does NOT micromanage the review loop.
-- **Main Agent Rebase Before Provisioning**: The main agent MUST rebase `issues-dev` onto `main` before starting any new subagent or provisioning a new issue worktree.
+- **Main Agent Sync Before Provisioning**: The main agent MUST merge `main` into `issues-dev` (after fetching `origin main`) before starting any new subagent or provisioning a new issue worktree.
 - **Subagent Rebase Before Review**: Subagents working in worktrees MUST rebase their branch on `issues-dev` before entering the review pairing loop to eliminate integration conflicts for the main agent.
 - **Autonomous Subagent Review Pairing**: Subagents working in worktrees are responsible for autonomously pairing with review agents until no further issues are reported ("clean review"). The subagent only notifies the main agent when the review is clean and ready for integration.
 - **Full Queue Completion**: All opened tickets are expected to be finished before completing the run. The coordinator works through the entire open issue set, continuing until no open issues remain.
@@ -43,10 +43,10 @@ metadata:
    ```bash
    git worktree add .workspaces/issues-dev -b issues-dev main
    ```
-   If it already exists, ensure it is rebased on `main`:
+   If it already exists, ensure it is synced with `main`:
    ```bash
    git -C .workspaces/issues-dev fetch origin main
-   git -C .workspaces/issues-dev rebase origin/main
+   git -C .workspaces/issues-dev merge origin/main
    ```
 
 2. **Ingest Issue Queue & Order Tasks**:
@@ -60,11 +60,11 @@ metadata:
    ```
    Map dependencies across open issues and order them into execution batches.
 
-3. **Rebase `issues-dev` on `main` & Provision Per-Issue Worktrees (Up to 3 Max)**:
+3. **Sync `issues-dev` with `main` & Provision Per-Issue Worktrees (Up to 3 Max)**:
    Before provisioning each new issue worktree:
    ```bash
    git -C .workspaces/issues-dev fetch origin main
-   git -C .workspaces/issues-dev rebase origin/main
+   git -C .workspaces/issues-dev merge origin/main
    ```
    Then create the dedicated worktree branched from `issues-dev`:
    ```bash
@@ -92,7 +92,7 @@ The worktree subagent is responsible for executing the fix, rebasing on `issues-
    Do not write implementation code until test failure is directly observed and verified in the tool output.
 
 ### Step 2B — Green Phase (Primitive-Correct Fix)
-1. Implement the minimal necessary change to satisfy the failing test.
+1. Fix the root cause identified by the failing test with a complete, primitive-correct implementation. Never apply shallow proxies, temporary workarounds, or minimal-effort shortcuts.
 2. Comply with project constraints:
    - Use native platform primitives (exact types, proper OS APIs, standard library idioms). No shallow proxies, stubs, or wrappers.
    - Never use heredoc.
@@ -162,10 +162,10 @@ Upon receiving the clean review notification from the worktree subagent:
    ```
 
 4. **Replenish Concurrency Pool**:
-   If additional open issues remain in the queue, rebase `issues-dev` on `main`:
+   If additional open issues remain in the queue, sync `issues-dev` with `main`:
    ```bash
    git -C .workspaces/issues-dev fetch origin main
-   git -C .workspaces/issues-dev rebase origin/main
+   git -C .workspaces/issues-dev merge origin/main
    ```
    Then provision the next `.workspaces/issue-<number>` from `issues-dev` to maintain up to 3 parallel workers.
 
