@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"reflect"
 	"testing"
 	"time"
 )
@@ -1451,4 +1452,56 @@ func TestClaudeCodeParser_StreamedMultiBlockDeduplication(t *testing.T) {
 		}
 	})
 }
+
+func TestClaudeCodeParser_StructFieldAcronymCasing(t *testing.T) {
+	// Verify rawJSONLine fields conform to Go acronym casing
+	rawJSONLineType := reflect.TypeOf(rawJSONLine{})
+
+	requiredJSONLineFields := []struct {
+		name    string
+		jsonTag string
+	}{
+		{"RequestID", "requestId,omitempty"},
+		{"APIBlockIndex", "apiBlockIndex,omitempty"},
+		{"APIErrorStatus", "apiErrorStatus,omitempty"},
+		{"IsAPIErrorMessage", "isApiErrorMessage,omitempty"},
+	}
+
+	for _, req := range requiredJSONLineFields {
+		field, ok := rawJSONLineType.FieldByName(req.name)
+		if !ok {
+			t.Errorf("rawJSONLine missing field %s conforming to Go acronym convention", req.name)
+			continue
+		}
+		if tag := field.Tag.Get("json"); tag != req.jsonTag {
+			t.Errorf("rawJSONLine field %s has json tag %q, want %q", req.name, tag, req.jsonTag)
+		}
+	}
+
+	bannedJSONLineFields := []string{
+		"RequestId",
+		"ApiBlockIndex",
+		"ApiErrorStatus",
+		"IsApiErrorMessage",
+	}
+	for _, banned := range bannedJSONLineFields {
+		if _, ok := rawJSONLineType.FieldByName(banned); ok {
+			t.Errorf("rawJSONLine contains mixed-case acronym field %s, should be renamed", banned)
+		}
+	}
+
+	// Verify rawMessage fields conform to Go acronym casing
+	rawMessageType := reflect.TypeOf(rawMessage{})
+	field, ok := rawMessageType.FieldByName("APIErrorStatus")
+	if !ok {
+		t.Errorf("rawMessage missing field APIErrorStatus conforming to Go acronym convention")
+	} else if tag := field.Tag.Get("json"); tag != "apiErrorStatus,omitempty" {
+		t.Errorf("rawMessage field APIErrorStatus has json tag %q, want %q", tag, "apiErrorStatus,omitempty")
+	}
+
+	if _, ok := rawMessageType.FieldByName("ApiErrorStatus"); ok {
+		t.Errorf("rawMessage contains mixed-case acronym field ApiErrorStatus, should be renamed")
+	}
+}
+
 

@@ -53,7 +53,7 @@ type rawMessage struct {
 	Content        interface{} `json:"content"`
 	Usage          *rawUsage   `json:"usage"`
 	Error          string      `json:"error,omitempty"`
-	ApiErrorStatus *int        `json:"apiErrorStatus,omitempty"`
+	APIErrorStatus *int        `json:"apiErrorStatus,omitempty"`
 }
 
 type rawJSONLine struct {
@@ -77,10 +77,10 @@ type rawJSONLine struct {
 	Content           interface{} `json:"content"`
 	Question          string      `json:"question"`
 	Error             string      `json:"error,omitempty"`
-	ApiErrorStatus    *int        `json:"apiErrorStatus,omitempty"`
-	IsApiErrorMessage bool        `json:"isApiErrorMessage,omitempty"`
-	RequestId         string      `json:"requestId,omitempty"`
-	ApiBlockIndex     *int        `json:"apiBlockIndex,omitempty"`
+	APIErrorStatus    *int        `json:"apiErrorStatus,omitempty"`
+	IsAPIErrorMessage bool        `json:"isApiErrorMessage,omitempty"`
+	RequestID         string      `json:"requestId,omitempty"`
+	APIBlockIndex     *int        `json:"apiBlockIndex,omitempty"`
 }
 
 func parseTimestamp(v interface{}) int64 {
@@ -618,7 +618,7 @@ func parseClaudeCodeLineEvents(
 		}
 
 	case "assistant":
-		reqID := raw.RequestId
+		reqID := raw.RequestID
 		msgID := ""
 		if raw.Message != nil && raw.Message.ID != "" {
 			msgID = raw.Message.ID
@@ -718,7 +718,7 @@ func parseClaudeCodeLineEvents(
 			// (e.g. apiBlockIndex: 0) of a streaming assistant turn. The actual tool call(s) or text
 			// response will arrive on subsequent line(s). Do not emit premature turn_end for pure thinking.
 			hasTerminalContent := len(textParts) > 0 || hasToolCall
-			isIntermediateThinking := !hasTerminalContent && (raw.Message.StopReason == "" || raw.ApiBlockIndex != nil || raw.Message.StopReason == "tool_use" || raw.Message.StopReason == "toolUse")
+			isIntermediateThinking := !hasTerminalContent && (raw.Message.StopReason == "" || raw.APIBlockIndex != nil || raw.Message.StopReason == "tool_use" || raw.Message.StopReason == "toolUse")
 
 			if !isIntermediateThinking {
 				isDuplicateRequest := false
@@ -785,9 +785,9 @@ func parseClaudeCodeLineEvents(
 
 		// Check for error fields
 		hasError := raw.Error != "" ||
-			raw.IsApiErrorMessage ||
-			(raw.ApiErrorStatus != nil && *raw.ApiErrorStatus > 0) ||
-			(raw.Message != nil && (raw.Message.Error != "" || (raw.Message.ApiErrorStatus != nil && *raw.Message.ApiErrorStatus > 0)))
+			raw.IsAPIErrorMessage ||
+			(raw.APIErrorStatus != nil && *raw.APIErrorStatus > 0) ||
+			(raw.Message != nil && (raw.Message.Error != "" || (raw.Message.APIErrorStatus != nil && *raw.Message.APIErrorStatus > 0)))
 
 		if hasError {
 			errText := raw.Error
@@ -801,10 +801,10 @@ func parseClaudeCodeLineEvents(
 				errText = extractContentString(raw.Content)
 			}
 			if errText == "" {
-				if raw.ApiErrorStatus != nil && *raw.ApiErrorStatus > 0 {
-					errText = fmt.Sprintf("API error: status %d", *raw.ApiErrorStatus)
-				} else if raw.Message != nil && raw.Message.ApiErrorStatus != nil && *raw.Message.ApiErrorStatus > 0 {
-					errText = fmt.Sprintf("API error: status %d", *raw.Message.ApiErrorStatus)
+				if raw.APIErrorStatus != nil && *raw.APIErrorStatus > 0 {
+					errText = fmt.Sprintf("API error: status %d", *raw.APIErrorStatus)
+				} else if raw.Message != nil && raw.Message.APIErrorStatus != nil && *raw.Message.APIErrorStatus > 0 {
+					errText = fmt.Sprintf("API error: status %d", *raw.Message.APIErrorStatus)
 				} else {
 					errText = "API error"
 				}
