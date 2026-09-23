@@ -44,107 +44,22 @@ export function shouldSkipBuild(argv: string[] = process.argv): boolean {
   return argv.includes("--no-build");
 }
 
-export function shouldDisableSummarizer(
-  argv: string[] = process.argv,
-  env: Record<string, string | undefined> = process.env
-): boolean {
-  if (argv.includes("--no-summarize")) {
-    return true;
-  }
-  const hasLiteLLM = Boolean(
-    (env.LITELLM_BASE_URL || env.OPENAI_BASE_URL) &&
-      (env.LITELLM_API_KEY || env.LITELLM_KEY || env.OPENAI_API_KEY)
-  );
-  const hasOpenAI = Boolean(env.OPENAI_API_KEY);
-  const hasGemini = Boolean(env.GEMINI_API_KEY);
-  const hasAnthropic = Boolean(env.ANTHROPIC_API_KEY);
-
-  const hasCredentials = hasLiteLLM || hasOpenAI || hasGemini || hasAnthropic;
-  return !hasCredentials;
-}
-
-export interface ISummarizerStatus {
-  enabled: boolean;
-  provider?: string;
-  model?: string;
-  endpoint?: string;
-  reason?: string;
-}
-
-export function getSummarizerStatus(
-  argv: string[] = process.argv,
-  env: Record<string, string | undefined> = process.env
-): ISummarizerStatus {
-  if (argv.includes("--no-summarize")) {
-    return {
-      enabled: false,
-      reason: "flag --no-summarize was provided; running with deterministic fallback heuristics",
-    };
-  }
-
-  const liteLLMURL = env.LITELLM_BASE_URL || env.OPENAI_BASE_URL;
-  const liteLLMKey = env.LITELLM_API_KEY || env.LITELLM_KEY;
-
-  if (liteLLMURL && liteLLMKey) {
-    const model = env.AIR_SUMMARIZER_MODEL || "gpt-4o-mini";
-    return {
-      enabled: true,
-      provider: "openai",
-      model,
-      endpoint: liteLLMURL,
-    };
-  }
-
-  if (env.OPENAI_API_KEY) {
-    const model = env.AIR_SUMMARIZER_MODEL || "gpt-4o-mini";
-    return {
-      enabled: true,
-      provider: "openai",
-      model,
-      endpoint: env.OPENAI_BASE_URL,
-    };
-  }
-
-  if (env.GEMINI_API_KEY) {
-    const model = env.AIR_SUMMARIZER_MODEL || "gemini-2.0-flash";
-    return {
-      enabled: true,
-      provider: "gemini",
-      model,
-    };
-  }
-
-  if (env.ANTHROPIC_API_KEY) {
-    const model = env.AIR_SUMMARIZER_MODEL || "claude-3-5-haiku-latest";
-    return {
-      enabled: true,
-      provider: "anthropic",
-      model,
-    };
-  }
-
-  return {
-    enabled: false,
-    reason:
-      "no LLM provider credentials found; AI action summarization is disabled. To enable, set LITELLM_BASE_URL and LITELLM_API_KEY (or LITELLM_KEY), OPENAI_API_KEY, GEMINI_API_KEY, or ANTHROPIC_API_KEY",
-  };
-}
-
 export interface IIngesterArgsOptions {
   argv?: string[];
   env?: Record<string, string | undefined>;
   logLevel?: string;
   ingesterBin?: string;
+  noSummarize?: boolean;
 }
 
 export function getIngesterArgs(options: IIngesterArgsOptions = {}): string[] {
   const argv = options.argv ?? process.argv;
-  const env = options.env ?? process.env;
   const logLevel = options.logLevel ?? getLogLevel(argv);
   const ingesterBin = options.ingesterBin ?? "air-ingester";
+  const noSummarize = options.noSummarize ?? argv.includes("--no-summarize");
 
   const args = [ingesterBin];
-  if (shouldDisableSummarizer(argv, env)) {
+  if (noSummarize) {
     args.push("--no-summarize");
   }
   args.push("--log-level", logLevel);
@@ -386,26 +301,8 @@ async function startStack() {
   const uiPrefix = agent ? "[ui]" : "\x1b[32m[ui]\x1b[0m";
 
   // 1. Ingester
-  const summarizerStatus = getSummarizerStatus(process.argv, process.env);
   if (!agent) {
-    if (summarizerStatus.enabled) {
-      const endpointInfo = summarizerStatus.endpoint ? ` (${summarizerStatus.endpoint})` : "";
-      console.log(
-        `   [1/4] Starting air-ingester (:4501) [summarizer: ${summarizerStatus.provider}/${summarizerStatus.model}${endpointInfo}]...`
-      );
-    } else {
-      console.log(
-        `   [1/4] Starting air-ingester (:4501) [summarizer disabled: ${summarizerStatus.reason}]...`
-      );
-    }
-  } else {
-    if (summarizerStatus.enabled) {
-      console.log(
-        `[dev-stack] INFO: summarizer enabled (provider=${summarizerStatus.provider} model=${summarizerStatus.model})`
-      );
-    } else {
-      console.log(`[dev-stack] WARN: summarizer disabled (${summarizerStatus.reason})`);
-    }
+    console.log("   [1/4] Starting air-ingester (:4501)...");
   }
   const ingesterArgs = getIngesterArgs({
     argv: process.argv,

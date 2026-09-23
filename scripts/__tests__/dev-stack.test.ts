@@ -4,8 +4,6 @@ import {
   getAction,
   getIngesterArgs,
   getLogLevel,
-  getSummarizerStatus,
-  shouldDisableSummarizer,
   shouldSkipBuild,
   type IBuildOptions,
 } from "../dev-stack";
@@ -175,80 +173,28 @@ describe("dev-stack build controls (#72)", () => {
     });
   });
 
-  describe("summarizer flag controls (#62)", () => {
-    describe("shouldDisableSummarizer", () => {
-      it("returns true when --no-summarize flag is explicitly passed in argv", () => {
-        expect(
-          shouldDisableSummarizer(["bun", "scripts/dev-stack.ts", "start", "--no-summarize"], {
-            OPENAI_API_KEY: "sk-test",
-          })
-        ).toBe(true);
-
-        expect(
-          shouldDisableSummarizer(["bun", "scripts/dev-stack.ts", "--no-summarize"], {
-            LITELLM_BASE_URL: "https://litellm.example.com",
-            LITELLM_API_KEY: "secret",
-          })
-        ).toBe(true);
-      });
-
-      it("returns true when no LLM provider credentials are in env", () => {
-        expect(shouldDisableSummarizer(["bun", "scripts/dev-stack.ts", "start"], {})).toBe(true);
-        expect(shouldDisableSummarizer([], {})).toBe(true);
-      });
-
-      it("returns false when OPENAI_API_KEY is present in env", () => {
-        expect(
-          shouldDisableSummarizer(["bun", "scripts/dev-stack.ts", "start"], {
-            OPENAI_API_KEY: "sk-openai-test",
-          })
-        ).toBe(false);
-      });
-
-      it("returns false when LITELLM_BASE_URL and LITELLM_API_KEY are present", () => {
-        expect(
-          shouldDisableSummarizer(["bun", "scripts/dev-stack.ts", "start"], {
-            LITELLM_BASE_URL: "https://litellm.example.com",
-            LITELLM_API_KEY: "sk-litellm-1",
-          })
-        ).toBe(false);
-      });
-
-      it("returns false when LITELLM_BASE_URL and LITELLM_KEY alias are present", () => {
-        expect(
-          shouldDisableSummarizer(["bun", "scripts/dev-stack.ts", "start"], {
-            LITELLM_BASE_URL: "https://litellm.example.com",
-            LITELLM_KEY: "sk-litellm-alias",
-          })
-        ).toBe(false);
-      });
-
-      it("returns false when GEMINI_API_KEY is present", () => {
-        expect(
-          shouldDisableSummarizer(["bun", "scripts/dev-stack.ts", "start"], {
-            GEMINI_API_KEY: "gemini-test-key",
-          })
-        ).toBe(false);
-      });
-
-      it("returns false when ANTHROPIC_API_KEY is present", () => {
-        expect(
-          shouldDisableSummarizer(["bun", "scripts/dev-stack.ts", "start"], {
-            ANTHROPIC_API_KEY: "anthropic-test-key",
-          })
-        ).toBe(false);
-      });
-    });
-
+  describe("summarizer flag controls (#62, #74)", () => {
     describe("getIngesterArgs", () => {
-      it("includes --no-summarize when credentials are empty", () => {
+      it("omits --no-summarize when credentials are empty and flag is not passed (#74)", () => {
         const args = getIngesterArgs({
           argv: ["bun", "scripts/dev-stack.ts", "start"],
           env: {},
           logLevel: "info",
           ingesterBin: "/bin/air-ingester",
         });
-        expect(args).toEqual(["/bin/air-ingester", "--no-summarize", "--log-level", "info"]);
+        expect(args).toEqual(["/bin/air-ingester", "--log-level", "info"]);
+        expect(args.includes("--no-summarize")).toBe(false);
+      });
+
+      it("omits --no-summarize for URL-only environment without API keys (#74)", () => {
+        const args = getIngesterArgs({
+          argv: ["bun", "scripts/dev-stack.ts", "start"],
+          env: { LITELLM_BASE_URL: "http://localhost:8000" },
+          logLevel: "info",
+          ingesterBin: "/bin/air-ingester",
+        });
+        expect(args).toEqual(["/bin/air-ingester", "--log-level", "info"]);
+        expect(args.includes("--no-summarize")).toBe(false);
       });
 
       it("omits --no-summarize when valid credentials are provided", () => {
@@ -262,7 +208,7 @@ describe("dev-stack build controls (#72)", () => {
         expect(args.includes("--no-summarize")).toBe(false);
       });
 
-      it("includes --no-summarize when explicitly requested despite credentials", () => {
+      it("includes --no-summarize when explicitly requested in argv despite credentials", () => {
         const args = getIngesterArgs({
           argv: ["bun", "scripts/dev-stack.ts", "start", "--no-summarize"],
           env: { OPENAI_API_KEY: "sk-openai" },
@@ -270,6 +216,18 @@ describe("dev-stack build controls (#72)", () => {
           ingesterBin: "/bin/air-ingester",
         });
         expect(args).toEqual(["/bin/air-ingester", "--no-summarize", "--log-level", "info"]);
+        expect(args.includes("--no-summarize")).toBe(true);
+      });
+
+      it("includes --no-summarize when noSummarize option is true (#74)", () => {
+        const args = getIngesterArgs({
+          argv: ["bun", "scripts/dev-stack.ts", "start"],
+          noSummarize: true,
+          logLevel: "info",
+          ingesterBin: "/bin/air-ingester",
+        });
+        expect(args).toEqual(["/bin/air-ingester", "--no-summarize", "--log-level", "info"]);
+        expect(args.includes("--no-summarize")).toBe(true);
       });
 
       it("derives log level from argv option regardless of process.argv (#75)", () => {
@@ -280,60 +238,6 @@ describe("dev-stack build controls (#72)", () => {
         });
         expect(args).toContain("--log-level");
         expect(args[args.indexOf("--log-level") + 1]).toBe("debug");
-      });
-    });
-
-    describe("getSummarizerStatus (#63)", () => {
-      it("returns disabled status when --no-summarize is passed", () => {
-        const status = getSummarizerStatus(["bun", "scripts/dev-stack.ts", "start", "--no-summarize"], {
-          OPENAI_API_KEY: "sk-test",
-        });
-        expect(status.enabled).toBe(false);
-        expect(status.reason).toContain("--no-summarize");
-      });
-
-      it("returns unconfigured warning status when no credentials exist", () => {
-        const status = getSummarizerStatus(["bun", "scripts/dev-stack.ts", "start"], {});
-        expect(status.enabled).toBe(false);
-        expect(status.reason).toContain("no LLM provider credentials found");
-      });
-
-      it("returns enabled OpenAI status with endpoint when LITELLM_KEY alias is used", () => {
-        const status = getSummarizerStatus(["bun", "scripts/dev-stack.ts", "start"], {
-          LITELLM_BASE_URL: "https://litellm.example.com",
-          LITELLM_KEY: "sk-litellm-key-alias",
-        });
-        expect(status.enabled).toBe(true);
-        expect(status.provider).toBe("openai");
-        expect(status.model).toBe("gpt-4o-mini");
-        expect(status.endpoint).toBe("https://litellm.example.com");
-      });
-
-      it("returns enabled OpenAI status when OPENAI_API_KEY is used", () => {
-        const status = getSummarizerStatus(["bun", "scripts/dev-stack.ts", "start"], {
-          OPENAI_API_KEY: "sk-openai",
-        });
-        expect(status.enabled).toBe(true);
-        expect(status.provider).toBe("openai");
-        expect(status.model).toBe("gpt-4o-mini");
-      });
-
-      it("returns enabled Gemini status when GEMINI_API_KEY is used", () => {
-        const status = getSummarizerStatus(["bun", "scripts/dev-stack.ts", "start"], {
-          GEMINI_API_KEY: "gemini-key",
-        });
-        expect(status.enabled).toBe(true);
-        expect(status.provider).toBe("gemini");
-        expect(status.model).toBe("gemini-2.0-flash");
-      });
-
-      it("returns enabled Anthropic status when ANTHROPIC_API_KEY is used", () => {
-        const status = getSummarizerStatus(["bun", "scripts/dev-stack.ts", "start"], {
-          ANTHROPIC_API_KEY: "anthropic-key",
-        });
-        expect(status.enabled).toBe(true);
-        expect(status.provider).toBe("anthropic");
-        expect(status.model).toBe("claude-3-5-haiku-latest");
       });
     });
   });
