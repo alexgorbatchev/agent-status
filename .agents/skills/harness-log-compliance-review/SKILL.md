@@ -22,6 +22,7 @@ bun x tsc --noEmit docs/harness-logs/*.ts
 ```
 
 Inspect the 4 reference harness contracts:
+
 - `docs/harness-logs/claude-code.ts` — Flat JSONL event stream, thinking/tool blocks, usage breakdown, attachments, and API error formats.
 - `docs/harness-logs/pi.ts` — DAG JSONL tree (`{id, parentId}`), `IPiCostBreakdown` object, model/label updates, compaction, and message roles.
 - `docs/harness-logs/codex.ts` — Date-partitioned rollout JSONL (`YYYY/MM/DD/`), string-encoded JSON arguments, subagent thread spawns, and synthetic `<environment_context>` filtering.
@@ -34,18 +35,21 @@ Inspect the 4 reference harness contracts:
 Systematically audit `packages/agent-parser/` against each harness contract:
 
 ### A. Top-Level Line & Record Parsing
+
 - **Claude Code**: Verify handling for all top-level record types (`assistant`, `user`, `ai-title`, `last-prompt`, `attachment`, `system`, `permission-mode`, `progress`, `pr-link`). Ensure API errors (`error`, `apiErrorStatus`, `isApiErrorMessage`) are parsed and emitted as error events.
 - **Pi**: Verify line 1 header (`type: "session"`) vs graph nodes (`message`, `model_change`, `thinking_level_change`, `compaction`, `branch_summary`, `custom_message`, `label`, `session_info`). Verify `model_change` accepts `modelId` (with fallbacks) and `label` accepts `label`.
 - **Codex**: Verify `session_meta`, `turn_context`, `event_msg`, and `response_item` unmarshaling. Verify secondary unmarshaling of stringified JSON in `function_call.arguments`.
 - **OpenCode**: Verify SQLite read-only connection strings (`?mode=ro&_pragma=busy_timeout(5000)`), query filtering, and JSON-in-TEXT parsing.
 
 ### B. Content Block Classification
+
 - **Assistant Conversational Text**: Verify assistant `type: "text"` content blocks are captured and attached to `turn_end` or conversational events, rather than silently dropped.
 - **Thinking vs Text Separation**: Ensure regular assistant text is NEVER misclassified or emitted as `EventType: "thinking"`.
 - **Question Prompts**: Verify `AskUserQuestion` / `ask_user` tool invocations extract question text from all parameter variants (`question`, `prompt`, or `questions` array) and emit `question_prompt` events.
 - **Tool Results**: Verify `is_error` / `isError` boolean flags, error text, and tool output strings are extracted.
 
 ### C. Token Usage & Cost Accounting
+
 - **Anthropic / Claude Code Semantics**: `output_tokens` already includes `reasoning_output_tokens` / `thinking_tokens`. Ensure total calculations (`Input + Output + CacheRead + CacheCreation`) do not add reasoning tokens twice.
 - **Pi Cost Breakdown**: `usage.cost` may be written as a numeric float or an `IPiCostBreakdown` object (`{input, output, cacheRead, cacheWrite, total}`). Ensure parser unmarshals both forms without dropping turns.
 - **Codex & OpenCode Usage**: Ensure reasoning tokens, cached prompt tokens, and completion totals are mapped accurately to `ITokenUsage`.

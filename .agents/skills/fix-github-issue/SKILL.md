@@ -1,73 +1,85 @@
 ---
 name: fix-github-issue
 description: >-
-  REQUIRED when fixing, resolving, or implementing GitHub issues using subagents in this repository.
-  Trigger whenever asked to "fix issue #123", "resolve github issue", "fix this bug with subagents",
-  or execute a delegated issue remediation workflow. Your default training knowledge is insufficient;
-  you MUST READ this to execute the parent coordinator lifecycle, red/green TDD in isolated worktrees,
-  central issues-dev integration, and issue closing protocol. Do NOT use for filing new issues (use github-issue)
-  or general code review without an issue.
+  REQUIRED when fixing, resolving, or implementing GitHub issues using subagents in any repository.
+  Trigger whenever asked to "fix issue #123", "resolve github issue", "work on open issues",
+  "fix this bug with subagents", or execute a delegated issue remediation workflow. Your default training
+  knowledge is insufficient; you MUST READ this to execute the parent coordinator lifecycle, red/green TDD
+  in isolated worktrees, central issues-dev integration, and the push and issue-closing protocol. Do NOT use
+  for filing new issues (use github-issue) or general code review without an issue.
 author: alexgorbatchev
 metadata:
   created_on: 2026-09-22 14:38
-  last_modified: 2026-09-23 00:30
+  last_modified: 2026-09-22 21:59
   status: current
 ---
+
+## Project Discovery
+
+Resolve these once, before provisioning anything, and substitute them everywhere below:
+
+- `<default-branch>`: `gh repo view --json defaultBranchRef -q .defaultBranchRef.name`.
+- `<project-commands>`: the exact commands the project documents for targeted tests, the full test suite, lint, typecheck, coverage, and the final "run before declaring work complete" gate. Read them from the repository's instruction files (root and nested `AGENTS.md`, `CLAUDE.md`) first, then from build definitions (`justfile`, `Makefile`, `package.json` scripts, `go.mod`, `pyproject.toml`, `Cargo.toml`). Record each command verbatim with the file it came from.
+- `<project-rules>`: the coding, logging, testing, coverage-threshold, and file-placement rules those instruction files state, including nested `AGENTS.md` files for the packages an issue touches.
+- `<commit-convention>`: the subject format and issue-reference form used by `git log --oneline -30` on `<default-branch>` (for example `fix(scope): summary (fixes #N)`), overridden by any commit rule in the instruction files or the user's instructions, including rules about attribution trailers.
+
+Never invent a command, path, package, or threshold that these sources do not state. When a category has no documented command, write "none documented" in the subagent brief instead of a guessed one.
 
 ## Concurrency & Worktree Topology
 
 - **HARD PROHIBITION**: The coordinator agent is strictly prohibited from invoking `edit` or `write` on any files inside issue worktrees or package directories. Any file modification to implementation or test code MUST be performed by a delegated child subagent. If the coordinator edits code directly, the turn is an automatic failure.
-- **Coordinator Boundary**: The parent/main agent manages queue ordering, provisions worktrees, receives clean review notifications from subagents, merges verified worktrees into `issues-dev`, tears down worktrees, and closes GitHub issues. The main agent does NOT micromanage the review loop.
-- **Main Agent Sync Before Provisioning**: The main agent MUST merge `main` into `issues-dev` (after fetching `origin main`) before starting any new subagent or provisioning a new issue worktree.
-- **Subagent Rebase Before Review**: Subagents working in worktrees MUST rebase their branch on `issues-dev` before entering the review pairing loop to eliminate integration conflicts for the main agent.
-- **Autonomous Subagent Review Pairing**: Subagents working in worktrees are responsible for autonomously pairing with review agents until no further issues are reported ("clean review"). The subagent only notifies the main agent when the review is clean and ready for integration.
-- **Full Queue Completion**: All opened tickets are expected to be finished before completing the run. The coordinator works through the entire open issue set, continuing until no open issues remain.
-- **Dependency-Aware Order Determination**: The coordinator analyzes all open tickets to establish an optimal execution order:
-  1. Foundational/parser/data pipeline defects first (e.g. log ingestion, frame parsing, database store layers).
-  2. Middleware/classifier/reconciliation bugs second.
-  3. UI/presentation card and consumer adjustments third.
-  4. Tooling/scripts/build and dev-stack ergonomics fourth.
-  5. Decoupled issues across distinct packages are prioritized for parallel execution across the 3 subagent slots.
+- **Coordinator Boundary**: The coordinator manages queue ordering, provisions worktrees, receives clean review notifications from subagents, merges verified worktrees into `issues-dev`, tears down worktrees, performs the final merge, and closes GitHub issues. The coordinator does NOT micromanage the review loop.
+- **Coordinator Rebase Before Provisioning**: The coordinator MUST rebase `issues-dev` onto `<default-branch>` before starting any new subagent or provisioning a new issue worktree.
+- **Subagent Rebase Before Review**: Subagents MUST rebase their branch on `issues-dev` before entering the review pairing loop to eliminate integration conflicts for the coordinator.
+- **Autonomous Subagent Review Pairing**: Subagents pair autonomously with review agents until no further issues are reported ("clean review"), and notify the coordinator only when the review is clean and ready for integration.
+- **Full Queue Completion**: The coordinator works through the entire open issue set, continuing until no open issues remain.
+- **Dependency-Aware Order Determination**: The coordinator analyzes all open tickets to establish an execution order:
+  1. Foundational defects first: data sources, ingestion, parsing, storage, and core domain logic.
+  2. Service, middleware, classification, and reconciliation defects second.
+  3. UI, presentation, and other consumer-surface adjustments third.
+  4. Tooling, scripts, build, and developer ergonomics fourth.
+  5. Issues in distinct packages with no shared files are prioritized for parallel execution across the 3 subagent slots; issues touching the same files run sequentially.
 - **Max 3 Parallel Subagents**: At most 3 subagents may run concurrently. When more than 3 issues are queued, maintain an active pool of up to 3 and launch subsequent issues as earlier ones complete.
-- **Central Integration Worktree (`issues-dev`)**: All completed issue fixes merge into a central integration worktree `.workspaces/issues-dev` on branch `issues-dev` (branched from `main`). No issue branch merges directly to `main`.
+- **Central Integration Worktree (`issues-dev`)**: All completed issue fixes merge into a central integration worktree `.workspaces/issues-dev` on branch `issues-dev` (branched from `<default-branch>`). No issue branch merges directly to `<default-branch>`.
 - **Per-Issue Worktree Isolation**: Each active issue runs in its own dedicated worktree `.workspaces/issue-<number>` on branch `fix/issue-<number>` (branched from `issues-dev`).
-- **Continuous Main Synchronization**: Best effort must be made to keep all active worktrees (`issues-dev` and every active `.workspaces/issue-<number>`) continuously up to date with `main` throughout the lifecycle.
-- **Harness-Agnostic Subagent Invocation**: Subagents are delegated using the active harness's native subagent mechanism (e.g., Claude Code, Pi, OpenAI Codex, OpenCode). Do not hardcode harness-specific API wrappers, agent profiles, or SDK types into this workflow.
+- **Continuous Synchronization**: Keep `issues-dev` and every active `.workspaces/issue-<number>` up to date with `<default-branch>` throughout the lifecycle.
+- **Harness-Agnostic Subagent Invocation**: Delegate subagents with the active harness's native subagent mechanism. Do not hardcode harness-specific API wrappers, agent profiles, or SDK types.
+- **Outward-Facing Actions Need Consent**: Pushing to a remote publishes work. Do not push without the user's explicit approval in the current run. Do not close an issue until its fix is on the remote `<default-branch>`.
 
 ---
 
 ## 1. Central Worktree Initialization & Queue Ingestion
 
-1. **Initialize Central `issues-dev` Worktree**:
+1. **Run Project Discovery** as described above.
+
+2. **Initialize Central `issues-dev` Worktree**:
    If `.workspaces/issues-dev` does not already exist:
+
    ```bash
-   git worktree add .workspaces/issues-dev -b issues-dev main
-   ```
-   If it already exists, ensure it is synced with `main`:
-   ```bash
-   git -C .workspaces/issues-dev fetch origin main
-   git -C .workspaces/issues-dev merge origin/main
+   git worktree add .workspaces/issues-dev -b issues-dev <default-branch>
    ```
 
-2. **Ingest Issue Queue & Order Tasks**:
-   Query open issues:
+   If it already exists, ensure it is rebased on `<default-branch>`:
+
+   ```bash
+   git -C .workspaces/issues-dev fetch origin <default-branch>
+   git -C .workspaces/issues-dev rebase origin/<default-branch>
+   ```
+
+3. **Ingest Issue Queue & Order Tasks**:
+
    ```bash
    gh issue list --state open --limit 20
-   ```
-   Fetch issue specifications:
-   ```bash
    gh issue view <issue-number> --json number,title,body,comments,labels,author
    ```
+
    Map dependencies across open issues and order them into execution batches.
 
-3. **Sync `issues-dev` with `main` & Provision Per-Issue Worktrees (Up to 3 Max)**:
+4. **Rebase `issues-dev` & Provision Per-Issue Worktrees (Up to 3 Max)**:
    Before provisioning each new issue worktree:
    ```bash
-   git -C .workspaces/issues-dev fetch origin main
-   git -C .workspaces/issues-dev merge origin/main
-   ```
-   Then create the dedicated worktree branched from `issues-dev`:
-   ```bash
+   git -C .workspaces/issues-dev fetch origin <default-branch>
+   git -C .workspaces/issues-dev rebase origin/<default-branch>
    git worktree add .workspaces/issue-<number> -b fix/issue-<number> issues-dev
    ```
 
@@ -75,132 +87,123 @@ metadata:
 
 ## 2. Subagent Worktree Execution & Autonomous Review Pairing
 
-Delegate each issue to a subagent scoped strictly to `.workspaces/issue-<number>` using the harness's native subagent mechanism.
-
-The worktree subagent is responsible for executing the fix, rebasing on `issues-dev`, and self-managing the review pairing loop until clean:
+Delegate each issue to a subagent scoped strictly to `.workspaces/issue-<number>`. The brief MUST contain the issue number, title, body, and comments; the worktree path; `<project-commands>` verbatim; `<project-rules>` for the packages involved; `<commit-convention>`; and steps 2A–2E below.
 
 ### Step 2A — Red Phase (Failing Reproduction Test)
-1. Locate the appropriate package test file (e.g., `packages/<pkg>/..._test.go` or `__tests__/*.test.tsx`).
+
+1. Locate the test file next to the affected code, following the project's existing test layout and naming.
 2. Author an automated unit or integration test reproducing the exact defect described in the issue.
-3. Run the test command in `.workspaces/issue-<number>` and verify it fails with the expected assertion error:
-   ```bash
-   # Go package
-   cd packages/<pkg> && go test -race -v -run <TestName> .
-   # UI / Web
-   bun test <path-to-test>
-   ```
-   Do not write implementation code until test failure is directly observed and verified in the tool output.
+3. Run it with the project's targeted-test command inside `.workspaces/issue-<number>` and verify it fails with the expected assertion error. Do not write implementation code until the failure is directly observed in the tool output.
 
 ### Step 2B — Green Phase (Primitive-Correct Fix)
-1. Fix the root cause identified by the failing test with a complete, primitive-correct implementation. Never apply shallow proxies, temporary workarounds, or minimal-effort shortcuts.
+
+1. Implement the change that fixes the root cause.
 2. Comply with project constraints:
    - Use native platform primitives (exact types, proper OS APIs, standard library idioms). No shallow proxies, stubs, or wrappers.
-   - Never use heredoc.
-   - Use `.tmp` for temporary files, never global `/tmp`.
-   - Use structured logging via `packages/agent-common/logging` (snake_case actions, dual-mode output).
+   - Follow every rule in `<project-rules>`, including logging conventions and file placement.
 3. Re-run the reproduction test and confirm it passes cleanly.
-4. Confirm statement coverage meets or exceeds 90% (`go test -cover ./...`).
-5. Run workspace test and lint suites in the worktree (`just test-all` and `just lint-all`).
+4. Run the project's coverage command and meet the threshold `<project-rules>` documents. If none is documented, report the measured figure without claiming a threshold.
+5. Run the project's full test, lint, and typecheck commands in the worktree.
 
 ### Step 2C — Mandatory Rebase on `issues-dev` Before Review
-Before entering the review pairing loop, the subagent MUST rebase `fix/issue-<number>` onto `issues-dev`:
+
+Before entering the review pairing loop, rebase `fix/issue-<number>` onto `issues-dev`:
+
 ```bash
 git -C .workspaces/issue-<number> rebase issues-dev
 ```
-This absorbs any changes integrated by concurrent subagents into `issues-dev`, resolves conflicts directly within the worktree, and guarantees that the review agent audits the exact rebased code. This prevents the main agent from dealing with integration conflicts.
+
+This absorbs changes integrated by concurrent subagents, resolves conflicts inside the worktree, and guarantees the review agent audits the exact rebased code.
 
 ### Step 2D — Autonomous Review Pairing Loop
-1. The worktree subagent pairs directly with a review agent with fresh context on the worktree diff.
-2. The review agent audits the diff against defect resolution, semantic integrity, regression risk, test robustness, and repository policies (see [references/reviewer-prompt.md](references/reviewer-prompt.md)).
-3. **Iterative Remediation**: If the review agent reports any defects or suggestions, the worktree subagent fixes them in `.workspaces/issue-<number>` and re-submits for review.
-4. **Clean Exit**: The pairing loop continues until the review agent reports `NO DEFECTS FOUND`.
+
+1. Pair with a review agent with fresh context on the worktree diff, using [references/reviewer-prompt.md](references/reviewer-prompt.md). If the project or user provides a code-review skill (for example `code-review-baseline`), instruct the reviewer to load it.
+2. Fix every reported defect in `.workspaces/issue-<number>` and re-submit for review.
+3. The loop continues until the review agent reports `NO DEFECTS FOUND`.
 
 ### Step 2E — Mandatory Verification Handshake & Notification
+
 1. **Red/Green Verification Handshake**:
    - Temporarily disable the fix in the worktree.
    - Run tests to confirm they fail (proving the tests genuinely guard against the defect).
    - Re-enable the fix.
    - Confirm all tests pass cleanly.
-2. Run final validation in worktree (`just test-all` and `just lint-all`).
-3. Commit changes in the issue worktree:
+2. Run the project's final gate command from `<project-commands>` in the worktree.
+3. Commit only the files this issue changed, using `<commit-convention>`:
    ```bash
-   cd .workspaces/issue-<number>
-   git add <modified-files>
-   git commit -m "fix(<package>): <concise summary> (#<issue-number>)"
+   git -C .workspaces/issue-<number> add <modified-files>
+   git -C .workspaces/issue-<number> commit -m "<subject per commit-convention referencing #<issue-number>>"
    ```
-4. Notify the main agent: "Issue #<number> review is clean, tests verified, ready to merge and close."
+4. Notify the coordinator with the issue number, commit SHA, root cause, fix, and verification evidence (red/green output, final gate result, coverage figure): "Issue #<number> review is clean, tests verified, ready to merge."
 
 ---
 
-## 3. Main Agent Integration to `issues-dev`, Teardown & Issue Closure
+## 3. Coordinator Integration to `issues-dev` & Teardown
 
-Upon receiving the clean review notification from the worktree subagent:
+Upon receiving the clean review notification:
 
 1. **Merge into Central `issues-dev`**:
-   In `.workspaces/issues-dev`:
+
    ```bash
-   cd .workspaces/issues-dev
-   git merge --no-ff fix/issue-<number> -m "merge: fix/issue-<number> into issues-dev"
+   git -C .workspaces/issues-dev merge --no-ff fix/issue-<number> -m "merge: fix/issue-<number> into issues-dev"
    ```
 
 2. **Teardown Issue Worktree**:
-   Remove the individual issue worktree and delete its branch:
+
    ```bash
    git worktree remove .workspaces/issue-<number>
    git branch -d fix/issue-<number>
    ```
 
-3. **Issue Closure Handshake**:
-   Comment on and close the issue using `gh`:
-   ```bash
-   gh issue close <issue-number> --comment "Resolved in issues-dev.
+3. **Record the Closing Summary**: Keep the subagent's root cause, fix, and verification evidence for section 4. Do not close the issue yet; the fix is not on `<default-branch>`.
 
-   ### Summary of Changes
-   - Root cause: <description>
-   - Fix: <description of changes>
-   - Verification: Added regression tests; verified via red/green validation loop and autonomous review agent pairing. All checks pass with >=90% test coverage."
-   ```
-
-4. **Replenish Concurrency Pool**:
-   If additional open issues remain in the queue, sync `issues-dev` with `main`:
-   ```bash
-   git -C .workspaces/issues-dev fetch origin main
-   git -C .workspaces/issues-dev merge origin/main
-   ```
-   Then provision the next `.workspaces/issue-<number>` from `issues-dev` to maintain up to 3 parallel workers.
+4. **Replenish Concurrency Pool**: If additional open issues remain, rebase `issues-dev` onto `origin/<default-branch>` and provision the next `.workspaces/issue-<number>` to maintain up to 3 parallel workers.
 
 ---
 
-## 4. Final Main Merge & Global Teardown
+## 4. Final Merge, Push, Issue Closure & Global Teardown
 
-When all target issues have been closed and no more actionable open issues remain:
+When all queued issues have been merged into `issues-dev`:
 
-1. **Final `main` Sync & Suite Validation**:
-   In `.workspaces/issues-dev`, sync with `origin/main` and run all suites:
+1. **Final Sync & Suite Validation**:
+
    ```bash
-   cd .workspaces/issues-dev
-   git fetch origin main
-   git merge origin/main
-   just test-all
-   just lint-all
+   git -C .workspaces/issues-dev fetch origin <default-branch>
+   git -C .workspaces/issues-dev merge origin/<default-branch>
    ```
 
-2. **Merge `issues-dev` to `main`**:
-   From repository root:
+   Run the project's final gate command in `.workspaces/issues-dev`. Stop and report on any failure.
+
+2. **Merge `issues-dev` into `<default-branch>`** from the repository root:
+
    ```bash
-   git checkout main
+   git checkout <default-branch>
    git merge --ff-only issues-dev
    ```
 
-3. **Global Cleanup**:
-   Remove the central integration worktree and delete the integration branch:
+3. **Push With Consent**: Show the user `git log --oneline origin/<default-branch>..<default-branch>` and ask for approval to push `<default-branch>` to `origin`. If the user declines, leave every issue open, report the unpushed commits, and skip step 4.
+
+4. **Issue Closure Handshake** after the push succeeds. For each merged issue, check `gh issue view <issue-number> --json state`. If a `fixes #N` reference in the pushed commits already closed it, post the summary with `gh issue comment <issue-number> --body "..."`; otherwise:
+
+   ```bash
+   gh issue close <issue-number> --comment "Resolved in <commit-sha> on <default-branch>.
+
+   ### Summary of Changes
+   - Root cause: <from subagent report>
+   - Fix: <from subagent report>
+   - Verification: <red/green evidence, final gate result, and coverage figure from subagent report>"
+   ```
+
+   Do not state any verification result the subagent report does not contain.
+
+5. **Global Cleanup**:
+
    ```bash
    git worktree remove .workspaces/issues-dev
    git branch -d issues-dev
    ```
 
-4. **Final Issue Check Before Turn Yield**:
-   Before yielding the turn to the user, check for any newly added open issues:
+6. **Final Issue Check Before Turn Yield**:
    ```bash
    gh issue list --state open --limit 20
    ```
