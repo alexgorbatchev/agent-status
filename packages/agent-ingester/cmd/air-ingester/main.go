@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"syscall"
 	"time"
 
@@ -52,6 +53,8 @@ func newRootCmd(cfg *config.Config) *cobra.Command {
 
 			logging.Info("server_starting", "addr", cfg.Addr, "db", cfg.DBPath, "notifySock", cfg.NotifySock, "noSummarize", cfg.NoSummarize)
 
+			syncNoSummarizeSource(cmd, cfg)
+
 			st, err := store.Open(cfg.DBPath)
 			if err != nil {
 				return fmt.Errorf("opening store: %w", err)
@@ -66,14 +69,17 @@ func newRootCmd(cfg *config.Config) *cobra.Command {
 			}
 
 			sumEngine, err := summarizer.New(summarizer.Config{
-				NoSummarize:     cfg.NoSummarize,
-				LiteLLMBaseURL:  cfg.LiteLLMBaseURL,
-				LiteLLMAPIKey:   cfg.LiteLLMAPIKey,
-				LiteLLMModel:    cfg.SummarizerModel,
-				GeminiAPIKey:    cfg.GeminiAPIKey,
-				GeminiModel:     cfg.SummarizerModel,
-				AnthropicAPIKey: cfg.AnthropicAPIKey,
-				AnthropicModel:  cfg.SummarizerModel,
+				NoSummarize:       cfg.NoSummarize,
+				NoSummarizeByFlag: cfg.NoSummarizeByFlag,
+				NoSummarizeByEnv:  cfg.NoSummarizeByEnv,
+				NoSummarizeSource: cfg.NoSummarizeSource,
+				LiteLLMBaseURL:    cfg.LiteLLMBaseURL,
+				LiteLLMAPIKey:     cfg.LiteLLMAPIKey,
+				LiteLLMModel:      cfg.SummarizerModel,
+				GeminiAPIKey:      cfg.GeminiAPIKey,
+				GeminiModel:       cfg.SummarizerModel,
+				AnthropicAPIKey:   cfg.AnthropicAPIKey,
+				AnthropicModel:    cfg.SummarizerModel,
 			})
 			if err != nil {
 				return fmt.Errorf("initializing summarizer engine: %w", err)
@@ -221,21 +227,72 @@ func startPeriodicReconciler(ctx context.Context, rec reconcilerRunner, interval
 	}
 }
 
-func logSummarizerStartup(cfg *config.Config, sumEngine *summarizer.Summarizer) {
-	if sumEngine != nil && sumEngine.DisabledByFlag() {
-		logging.Info("summarizer_disabled", "reason", "flag --no-summarize was provided; running with deterministic fallback heuristics")
+func syncNoSummarizeSource(cmd *cobra.Command, cfg *config.Config) {
+	if cfg == nil {
 		return
 	}
-	if sumEngine != nil && sumEngine.HasProviders() {
-		for _, p := range sumEngine.ActiveProviders() {
-			if p.Endpoint != "" {
-				logging.Info("summarizer_ready", "provider", p.Name, "model", p.Model, "endpoint", p.Endpoint)
-			} else {
-				logging.Info("summarizer_ready", "provider", p.Name, "model", p.Model)
-			}
+	if cmd != nil && cmd.Flags().Changed("no-summarize") {
+		if cfg.NoSummarize {
+			cfg.NoSummarizeByFlag = true
+			cfg.NoSummarizeByEnv = false
+			cfg.NoSummarizeSource = "flag"
+		}
+	} else if cfg.NoSummarize {
+		cfg.NoSummarizeByFlag = false
+		cfg.NoSummarizeByEnv = true
+		cfg.NoSummarizeSource = "env"
+	}
+}
+
+func logSummarizerStartup(cfg *config.Config, sumEngine *summarizer.Summarizer) {
+	isDisabled := false
+	isEnv := false
+	if sumEngine != nil && (sumEngine.DisabledByFlag() || sumEngine.DisabledByEnv()) {
+		isDisabled = true
+		isEnv = sumEngine.DisabledByEnv()
+	} else if cfg != nil && cfg.NoSummarize {
+		isDisabled = true
+		isEnv = cfg.NoSummarizeByEnv || cfg.NoSummarizeSource == "env"
+	}
+
+	if isDisabled {
+		if isEnv {
+			logging.Info("summarizer_disabled", "reason", "env var AIR_NO_SUMMARIZE=1 was provided; running with deterministic fallback heuristics")
+		} else {
+			logging.Info("summarizer_disabled", "reason", "flag --no-summarize was provided; running with deterministic fallback heuristics")
 		}
 		return
 	}
+
+	if sumEngine != nil {
+		initErrors := sumEngine.ProviderInitErrors()
+		if len(initErrors) > 0 {
+			provNames := make([]string, 0, len(initErrors))
+			for name := range initErrors {
+				provNames = append(provNames, name)
+			}
+			sort.Strings(provNames)
+			for _, name := range provNames {
+				logging.Error("summarizer_provider_init_failed", "provider", name, "err", initErrors[name])
+			}
+		}
+
+		if sumEngine.HasProviders() {
+			for _, p := range sumEngine.ActiveProviders() {
+				if p.Endpoint != "" {
+					logging.Info("summarizer_ready", "provider", p.Name, "model", p.Model, "endpoint", p.Endpoint)
+				} else {
+					logging.Info("summarizer_ready", "provider", p.Name, "model", p.Model)
+				}
+			}
+			return
+		}
+
+		if len(initErrors) > 0 {
+			return
+		}
+	}
+
 	logging.Warn("summarizer_unconfigured", "reason", "no LLM provider credentials found; AI action summarization is disabled. To enable, set LITELLM_BASE_URL and LITELLM_API_KEY (or LITELLM_KEY), OPENAI_API_KEY, GEMINI_API_KEY, or ANTHROPIC_API_KEY")
 }
 

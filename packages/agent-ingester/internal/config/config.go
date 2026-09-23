@@ -9,9 +9,12 @@ type Config struct {
 	Addr            string
 	BearerToken     string
 	DBPath          string
-	NotifySock      string
-	NoSummarize     bool
-	LiteLLMBaseURL  string
+	NotifySock        string
+	NoSummarize       bool
+	NoSummarizeByFlag bool
+	NoSummarizeByEnv  bool
+	NoSummarizeSource string
+	LiteLLMBaseURL    string
 	LiteLLMAPIKey   string
 	GeminiAPIKey    string
 	AnthropicAPIKey string
@@ -58,19 +61,28 @@ func Load() *Config {
 		liteLLMKey = os.Getenv("OPENAI_API_KEY")
 	}
 
+	noSummarizeEnv := os.Getenv("AIR_NO_SUMMARIZE") == "1"
+	var noSummarizeSource string
+	if noSummarizeEnv {
+		noSummarizeSource = "env"
+	}
+
 	return &Config{
-		Addr:            addr,
-		BearerToken:     token,
-		DBPath:          dbPath,
-		NotifySock:      notifySock,
-		NoSummarize:     os.Getenv("AIR_NO_SUMMARIZE") == "1",
-		LiteLLMBaseURL:  liteLLMURL,
-		LiteLLMAPIKey:   liteLLMKey,
-		GeminiAPIKey:    os.Getenv("GEMINI_API_KEY"),
-		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
-		SummarizerModel: os.Getenv("AIR_SUMMARIZER_MODEL"),
-		LogLevel:        "info",
-		LogDir:          os.Getenv("AIR_LOG_DIR"),
-		LogFile:         os.Getenv("AIR_LOG_FILE"),
+		Addr:              addr,
+		BearerToken:       token,
+		DBPath:            dbPath,
+		NotifySock:        notifySock,
+		NoSummarize:       noSummarizeEnv,
+		NoSummarizeByFlag: false,
+		NoSummarizeByEnv:  noSummarizeEnv,
+		NoSummarizeSource: noSummarizeSource,
+		LiteLLMBaseURL:    liteLLMURL,
+		LiteLLMAPIKey:     liteLLMKey,
+		GeminiAPIKey:      os.Getenv("GEMINI_API_KEY"),
+		AnthropicAPIKey:   os.Getenv("ANTHROPIC_API_KEY"),
+		SummarizerModel:   os.Getenv("AIR_SUMMARIZER_MODEL"),
+		LogLevel:          "info",
+		LogDir:            os.Getenv("AIR_LOG_DIR"),
+		LogFile:           os.Getenv("AIR_LOG_FILE"),
 	}
 }

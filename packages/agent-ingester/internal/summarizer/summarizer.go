@@ -81,26 +81,32 @@ type ProviderInfo struct {
 }
 
 type Config struct {
-	NoSummarize     bool
-	DebounceWindow  time.Duration
-	Timeout         time.Duration
-	LiteLLMBaseURL  string
-	LiteLLMAPIKey   string
-	LiteLLMModel    string
-	GeminiAPIKey    string
-	GeminiModel     string
-	AnthropicAPIKey string
-	AnthropicModel  string
-	Providers       []ProviderConfig
+	NoSummarize       bool
+	NoSummarizeByFlag bool
+	NoSummarizeByEnv  bool
+	NoSummarizeSource string
+	DebounceWindow    time.Duration
+	Timeout           time.Duration
+	LiteLLMBaseURL    string
+	LiteLLMAPIKey     string
+	LiteLLMModel      string
+	GeminiAPIKey      string
+	GeminiModel       string
+	AnthropicAPIKey   string
+	AnthropicModel    string
+	Providers         []ProviderConfig
+	InitErrors        map[string]error
 }
 
 type Summarizer struct {
-	providers   []ProviderConfig
-	limiters    map[string]*rate.Limiter
-	mu          sync.Mutex
-	debounce    time.Duration
-	timeout     time.Duration
-	noSummarize bool
+	providers         []ProviderConfig
+	initErrors        map[string]error
+	limiters          map[string]*rate.Limiter
+	mu                sync.Mutex
+	debounce          time.Duration
+	timeout           time.Duration
+	noSummarize       bool
+	noSummarizeSource string
 }
 
 func New(cfg Config) (*Summarizer, error) {
@@ -114,11 +120,28 @@ func New(cfg Config) (*Summarizer, error) {
 		timeout = DefaultTimeout
 	}
 
+	noSummarizeSource := cfg.NoSummarizeSource
+	if noSummarizeSource == "" {
+		if cfg.NoSummarizeByEnv {
+			noSummarizeSource = "env"
+		} else if cfg.NoSummarizeByFlag {
+			noSummarizeSource = "flag"
+		} else if cfg.NoSummarize {
+			noSummarizeSource = "flag"
+		}
+	}
+
 	s := &Summarizer{
-		limiters:    make(map[string]*rate.Limiter),
-		debounce:    debounce,
-		timeout:     timeout,
-		noSummarize: cfg.NoSummarize,
+		initErrors:        make(map[string]error),
+		limiters:          make(map[string]*rate.Limiter),
+		debounce:          debounce,
+		timeout:           timeout,
+		noSummarize:       cfg.NoSummarize,
+		noSummarizeSource: noSummarizeSource,
+	}
+
+	for k, v := range cfg.InitErrors {
+		s.initErrors[k] = v
 	}
 
 	if len(cfg.Providers) > 0 {
@@ -150,7 +173,9 @@ func New(cfg Config) (*Summarizer, error) {
 			opts = append(opts, anyllm.WithAPIKey(liteLLMKey))
 		}
 		p, err := openai.New(opts...)
-		if err == nil && p != nil {
+		if err != nil {
+			s.initErrors["openai"] = fmt.Errorf("initializing openai provider: %w", err)
+		} else if p != nil {
 			model := cfg.LiteLLMModel
 			if model == "" {
 				model = "gpt-4o-mini"
@@ -168,7 +193,9 @@ func New(cfg Config) (*Summarizer, error) {
 	geminiKey := cfg.GeminiAPIKey
 	if geminiKey != "" {
 		p, err := gemini.New(anyllm.WithAPIKey(geminiKey))
-		if err == nil && p != nil {
+		if err != nil {
+			s.initErrors["gemini"] = fmt.Errorf("initializing gemini provider: %w", err)
+		} else if p != nil {
 			model := cfg.GeminiModel
 			if model == "" {
 				model = "gemini-2.0-flash"
@@ -185,7 +212,9 @@ func New(cfg Config) (*Summarizer, error) {
 	anthropicKey := cfg.AnthropicAPIKey
 	if anthropicKey != "" {
 		p, err := anthropic.New(anyllm.WithAPIKey(anthropicKey))
-		if err == nil && p != nil {
+		if err != nil {
+			s.initErrors["anthropic"] = fmt.Errorf("initializing anthropic provider: %w", err)
+		} else if p != nil {
 			model := cfg.AnthropicModel
 			if model == "" {
 				model = "claude-3-5-haiku-latest"
@@ -250,7 +279,50 @@ func (s *Summarizer) DisabledByFlag() bool {
 	if s == nil {
 		return false
 	}
-	return s.noSummarize
+	return s.noSummarize && s.noSummarizeSource != "env"
+}
+
+// DisabledByEnv returns true if summarization was disabled by environment variable.
+func (s *Summarizer) DisabledByEnv() bool {
+	if s == nil {
+		return false
+	}
+	return s.noSummarize && s.noSummarizeSource == "env"
+}
+
+// NoSummarizeSource returns the source that disabled summarization ("flag", "env", or "").
+func (s *Summarizer) NoSummarizeSource() string {
+	if s == nil || !s.noSummarize {
+		return ""
+	}
+	return s.noSummarizeSource
+}
+
+// ProviderInitErrors returns a map of provider name to constructor error for any providers that failed initialization.
+func (s *Summarizer) ProviderInitErrors() map[string]error {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.initErrors) == 0 {
+		return nil
+	}
+	res := make(map[string]error, len(s.initErrors))
+	for k, v := range s.initErrors {
+		res[k] = v
+	}
+	return res
+}
+
+// HasInitErrors returns true if at least one provider constructor failed during initialization.
+func (s *Summarizer) HasInitErrors() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.initErrors) > 0
 }
 
 // HasProviders returns true if at least one active LLM provider is configured.

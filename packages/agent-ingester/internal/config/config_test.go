@@ -51,6 +51,15 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.NoSummarize {
 		t.Errorf("expected NoSummarize false, got true")
 	}
+	if cfg.NoSummarizeByEnv {
+		t.Errorf("expected NoSummarizeByEnv false, got true")
+	}
+	if cfg.NoSummarizeByFlag {
+		t.Errorf("expected NoSummarizeByFlag false, got true")
+	}
+	if cfg.NoSummarizeSource != "" {
+		t.Errorf("expected NoSummarizeSource empty, got %q", cfg.NoSummarizeSource)
+	}
 	if cfg.LogLevel != "info" {
 		t.Errorf("got LogLevel %q, want info", cfg.LogLevel)
 	}
@@ -85,6 +94,15 @@ func TestLoad_EnvironmentOverrides(t *testing.T) {
 	}
 	if !cfg.NoSummarize {
 		t.Errorf("expected NoSummarize true, got false")
+	}
+	if !cfg.NoSummarizeByEnv {
+		t.Errorf("expected NoSummarizeByEnv true, got false")
+	}
+	if cfg.NoSummarizeByFlag {
+		t.Errorf("expected NoSummarizeByFlag false, got true")
+	}
+	if cfg.NoSummarizeSource != "env" {
+		t.Errorf("expected NoSummarizeSource 'env', got %q", cfg.NoSummarizeSource)
 	}
 	if cfg.LiteLLMBaseURL != "https://litellm.custom/v1" {
 		t.Errorf("got LiteLLMBaseURL %q, want https://litellm.custom/v1", cfg.LiteLLMBaseURL)

@@ -3,6 +3,7 @@ package summarizer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -1245,7 +1246,8 @@ func TestSanitizeEndpoint(t *testing.T) {
 func TestSummarizer_ActiveProvidersAndStatus(t *testing.T) {
 	// 1. Disabled by flag
 	sDisabled, err := New(Config{
-		NoSummarize: true,
+		NoSummarize:       true,
+		NoSummarizeSource: "flag",
 	})
 	if err != nil {
 		t.Fatalf("New() failed: %v", err)
@@ -1253,11 +1255,35 @@ func TestSummarizer_ActiveProvidersAndStatus(t *testing.T) {
 	if !sDisabled.DisabledByFlag() {
 		t.Errorf("expected DisabledByFlag = true")
 	}
+	if sDisabled.DisabledByEnv() {
+		t.Errorf("expected DisabledByEnv = false")
+	}
+	if sDisabled.NoSummarizeSource() != "flag" {
+		t.Errorf("expected NoSummarizeSource = 'flag', got %q", sDisabled.NoSummarizeSource())
+	}
 	if sDisabled.HasProviders() {
 		t.Errorf("expected HasProviders = false")
 	}
 	if len(sDisabled.ActiveProviders()) != 0 {
 		t.Errorf("expected 0 active providers when disabled by flag")
+	}
+
+	// 1b. Disabled by env
+	sDisabledEnv, err := New(Config{
+		NoSummarize:      true,
+		NoSummarizeByEnv: true,
+	})
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	if sDisabledEnv.DisabledByFlag() {
+		t.Errorf("expected DisabledByFlag = false when disabled by env")
+	}
+	if !sDisabledEnv.DisabledByEnv() {
+		t.Errorf("expected DisabledByEnv = true when disabled by env")
+	}
+	if sDisabledEnv.NoSummarizeSource() != "env" {
+		t.Errorf("expected NoSummarizeSource = 'env', got %q", sDisabledEnv.NoSummarizeSource())
 	}
 
 	// 2. Unconfigured (no credentials)
@@ -1268,11 +1294,20 @@ func TestSummarizer_ActiveProvidersAndStatus(t *testing.T) {
 	if sEmpty.DisabledByFlag() {
 		t.Errorf("expected DisabledByFlag = false when unconfigured")
 	}
+	if sEmpty.DisabledByEnv() {
+		t.Errorf("expected DisabledByEnv = false when unconfigured")
+	}
 	if sEmpty.HasProviders() {
 		t.Errorf("expected HasProviders = false when unconfigured")
 	}
 	if !sEmpty.IsNoSummarize() {
 		t.Errorf("expected IsNoSummarize = true when unconfigured")
+	}
+	if sEmpty.HasInitErrors() {
+		t.Errorf("expected HasInitErrors = false when unconfigured")
+	}
+	if len(sEmpty.ProviderInitErrors()) != 0 {
+		t.Errorf("expected ProviderInitErrors to be empty when unconfigured")
 	}
 
 	// 3. Configured with mock provider
@@ -1371,4 +1406,48 @@ func TestSummarizer_DoesNotReadEnvironment(t *testing.T) {
 		t.Errorf("expected HasProviders() to be false when Config is empty, even if env vars are set, but got %d providers", len(s.providers))
 	}
 }
+
+func TestSummarizer_ProviderInitErrors(t *testing.T) {
+	// 1. Invalid OpenAI/LiteLLM base URL triggers initialization error
+	s, err := New(Config{
+		LiteLLMBaseURL: "invalid-url-no-scheme",
+		LiteLLMAPIKey:  "test-key",
+	})
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	if !s.HasInitErrors() {
+		t.Errorf("expected HasInitErrors() = true")
+	}
+	initErrors := s.ProviderInitErrors()
+	if len(initErrors) != 1 {
+		t.Fatalf("expected 1 init error, got %d", len(initErrors))
+	}
+	openAIErr, ok := initErrors["openai"]
+	if !ok || openAIErr == nil {
+		t.Fatalf("expected init error for openai, got %v", openAIErr)
+	}
+	if !strings.Contains(openAIErr.Error(), "openai") {
+		t.Errorf("expected error message to mention openai, got: %v", openAIErr)
+	}
+
+	// 2. Explicitly injected InitErrors in Config are captured
+	injectedErr := errors.New("injected gemini failure")
+	sInjected, err := New(Config{
+		InitErrors: map[string]error{
+			"gemini": injectedErr,
+		},
+	})
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+	if !sInjected.HasInitErrors() {
+		t.Errorf("expected HasInitErrors() = true for injected error")
+	}
+	injectedErrors := sInjected.ProviderInitErrors()
+	if injectedErrors["gemini"] == nil || !strings.Contains(injectedErrors["gemini"].Error(), "injected gemini failure") {
+		t.Errorf("expected injected gemini error, got: %v", injectedErrors["gemini"])
+	}
+}
+
 

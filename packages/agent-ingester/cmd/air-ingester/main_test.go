@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -152,6 +153,56 @@ func TestIngesterDefaultConfig(t *testing.T) {
 	}
 }
 
+func TestSyncNoSummarizeSource(t *testing.T) {
+	t.Run("nil config is safe", func(t *testing.T) {
+		syncNoSummarizeSource(nil, nil)
+	})
+
+	t.Run("flag set overrides source to flag", func(t *testing.T) {
+		cfg := &config.Config{
+			NoSummarize:       false,
+			NoSummarizeByEnv:  true,
+			NoSummarizeSource: "env",
+		}
+		cmd := newRootCmd(cfg)
+		if err := cmd.ParseFlags([]string{"--no-summarize"}); err != nil {
+			t.Fatalf("ParseFlags failed: %v", err)
+		}
+		syncNoSummarizeSource(cmd, cfg)
+		if !cfg.NoSummarizeByFlag {
+			t.Errorf("expected NoSummarizeByFlag = true")
+		}
+		if cfg.NoSummarizeByEnv {
+			t.Errorf("expected NoSummarizeByEnv = false")
+		}
+		if cfg.NoSummarizeSource != "flag" {
+			t.Errorf("expected NoSummarizeSource = 'flag', got %q", cfg.NoSummarizeSource)
+		}
+	})
+
+	t.Run("env set without flag retains env source", func(t *testing.T) {
+		cfg := &config.Config{
+			NoSummarize:       true,
+			NoSummarizeByEnv:  true,
+			NoSummarizeSource: "env",
+		}
+		cmd := newRootCmd(cfg)
+		if err := cmd.ParseFlags([]string{}); err != nil {
+			t.Fatalf("ParseFlags failed: %v", err)
+		}
+		syncNoSummarizeSource(cmd, cfg)
+		if cfg.NoSummarizeByFlag {
+			t.Errorf("expected NoSummarizeByFlag = false")
+		}
+		if !cfg.NoSummarizeByEnv {
+			t.Errorf("expected NoSummarizeByEnv = true")
+		}
+		if cfg.NoSummarizeSource != "env" {
+			t.Errorf("expected NoSummarizeSource = 'env', got %q", cfg.NoSummarizeSource)
+		}
+	})
+}
+
 func TestLogSummarizerStartup(t *testing.T) {
 	origLogger := logging.Default()
 	t.Cleanup(func() {
@@ -196,6 +247,137 @@ func TestLogSummarizerStartup(t *testing.T) {
 		}
 		if !strings.Contains(out, "flag --no-summarize was provided") {
 			t.Errorf("expected reason in log, got: %s", out)
+		}
+	})
+
+	t.Run("disabled by env var AIR_NO_SUMMARIZE", func(t *testing.T) {
+		buf := new(bytes.Buffer)
+		logging.SetDefault(logging.NewWithMode(buf, "test-ingester", "info", true))
+
+		t.Setenv("AIR_NO_SUMMARIZE", "1")
+		cfg := config.Load()
+		sumEngine, err := summarizer.New(summarizer.Config{
+			NoSummarize:       cfg.NoSummarize,
+			NoSummarizeByEnv:  cfg.NoSummarizeByEnv,
+			NoSummarizeSource: cfg.NoSummarizeSource,
+		})
+		if err != nil {
+			t.Fatalf("summarizer.New failed: %v", err)
+		}
+		logSummarizerStartup(cfg, sumEngine)
+
+		out := buf.String()
+		if !strings.Contains(out, "summarizer_disabled") {
+			t.Errorf("expected summarizer_disabled log, got: %s", out)
+		}
+		if !strings.Contains(out, "AIR_NO_SUMMARIZE") {
+			t.Errorf("expected AIR_NO_SUMMARIZE in reason log, got: %s", out)
+		}
+		if strings.Contains(out, "flag --no-summarize was provided") {
+			t.Errorf("did not expect flag reason when disabled by env var, got: %s", out)
+		}
+	})
+
+	t.Run("provider constructor failure logs error and skips unconfigured warning", func(t *testing.T) {
+		buf := new(bytes.Buffer)
+		logging.SetDefault(logging.NewWithMode(buf, "test-ingester", "info", true))
+
+		cfg := &config.Config{
+			NoSummarize:    false,
+			LiteLLMBaseURL: "invalid-url-no-scheme", // Causes anyllm/openai constructor to fail
+			LiteLLMAPIKey:  "dummy-key",
+		}
+		sumEngine, err := summarizer.New(summarizer.Config{
+			LiteLLMBaseURL: cfg.LiteLLMBaseURL,
+			LiteLLMAPIKey:  cfg.LiteLLMAPIKey,
+		})
+		if err != nil {
+			t.Fatalf("summarizer.New failed: %v", err)
+		}
+		logSummarizerStartup(cfg, sumEngine)
+
+		out := buf.String()
+		if !strings.Contains(out, "summarizer_provider_init_failed") {
+			t.Errorf("expected summarizer_provider_init_failed in log, got: %s", out)
+		}
+		if !strings.Contains(out, "provider=openai") {
+			t.Errorf("expected provider=openai in log, got: %s", out)
+		}
+		if strings.Contains(out, "summarizer_unconfigured") {
+			t.Errorf("did not expect summarizer_unconfigured when credentials were provided, got: %s", out)
+		}
+	})
+
+	t.Run("multiple provider constructor failures log deterministically", func(t *testing.T) {
+		buf := new(bytes.Buffer)
+		logging.SetDefault(logging.NewWithMode(buf, "test-ingester", "info", true))
+
+		cfg := &config.Config{NoSummarize: false}
+		sumEngine, err := summarizer.New(summarizer.Config{
+			InitErrors: map[string]error{
+				"openai":    errors.New("openai init failure"),
+				"gemini":    errors.New("gemini init failure"),
+				"anthropic": errors.New("anthropic init failure"),
+			},
+		})
+		if err != nil {
+			t.Fatalf("summarizer.New failed: %v", err)
+		}
+		logSummarizerStartup(cfg, sumEngine)
+
+		out := buf.String()
+		// Must log all 3 providers
+		if !strings.Contains(out, "provider=anthropic") || !strings.Contains(out, "provider=gemini") || !strings.Contains(out, "provider=openai") {
+			t.Errorf("expected all 3 failed providers logged, got: %s", out)
+		}
+		// Must be sorted: anthropic before gemini before openai
+		anthropicIdx := strings.Index(out, "provider=anthropic")
+		geminiIdx := strings.Index(out, "provider=gemini")
+		openaiIdx := strings.Index(out, "provider=openai")
+		if anthropicIdx >= geminiIdx || geminiIdx >= openaiIdx {
+			t.Errorf("expected alphabetical order anthropic < gemini < openai, got indices: %d, %d, %d", anthropicIdx, geminiIdx, openaiIdx)
+		}
+		if strings.Contains(out, "summarizer_unconfigured") {
+			t.Errorf("did not expect summarizer_unconfigured when provider constructor errors exist, got: %s", out)
+		}
+	})
+
+	t.Run("provider failure with active failover provider logs both init error and ready", func(t *testing.T) {
+		buf := new(bytes.Buffer)
+		logging.SetDefault(logging.NewWithMode(buf, "test-ingester", "info", true))
+
+		cfg := &config.Config{NoSummarize: false}
+		p, err := openai.New(anyllm.WithAPIKey("dummy-key"))
+		if err != nil {
+			t.Fatalf("openai.New failed: %v", err)
+		}
+		sumEngine, err := summarizer.New(summarizer.Config{
+			InitErrors: map[string]error{
+				"gemini": errors.New("bad gemini config"),
+			},
+			Providers: []summarizer.ProviderConfig{
+				{
+					Name:     "openai",
+					Provider: p,
+					Model:    "gpt-4o-mini",
+					Endpoint: "https://api.openai.com/v1",
+				},
+			},
+		})
+		if err != nil {
+			t.Fatalf("summarizer.New failed: %v", err)
+		}
+		logSummarizerStartup(cfg, sumEngine)
+
+		out := buf.String()
+		if !strings.Contains(out, "summarizer_provider_init_failed") || !strings.Contains(out, "provider=gemini") {
+			t.Errorf("expected gemini init failure logged, got: %s", out)
+		}
+		if !strings.Contains(out, "summarizer_ready") || !strings.Contains(out, "provider=openai") {
+			t.Errorf("expected openai ready logged, got: %s", out)
+		}
+		if strings.Contains(out, "summarizer_unconfigured") {
+			t.Errorf("did not expect summarizer_unconfigured when active providers exist, got: %s", out)
 		}
 	})
 
