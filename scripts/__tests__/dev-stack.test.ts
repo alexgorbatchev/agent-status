@@ -241,4 +241,32 @@ describe("dev-stack build controls (#72)", () => {
       });
     });
   });
+
+  describe("documentation coverage (#87)", () => {
+    it("documents --no-build and --no-summarize flags in README.md", async () => {
+      const readme = await Bun.file(new URL("../../README.md", import.meta.url).pathname).text();
+      expect(readme).toContain("--no-build");
+      expect(readme).toContain("--no-summarize");
+      expect(readme).toContain("AIR_NO_SUMMARIZE");
+      expect(readme).toContain("LITELLM_KEY");
+      expect(readme).toContain("Environment Variables");
+    });
+
+    it("documents updated sample startup output without stale stopping line in README.md", async () => {
+      const readme = await Bun.file(new URL("../../README.md", import.meta.url).pathname).text();
+      expect(readme).not.toContain("[INFO] Stopping agent-status stack...");
+      expect(readme).toContain("[OK] Stack stopped.");
+    });
+
+    it("documents LITELLM_KEY and AIR_NO_SUMMARIZE in docs/prd.md and docs/implementation.md", async () => {
+      const prd = await Bun.file(new URL("../../docs/prd.md", import.meta.url).pathname).text();
+      const impl = await Bun.file(new URL("../../docs/implementation.md", import.meta.url).pathname).text();
+
+      expect(prd).toContain("LITELLM_KEY");
+      expect(prd).toContain("AIR_NO_SUMMARIZE");
+      expect(impl).toContain("LITELLM_KEY");
+      expect(impl).toContain("AIR_NO_SUMMARIZE");
+    });
+  });
 });
+

@@ -191,7 +191,7 @@ The following source checkouts are retained on disk:
 1. **Unified Multi-Provider Completion Client**: `github.com/mozilla-ai/any-llm-go`
    - **Adoption**: Mozilla.ai open-source Go library providing normalized multi-provider interfaces.
    - **Providers Configured**:
-     - OpenAI-compatible / LiteLLM Proxy: `providers/openai` with `anyllm.WithBaseURL(url)` supporting self-hosted instances e.g. `https://litellm.example.com` via `LITELLM_BASE_URL` / `LITELLM_API_KEY`.
+     - OpenAI-compatible / LiteLLM Proxy: `providers/openai` with `anyllm.WithBaseURL(url)` supporting self-hosted instances e.g. `https://litellm.example.com` via `LITELLM_BASE_URL` / `LITELLM_API_KEY` (alias `LITELLM_KEY`).
      - Direct Google Gemini: `providers/gemini`
      - Direct Anthropic Claude: `providers/anthropic`
    - **Features**: Single client abstraction, structured schema enforcement, unified error handling on 429/5xx with retry backoff.

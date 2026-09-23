@@ -61,7 +61,6 @@ just debug session replay <path-to-transcript.jsonl>
 
 Sample Output:
 ```
-[INFO] Stopping agent-status stack...
 [OK] Stack stopped.
 [INFO] Starting agent-status stack (ingester, server, observer, ui)...
 [INFO] Building Go binaries...
@@ -82,6 +81,8 @@ Sample Output:
 | :--- | :--- | :--- | :--- |
 | `--debug` | `-d` | `false` | Enable debug logging across all stack services |
 | `--log-level <level>` | (none) | `info` | Log level for services (`debug`, `info`, `warn`, `error`) |
+| `--no-build` | (none) | `false` | Skip binary builds on dev stack start |
+| `--no-summarize` | (none) | `false` | Run with deterministic fallback heuristics without AI action summarization |
 
 ### `air-observer`
 
@@ -145,6 +146,24 @@ Sample Output:
 | `--env <label>` | (none) | `debug` | Environment label override |
 | `--version` | `-v` | `false` | Print version information and exit |
 | `--help` | `-h` | `false` | Print command line help |
+
+### Environment Variables
+
+The table below lists environment variables read by the system, in precedence and resolution order:
+
+| Variable | Precedence / Default | Description |
+| :--- | :--- | :--- |
+| `LITELLM_BASE_URL` | Fallback: `OPENAI_BASE_URL` | Base URL for OpenAI-compatible or LiteLLM proxy endpoint |
+| `OPENAI_BASE_URL` | (none) | Fallback endpoint URL when `LITELLM_BASE_URL` is unset |
+| `LITELLM_API_KEY` | Alias: `LITELLM_KEY`, fallback: `OPENAI_API_KEY` | Primary API authentication key for LiteLLM or OpenAI-compatible proxy |
+| `LITELLM_KEY` | Fallback: `OPENAI_API_KEY` | Alias for `LITELLM_API_KEY` |
+| `OPENAI_API_KEY` | (none) | Fallback API authentication key when LiteLLM keys are unset |
+| `GEMINI_API_KEY` | (none) | API key for Google Gemini action summarization provider |
+| `ANTHROPIC_API_KEY` | (none) | API key for Anthropic Claude action summarization provider |
+| `AIR_SUMMARIZER_MODEL` | Provider default | Custom model identifier override for action summarization |
+| `AIR_NO_SUMMARIZE` | `0` | Set to `1` to disable LLM action summarization and use deterministic fallback heuristics |
+| `AIR_LOG_DIR` | `~/.local/state/agent-status/logs` | Directory path for rotating daemon disk logs |
+| `AIR_LOG_FILE` | (none) | Explicit file path override for daemon disk logging |
 
 # License
 

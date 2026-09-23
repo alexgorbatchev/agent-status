@@ -26,7 +26,7 @@ It answers five questions without the engineer cycling through terminals:
 - Host platforms: **darwin** and **linux**.
 - Four packages: `agent-observer`, `agent-ingester`, `agent-server`, `ui-web`.
 - Core Go implementation built with verified ecosystem libraries (`gopsutil/v4`, `coder/websocket`, `go-chi/chi/v5`, `ncruces/go-sqlite3`, `github.com/mozilla-ai/any-llm-go`, `spf13/cobra`).
-- Multi-provider LLM Action Summarization supporting OpenAI-compatible endpoints (including self-hosted LiteLLM proxies e.g. `https://litellm.example.com` via `LITELLM_BASE_URL` / `LITELLM_API_KEY`), direct Google Gemini, and direct Anthropic Claude.
+- Multi-provider LLM Action Summarization supporting OpenAI-compatible endpoints (including self-hosted LiteLLM proxies e.g. `https://litellm.example.com` via `LITELLM_BASE_URL` / `LITELLM_API_KEY` or `LITELLM_KEY`), direct Google Gemini, and direct Anthropic Claude.
 - Live token usage (5-way breakdown: input, output, cache read, cache write, reasoning) and cost computation using a centrally synced model pricing map.
 - Live cost roll-ups across Agent cards, Project groups, Environment groups, and the Fleet header.
 - Subagent observation for delegated runs (nested execution traces in the drawer, usage/cost roll-up to the parent Agent).
@@ -300,7 +300,7 @@ Subagent events update parent token usage and cost roll-ups, but do not override
 - **Action Summarizer**:
   - Unified Client: **`github.com/mozilla-ai/any-llm-go`** providing multi-provider model completions.
   - Supported Providers & Configuration:
-    - **OpenAI-compatible / LiteLLM Proxy** (Primary for local/custom testing): Configured via `any-llm-go/providers/openai` using options `anyllm.WithBaseURL(url)` and `anyllm.WithAPIKey(key)`. Reads `LITELLM_BASE_URL` (e.g. `https://litellm.example.com/v1` or `https://litellm.example.com`) / `OPENAI_BASE_URL` and `LITELLM_API_KEY` / `OPENAI_API_KEY`.
+    - **OpenAI-compatible / LiteLLM Proxy** (Primary for local/custom testing): Configured via `any-llm-go/providers/openai` using options `anyllm.WithBaseURL(url)` and `anyllm.WithAPIKey(key)`. Reads `LITELLM_BASE_URL` (e.g. `https://litellm.example.com/v1` or `https://litellm.example.com`) / `OPENAI_BASE_URL` and `LITELLM_API_KEY` (alias `LITELLM_KEY`) / `OPENAI_API_KEY`.
     - **Google Gemini**: via `any-llm-go/providers/gemini` using `GEMINI_API_KEY`.
     - **Anthropic Claude**: via `any-llm-go/providers/anthropic` using `ANTHROPIC_API_KEY`.
   - Fallback logic: Configurable primary provider with automatic failover to alternative provider on HTTP 429, 5xx, or 10-second timeout with jittered backoff.
@@ -315,7 +315,7 @@ Subagent events update parent token usage and cost roll-ups, but do not override
       "activeTarget": "packages/registry-cli/src/commands/buildCommand.ts"
     }
     ```
-  - Flag `--no-summarize` disables external LLM calls, falling back to deterministic tool descriptions (`"Editing build.ts"`).
+  - Flag `--no-summarize` (or environment variable `AIR_NO_SUMMARIZE=1`) disables external LLM calls, falling back to deterministic tool descriptions (`"Editing build.ts"`). Dev stack also supports `--no-build` to skip binary compilation.
 
 #### 4.2.5. SQLite Persistence & Retention
 
@@ -823,9 +823,9 @@ CREATE TABLE IF NOT EXISTS observer_cursors (
 - [ ] Verification: Multi-host aggregation with agents running on Darwin and Linux over overlay network.
 
 ### Phase 3: AI Action Summarizer
-- [ ] Ingester: Multi-provider client via `github.com/mozilla-ai/any-llm-go` supporting OpenAI-compatible endpoints (LiteLLM proxy e.g. `https://litellm.example.com` via `LITELLM_BASE_URL` and `LITELLM_API_KEY`), Google Gemini, and Anthropic Claude.
+- [ ] Ingester: Multi-provider client via `github.com/mozilla-ai/any-llm-go` supporting OpenAI-compatible endpoints (LiteLLM proxy e.g. `https://litellm.example.com` via `LITELLM_BASE_URL` and `LITELLM_API_KEY` / `LITELLM_KEY`), Google Gemini, and Anthropic Claude.
 - [ ] Ingester: 12-second debouncer (`golang.org/x/time/rate`) and event trigger scheduler.
-- [ ] Ingester: `--no-summarize` toggle verification.
+- [ ] Ingester: `--no-summarize` toggle (and `AIR_NO_SUMMARIZE=1`) verification.
 
 ### Phase 4: Full Dashboard UI
 - [ ] UI: Two-tier Attention Banner (`ACT NOW` live alerts vs `REVIEW` recent exits).
