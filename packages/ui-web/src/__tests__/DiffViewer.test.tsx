@@ -130,8 +130,8 @@ describe("DiffViewer Component", () => {
 
     const wordDel = html.match(/<span[^>]*data-testid="DiffViewer--word-del"[^>]*>/)?.[0] ?? "";
     const wordAdd = html.match(/<span[^>]*data-testid="DiffViewer--word-add"[^>]*>/)?.[0] ?? "";
-    expect(wordDel).toContain("bg-black/30");
-    expect(wordAdd).toContain("bg-black/30");
+    expect(wordDel).not.toContain("bg-black");
+    expect(wordAdd).not.toContain("bg-black");
   });
 
   it("renders multi-hunk diffs sequentially with hunk headers", () => {
@@ -211,5 +211,43 @@ describe("DiffViewer Component", () => {
     );
 
     expect(html).toContain("No differences detected");
+  });
+
+  it("does not wrap text in diff lines or write view", () => {
+    const htmlDiff = renderToString(
+      <DiffViewer
+        payload={{
+          action: "EDIT",
+          filePath: "main.go",
+          hunks: [
+            {
+              lines: [
+                { type: "del", oldLineNumber: 1, content: "const timeout = 10" },
+                { type: "add", newLineNumber: 1, content: "const timeout = 20" },
+                { type: "ctx", oldLineNumber: 2, newLineNumber: 2, content: "return timeout" },
+              ],
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(htmlDiff).not.toContain("whitespace-pre-wrap");
+    expect(htmlDiff).not.toContain("break-all");
+    expect(htmlDiff).toContain("whitespace-pre");
+
+    const htmlWrite = renderToString(
+      <DiffViewer
+        payload={{
+          action: "WRITE",
+          filePath: "main.go",
+          content: "const timeout = 10",
+        }}
+      />,
+    );
+
+    expect(htmlWrite).not.toContain("whitespace-pre-wrap");
+    expect(htmlWrite).not.toContain("break-all");
+    expect(htmlWrite).toContain("whitespace-pre");
   });
 });

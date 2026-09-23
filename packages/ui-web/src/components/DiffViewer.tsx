@@ -84,17 +84,17 @@ export function DiffViewer({ payload }: IDiffViewerProps): React.JSX.Element {
       {isWrite ? (
         <div
           data-testid="DiffViewer--write-content"
-          className="overflow-x-auto max-h-72 p-2 bg-slate-950 text-slate-300 text-[11px] font-mono whitespace-pre-wrap break-all [overflow-wrap:anywhere] min-w-0 max-w-full divide-y divide-transparent"
+          className="overflow-x-auto max-h-72 p-2 bg-slate-950 text-slate-300 text-[11px] font-mono min-w-0 max-w-full"
         >
           {payload.content ? (
-            payload.content.split("\n").map((line, idx) => (
-              <div key={`write-line-${idx}`} className="flex items-start hover:bg-slate-900/30">
-                <span className="w-8 shrink-0 text-right select-none pr-2 text-slate-600 text-[10px]">{idx + 1}</span>
-                <span className="flex-1 whitespace-pre-wrap break-all [overflow-wrap:anywhere] min-w-0 max-w-full">
-                  {line}
-                </span>
-              </div>
-            ))
+            <div className="w-max min-w-full divide-y divide-transparent">
+              {payload.content.split("\n").map((line, idx) => (
+                <div key={`write-line-${idx}`} className="flex items-start hover:bg-slate-900/30">
+                  <span className="w-8 shrink-0 text-right select-none pr-2 text-slate-600 text-[10px]">{idx + 1}</span>
+                  <span className="flex-1 whitespace-pre min-w-0">{line}</span>
+                </div>
+              ))}
+            </div>
           ) : (
             <span className="text-slate-500 italic p-2 block">(Empty file)</span>
           )}
@@ -102,108 +102,100 @@ export function DiffViewer({ payload }: IDiffViewerProps): React.JSX.Element {
       ) : (
         <div className="overflow-x-auto max-h-80 bg-slate-950 min-w-0 max-w-full">
           {payload.hunks && payload.hunks.length > 0 ? (
-            payload.hunks.map((hunk, hIdx) => (
-              <div key={`hunk-${hIdx}`} className="border-b border-slate-800/40 last:border-b-0">
-                {hunk.header && (
-                  <div
-                    data-testid="DiffViewer--hunk-header"
-                    className="bg-slate-900/70 text-slate-400 text-[10px] font-mono px-3 py-1 border-y border-slate-800/60 select-none"
-                  >
-                    {hunk.header}
-                  </div>
-                )}
-                <div className="divide-y divide-slate-900/20">
-                  {hunk.lines.map((line, lIdx) => {
-                    if (line.type === "del") {
+            <div className="w-max min-w-full">
+              {payload.hunks.map((hunk, hIdx) => (
+                <div key={`hunk-${hIdx}`} className="border-b border-slate-800/40 last:border-b-0">
+                  {hunk.header && (
+                    <div
+                      data-testid="DiffViewer--hunk-header"
+                      className="bg-slate-900/70 text-slate-400 text-[10px] font-mono px-3 py-1 border-y border-slate-800/60 select-none whitespace-pre"
+                    >
+                      {hunk.header}
+                    </div>
+                  )}
+                  <div className="divide-y divide-slate-900/20">
+                    {hunk.lines.map((line, lIdx) => {
+                      if (line.type === "del") {
+                        return (
+                          <div
+                            key={`line-${lIdx}`}
+                            data-testid="DiffViewer--del-line"
+                            className="flex items-start bg-red-800/80 text-white hover:bg-red-800/90 py-0.5 px-1 font-mono text-[11px]"
+                          >
+                            <span className="w-8 shrink-0 text-right select-none pr-2 text-white/50 text-[10px]">
+                              {line.oldLineNumber ?? ""}
+                            </span>
+                            <span className="w-8 shrink-0 select-none" />
+                            <span className="w-4 shrink-0 text-center select-none text-white/80 font-semibold">-</span>
+                            <span className="flex-1 whitespace-pre text-white">
+                              {line.wordTokens
+                                ? line.wordTokens.map((token, tIdx) => {
+                                    if (token.type === "del") {
+                                      return (
+                                        <span key={`t-${tIdx}`} data-testid="DiffViewer--word-del">
+                                          {token.value}
+                                        </span>
+                                      );
+                                    }
+                                    return <span key={`t-${tIdx}`}>{token.value}</span>;
+                                  })
+                                : line.content}
+                            </span>
+                          </div>
+                        );
+                      }
+
+                      if (line.type === "add") {
+                        return (
+                          <div
+                            key={`line-${lIdx}`}
+                            data-testid="DiffViewer--add-line"
+                            className="flex items-start bg-emerald-800/80 text-white hover:bg-emerald-800/90 py-0.5 px-1 font-mono text-[11px]"
+                          >
+                            <span className="w-8 shrink-0 select-none" />
+                            <span className="w-8 shrink-0 text-right select-none pr-2 text-white/50 text-[10px]">
+                              {line.newLineNumber ?? ""}
+                            </span>
+                            <span className="w-4 shrink-0 text-center select-none text-white/80 font-semibold">+</span>
+                            <span className="flex-1 whitespace-pre text-white">
+                              {line.wordTokens
+                                ? line.wordTokens.map((token, tIdx) => {
+                                    if (token.type === "add") {
+                                      return (
+                                        <span key={`t-${tIdx}`} data-testid="DiffViewer--word-add">
+                                          {token.value}
+                                        </span>
+                                      );
+                                    }
+                                    return <span key={`t-${tIdx}`}>{token.value}</span>;
+                                  })
+                                : line.content}
+                            </span>
+                          </div>
+                        );
+                      }
+
                       return (
                         <div
                           key={`line-${lIdx}`}
-                          data-testid="DiffViewer--del-line"
-                          className="flex items-start bg-red-800/80 text-white hover:bg-red-800/90 py-0.5 px-1 font-mono text-[11px]"
+                          data-testid="DiffViewer--ctx-line"
+                          className="flex items-start text-slate-400 hover:bg-slate-900/40 py-0.5 px-1 font-mono text-[11px]"
                         >
-                          <span className="w-8 shrink-0 text-right select-none pr-2 text-white/50 text-[10px]">
+                          <span className="w-8 shrink-0 text-right select-none pr-2 text-slate-600 text-[10px]">
                             {line.oldLineNumber ?? ""}
                           </span>
-                          <span className="w-8 shrink-0 select-none" />
-                          <span className="w-4 shrink-0 text-center select-none text-white/80 font-semibold">-</span>
-                          <span className="flex-1 whitespace-pre-wrap break-all [overflow-wrap:anywhere] min-w-0 max-w-full text-white">
-                            {line.wordTokens
-                              ? line.wordTokens.map((token, tIdx) => {
-                                  if (token.type === "del") {
-                                    return (
-                                      <span
-                                        key={`t-${tIdx}`}
-                                        data-testid="DiffViewer--word-del"
-                                        className="bg-black/30 text-white rounded px-0.5"
-                                      >
-                                        {token.value}
-                                      </span>
-                                    );
-                                  }
-                                  return <span key={`t-${tIdx}`}>{token.value}</span>;
-                                })
-                              : line.content}
-                          </span>
-                        </div>
-                      );
-                    }
-
-                    if (line.type === "add") {
-                      return (
-                        <div
-                          key={`line-${lIdx}`}
-                          data-testid="DiffViewer--add-line"
-                          className="flex items-start bg-emerald-800/80 text-white hover:bg-emerald-800/90 py-0.5 px-1 font-mono text-[11px]"
-                        >
-                          <span className="w-8 shrink-0 select-none" />
-                          <span className="w-8 shrink-0 text-right select-none pr-2 text-white/50 text-[10px]">
+                          <span className="w-8 shrink-0 text-right select-none pr-2 text-slate-600 text-[10px]">
                             {line.newLineNumber ?? ""}
                           </span>
-                          <span className="w-4 shrink-0 text-center select-none text-white/80 font-semibold">+</span>
-                          <span className="flex-1 whitespace-pre-wrap break-all [overflow-wrap:anywhere] min-w-0 max-w-full text-white">
-                            {line.wordTokens
-                              ? line.wordTokens.map((token, tIdx) => {
-                                  if (token.type === "add") {
-                                    return (
-                                      <span
-                                        key={`t-${tIdx}`}
-                                        data-testid="DiffViewer--word-add"
-                                        className="bg-black/30 text-white rounded px-0.5"
-                                      >
-                                        {token.value}
-                                      </span>
-                                    );
-                                  }
-                                  return <span key={`t-${tIdx}`}>{token.value}</span>;
-                                })
-                              : line.content}
-                          </span>
+                          <span className="w-4 shrink-0 text-center select-none text-slate-600">&nbsp;</span>
+                          <span className="flex-1 whitespace-pre">{line.content}</span>
                         </div>
                       );
-                    }
-
-                    return (
-                      <div
-                        key={`line-${lIdx}`}
-                        data-testid="DiffViewer--ctx-line"
-                        className="flex items-start text-slate-400 hover:bg-slate-900/40 py-0.5 px-1 font-mono text-[11px]"
-                      >
-                        <span className="w-8 shrink-0 text-right select-none pr-2 text-slate-600 text-[10px]">
-                          {line.oldLineNumber ?? ""}
-                        </span>
-                        <span className="w-8 shrink-0 text-right select-none pr-2 text-slate-600 text-[10px]">
-                          {line.newLineNumber ?? ""}
-                        </span>
-                        <span className="w-4 shrink-0 text-center select-none text-slate-600">&nbsp;</span>
-                        <span className="flex-1 whitespace-pre-wrap break-all [overflow-wrap:anywhere] min-w-0 max-w-full">
-                          {line.content}
-                        </span>
-                      </div>
-                    );
-                  })}
+                    })}
+                  </div>
                 </div>
-              </div>
-            ))
+              ))}
+            </div>
           ) : (
             <div className="p-3 text-slate-500 italic text-[11px]">No differences detected</div>
           )}
