@@ -1,6 +1,7 @@
 import { spawn, type Subprocess } from "bun";
 import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
+import { parseArgs } from "node:util";
 
 const rootDir = resolve(import.meta.dir, "..");
 const runDir = resolve(rootDir, ".tmp", "dev-stack");
@@ -10,12 +11,34 @@ if (!existsSync(runDir)) {
 
 const pidFile = resolve(runDir, "pids.json");
 
-export function getAction(argv: string[] = process.argv): string {
-  const nonFlagArgs = argv.slice(2).filter((arg) => !arg.startsWith("-"));
-  return nonFlagArgs[0] || "start";
-}
+export const VALID_ACTIONS = ["start", "stop", "status"] as const;
+export type Action = (typeof VALID_ACTIONS)[number];
 
-const action = getAction();
+export function getAction(argv: string[] = process.argv): string {
+  const args =
+    argv.length >= 2 && !argv[0].startsWith("-") && !argv[1].startsWith("-")
+      ? argv.slice(2)
+      : argv;
+
+  const { positionals } = parseArgs({
+    args,
+    options: {
+      "log-level": { type: "string" },
+      debug: { type: "boolean", short: "d" },
+      "no-build": { type: "boolean" },
+      "no-summarize": { type: "boolean" },
+    },
+    allowPositionals: true,
+    strict: false,
+  });
+
+  const rawAction = positionals[0] || "start";
+  if (!VALID_ACTIONS.includes(rawAction as Action)) {
+    throw new Error(`Unknown action: "${rawAction}". Valid actions are: ${VALID_ACTIONS.join(", ")}`);
+  }
+
+  return rawAction;
+}
 
 export function shouldSkipBuild(argv: string[] = process.argv): boolean {
   return argv.includes("--no-build");
@@ -495,6 +518,14 @@ async function startStack() {
 }
 
 if (import.meta.main) {
+  let action: string;
+  try {
+    action = getAction();
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+
   if (action === "stop") {
     await stopStack();
   } else if (action === "status") {

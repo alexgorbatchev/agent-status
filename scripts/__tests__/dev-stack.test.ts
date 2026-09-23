@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   buildBinaries,
+  getAction,
   getIngesterArgs,
   getLogLevel,
   getSummarizerStatus,
@@ -44,6 +45,29 @@ describe("dev-stack build controls (#72)", () => {
     it("parses --log-level=value syntax", () => {
       expect(getLogLevel(["node", "dev-stack.ts", "--log-level=debug"])).toBe("debug");
       expect(getLogLevel(["--log-level=trace"])).toBe("trace");
+    });
+  });
+
+  describe("getAction (#80)", () => {
+    it("resolves action to stop when --log-level precedes action", () => {
+      expect(getAction(["node", "dev-stack.ts", "--log-level", "debug", "stop"])).toBe("stop");
+      expect(getAction(["--log-level", "debug", "stop"])).toBe("stop");
+    });
+
+    it("resolves action to status with boolean flags", () => {
+      expect(getAction(["node", "dev-stack.ts", "-d", "status"])).toBe("status");
+      expect(getAction(["node", "dev-stack.ts", "--debug", "status"])).toBe("status");
+    });
+
+    it("defaults to start when no action is specified", () => {
+      expect(getAction(["node", "dev-stack.ts"])).toBe("start");
+      expect(getAction([])).toBe("start");
+      expect(getAction(["node", "dev-stack.ts", "--debug"])).toBe("start");
+    });
+
+    it("throws an error for unknown action", () => {
+      expect(() => getAction(["node", "dev-stack.ts", "invalid"])).toThrow(/Unknown action/);
+      expect(() => getAction(["unknown"])).toThrow(/Unknown action/);
     });
   });
 
