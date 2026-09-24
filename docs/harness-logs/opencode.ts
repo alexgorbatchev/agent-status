@@ -174,6 +174,8 @@ export interface IOpencodeMessageData {
   readonly time?: IOpencodeMessageTiming;
   /** Finish reason string ("stop", "tool_use", "length") or null if in progress. */
   readonly finish?: string | null;
+  /** Error payload if message generation encountered an error. */
+  readonly error?: unknown;
 }
 
 /**
@@ -208,6 +210,8 @@ export interface IOpencodeToolPartState {
   readonly input?: Record<string, unknown>;
   /** Tool execution string output / result. */
   readonly output?: string;
+  /** Tool execution error message if status is "error" or tool execution failed. */
+  readonly error?: string;
   /** Optional metadata dictionary. */
   readonly metadata?: Record<string, unknown>;
   /** Execution timestamps. */
@@ -274,13 +278,52 @@ export interface IOpencodeFilePartData {
   readonly metadata?: Record<string, unknown>;
 }
 
+/** Error event part. */
+export interface IOpencodeErrorPartData {
+  readonly type: "error";
+  readonly error?: unknown;
+  readonly text?: string;
+  readonly message?: string;
+  readonly time?: {
+    readonly start: number;
+    readonly end?: number;
+  };
+  readonly metadata?: Record<string, unknown>;
+}
+
+/**
+ * Generic part data structure deserialized from the `part.data` column,
+ * matching Go's OpencodePartData struct representation.
+ */
+export interface IOpencodePartData {
+  readonly type: string;
+  readonly text?: string;
+  readonly tool?: string;
+  readonly callID?: string;
+  readonly state?: IOpencodeToolPartState;
+  readonly reason?: string;
+  readonly cost?: number;
+  readonly tokens?: IOpencodeMessageTokenUsage;
+  readonly path?: string;
+  readonly content?: string;
+  readonly snapshot?: Record<string, unknown>;
+  readonly metadata?: Record<string, unknown>;
+  readonly time?: {
+    readonly start: number;
+    readonly end?: number;
+  };
+  readonly error?: unknown;
+  readonly message?: string;
+}
+
 export type OpencodePartData =
   | IOpencodeTextPartData
   | IOpencodeToolPartData
   | IOpencodeReasoningPartData
   | IOpencodeStepStartPartData
   | IOpencodeStepFinishPartData
-  | IOpencodeFilePartData;
+  | IOpencodeFilePartData
+  | IOpencodeErrorPartData;
 
 /**
  * Raw row shape from the `part` table in `opencode.db`.
@@ -458,4 +501,11 @@ export function isOpencodeReasoningPart(
   part: OpencodePartData,
 ): part is IOpencodeReasoningPartData {
   return part.type === "reasoning";
+}
+
+/**
+ * Checks if a part represents an error.
+ */
+export function isOpencodeErrorPart(part: OpencodePartData): part is IOpencodeErrorPartData {
+  return part.type === "error";
 }

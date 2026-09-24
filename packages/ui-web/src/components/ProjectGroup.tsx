@@ -55,6 +55,7 @@ export function ProjectGroup({
     }
     const hierarchy = groupAgentsByProjectHierarchy(agents);
     return (
+      hierarchy.find((item) => item.id === projectId) ??
       hierarchy[0] ?? {
         id: projectId,
         name: projectName,

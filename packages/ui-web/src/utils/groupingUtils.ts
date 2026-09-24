@@ -83,11 +83,8 @@ export function groupAgentsByProjectHierarchy(agents: IAgentState[]): IProjectTr
 export function groupAgentsByProject(agents: IAgentState[]): IProjectGroupItem[] {
   const treeGroups = groupAgentsByProjectHierarchy(agents);
   return treeGroups.map((tg) => ({
-    id: tg.id,
-    name: tg.name,
+    ...tg,
     agents: tg.allAgents,
-    rootAgents: tg.rootAgents,
-    worktrees: tg.worktrees,
   }));
 }
 

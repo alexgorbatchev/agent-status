@@ -234,10 +234,14 @@ export interface IPiAssistantMessage {
   readonly providerThinkingLevel?: string;
   /** Token usage and cost metrics. */
   readonly usage: IPiTokenUsage;
-  /** Reason why completion terminated. */
-  readonly stopReason: PiStopReason;
-  /** Error message if stopReason is 'error'. */
+  /** Reason why completion terminated (canonical or alias). */
+  readonly stopReason?: PiStopReason;
+  readonly stop_reason?: string;
+  /** Error message if stopReason is 'error' or provider request failed (canonical or alias). */
   readonly errorMessage?: string;
+  readonly error_message?: string;
+  /** Top-level error string if reported directly. */
+  readonly error?: string;
   /** Raw unmapped stop reason string from the provider. */
   readonly rawStopReason?: string;
   /** Indicates whether the assistant explicitly ended the turn. */
@@ -367,6 +371,10 @@ export interface IPiSessionEntryBase {
   readonly parentId: string | null;
   /** ISO 8601 UTC timestamp string. */
   readonly timestamp: string;
+  /** Optional error fields emitted when an entry or line encounters an error. */
+  readonly error?: string;
+  readonly errorMessage?: string;
+  readonly error_message?: string;
 }
 
 /**
@@ -507,6 +515,19 @@ export interface IPiSessionInfoEntry extends IPiSessionEntryBase {
 }
 
 /**
+ * Error Entry: Emitted when an error is logged as a distinct entry in the session transcript.
+ */
+export interface IPiErrorEntry extends IPiSessionEntryBase {
+  readonly type: "error";
+  /** Top-level error string. */
+  readonly error?: string;
+  /** Error message detail (camelCase). */
+  readonly errorMessage?: string;
+  /** Error message detail (snake_case alias). */
+  readonly error_message?: string;
+}
+
+/**
  * Union of all tree node entries (all entries except the SessionHeader).
  */
 export type PiSessionEntry =
@@ -518,7 +539,8 @@ export type PiSessionEntry =
   | IPiCustomEntry
   | IPiCustomMessageEntry
   | IPiLabelEntry
-  | IPiSessionInfoEntry;
+  | IPiSessionInfoEntry
+  | IPiErrorEntry;
 
 /**
  * Complete union of all possible lines in a Pi session JSONL file.

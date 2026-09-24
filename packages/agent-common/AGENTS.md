@@ -10,6 +10,8 @@ Shared Go types and structured logging definitions for the agent-status pipeline
 ## Local conventions
 
 - Keep types in `types/types.go` synchronized with frontend models in `packages/ui-web/src/types/types.ts`.
+- `ActivityRateLimited` (`"RATE_LIMITED"`) models rate-limiting state on `IAgentActivity` alongside `RateLimitResetAt` (epoch ms reset timestamp) and `RetryAfterSeconds` (retry delay), with snake_case JSON unmarshaling compatibility.
+- Turn completion retention uses `HasUnseenCompletion` (boolean pointer) and `CompletedAt` (epoch ms timestamp) on `IAgentActivity` (and `CompletedAt` on `ISubagentSummary`) to flag unacknowledged completed turns that transitioned to idle.
 - Structured logging wraps `log/slog` via `logging/logging.go` and respects dual-mode output via `AGENT=1` (human mode formats clean tags and prefers human names over opaque IDs; agent mode produces token-conservative machine logfmt), with disk rotation and retention limits via lumberjack.
 
 ## Local gotchas

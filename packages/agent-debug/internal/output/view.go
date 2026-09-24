@@ -336,7 +336,14 @@ func RenderFleetViewAt(w io.Writer, agents []types.IAgentState, agentMode bool, 
 				if agent.Activity.Lifecycle == types.LifecycleRunning && agent.Activity.Activity == types.ActivityIdle && agent.Activity.HasUnseenCompletion != nil && *agent.Activity.HasUnseenCompletion {
 					activityStr = "completed"
 				}
-				_, _ = fmt.Fprintf(w, "%s%s %s (%s)\n", childIndent, harnessBadge, title, activityStr)
+				line := fmt.Sprintf("%s%s %s (%s)", childIndent, harnessBadge, title, activityStr)
+				isStaleIdle := agent.Activity.Activity == types.ActivityIdle && GetIdleFreshness(agent.Activity.UpdatedAt, nowMs) == FreshnessStale && (agent.Activity.HasUnseenCompletion == nil || !*agent.Activity.HasUnseenCompletion)
+				if isStaleIdle {
+					formatted := strings.ReplaceAll(line, AnsiReset, AnsiReset+AnsiDim)
+					_, _ = fmt.Fprintf(w, "%s%s%s\n", AnsiDim, formatted, AnsiReset)
+				} else {
+					_, _ = fmt.Fprintln(w, line)
+				}
 			}
 		}
 	}

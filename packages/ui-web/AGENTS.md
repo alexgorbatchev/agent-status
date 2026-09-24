@@ -25,6 +25,12 @@ Web frontend dashboard for agent-status built with React 19, Tailwind CSS v4, Lu
 - Finished sessions are hidden by default on load, with a UI toggle (`App--toggle-show-finished`) next to show/hide hidden to show/hide finished sessions without state persistence.
 - ToolExecutionBlock multiline output container must constrain height (`max-h-64`) and handle overflow (`overflow-auto`) on the flex scroll container wrapping the line gutter and pre output, ensuring line numbers and output content scroll together without empty space.
 - Custom scrollbars matching page colors (standard `scrollbar-width: thin`, `scrollbar-color: #334155 transparent` and WebKit `#334155` slate-700 thumb on transparent track) must be defined in `src/theme.css` across all scrollable elements.
+- Hierarchical project nesting uses `IProjectTreeGroup` and `IWorktreeBranchGroup` (`src/types/types.ts`) via `groupAgentsByProjectHierarchy`, separating root checkout agents from linked worktree branches with dedicated headers and subgrids.
+- Semantic color precedence strictly reserves green and red for lifecycle and activity states; colors defined in `src/theme.css` must maintain WCAG AA contrast compliance against dark card surfaces (`#090d16` / `#0f172a`).
+- Unacknowledged completion state: When `hasUnseenCompletion` is true, cards display a green `(Completed)` status badge and completion callout with an acknowledge action to dismiss the completion state.
+- Idle freshness tiers classify idle sessions as `fresh` (<15m), `standard` (15m–2h), or `stale` (>2h, visually dimmed via opacity styling unless unacknowledged completion is active, #109).
+- Redundant project prefixes in card titles are stripped with `trimProjectTitlePrefix` (`src/utils/trimProjectTitlePrefix.ts`) when displayed in project group context.
+- Rate-limiting is rendered with a dedicated `RATE_LIMITED` status badge and callout detailing remaining wait time or reset timestamp (`rateLimitResetAt`, `retryAfterSeconds`).
 - Enforce strict TypeScript: no `any`, no type assertions (`as Type`), explicit return types on public functions.
 
 ## Local gotchas

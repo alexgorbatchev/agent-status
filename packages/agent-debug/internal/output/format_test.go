@@ -564,6 +564,36 @@ func TestTruncateLeftVisual_EdgeCases(t *testing.T) {
 	if !strings.HasPrefix(gotASCII, "...") {
 		t.Errorf("expected prefix '...', got %q", gotASCII)
 	}
+
+	// 4. ANSI string that fits in maxWidth: returned intact
+	ansiShort := "\x1b[32m/short/path\x1b[0m"
+	if got := TruncateLeftVisual(ansiShort, 20, "..."); got != ansiShort {
+		t.Errorf("TruncateLeftVisual(%q) = %q, want %q", ansiShort, got, ansiShort)
+	}
+
+	// 5. ANSI string that exceeds maxWidth: strip-safe, visual width <= maxWidth, no broken escape codes
+	ansiLong := "\x1b[31;1m/home/user/long/path/to/project\x1b[0m"
+	gotANSI := TruncateLeftVisual(ansiLong, 15, "...")
+	if VisualWidth(gotANSI) > 15 {
+		t.Errorf("VisualWidth(%q) = %d > 15", gotANSI, VisualWidth(gotANSI))
+	}
+	if !strings.HasPrefix(gotANSI, "...") {
+		t.Errorf("expected prefix '...', got %q", gotANSI)
+	}
+	// Verify it does not contain dangling escape fragments like "\x1b[" without terminator
+	if strings.Contains(gotANSI, "\x1b[") && !strings.Contains(gotANSI, "m") {
+		t.Errorf("gotANSI contains broken escape sequence: %q", gotANSI)
+	}
+
+	// 6. Wide runes with ANSI codes
+	wideANSI := "\x1b[34m/日本語/ディレクトリ/プロジェクト\x1b[0m"
+	gotWide := TruncateLeftVisual(wideANSI, 14, "...")
+	if VisualWidth(gotWide) > 14 {
+		t.Errorf("VisualWidth(%q) = %d > 14", gotWide, VisualWidth(gotWide))
+	}
+	if !strings.HasPrefix(gotWide, "...") {
+		t.Errorf("expected prefix '...', got %q", gotWide)
+	}
 }
 
 func TestTrimProjectPrefix(t *testing.T) {

@@ -215,6 +215,7 @@ export function App({ apiBaseUrl, token = DEFAULT_DEV_TOKEN }: IAppProps = {}): 
               projectName={group.name}
               projectId={group.id}
               agents={group.agents}
+              treeGroup={group}
               onSelectAgent={setSelectedAgent}
               onToggleHide={handleToggleHide}
             />

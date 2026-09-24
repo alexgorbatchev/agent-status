@@ -209,12 +209,8 @@ export interface IProjectTreeGroup {
   allAgents: IAgentState[]; // convenience flat list for counts / total spend
 }
 
-export interface IProjectGroupItem {
-  id: string;
-  name: string;
+export interface IProjectGroupItem extends IProjectTreeGroup {
   agents: IAgentState[];
-  rootAgents?: IAgentState[];
-  worktrees?: IWorktreeBranchGroup[];
 }
 
 export interface IEnvironmentGroupItem {

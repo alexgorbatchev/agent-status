@@ -1129,6 +1129,110 @@ func TestRenderFleetView_HumanMode_Completed(t *testing.T) {
 	}
 }
 
+func TestRenderFleetView_HumanMode_IdleStaleDimmed(t *testing.T) {
+	nowMs := int64(10_000_000)
+	agent := types.IAgentState{
+		ID:        "env-1:claude-code:ses-stale",
+		SessionID: "ses-stale",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:    "env-1",
+			Label: "local-dev",
+		},
+		Project: types.IProjectInfo{
+			ID:   "proj-1",
+			Name: "agent-status",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "main",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityIdle,
+			Title:     "Old idle work",
+			UpdatedAt: nowMs - 3*60*60*1000, // 3 hours ago (>2h)
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderFleetViewAt(&buf, []types.IAgentState{agent}, false, nowMs)
+	out := buf.String()
+
+	if !strings.Contains(out, AnsiDim) {
+		t.Errorf("expected AnsiDim in fleet view for stale idle session (>2h), got:\n%s", out)
+	}
+}
+
+func TestRenderFleetView_HumanMode_IdleFreshNotDimmed(t *testing.T) {
+	nowMs := int64(10_000_000)
+	agent := types.IAgentState{
+		ID:        "env-1:claude-code:ses-fresh",
+		SessionID: "ses-fresh",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:    "env-1",
+			Label: "local-dev",
+		},
+		Project: types.IProjectInfo{
+			ID:   "proj-1",
+			Name: "agent-status",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "main",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityIdle,
+			Title:     "Recent idle work",
+			UpdatedAt: nowMs - 5*60*1000, // 5 minutes ago (<15m)
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderFleetViewAt(&buf, []types.IAgentState{agent}, false, nowMs)
+	out := buf.String()
+
+	if strings.Contains(out, AnsiDim) {
+		t.Errorf("expected no AnsiDim in fleet view for fresh idle session (<15m), got:\n%s", out)
+	}
+}
+
+func TestRenderFleetView_HumanMode_IdleStaleWithUnseenCompletionNotDimmed(t *testing.T) {
+	nowMs := int64(10_000_000)
+	tVal := true
+	agent := types.IAgentState{
+		ID:        "env-1:claude-code:ses-completed-stale",
+		SessionID: "ses-completed-stale",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:    "env-1",
+			Label: "local-dev",
+		},
+		Project: types.IProjectInfo{
+			ID:   "proj-1",
+			Name: "agent-status",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "main",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle:           types.LifecycleRunning,
+			Activity:            types.ActivityIdle,
+			Title:               "Completed work turn",
+			HasUnseenCompletion: &tVal,
+			UpdatedAt:           nowMs - 3*60*60*1000, // 3 hours ago, but unacknowledged
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderFleetViewAt(&buf, []types.IAgentState{agent}, false, nowMs)
+	out := buf.String()
+
+	if strings.Contains(out, AnsiDim) {
+		t.Errorf("expected no AnsiDim in fleet view for completed session even if >2h old, got:\n%s", out)
+	}
+}
+
 
 
 

@@ -170,6 +170,8 @@ func VisualWidth(s string) int {
 
 // TruncateLeftVisual truncates s from the left, keeping the rightmost characters
 // such that prefix + tail has visual display width <= maxWidth.
+// It is ANSI-aware and strip-safe, operating on plain runes to prevent slicing
+// inside escape sequences or miscalculating escape code byte lengths as display cells.
 func TruncateLeftVisual(s string, maxWidth int, prefix string) string {
 	plain := stripANSI(s)
 	if runewidth.StringWidth(plain) <= maxWidth {
@@ -178,9 +180,9 @@ func TruncateLeftVisual(s string, maxWidth int, prefix string) string {
 	prefixWidth := runewidth.StringWidth(stripANSI(prefix))
 	available := maxWidth - prefixWidth
 	if available <= 0 {
-		return runewidth.Truncate(prefix, maxWidth, "")
+		return runewidth.Truncate(stripANSI(prefix), maxWidth, "")
 	}
-	runes := []rune(s)
+	runes := []rune(plain)
 	totalWidth := 0
 	cutIdx := len(runes)
 	for i := len(runes) - 1; i >= 0; i-- {

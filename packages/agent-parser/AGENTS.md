@@ -12,6 +12,8 @@ Pure Go parsing routines for extracting structured events from Claude Code, Pi, 
 - Match parser behavior against canonical schema specifications in `docs/harness-logs/*.ts`.
 - Go parser types and unmarshaling structs must be kept strictly in sync with the canonical TypeScript definitions in `docs/harness-logs/*.ts`.
 - Parsers must be pure functions without filesystem I/O, network requests, or global state.
+- Pi logs emit error events (`EventType: "error"`, `IsError: true`) when `stopReason` / `stop_reason` is `"error"`, when error message fields (`errorMessage`, `error_message`, `error`) are populated, or on `type: "error"` transcript lines (`pi.go`).
+- OpenCode parsers emit error events (`EventType: "error"`, `IsError: true`) on tool execution failures (`status: "error"`, `p.Data.State.Error`), error parts (`type: "error"`, `extractOpencodeError`), or message-level error finish reasons and payloads (`opencode.go`).
 
 ## Local gotchas
 

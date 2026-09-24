@@ -9,9 +9,12 @@ Central telemetry ingestion daemon (`air-ingester`) that receives agent events, 
 - Lint: `just lint`
 
 ## Local conventions
-- SQLite migrations are defined sequentially in `internal/store/migrations.go`.
+- SQLite migrations are defined sequentially in `internal/store/migrations.go`; migration v6 updates the SQLite `activity` check constraint to include `'RATE_LIMITED'` alongside `'BUSY'`, `'WAITING_QUESTION'`, `'ERROR'`, and `'IDLE'`.
 - Hidden agent state is stored in SQLite (`is_hidden`, `hidden_at`); incoming telemetry frames with new activity automatically reset `is_hidden = 0`.
 - Real-time updates broadcast over Unix domain socket `$XDG_RUNTIME_DIR/agent-status/notify.sock` via `internal/notify/publisher.go`.
+- Turn-end debouncing uses `DefaultIdleGracePeriod = 2500ms` (`DefaultTurnEndGraceWindow`) to smooth short gaps between tool results and subsequent thinking turns before declaring idle.
+- Turn completion retention sets `HasUnseenCompletion = true` and `CompletedAt` timestamp when a turn ends without error or pending question, retaining completion state until a new user turn or explicit dismissal.
+- Activity classification precedence elevates `RATE_LIMITED` above standard idle/busy states: a root or subagent rate limit takes precedence over idle status, rolling up subagent rate-limit errors (e.g. `[Subagent <id>] rate limit exceeded`).
 - WebSocket receiver configures a 64 MiB read limit (`conn.SetReadLimit(64 * 1024 * 1024)`) on observer connections to handle oversized frame batches, diffs, and bash outputs.
 - Telemetry and session logging resolves human environment and project names for clean human-facing logs while preserving machine IDs under `AGENT=1`.
 - Pricing calculations use static rates defined in `internal/pricing/pricing.go`.
