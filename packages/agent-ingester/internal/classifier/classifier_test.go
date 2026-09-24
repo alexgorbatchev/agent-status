@@ -7372,6 +7372,194 @@ func TestClassifier_TurnEndGraceWindow_StopAndCloseCleansTimers(t *testing.T) {
 	}
 }
 
+func TestClassifier_HasUnseenCompletion_TurnCompletionAndTransitions(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+
+	c, _ := newTestClassifier(t, sum)
+
+	env := types.IEnvironmentInfo{
+		ID:              "env-unseen",
+		Label:           "work-macbook",
+		Hostname:        "macbook",
+		Platform:        "darwin",
+		User:            "alex",
+		LastHeartbeatAt: 1000,
+	}
+	ws := types.IWorkspaceInfo{
+		Branch: "feat/unseen",
+		CWD:    "/Users/alex/dev/repo",
+	}
+	proj := types.IProjectInfo{
+		ID:            "github.com/org/repo",
+		Name:          "repo",
+		CanonicalRoot: "/Users/alex/dev/repo",
+	}
+
+	agentID := "env-unseen:claude-code:session-unseen"
+	baseFrame := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       "env-unseen",
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "session-unseen",
+		PID:         5555,
+		Harness:     types.HarnessClaudeCode,
+		Workspace:   ws,
+		Project:     proj,
+	}
+
+	// 1. run_started
+	f1 := baseFrame
+	f1.Seq = 1
+	f1.Timestamp = 1000
+	f1.EventType = "run_started"
+	agent, err := c.ProcessFrame(f1)
+	if err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+	if agent.Activity.HasUnseenCompletion != nil && *agent.Activity.HasUnseenCompletion {
+		t.Errorf("expected HasUnseenCompletion to be false/nil initially, got true")
+	}
+
+	// 2. turn_start -> BUSY
+	p := "Refactor database"
+	f2 := baseFrame
+	f2.Seq = 2
+	f2.Timestamp = 2000
+	f2.EventType = "turn_start"
+	f2.Data = types.TelemetryFrameData{Content: &p}
+	agent, err = c.ProcessFrame(f2)
+	if err != nil {
+		t.Fatalf("turn_start failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Fatalf("expected BUSY, got %s", agent.Activity.Activity)
+	}
+	if agent.Activity.HasUnseenCompletion != nil && *agent.Activity.HasUnseenCompletion {
+		t.Errorf("expected HasUnseenCompletion to be cleared on turn_start, got true")
+	}
+
+	// 3. tool_call -> BUSY
+	tool := "Edit"
+	f3 := baseFrame
+	f3.Seq = 3
+	f3.Timestamp = 3000
+	f3.EventType = "tool_call"
+	f3.Data = types.TelemetryFrameData{ToolName: &tool}
+	_, err = c.ProcessFrame(f3)
+	if err != nil {
+		t.Fatalf("tool_call failed: %v", err)
+	}
+
+	// 4. turn_end -> IDLE (gracePeriod is 0 in newTestClassifier)
+	stopReason := "end_turn"
+	f4 := baseFrame
+	f4.Seq = 4
+	f4.Timestamp = 4000
+	f4.EventType = "turn_end"
+	f4.Data = types.TelemetryFrameData{StopReason: &stopReason}
+	agent, err = c.ProcessFrame(f4)
+	if err != nil {
+		t.Fatalf("turn_end failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityIdle {
+		t.Fatalf("expected IDLE, got %s", agent.Activity.Activity)
+	}
+	if agent.Activity.HasUnseenCompletion == nil || !*agent.Activity.HasUnseenCompletion {
+		t.Fatalf("expected HasUnseenCompletion to be true on transition to IDLE, got %v", agent.Activity.HasUnseenCompletion)
+	}
+	if agent.Activity.CompletedAt == nil || *agent.Activity.CompletedAt != 4000 {
+		t.Fatalf("expected CompletedAt to be 4000, got %v", agent.Activity.CompletedAt)
+	}
+
+	// 5. New turn_start -> clears HasUnseenCompletion
+	f5 := baseFrame
+	f5.Seq = 5
+	f5.Timestamp = 5000
+	f5.EventType = "turn_start"
+	f5.Data = types.TelemetryFrameData{Content: &p}
+	agent, err = c.ProcessFrame(f5)
+	if err != nil {
+		t.Fatalf("turn_start failed: %v", err)
+	}
+	if agent.Activity.HasUnseenCompletion != nil && *agent.Activity.HasUnseenCompletion {
+		t.Errorf("expected HasUnseenCompletion to be cleared on new turn_start, got true")
+	}
+
+	// 6. Another turn_end -> IDLE
+	f6 := baseFrame
+	f6.Seq = 6
+	f6.Timestamp = 6000
+	f6.EventType = "turn_end"
+	f6.Data = types.TelemetryFrameData{StopReason: &stopReason}
+	agent, err = c.ProcessFrame(f6)
+	if err != nil {
+		t.Fatalf("turn_end failed: %v", err)
+	}
+	if agent.Activity.HasUnseenCompletion == nil || !*agent.Activity.HasUnseenCompletion {
+		t.Fatalf("expected HasUnseenCompletion to be true on second turn_end, got %v", agent.Activity.HasUnseenCompletion)
+	}
+
+	// 7. Transition to WAITING_QUESTION clears HasUnseenCompletion
+	qPrompt := "Confirm deletion?"
+	f7 := baseFrame
+	f7.Seq = 7
+	f7.Timestamp = 7000
+	f7.EventType = "question_prompt"
+	f7.Data = types.TelemetryFrameData{Question: &qPrompt}
+	agent, err = c.ProcessFrame(f7)
+	if err != nil {
+		t.Fatalf("question_prompt failed: %v", err)
+	}
+	if agent.Activity.HasUnseenCompletion != nil && *agent.Activity.HasUnseenCompletion {
+		t.Errorf("expected HasUnseenCompletion cleared on question_prompt, got true")
+	}
+
+	// 7b. User answers -> BUSY
+	userAns := "yes"
+	f7b := baseFrame
+	f7b.Seq = 8
+	f7b.Timestamp = 7500
+	f7b.EventType = "user_prompt"
+	f7b.Data = types.TelemetryFrameData{Content: &userAns}
+	_, err = c.ProcessFrame(f7b)
+	if err != nil {
+		t.Fatalf("user_prompt failed: %v", err)
+	}
+
+	// 8. Turn end to IDLE -> HasUnseenCompletion true
+	f8 := baseFrame
+	f8.Seq = 9
+	f8.Timestamp = 8000
+	f8.EventType = "turn_end"
+	f8.Data = types.TelemetryFrameData{StopReason: &stopReason}
+	agent, err = c.ProcessFrame(f8)
+	if err != nil {
+		t.Fatalf("turn_end failed: %v", err)
+	}
+	if agent.Activity.HasUnseenCompletion == nil || !*agent.Activity.HasUnseenCompletion {
+		t.Fatalf("expected HasUnseenCompletion to be true on turn_end, got %v", agent.Activity.HasUnseenCompletion)
+	}
+
+	// 9. Error clears HasUnseenCompletion
+	errStr := "syntax error"
+	f9 := baseFrame
+	f9.Seq = 10
+	f9.Timestamp = 9000
+	f9.EventType = "error"
+	f9.Data = types.TelemetryFrameData{Content: &errStr}
+	agent, err = c.ProcessFrame(f9)
+	if err != nil {
+		t.Fatalf("error failed: %v", err)
+	}
+	if agent.Activity.HasUnseenCompletion != nil && *agent.Activity.HasUnseenCompletion {
+		t.Errorf("expected HasUnseenCompletion cleared on error, got true")
+	}
+}
+
 
 
 

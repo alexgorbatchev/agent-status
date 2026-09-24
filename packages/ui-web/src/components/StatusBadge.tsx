@@ -58,7 +58,23 @@ export function StatusBadge({
   toolDuration,
   isSessionStalled,
   silenceDuration,
+  hasUnseenCompletion,
 }: IStatusBadgeProps): React.JSX.Element {
+  if (lifecycle === "RUNNING" && activity === "IDLE" && Boolean(hasUnseenCompletion)) {
+    return (
+      <span
+        data-testid="StatusBadge"
+        role="status"
+        data-lifecycle={lifecycle}
+        data-semantic-status="success"
+        className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-950/60 text-emerald-300 border border-emerald-600/80"
+      >
+        <span data-testid="StatusBadge--indicator" className="w-2 h-2 rounded-full bg-emerald-400" />
+        <span data-testid="StatusBadge--label">Completed</span>
+      </span>
+    );
+  }
+
   const isToolStalledOrWarning =
     lifecycle === "RUNNING" && activity === "BUSY" && (stallTier === "warning" || stallTier === "stalled");
 

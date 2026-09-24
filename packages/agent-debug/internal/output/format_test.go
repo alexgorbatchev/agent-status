@@ -783,5 +783,64 @@ func TestTrimProjectPrefix(t *testing.T) {
 	}
 }
 
+func TestFormatActivityStatus(t *testing.T) {
+	tTrue := true
+	tFalse := false
+
+	tests := []struct {
+		name                string
+		lifecycle           types.LifecycleState
+		activity            types.ActivityState
+		hasUnseenCompletion *bool
+		want                string
+	}{
+		{"running completed", types.LifecycleRunning, types.ActivityIdle, &tTrue, "Completed"},
+		{"running idle unseen false", types.LifecycleRunning, types.ActivityIdle, &tFalse, "Idle"},
+		{"running idle unseen nil", types.LifecycleRunning, types.ActivityIdle, nil, "Idle"},
+		{"running busy", types.LifecycleRunning, types.ActivityBusy, nil, "Working"},
+		{"running question", types.LifecycleRunning, types.ActivityWaitingQuestion, nil, "Waiting on Question"},
+		{"running error", types.LifecycleRunning, types.ActivityError, nil, "Error"},
+		{"exited", types.LifecycleExited, types.ActivityIdle, nil, "Finished"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FormatActivityStatus(tt.lifecycle, tt.activity, tt.hasUnseenCompletion)
+			if got != tt.want {
+				t.Errorf("FormatActivityStatus(%s, %s, %v) = %q, want %q", tt.lifecycle, tt.activity, tt.hasUnseenCompletion, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRenderReplaySummary_Completed(t *testing.T) {
+	tTrue := true
+	s := ReplaySummary{
+		SessionID:           "ses-123",
+		AgentID:             "env-1:claude-code:ses-123",
+		ProjectName:         "repo",
+		Branch:              "main",
+		Harness:             types.HarnessClaudeCode,
+		Lifecycle:           types.LifecycleRunning,
+		Activity:            types.ActivityIdle,
+		HasUnseenCompletion: &tTrue,
+	}
+
+	var humanBuf bytes.Buffer
+	RenderReplaySummary(&humanBuf, s, false)
+	humanOut := humanBuf.String()
+	if !strings.Contains(humanOut, "Activity:        Completed") {
+		t.Errorf("expected human output to contain Activity: Completed, got:\n%s", humanOut)
+	}
+
+	var agentBuf bytes.Buffer
+	RenderReplaySummary(&agentBuf, s, true)
+	agentOut := agentBuf.String()
+	if !strings.Contains(agentOut, "activity:COMPLETED") {
+		t.Errorf("expected agent output to contain activity:COMPLETED, got:\n%s", agentOut)
+	}
+}
+
+
 
 

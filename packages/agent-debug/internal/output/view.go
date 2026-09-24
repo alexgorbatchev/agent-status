@@ -333,6 +333,9 @@ func RenderFleetViewAt(w io.Writer, agents []types.IAgentState, agentMode bool, 
 				if activityStr == "" {
 					activityStr = "idle"
 				}
+				if agent.Activity.Lifecycle == types.LifecycleRunning && agent.Activity.Activity == types.ActivityIdle && agent.Activity.HasUnseenCompletion != nil && *agent.Activity.HasUnseenCompletion {
+					activityStr = "completed"
+				}
 				_, _ = fmt.Fprintf(w, "%s%s %s (%s)\n", childIndent, harnessBadge, title, activityStr)
 			}
 		}
@@ -372,6 +375,10 @@ func renderAgentViewAgentMode(w io.Writer, agent types.IAgentState) {
 	if activity == "" {
 		activity = string(types.ActivityIdle)
 	}
+	isCompleted := agent.Activity.Lifecycle == types.LifecycleRunning && agent.Activity.Activity == types.ActivityIdle && agent.Activity.HasUnseenCompletion != nil && *agent.Activity.HasUnseenCompletion
+	if isCompleted {
+		activity = "COMPLETED"
+	}
 	lifecycle := string(agent.Activity.Lifecycle)
 	if lifecycle == "" {
 		lifecycle = string(types.LifecycleRunning)
@@ -393,6 +400,9 @@ func renderAgentViewAgentMode(w io.Writer, agent types.IAgentState) {
 	parts = append(parts, fmt.Sprintf("title:%q", title))
 	parts = append(parts, fmt.Sprintf("action:%q", action))
 	parts = append(parts, fmt.Sprintf("activity:%s", activity))
+	if isCompleted {
+		parts = append(parts, "has_unseen_completion:true")
+	}
 
 	if agent.Activity.Activity == types.ActivityWaitingQuestion && agent.Activity.Question != nil && *agent.Activity.Question != "" {
 		parts = append(parts, fmt.Sprintf("question:%q", *agent.Activity.Question))
@@ -440,7 +450,11 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 	}
 	buttons = append(buttons, hideButton)
 	headerLeft := fmt.Sprintf("%s %s", harnessBadge, strings.Join(buttons, " "))
-	headerRight := fmt.Sprintf("(%s)", lifecycle)
+	statusLabel := lifecycle
+	if agent.Activity.Lifecycle == types.LifecycleRunning && agent.Activity.Activity == types.ActivityIdle && agent.Activity.HasUnseenCompletion != nil && *agent.Activity.HasUnseenCompletion {
+		statusLabel = AnsiGreen + "Completed" + AnsiReset
+	}
+	headerRight := fmt.Sprintf("(%s)", statusLabel)
 
 	headerSpace := width - runewidth.StringWidth(stripANSI(headerLeft)) - runewidth.StringWidth(stripANSI(headerRight))
 	if headerSpace < 1 {
@@ -531,7 +545,7 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 	metricsLine := metricsLeft + strings.Repeat(" ", metricsSpace) + metricsRight
 
 	// Calculate idle freshness: if session is IDLE and age > 2h (stale), dim output with ANSI Dim
-	isStaleIdle := agent.Activity.Activity == types.ActivityIdle && GetIdleFreshness(agent.Activity.UpdatedAt, nowMs) == FreshnessStale
+	isStaleIdle := agent.Activity.Activity == types.ActivityIdle && GetIdleFreshness(agent.Activity.UpdatedAt, nowMs) == FreshnessStale && (agent.Activity.HasUnseenCompletion == nil || !*agent.Activity.HasUnseenCompletion)
 
 	printLine := func(line string) {
 		if line == "" {

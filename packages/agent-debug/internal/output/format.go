@@ -364,6 +364,7 @@ type ReplaySummary struct {
 	Activity             types.ActivityState  `json:"activity"`
 	Lifecycle            types.LifecycleState `json:"lifecycle"`
 	IsLifecycleSynthetic bool                 `json:"isLifecycleSynthetic,omitempty"`
+	HasUnseenCompletion  *bool                `json:"hasUnseenCompletion,omitempty"`
 	Title                string               `json:"title"`
 	Action           string              `json:"action"`
 	TokensInput      int64               `json:"tokensInput"`
@@ -375,6 +376,28 @@ type ReplaySummary struct {
 	VerificationOK   bool                `json:"verificationOk"`
 	VerificationLogs int                 `json:"verificationLogs"`
 	DurationMs       int64               `json:"durationMs"`
+}
+
+// FormatActivityStatus returns the human-readable status for a session.
+func FormatActivityStatus(lifecycle types.LifecycleState, activity types.ActivityState, hasUnseenCompletion *bool) string {
+	if lifecycle == types.LifecycleRunning && activity == types.ActivityIdle && hasUnseenCompletion != nil && *hasUnseenCompletion {
+		return "Completed"
+	}
+	if lifecycle == types.LifecycleExited {
+		return "Finished"
+	}
+	switch activity {
+	case types.ActivityBusy:
+		return "Working"
+	case types.ActivityWaitingQuestion:
+		return "Waiting on Question"
+	case types.ActivityError:
+		return "Error"
+	case types.ActivityIdle:
+		return "Idle"
+	default:
+		return string(activity)
+	}
 }
 
 // RenderReplaySummary writes the summary of the replayed session.
@@ -392,8 +415,12 @@ func RenderReplaySummary(w io.Writer, s ReplaySummary, agentMode bool) {
 				lifecycleStr = "EXITED(native)"
 			}
 		}
+		activityStr := string(s.Activity)
+		if s.Lifecycle == types.LifecycleRunning && s.Activity == types.ActivityIdle && s.HasUnseenCompletion != nil && *s.HasUnseenCompletion {
+			activityStr = "COMPLETED"
+		}
 		_, _ = fmt.Fprintf(w, "harness:%s session_id:%s agent_id:%s project:%s branch:%s activity:%s lifecycle:%s tokens_in:%d tokens_out:%d tokens_total:%d cost_usd:%.4f subagents:%d frames:%d verification:%s ver_logs:%d duration_ms:%d\n",
-			s.Harness, s.SessionID, s.AgentID, s.ProjectName, s.Branch, s.Activity, lifecycleStr,
+			s.Harness, s.SessionID, s.AgentID, s.ProjectName, s.Branch, activityStr, lifecycleStr,
 			s.TokensInput, s.TokensOutput, s.TokensTotal, s.CostUSD, s.SubagentCount,
 			s.FramesProcessed, verStatus, s.VerificationLogs, s.DurationMs)
 		return
@@ -420,8 +447,12 @@ func RenderReplaySummary(w io.Writer, s ReplaySummary, agentMode bool) {
 			lifecycleStr += " (native)"
 		}
 	}
+	activityStr := string(s.Activity)
+	if s.Lifecycle == types.LifecycleRunning && s.Activity == types.ActivityIdle && s.HasUnseenCompletion != nil && *s.HasUnseenCompletion {
+		activityStr = "Completed"
+	}
 	_, _ = fmt.Fprintf(w, "  Lifecycle:       %s\n", lifecycleStr)
-	_, _ = fmt.Fprintf(w, "  Activity:        %s\n", s.Activity)
+	_, _ = fmt.Fprintf(w, "  Activity:        %s\n", activityStr)
 	_, _ = fmt.Fprintf(w, "  Token Usage:     Input: %d | Output: %d | Total: %d\n",
 		s.TokensInput, s.TokensOutput, s.TokensTotal)
 	_, _ = fmt.Fprintf(w, "  Total Cost:      $%.4f USD\n", s.CostUSD)

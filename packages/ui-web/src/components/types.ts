@@ -55,6 +55,7 @@ export interface IStatusBadgeProps {
   isSessionStalled?: boolean;
   silenceDuration?: string;
   harness?: HarnessType;
+  hasUnseenCompletion?: boolean | null;
 }
 
 export interface IHeaderProps {
@@ -81,6 +82,8 @@ export interface IAgentCardProps {
   agent: IAgentState;
   projectName?: string;
   onOpenDrawer?: (agent: IAgentState) => void;
+  onSelect?: (agent: IAgentState) => void;
+  onAcknowledgeCompletion?: (agent: IAgentState) => void;
   onToggleHide?: (agent: IAgentState) => void;
   defaultShowSubagents?: boolean;
   hideWorktreeBadge?: boolean;

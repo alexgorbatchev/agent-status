@@ -861,4 +861,148 @@ describe("AgentCard Component", () => {
       expect(html).toContain('data-freshness="fresh"');
     });
   });
+
+  describe("Unacknowledged completion (#108)", () => {
+    it("renders Completed status badge when agent has unseen completion", () => {
+      const completedAgent = factory_agentState({
+        activity: {
+          ...fixture_agentStateRunning.activity,
+          lifecycle: "RUNNING",
+          activity: "IDLE",
+          hasUnseenCompletion: true,
+          completedAt: Date.now() - 10000,
+        },
+      });
+
+      const html = renderToStaticMarkup(<AgentCard agent={completedAgent} />);
+      expect(html).toContain('<span data-testid="StatusBadge--label">Completed</span>');
+    });
+
+    it("acknowledges completion and returns badge to Idle when clicked", async () => {
+      const { mockDoc, cleanup } = setupMockDomEnvironment();
+      let acknowledged = false;
+      let openedDrawer = false;
+      const completedAgent = factory_agentState({
+        activity: {
+          ...fixture_agentStateRunning.activity,
+          lifecycle: "RUNNING",
+          activity: "IDLE",
+          hasUnseenCompletion: true,
+          completedAt: Date.now() - 5000,
+        },
+      });
+
+      const { container, unmount } = await mountComponent(
+        <AgentCard
+          agent={completedAgent}
+          onOpenDrawer={() => {
+            openedDrawer = true;
+          }}
+          onAcknowledgeCompletion={() => {
+            acknowledged = true;
+          }}
+        />,
+        mockDoc,
+      );
+
+      const card = container.querySelector('[data-testid="AgentCard"]');
+      assert(card, "AgentCard must be present");
+
+      const statusLabelBefore = container.querySelector('[data-testid="StatusBadge--label"]');
+      expect(statusLabelBefore?.textContent).toBe("Completed");
+
+      await act(async () => {
+        card.click();
+      });
+
+      expect(openedDrawer).toBe(true);
+      expect(acknowledged).toBe(true);
+
+      const statusLabelAfter = container.querySelector('[data-testid="StatusBadge--label"]');
+      expect(statusLabelAfter?.textContent).toBe("Idle");
+
+      await unmount();
+      cleanup();
+    });
+
+    it("acknowledges completion when card receives focus", async () => {
+      const { mockDoc, cleanup } = setupMockDomEnvironment();
+      let acknowledged = false;
+      const completedAgent = factory_agentState({
+        activity: {
+          ...fixture_agentStateRunning.activity,
+          lifecycle: "RUNNING",
+          activity: "IDLE",
+          hasUnseenCompletion: true,
+          completedAt: Date.now() - 5000,
+        },
+      });
+
+      const { container, unmount } = await mountComponent(
+        <AgentCard
+          agent={completedAgent}
+          onAcknowledgeCompletion={() => {
+            acknowledged = true;
+          }}
+        />,
+        mockDoc,
+      );
+
+      const card = container.querySelector('[data-testid="AgentCard"]');
+      assert(card, "AgentCard must be present");
+
+      const statusLabelBefore = container.querySelector('[data-testid="StatusBadge--label"]');
+      expect(statusLabelBefore?.textContent).toBe("Completed");
+
+      await act(async () => {
+        card.dispatchEvent({ type: "focusin", bubbles: true });
+        card.dispatchEvent({ type: "focus", bubbles: true });
+      });
+
+      expect(acknowledged).toBe(true);
+      const statusLabelAfter = container.querySelector('[data-testid="StatusBadge--label"]');
+      expect(statusLabelAfter?.textContent).toBe("Idle");
+
+      await unmount();
+      cleanup();
+    });
+
+    it("acknowledges completion on Enter key down", async () => {
+      const { mockDoc, cleanup } = setupMockDomEnvironment();
+      let acknowledged = false;
+      const completedAgent = factory_agentState({
+        activity: {
+          ...fixture_agentStateRunning.activity,
+          lifecycle: "RUNNING",
+          activity: "IDLE",
+          hasUnseenCompletion: true,
+          completedAt: Date.now() - 5000,
+        },
+      });
+
+      const { container, unmount } = await mountComponent(
+        <AgentCard
+          agent={completedAgent}
+          onAcknowledgeCompletion={() => {
+            acknowledged = true;
+          }}
+        />,
+        mockDoc,
+      );
+
+      const card = container.querySelector('[data-testid="AgentCard"]');
+      assert(card, "AgentCard must be present");
+
+      await act(async () => {
+        card.dispatchEvent({ type: "keydown", key: "Enter", bubbles: true });
+      });
+
+      expect(acknowledged).toBe(true);
+      const statusLabelAfter = container.querySelector('[data-testid="StatusBadge--label"]');
+      expect(statusLabelAfter?.textContent).toBe("Idle");
+
+      await unmount();
+      cleanup();
+    });
+  });
 });

@@ -91,6 +91,10 @@ export interface IAgentActivity {
   currentRun: IRunInfo | null;
   firstStartedAt: number;
   updatedAt: number;
+  hasUnseenCompletion?: boolean | null;
+  completedAt?: number | null;
+  has_unseen_completion?: boolean | null;
+  completed_at?: number | null;
 }
 
 export interface IAgentState {

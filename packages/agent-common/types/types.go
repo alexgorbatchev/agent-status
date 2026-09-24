@@ -1,5 +1,7 @@
 package types
 
+import "encoding/json"
+
 type LifecycleState string
 
 const (
@@ -124,6 +126,29 @@ type IAgentActivity struct {
 	CurrentRun          *IRunInfo          `json:"currentRun"`
 	FirstStartedAt      int64              `json:"firstStartedAt"`
 	UpdatedAt           int64              `json:"updatedAt"`
+	HasUnseenCompletion *bool              `json:"hasUnseenCompletion,omitempty"`
+	CompletedAt         *int64             `json:"completedAt,omitempty"`
+}
+
+func (a *IAgentActivity) UnmarshalJSON(data []byte) error {
+	type Alias IAgentActivity
+	aux := struct {
+		*Alias
+		SnakeHasUnseenCompletion *bool  `json:"has_unseen_completion"`
+		SnakeCompletedAt         *int64 `json:"completed_at"`
+	}{
+		Alias: (*Alias)(a),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if a.HasUnseenCompletion == nil && aux.SnakeHasUnseenCompletion != nil {
+		a.HasUnseenCompletion = aux.SnakeHasUnseenCompletion
+	}
+	if a.CompletedAt == nil && aux.SnakeCompletedAt != nil {
+		a.CompletedAt = aux.SnakeCompletedAt
+	}
+	return nil
 }
 
 type IAgentState struct {

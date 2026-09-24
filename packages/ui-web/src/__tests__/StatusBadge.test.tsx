@@ -106,4 +106,24 @@ describe("StatusBadge Component", () => {
       expect(html).not.toContain("opencode");
     });
   });
+
+  describe("Unacknowledged completion (#108)", () => {
+    it("renders RUNNING + IDLE with hasUnseenCompletion as emerald Completed badge", () => {
+      const html = renderToStaticMarkup(<StatusBadge lifecycle="RUNNING" activity="IDLE" hasUnseenCompletion={true} />);
+      expect(html).toContain('data-testid="StatusBadge"');
+      expect(html).toContain('data-semantic-status="success"');
+      expect(html).toContain("bg-emerald-950/60 text-emerald-300 border border-emerald-600/80");
+      expect(html).toContain("bg-emerald-400");
+      expect(html).toContain('<span data-testid="StatusBadge--label">Completed</span>');
+    });
+
+    it("renders RUNNING + IDLE with hasUnseenCompletion=false as standard Idle badge", () => {
+      const html = renderToStaticMarkup(
+        <StatusBadge lifecycle="RUNNING" activity="IDLE" hasUnseenCompletion={false} />,
+      );
+      expect(html).toContain('data-semantic-status="neutral"');
+      expect(html).toContain('<span data-testid="StatusBadge--label">Idle</span>');
+      expect(html).not.toContain("Completed");
+    });
+  });
 });

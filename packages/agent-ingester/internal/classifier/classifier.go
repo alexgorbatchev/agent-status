@@ -54,6 +54,16 @@ type agentContext struct {
 	inFlightToolName        string
 	inTurn                  bool
 	turnFloorUntil          int64
+	hasUnseenCompletion     *bool
+	completedAt             *int64
+}
+
+func boolPtr(b bool) *bool {
+	return &b
+}
+
+func int64Ptr(i int64) *int64 {
+	return &i
 }
 
 type summaryJob struct {
@@ -668,12 +678,14 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				}
 			}
 			actx = &agentContext{
-				seenSubagents: preloaded,
-				subagents:     subagentsMap,
-				rootActivity:  initialRootActivity,
-				rootAction:    initialRootAction,
-				rootQuestion:  initialRootQuestion,
-				rootLastError: initialRootLastError,
+				seenSubagents:       preloaded,
+				subagents:           subagentsMap,
+				rootActivity:        initialRootActivity,
+				rootAction:          initialRootAction,
+				rootQuestion:        initialRootQuestion,
+				rootLastError:       initialRootLastError,
+				hasUnseenCompletion: agent.Activity.HasUnseenCompletion,
+				completedAt:         agent.Activity.CompletedAt,
 			}
 			c.agentCtx[agent.ID] = actx
 		}
@@ -687,6 +699,8 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		agent.Activity.Action = actx.rootAction
 		agent.Activity.Question = actx.rootQuestion
 		agent.Activity.LastError = actx.rootLastError
+		agent.Activity.HasUnseenCompletion = actx.hasUnseenCompletion
+		agent.Activity.CompletedAt = actx.completedAt
 	}
 	if actx.seenSubagents == nil {
 		actx.seenSubagents = make(map[string]struct{})
@@ -731,6 +745,8 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 
 			agent.Activity.Lifecycle = types.LifecycleRunning
 			agent.Activity.Activity = types.ActivityIdle
+			agent.Activity.HasUnseenCompletion = nil
+			agent.Activity.CompletedAt = nil
 			runID := fmt.Sprintf("%s:%d:%d", agent.ID, frame.PID, now)
 			agent.Activity.CurrentRun = &types.IRunInfo{
 				ID:             runID,
@@ -754,6 +770,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			c.mu.Unlock()
 
 			agent.Activity.Lifecycle = types.LifecycleExited
+			agent.Activity.HasUnseenCompletion = nil
 			agent.Activity.ActiveTool = nil
 			agent.Activity.ActiveTarget = nil
 			agent.Activity.ActiveToolStartedAt = nil
@@ -779,6 +796,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			c.cancelSilenceTimerLocked(agent.ID)
 			c.mu.Unlock()
 			agent.Activity.Activity = types.ActivityWaitingQuestion
+			agent.Activity.HasUnseenCompletion = nil
 			agent.Activity.ActiveTool = nil
 			agent.Activity.ActiveTarget = nil
 			if frame.Data.Question != nil {
@@ -792,6 +810,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			c.cancelSilenceTimerLocked(agent.ID)
 			c.mu.Unlock()
 			agent.Activity.Activity = types.ActivityError
+			agent.Activity.HasUnseenCompletion = nil
 			agent.Activity.ActiveTool = nil
 			agent.Activity.ActiveTarget = nil
 			agent.Activity.ActiveToolStartedAt = nil
@@ -814,6 +833,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			// Tool results (even non-zero exits) are a normal part of shell/agent workflows;
 			// the agent remains busy processing the result, not in an error state.
 			agent.Activity.Activity = types.ActivityBusy
+			agent.Activity.HasUnseenCompletion = nil
 			agent.Activity.LastError = nil
 			agent.Activity.ActiveTool = nil
 			agent.Activity.ActiveTarget = nil
@@ -831,6 +851,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			c.scheduleSilenceTimerLocked(agent.ID, actx.rootGeneration)
 			c.mu.Unlock()
 			agent.Activity.Activity = types.ActivityBusy
+			agent.Activity.HasUnseenCompletion = nil
 			agent.Activity.LastError = nil
 			agent.Activity.ActiveToolStartedAt = &now
 			if frame.Data.ToolName != nil {
@@ -862,6 +883,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 
 				if toolName == "AskUserQuestion" {
 					agent.Activity.Activity = types.ActivityWaitingQuestion
+					agent.Activity.HasUnseenCompletion = nil
 					if frame.Data.Question != nil {
 						agent.Activity.Question = frame.Data.Question
 					}
@@ -888,6 +910,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			c.scheduleSilenceTimerLocked(agent.ID, actx.rootGeneration)
 			c.mu.Unlock()
 			agent.Activity.Activity = types.ActivityBusy
+			agent.Activity.HasUnseenCompletion = nil
 			agent.Activity.LastError = nil
 			agent.Activity.ActiveTool = nil
 			agent.Activity.ActiveTarget = nil
@@ -902,6 +925,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			c.scheduleSilenceTimerLocked(agent.ID, actx.rootGeneration)
 			c.mu.Unlock()
 			agent.Activity.Activity = types.ActivityBusy
+			agent.Activity.HasUnseenCompletion = nil
 			agent.Activity.LastError = nil
 			if frame.Data.Content != nil && strings.TrimSpace(*frame.Data.Content) != "" {
 				c.mu.Lock()
@@ -916,6 +940,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			c.scheduleSilenceTimerLocked(agent.ID, actx.rootGeneration)
 			c.mu.Unlock()
 			agent.Activity.Activity = types.ActivityBusy
+			agent.Activity.HasUnseenCompletion = nil
 			agent.Activity.LastError = nil
 			if frame.Data.Content != nil {
 				agent.Activity.LastThinkingExcerpt = frame.Data.Content
@@ -955,6 +980,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				c.mu.Unlock()
 				if agent.Activity.Activity != types.ActivityWaitingQuestion {
 					agent.Activity.Activity = types.ActivityBusy
+					agent.Activity.HasUnseenCompletion = nil
 				}
 				pendingJob = c.updateSummarization(agent, true)
 			} else if agent.Activity.Activity == types.ActivityWaitingQuestion {
@@ -983,6 +1009,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 
 				if isWithinTurnFloor {
 					agent.Activity.Activity = types.ActivityBusy
+					agent.Activity.HasUnseenCompletion = nil
 					agent.Activity.Action = "Thinking"
 					p := types.PhasePlanning
 					agent.Activity.Phase = &p
@@ -1017,6 +1044,10 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 						c.mu.Lock()
 						c.cancelIdleTimerLocked(agent.ID)
 						c.mu.Unlock()
+						if agent.Activity.Activity == types.ActivityBusy {
+							agent.Activity.HasUnseenCompletion = boolPtr(true)
+							agent.Activity.CompletedAt = int64Ptr(now)
+						}
 						agent.Activity.Activity = types.ActivityIdle
 						pendingJob = c.updateSummarization(agent, true)
 					} else {
@@ -1181,12 +1212,17 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		actx.rootAction = agent.Activity.Action
 		actx.rootQuestion = agent.Activity.Question
 		actx.rootLastError = agent.Activity.LastError
+		actx.hasUnseenCompletion = agent.Activity.HasUnseenCompletion
+		actx.completedAt = agent.Activity.CompletedAt
 	}
 	if agent.Activity.Lifecycle != types.LifecycleExited {
 		c.pruneExpiredSubagentsLocked(agent.ID, actx, now)
 		c.rollupActivityLocked(agent, actx)
+		actx.hasUnseenCompletion = agent.Activity.HasUnseenCompletion
+		actx.completedAt = agent.Activity.CompletedAt
 	} else {
 		agent.Activity.ActiveSubagents = nil
+		actx.hasUnseenCompletion = nil
 	}
 	c.mu.Unlock()
 
@@ -1532,11 +1568,16 @@ func (c *Classifier) handleIdleTransition(agentID string, scheduledGen uint64) {
 		return
 	}
 
+	now := time.Now().UnixMilli()
+	if agent.Activity.Activity == types.ActivityBusy {
+		agent.Activity.HasUnseenCompletion = boolPtr(true)
+		agent.Activity.CompletedAt = int64Ptr(now)
+	}
 	agent.Activity.Activity = types.ActivityIdle
 	agent.Activity.ActiveTool = nil
 	agent.Activity.ActiveTarget = nil
 	agent.Activity.Question = nil
-	agent.Activity.UpdatedAt = time.Now().UnixMilli()
+	agent.Activity.UpdatedAt = now
 
 	// Compute fallback summary purely without mutating agentContext or cancelling trailing timers
 	input, currentToolKey := c.prepareSummaryInput(agent)
@@ -1568,7 +1609,11 @@ func (c *Classifier) handleIdleTransition(agentID string, scheduledGen uint64) {
 	actx.rootActivity = types.ActivityIdle
 	actx.rootAction = agent.Activity.Action
 	actx.rootQuestion = nil
+	actx.hasUnseenCompletion = agent.Activity.HasUnseenCompletion
+	actx.completedAt = agent.Activity.CompletedAt
 	c.rollupActivityLocked(agent, actx)
+	actx.hasUnseenCompletion = agent.Activity.HasUnseenCompletion
+	actx.completedAt = agent.Activity.CompletedAt
 	c.mu.Unlock()
 
 	if err := c.store.SaveAgentState(*agent); err != nil {
@@ -1614,11 +1659,16 @@ func (c *Classifier) handleSilenceTransition(agentID string, scheduledGen uint64
 		return
 	}
 
+	now := time.Now().UnixMilli()
+	if agent.Activity.Activity == types.ActivityBusy {
+		agent.Activity.HasUnseenCompletion = boolPtr(true)
+		agent.Activity.CompletedAt = int64Ptr(now)
+	}
 	agent.Activity.Activity = types.ActivityIdle
 	agent.Activity.ActiveTool = nil
 	agent.Activity.ActiveTarget = nil
 	agent.Activity.Question = nil
-	agent.Activity.UpdatedAt = time.Now().UnixMilli()
+	agent.Activity.UpdatedAt = now
 
 	input, currentToolKey := c.prepareSummaryInput(agent)
 
@@ -1644,7 +1694,11 @@ func (c *Classifier) handleSilenceTransition(agentID string, scheduledGen uint64
 	actx.rootActivity = types.ActivityIdle
 	actx.rootAction = agent.Activity.Action
 	actx.rootQuestion = nil
+	actx.hasUnseenCompletion = agent.Activity.HasUnseenCompletion
+	actx.completedAt = agent.Activity.CompletedAt
 	c.rollupActivityLocked(agent, actx)
+	actx.hasUnseenCompletion = agent.Activity.HasUnseenCompletion
+	actx.completedAt = agent.Activity.CompletedAt
 	c.mu.Unlock()
 
 	if err := c.store.SaveAgentState(*agent); err != nil {
@@ -1743,9 +1797,11 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 	if actx.rootActivity == types.ActivityError {
 		agent.Activity.Activity = types.ActivityError
 		agent.Activity.LastError = actx.rootLastError
+		agent.Activity.HasUnseenCompletion = nil
 		return
 	} else if subError != nil {
 		agent.Activity.Activity = types.ActivityError
+		agent.Activity.HasUnseenCompletion = nil
 		if subError.LastError != nil {
 			errStr := fmt.Sprintf("[Subagent %s] %s", subError.ID, *subError.LastError)
 			agent.Activity.LastError = &errStr
@@ -1759,9 +1815,11 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 	if actx.rootActivity == types.ActivityWaitingQuestion {
 		agent.Activity.Activity = types.ActivityWaitingQuestion
 		agent.Activity.Question = actx.rootQuestion
+		agent.Activity.HasUnseenCompletion = nil
 		return
 	} else if subQuestion != nil {
 		agent.Activity.Activity = types.ActivityWaitingQuestion
+		agent.Activity.HasUnseenCompletion = nil
 		if sub, ok := actx.subagents[subQuestion.ID]; ok && sub.question != nil {
 			qStr := fmt.Sprintf("[Subagent %s] %s", subQuestion.ID, *sub.question)
 			agent.Activity.Question = &qStr
@@ -1775,8 +1833,10 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 	if actx.rootActivity == types.ActivityBusy {
 		agent.Activity.Activity = types.ActivityBusy
 		agent.Activity.Action = actx.rootAction
+		agent.Activity.HasUnseenCompletion = nil
 	} else if subBusy != nil {
 		agent.Activity.Activity = types.ActivityBusy
+		agent.Activity.HasUnseenCompletion = nil
 		if subBusy.ActiveTool != nil && *subBusy.ActiveTool != "" {
 			agent.Activity.Action = fmt.Sprintf("Running subagent %s: %s", subBusy.ID, *subBusy.ActiveTool)
 		} else if subBusy.Action != "" {
@@ -1786,6 +1846,11 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 		}
 	} else {
 		// Root is idle and all subagents are idle
+		if agent.Activity.Activity == types.ActivityBusy {
+			now := time.Now().UnixMilli()
+			agent.Activity.HasUnseenCompletion = boolPtr(true)
+			agent.Activity.CompletedAt = int64Ptr(now)
+		}
 		agent.Activity.Activity = types.ActivityIdle
 		if actx.rootAction != "" && actx.rootAction != "Thinking" {
 			agent.Activity.Action = actx.rootAction

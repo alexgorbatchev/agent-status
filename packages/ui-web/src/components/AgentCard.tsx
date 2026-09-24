@@ -57,6 +57,8 @@ export function AgentCard({
   agent,
   projectName,
   onOpenDrawer,
+  onSelect,
+  onAcknowledgeCompletion,
   onToggleHide,
   defaultShowSubagents = false,
   hideWorktreeBadge = false,
@@ -65,6 +67,27 @@ export function AgentCard({
   const [focusError, setFocusError] = useState<string | null>(null);
   const [showSubagents, setShowSubagents] = useState<boolean>(defaultShowSubagents);
   const { activity, environment, workspace, harness } = agent;
+
+  const hasUnseenCompletionProp = Boolean(activity.hasUnseenCompletion ?? activity.has_unseen_completion);
+  const currentCompletedAt = activity.completedAt ?? activity.completed_at;
+  const [acknowledged, setAcknowledged] = useState<boolean>(false);
+  const [prevHasUnseen, setPrevHasUnseen] = useState<boolean>(hasUnseenCompletionProp);
+  const [prevCompletedAt, setPrevCompletedAt] = useState<number | null | undefined>(currentCompletedAt);
+
+  if (hasUnseenCompletionProp !== prevHasUnseen || currentCompletedAt !== prevCompletedAt) {
+    setPrevHasUnseen(hasUnseenCompletionProp);
+    setPrevCompletedAt(currentCompletedAt);
+    setAcknowledged(false);
+  }
+
+  const effectiveHasUnseenCompletion = hasUnseenCompletionProp && !acknowledged;
+
+  const handleAcknowledgeCompletion = () => {
+    if (effectiveHasUnseenCompletion) {
+      setAcknowledged(true);
+      onAcknowledgeCompletion?.(agent);
+    }
+  };
 
   const formattedCost = activity.cost ? `$${activity.cost.total.toFixed(4)}` : "—";
   const rawTitle = activity.title || "Untitled Agent Session";
@@ -93,7 +116,7 @@ export function AgentCard({
   const silenceDuration = `${silenceMinutes}m`;
 
   const freshness: IdleFreshness =
-    activity.lifecycle === "RUNNING" && activity.activity === "IDLE"
+    activity.lifecycle === "RUNNING" && activity.activity === "IDLE" && !effectiveHasUnseenCompletion
       ? getIdleFreshness(activity.updatedAt, now)
       : "fresh";
 
@@ -103,15 +126,34 @@ export function AgentCard({
     }
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
+      handleAcknowledgeCompletion();
+      onSelect?.(agent);
       onOpenDrawer?.(agent);
     }
+  };
+
+  const handleClick = () => {
+    handleAcknowledgeCompletion();
+    onSelect?.(agent);
+    onOpenDrawer?.(agent);
+  };
+
+  const handleFocus = () => {
+    handleAcknowledgeCompletion();
   };
 
   const isError = activity.activity === "ERROR";
   const isWaitingQuestion = activity.activity === "WAITING_QUESTION";
   const isAttentionState = isError || isWaitingQuestion;
   const brandState = isAttentionState ? "muted" : isFinished ? "quiescent" : "active";
-  const semanticStatus = isError ? "error" : isWaitingQuestion || isStalled || sessionStalled ? "warning" : undefined;
+  const isCompleted = effectiveHasUnseenCompletion && activity.lifecycle === "RUNNING" && activity.activity === "IDLE";
+  const semanticStatus = isError
+    ? "error"
+    : isWaitingQuestion || isStalled || sessionStalled
+      ? "warning"
+      : isCompleted
+        ? "success"
+        : undefined;
 
   return (
     <div
@@ -121,7 +163,8 @@ export function AgentCard({
       data-semantic-status={semanticStatus}
       data-freshness={freshness}
       aria-label={`View details for ${title}`}
-      onClick={() => onOpenDrawer?.(agent)}
+      onClick={handleClick}
+      onFocus={handleFocus}
       onKeyDown={handleKeyDown}
       className={clsx(
         "group relative flex flex-col justify-between p-4 rounded-xl bg-slate-900/80 border transition-all cursor-pointer shadow-lg hover:shadow-slate-950/50",
@@ -131,7 +174,9 @@ export function AgentCard({
             ? "border-amber-600/80 shadow-amber-950/40"
             : isStalled || sessionStalled
               ? "border-amber-500/80 shadow-amber-950/40"
-              : "border-slate-800 hover:border-slate-700",
+              : isCompleted
+                ? "border-emerald-600/80 shadow-emerald-950/40"
+                : "border-slate-800 hover:border-slate-700",
         agent.isHidden && "border-dashed border-slate-700/60 opacity-60 hover:opacity-100",
         !agent.isHidden && isFinished && "opacity-60 hover:opacity-100",
         freshness === "stale" && "opacity-60 bg-slate-950/40 border-slate-800/50 hover:opacity-100",
@@ -248,6 +293,7 @@ export function AgentCard({
               isSessionStalled={sessionStalled}
               silenceDuration={sessionStalled ? silenceDuration : undefined}
               harness={harness}
+              hasUnseenCompletion={effectiveHasUnseenCompletion}
             />
           </div>
         </div>

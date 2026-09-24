@@ -649,4 +649,61 @@ func TestMessagesAndEventsJSON(t *testing.T) {
 			t.Errorf("decoded ContextFullness = %v, want %f", decodedFrame.ContextFullness, fullness)
 		}
 	})
+
+	t.Run("HasUnseenCompletion and CompletedAt serialization and unmarshaling", func(t *testing.T) {
+		tTrue := true
+		compAt := int64(1700000050000)
+		act := IAgentActivity{
+			Lifecycle:           LifecycleRunning,
+			Activity:            ActivityIdle,
+			HasUnseenCompletion: &tTrue,
+			CompletedAt:         &compAt,
+		}
+
+		data, err := json.Marshal(act)
+		if err != nil {
+			t.Fatalf("json.Marshal failed: %v", err)
+		}
+		var decoded IAgentActivity
+		if err := json.Unmarshal(data, &decoded); err != nil {
+			t.Fatalf("json.Unmarshal failed: %v", err)
+		}
+		if decoded.HasUnseenCompletion == nil || !*decoded.HasUnseenCompletion {
+			t.Errorf("expected HasUnseenCompletion true, got %v", decoded.HasUnseenCompletion)
+		}
+		if decoded.CompletedAt == nil || *decoded.CompletedAt != compAt {
+			t.Errorf("expected CompletedAt %d, got %v", compAt, decoded.CompletedAt)
+		}
+
+		// Also verify snake_case deserialization
+		snakeJSON := `{"lifecycle":"RUNNING","activity":"IDLE","has_unseen_completion":true,"completed_at":1700000050000}`
+		var decodedSnake IAgentActivity
+		if err := json.Unmarshal([]byte(snakeJSON), &decodedSnake); err != nil {
+			t.Fatalf("json.Unmarshal snake_case failed: %v", err)
+		}
+		if decodedSnake.HasUnseenCompletion == nil || !*decodedSnake.HasUnseenCompletion {
+			t.Errorf("expected HasUnseenCompletion true from snake_case, got %v", decodedSnake.HasUnseenCompletion)
+		}
+		if decodedSnake.CompletedAt == nil || *decodedSnake.CompletedAt != compAt {
+			t.Errorf("expected CompletedAt %d from snake_case, got %v", compAt, decodedSnake.CompletedAt)
+		}
+
+		// When both camelCase and snake_case are provided, camelCase takes precedence
+		bothJSON := `{"lifecycle":"RUNNING","activity":"IDLE","hasUnseenCompletion":false,"has_unseen_completion":true,"completedAt":111,"completed_at":222}`
+		var decodedBoth IAgentActivity
+		if err := json.Unmarshal([]byte(bothJSON), &decodedBoth); err != nil {
+			t.Fatalf("json.Unmarshal both failed: %v", err)
+		}
+		if decodedBoth.HasUnseenCompletion == nil || *decodedBoth.HasUnseenCompletion != false {
+			t.Errorf("expected camelCase false to win, got %v", decodedBoth.HasUnseenCompletion)
+		}
+		if decodedBoth.CompletedAt == nil || *decodedBoth.CompletedAt != 111 {
+			t.Errorf("expected camelCase 111 to win, got %v", decodedBoth.CompletedAt)
+		}
+
+		var invalid IAgentActivity
+		if err := json.Unmarshal([]byte(`{"lifecycle": 123}`), &invalid); err == nil {
+			t.Errorf("expected error unmarshaling invalid json")
+		}
+	})
 }

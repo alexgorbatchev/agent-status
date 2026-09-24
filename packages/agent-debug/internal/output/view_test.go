@@ -967,6 +967,117 @@ func TestRenderFleetView_AgentMode(t *testing.T) {
 	}
 }
 
+func TestRenderAgentView_HumanMode_Completed(t *testing.T) {
+	tVal := true
+	agent := types.IAgentState{
+		ID:        "env-1:claude-code:ses-completed",
+		SessionID: "ses-completed",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:    "env-1",
+			Label: "local-dev",
+		},
+		Project: types.IProjectInfo{
+			ID:   "proj-1",
+			Name: "agent-status",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "main",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle:           types.LifecycleRunning,
+			Activity:            types.ActivityIdle,
+			Title:               "Completed work turn",
+			Action:              "Finished processing",
+			HasUnseenCompletion: &tVal,
+			UpdatedAt:           1000000,
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderAgentViewAt(&buf, agent, false, 1000000+5000)
+	out := buf.String()
+
+	if !strings.Contains(stripANSI(out), "(Completed)") {
+		t.Errorf("expected header to contain (Completed) for unacknowledged completion, got:\n%s", out)
+	}
+}
+
+func TestRenderAgentView_AgentMode_Completed(t *testing.T) {
+	tVal := true
+	agent := types.IAgentState{
+		ID:        "env-1:claude-code:ses-completed",
+		SessionID: "ses-completed",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:    "env-1",
+			Label: "local-dev",
+		},
+		Project: types.IProjectInfo{
+			ID:   "proj-1",
+			Name: "agent-status",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "main",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle:           types.LifecycleRunning,
+			Activity:            types.ActivityIdle,
+			Title:               "Completed work turn",
+			Action:              "Finished processing",
+			HasUnseenCompletion: &tVal,
+			UpdatedAt:           1000000,
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderAgentView(&buf, agent, true)
+	line := strings.TrimSpace(buf.String())
+
+	if !strings.Contains(line, "activity:COMPLETED") {
+		t.Errorf("expected activity:COMPLETED in agent mode, got:\n%s", line)
+	}
+	if !strings.Contains(line, "has_unseen_completion:true") {
+		t.Errorf("expected has_unseen_completion:true in agent mode, got:\n%s", line)
+	}
+}
+
+func TestRenderFleetView_HumanMode_Completed(t *testing.T) {
+	tVal := true
+	agent := types.IAgentState{
+		ID:        "env-1:claude-code:ses-completed",
+		SessionID: "ses-completed",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:    "env-1",
+			Label: "local-dev",
+		},
+		Project: types.IProjectInfo{
+			ID:   "proj-1",
+			Name: "agent-status",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "main",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle:           types.LifecycleRunning,
+			Activity:            types.ActivityIdle,
+			Title:               "Completed work turn",
+			Action:              "Finished processing",
+			HasUnseenCompletion: &tVal,
+			UpdatedAt:           1000000,
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderFleetView(&buf, []types.IAgentState{agent}, false)
+	out := buf.String()
+
+	if !strings.Contains(out, "(completed)") {
+		t.Errorf("expected fleet view tree to display (completed) for unacknowledged completion, got:\n%s", out)
+	}
+}
+
 
 
 
