@@ -27,6 +27,24 @@ describe("AttentionBanner Component", () => {
     expect(element).toBeNull();
   });
 
+  it("returns null when running agent is RATE_LIMITED and not stalled", () => {
+    const now = 1789850000000;
+    const rateLimitedAgent = factory_agentState({
+      activity: {
+        lifecycle: "RUNNING",
+        activity: "RATE_LIMITED",
+        lastError: "rate_limit_exceeded: backoff in progress",
+        updatedAt: now - 15000,
+      } as unknown as IAgentState["activity"],
+    });
+    const element = AttentionBanner({
+      agents: [rateLimitedAgent],
+      onSelectAgent: () => {},
+      now,
+    });
+    expect(element).toBeNull();
+  });
+
   it("returns null when agents have exited even if their activity was ERROR or WAITING_QUESTION", () => {
     const exitedError = factory_agentState({
       activity: {

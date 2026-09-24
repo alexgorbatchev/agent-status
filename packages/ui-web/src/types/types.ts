@@ -1,6 +1,6 @@
 export type LifecycleState = "RUNNING" | "EXITED";
 
-export type ActivityState = "BUSY" | "WAITING_QUESTION" | "ERROR" | "IDLE";
+export type ActivityState = "BUSY" | "WAITING_QUESTION" | "ERROR" | "RATE_LIMITED" | "IDLE";
 
 export type HarnessType = "claude-code" | "pi" | "codex" | "opencode";
 
@@ -81,6 +81,10 @@ export interface IAgentActivity {
   question: string | null; // Active prompt when WAITING_QUESTION
   lastThinkingExcerpt: string | null;
   lastError: string | null;
+  rateLimitResetAt?: number | null;
+  retryAfterSeconds?: number | null;
+  rate_limit_reset_at?: number | null;
+  retry_after_seconds?: number | null;
   model?: string | null;
   contextWindow?: number | null;
   contextFullness?: number | null;
@@ -148,6 +152,9 @@ export interface ITelemetryFrameData {
   fileModification?: IFileModification | null;
   toolOutput: string | null;
   isError: boolean | null;
+  isRateLimit?: boolean | null;
+  rateLimitResetAt?: number | null;
+  retryAfterSeconds?: number | null;
   exitCode: number | null;
   durationMs?: number | null;
   question: string | null;

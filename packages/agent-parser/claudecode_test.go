@@ -414,6 +414,9 @@ func TestClaudeCodeParser_ParseLine_Cases(t *testing.T) {
 		if evs[0].Data.IsError == nil || !*evs[0].Data.IsError {
 			t.Errorf("expected isError = true")
 		}
+		if evs[0].Data.IsRateLimit == nil || !*evs[0].Data.IsRateLimit {
+			t.Errorf("expected isRateLimit = true for rate_limit_exceeded")
+		}
 	})
 
 	t.Run("assistant apiErrorStatus and isApiErrorMessage", func(t *testing.T) {

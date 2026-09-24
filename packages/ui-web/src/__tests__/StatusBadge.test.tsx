@@ -31,6 +31,13 @@ describe("StatusBadge Component", () => {
     );
   });
 
+  it("renders RUNNING + RATE_LIMITED status badge with pulsing amber indicator", () => {
+    const html = renderToStaticMarkup(<StatusBadge lifecycle="RUNNING" activity="RATE_LIMITED" />);
+    expect(html).toContain('data-semantic-status="warning"');
+    expect(html).toContain("Rate Limited");
+    expect(html).toContain("bg-amber-400");
+  });
+
   it("renders EXITED + IDLE status badge with emerald indicator", () => {
     const html = renderToStaticMarkup(<StatusBadge lifecycle="EXITED" activity="IDLE" />);
     expect(html).toBe(

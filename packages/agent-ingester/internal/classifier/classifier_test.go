@@ -7560,6 +7560,195 @@ func TestClassifier_HasUnseenCompletion_TurnCompletionAndTransitions(t *testing.
 	}
 }
 
+func TestClassifier_RateLimitedActivity(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New failed: %v", err)
+	}
+	newTestClassifier := func() *Classifier {
+		st, err := store.Open(":memory:")
+		if err != nil {
+			t.Fatalf("store.Open failed: %v", err)
+		}
+		return New(st, nil, sum)
+	}
+	makeIntPtr := func(v int) *int { return &v }
+
+	baseFrame := types.ITelemetryFrame{
+		Version:   "1.0",
+		EnvID:     "env-rl",
+		AgentID:   "agent-rl",
+		SessionID: "session-rl",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-rl",
+			Label:    "dev",
+			Platform: "linux",
+		},
+		Project: types.IProjectInfo{
+			ID:   "proj-rl",
+			Name: "test-repo",
+		},
+		Workspace: types.IWorkspaceInfo{
+			CWD: "/tmp",
+		},
+	}
+
+	testCases := []struct {
+		name         string
+		content      string
+		exitCode     *int
+		isRateLimit  *bool
+		resetAt      *int64
+		retrySeconds *int64
+	}{
+		{
+			name:    "HTTP 429 in content",
+			content: "HTTP 429: Too Many Requests",
+		},
+		{
+			name:    "rate_limit string in error",
+			content: "rate_limit_exceeded: token bucket empty",
+		},
+		{
+			name:    "rate limit with space",
+			content: "Connection rate limit exceeded",
+		},
+		{
+			name:    "overloaded_error string",
+			content: "overloaded_error: Anthropic API is currently overloaded",
+		},
+		{
+			name:    "quota string",
+			content: "insufficient_quota: model quota exceeded for current tier",
+		},
+		{
+			name:        "isRateLimit boolean flag true",
+			content:     "transient api rejection",
+			isRateLimit: boolPtr(true),
+		},
+		{
+			name:     "exitCode 429",
+			content:  "API error",
+			exitCode: makeIntPtr(429),
+		},
+		{
+			name:         "with rateLimitResetAt and retryAfterSeconds metadata",
+			content:      "rate limit: backoff required",
+			resetAt:      int64Ptr(1789900060000),
+			retrySeconds: int64Ptr(45),
+		},
+	}
+
+	for i, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTestClassifier()
+			f := baseFrame
+			f.AgentID = fmt.Sprintf("agent-rl-%d", i)
+			f.SessionID = fmt.Sprintf("session-rl-%d", i)
+			f.Seq = 1
+			f.Timestamp = 1000
+			f.EventType = "error"
+			f.Data = types.TelemetryFrameData{
+				Content:           &tc.content,
+				ExitCode:          tc.exitCode,
+				IsRateLimit:       tc.isRateLimit,
+				RateLimitResetAt:  tc.resetAt,
+				RetryAfterSeconds: tc.retrySeconds,
+			}
+
+			agent, err := c.ProcessFrame(f)
+			if err != nil {
+				t.Fatalf("ProcessFrame failed: %v", err)
+			}
+			if agent.Activity.Activity != types.ActivityRateLimited {
+				t.Errorf("expected activity %s, got %s", types.ActivityRateLimited, agent.Activity.Activity)
+			}
+			if tc.resetAt != nil {
+				if agent.Activity.RateLimitResetAt == nil || *agent.Activity.RateLimitResetAt != *tc.resetAt {
+					t.Errorf("expected RateLimitResetAt %v, got %v", tc.resetAt, agent.Activity.RateLimitResetAt)
+				}
+			}
+			if tc.retrySeconds != nil {
+				if agent.Activity.RetryAfterSeconds == nil || *agent.Activity.RetryAfterSeconds != *tc.retrySeconds {
+					t.Errorf("expected RetryAfterSeconds %v, got %v", tc.retrySeconds, agent.Activity.RetryAfterSeconds)
+				}
+			}
+
+			// Verify turn_end preserves RATE_LIMITED state instead of resetting to IDLE
+			fEnd := f
+			fEnd.Seq = 2
+			fEnd.Timestamp = 1010
+			fEnd.EventType = "turn_end"
+			stopReason := "end_turn"
+			fEnd.Data = types.TelemetryFrameData{StopReason: &stopReason}
+			agentEnd, err := c.ProcessFrame(fEnd)
+			if err != nil {
+				t.Fatalf("turn_end failed: %v", err)
+			}
+			if agentEnd.Activity.Activity != types.ActivityRateLimited {
+				t.Errorf("expected activity %s preserved across turn_end, got %s", types.ActivityRateLimited, agentEnd.Activity.Activity)
+			}
+		})
+	}
+
+	t.Run("non-rate-limit fatal error remains ActivityError", func(t *testing.T) {
+		c := newTestClassifier()
+		f := baseFrame
+		f.AgentID = "agent-fatal"
+		f.SessionID = "session-fatal"
+		f.Seq = 1
+		f.Timestamp = 1000
+		f.EventType = "error"
+		errStr := "panic: nil pointer dereference"
+		f.Data = types.TelemetryFrameData{Content: &errStr}
+
+		agent, err := c.ProcessFrame(f)
+		if err != nil {
+			t.Fatalf("ProcessFrame failed: %v", err)
+		}
+		if agent.Activity.Activity != types.ActivityError {
+			t.Errorf("expected activity %s for fatal error, got %s", types.ActivityError, agent.Activity.Activity)
+		}
+	})
+
+	t.Run("subagent rate limit transitions subagent to RATE_LIMITED and reconciles root", func(t *testing.T) {
+		c := newTestClassifier()
+		fRoot := baseFrame
+		fRoot.AgentID = "agent-root-rl"
+		fRoot.SessionID = "session-root-rl"
+		fRoot.Seq = 1
+		fRoot.Timestamp = 1000
+		fRoot.EventType = "user_prompt"
+		prompt := "do task"
+		fRoot.Data = types.TelemetryFrameData{Content: &prompt}
+		_, err := c.ProcessFrame(fRoot)
+		if err != nil {
+			t.Fatalf("user_prompt failed: %v", err)
+		}
+
+		subID := "sub-1"
+		fSub := baseFrame
+		fSub.AgentID = "agent-root-rl"
+		fSub.SessionID = "session-root-rl"
+		fSub.SubagentID = &subID
+		fSub.Seq = 2
+		fSub.Timestamp = 1050
+		fSub.EventType = "error"
+		rlMsg := "rate_limit_exceeded on subagent provider"
+		fSub.Data = types.TelemetryFrameData{Content: &rlMsg}
+
+		agent, err := c.ProcessFrame(fSub)
+		if err != nil {
+			t.Fatalf("subagent error frame failed: %v", err)
+		}
+		if agent.Activity.Activity != types.ActivityRateLimited {
+			t.Errorf("expected root activity %s from subagent rate limit, got %s", types.ActivityRateLimited, agent.Activity.Activity)
+		}
+	})
+}
+
+
 
 
 

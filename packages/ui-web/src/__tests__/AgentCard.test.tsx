@@ -62,6 +62,23 @@ describe("AgentCard Component", () => {
     expect(html).toContain("1 subagent");
   });
 
+  it("renders rate limited detail block without red error callout when activity is RATE_LIMITED", () => {
+    const rateLimitedAgent = factory_agentState({
+      activity: {
+        ...fixture_agentStateRunning.activity,
+        lifecycle: "RUNNING",
+        activity: "RATE_LIMITED",
+        lastError: "rate_limit_exceeded: 429 backoff",
+      },
+    });
+    const html = renderToStaticMarkup(<AgentCard agent={rateLimitedAgent} />);
+
+    expect(html).not.toContain('data-testid="AgentCard--error"');
+    expect(html).toContain('data-testid="AgentCard--rate-limited"');
+    expect(html).toContain("rate_limit_exceeded: 429 backoff");
+    expect(html).toContain('data-callout-type="warning"');
+  });
+
   it("renders fallback values for minimal agent with omitted fields", () => {
     const html = renderToStaticMarkup(<AgentCard agent={fixture_minimalAgentState} />);
 

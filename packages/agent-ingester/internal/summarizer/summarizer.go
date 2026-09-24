@@ -997,6 +997,11 @@ func FallbackSummary(input SummaryInput) SummaryResult {
 				action = "Encountered error"
 			}
 
+		case types.ActivityRateLimited:
+			p := types.PhasePlanning
+			phase = &p
+			action = "Rate limit reached — backoff/retry in progress"
+
 		case types.ActivityIdle:
 			if input.LastAssistantResponse != "" && len(input.RecentTools) == 0 {
 				action = "Responded to user"

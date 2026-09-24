@@ -650,6 +650,57 @@ func TestRenderAgentView_HumanMode_VendorBadge_WorkingState(t *testing.T) {
 	}
 }
 
+func TestFormatHarnessBadge_RateLimited(t *testing.T) {
+	badge := FormatHarnessBadge(types.HarnessClaudeCode, types.ActivityRateLimited)
+	expected := AnsiYellow + "(Claude Code)" + AnsiReset
+	if badge != expected {
+		t.Errorf("FormatHarnessBadge(ClaudeCode, ActivityRateLimited) = %q, want %q", badge, expected)
+	}
+}
+
+func TestRenderAgentView_RateLimited(t *testing.T) {
+	rlMsg := "HTTP 429: Rate limit exceeded"
+	agent := types.IAgentState{
+		ID:        "env-1:claude-code:ses-rl",
+		SessionID: "ses-rl",
+		Harness:   types.HarnessClaudeCode,
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityRateLimited,
+			Title:     "Rate limited session",
+			Action:    "Rate limit reached — backoff/retry in progress",
+			LastError: &rlMsg,
+			UpdatedAt: 1000,
+		},
+	}
+
+	// Human mode
+	var bufHuman bytes.Buffer
+	RenderAgentViewAt(&bufHuman, agent, false, 1000)
+	humanOut := bufHuman.String()
+
+	expectedCallout := AnsiYellow + GlyphWarn + " " + rlMsg + AnsiReset
+	if !strings.Contains(humanOut, expectedCallout) {
+		t.Errorf("expected human output to contain rate limit callout %q, got:\n%s", expectedCallout, humanOut)
+	}
+	expectedStatus := AnsiYellow + "Rate Limited" + AnsiReset
+	if !strings.Contains(humanOut, expectedStatus) {
+		t.Errorf("expected human output to contain status label %q, got:\n%s", expectedStatus, humanOut)
+	}
+
+	// Agent mode
+	var bufAgent bytes.Buffer
+	RenderAgentViewAt(&bufAgent, agent, true, 1000)
+	agentOut := bufAgent.String()
+
+	if !strings.Contains(agentOut, "activity:RATE_LIMITED") {
+		t.Errorf("expected agent mode output to contain activity:RATE_LIMITED, got:\n%s", agentOut)
+	}
+	if !strings.Contains(agentOut, `rate_limit:"HTTP 429: Rate limit exceeded"`) {
+		t.Errorf("expected agent mode output to contain rate_limit payload, got:\n%s", agentOut)
+	}
+}
+
 func TestFormatHarnessBadge_ProhibitsRedAndGreen(t *testing.T) {
 	// Custom or unknown harness should never be assigned Red or Green
 	badge := FormatHarnessBadge(types.HarnessType("custom-harness"), types.ActivityBusy)

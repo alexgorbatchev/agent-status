@@ -443,6 +443,9 @@ func TestParseCodexLine(t *testing.T) {
 		if evs[0].EventType != "error" || *evs[0].Data.Content != "Connection rate limit exceeded" || !*evs[0].Data.IsError {
 			t.Errorf("unexpected error event: %+v", evs[0])
 		}
+		if evs[0].Data.IsRateLimit == nil || !*evs[0].Data.IsRateLimit {
+			t.Errorf("expected isRateLimit = true for 429 rate limit error")
+		}
 	})
 
 	t.Run("response_item function_call exec_command with JSON-encoded arguments", func(t *testing.T) {

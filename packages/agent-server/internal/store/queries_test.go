@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS agents (
     worktree_rel_path     TEXT,
     cwd                   TEXT NOT NULL,
     current_run_id        TEXT REFERENCES runs(id) ON DELETE SET NULL,
-    activity              TEXT NOT NULL CHECK (activity IN ('BUSY','WAITING_QUESTION','ERROR','IDLE')),
+    activity              TEXT NOT NULL CHECK (activity IN ('BUSY','WAITING_QUESTION','ERROR','RATE_LIMITED','IDLE')),
     title                 TEXT NOT NULL DEFAULT '',
     action                TEXT NOT NULL DEFAULT '',
     action_stale          INTEGER NOT NULL DEFAULT 0,
@@ -832,5 +832,109 @@ func TestStore_GetAgents_ActiveSubagents_RoundTrip(t *testing.T) {
 	}
 	if agent.Activity.ActiveSubagents[0].ID != "sub-test-1" {
 		t.Errorf("expected subagent ID 'sub-test-1', got %q", agent.Activity.ActiveSubagents[0].ID)
+	}
+}
+
+func TestStore_RateLimitedFilterAndStatus(t *testing.T) {
+	st := setupTestDB(t)
+	now := time.Now().UnixMilli()
+
+	// Seed environment and run
+	_, err := st.db.Exec(`
+		INSERT INTO environments (id, label, hostname, platform, user, last_heartbeat_at)
+		VALUES ('env-rl', 'dev', 'host', 'linux', 'user', ?);
+	`, now)
+	if err != nil {
+		t.Fatalf("seeding env: %v", err)
+	}
+
+	_, err = st.db.Exec(`
+		INSERT INTO runs (id, agent_id, pid, harness_version, started_at)
+		VALUES ('run-rl-1', 'env-rl:claude-code:sess-fresh', 1234, '1.0.0', ?),
+		       ('run-rl-2', 'env-rl:claude-code:sess-stalled', 5678, '1.0.0', ?);
+	`, now, now-200000)
+	if err != nil {
+		t.Fatalf("seeding runs: %v", err)
+	}
+
+	// Insert fresh rate-limited agent (updated 10s ago)
+	_, err = st.db.Exec(`
+		INSERT INTO agents (
+			id, session_id, environment_id, harness,
+			project_id, project_name, canonical_root,
+			branch, is_detached, is_worktree, worktree_rel_path, cwd,
+			current_run_id, activity, title, action, action_stale,
+			phase, last_error,
+			tokens_input, tokens_output, tokens_cache_read, tokens_cache_write,
+			tokens_reasoning, tokens_total, cost_usd, subagent_count,
+			first_started_at, updated_at
+		) VALUES (
+			'env-rl:claude-code:sess-fresh', 'sess-fresh', 'env-rl', 'claude-code',
+			'github.com/org/repo-rl', 'repo-rl', '/path/to/repo-rl',
+			'main', 0, 0, NULL, '/path/to/repo-rl',
+			'run-rl-1', 'RATE_LIMITED', 'Rate limited fresh', 'Backing off', 0,
+			'planning', 'rate_limit_exceeded',
+			100, 50, 0, 0,
+			0, 150, 0.25, 0,
+			?, ?
+		);
+	`, now-10000, now-10000)
+	if err != nil {
+		t.Fatalf("seeding fresh rate-limited agent: %v", err)
+	}
+
+	// Insert stalled rate-limited agent (updated 150s ago)
+	_, err = st.db.Exec(`
+		INSERT INTO agents (
+			id, session_id, environment_id, harness,
+			project_id, project_name, canonical_root,
+			branch, is_detached, is_worktree, worktree_rel_path, cwd,
+			current_run_id, activity, title, action, action_stale,
+			phase, last_error,
+			tokens_input, tokens_output, tokens_cache_read, tokens_cache_write,
+			tokens_reasoning, tokens_total, cost_usd, subagent_count,
+			first_started_at, updated_at
+		) VALUES (
+			'env-rl:claude-code:sess-stalled', 'sess-stalled', 'env-rl', 'claude-code',
+			'github.com/org/repo-rl', 'repo-rl', '/path/to/repo-rl',
+			'main', 0, 0, NULL, '/path/to/repo-rl',
+			'run-rl-2', 'RATE_LIMITED', 'Rate limited stalled', 'Backing off', 0,
+			'planning', 'rate_limit_exceeded',
+			100, 50, 0, 0,
+			0, 150, 0.25, 0,
+			?, ?
+		);
+	`, now-200000, now-150000)
+	if err != nil {
+		t.Fatalf("seeding stalled rate-limited agent: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Test filter by ActivityRateLimited
+	agents, err := st.GetAgents(ctx, AgentFilter{Activity: types.ActivityRateLimited})
+	if err != nil {
+		t.Fatalf("GetAgents with ActivityRateLimited failed: %v", err)
+	}
+	if len(agents) != 2 {
+		t.Fatalf("expected 2 rate-limited agents, got %d", len(agents))
+	}
+	for _, a := range agents {
+		if a.Activity.Activity != types.ActivityRateLimited {
+			t.Errorf("expected activity %s, got %s", types.ActivityRateLimited, a.Activity.Activity)
+		}
+	}
+
+	// Test GetStatus: both agents are active (current_run_id IS NOT NULL),
+	// but only the stalled one (> 120s) requires attention!
+	status, err := st.GetStatus(ctx)
+	if err != nil {
+		t.Fatalf("GetStatus failed: %v", err)
+	}
+	if status.ActiveAgentCount != 2 {
+		t.Errorf("expected ActiveAgentCount = 2, got %d", status.ActiveAgentCount)
+	}
+	if status.RequiresAttentionCount != 1 {
+		t.Errorf("expected RequiresAttentionCount = 1 (only stalled), got %d", status.RequiresAttentionCount)
 	}
 }

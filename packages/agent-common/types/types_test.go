@@ -19,6 +19,7 @@ func TestEnumConstants(t *testing.T) {
 		{"ActivityBusy", string(ActivityBusy), "BUSY"},
 		{"ActivityWaitingQuestion", string(ActivityWaitingQuestion), "WAITING_QUESTION"},
 		{"ActivityError", string(ActivityError), "ERROR"},
+		{"ActivityRateLimited", string(ActivityRateLimited), "RATE_LIMITED"},
 		{"ActivityIdle", string(ActivityIdle), "IDLE"},
 
 		// HarnessType
@@ -699,6 +700,55 @@ func TestMessagesAndEventsJSON(t *testing.T) {
 		}
 		if decodedBoth.CompletedAt == nil || *decodedBoth.CompletedAt != 111 {
 			t.Errorf("expected camelCase 111 to win, got %v", decodedBoth.CompletedAt)
+		}
+
+		// Verify RateLimitResetAt and RetryAfterSeconds serialization and snake_case deserialization
+		resetAt := int64(1700000060000)
+		retrySec := int64(30)
+		actRL := IAgentActivity{
+			Lifecycle:         LifecycleRunning,
+			Activity:          ActivityRateLimited,
+			RateLimitResetAt:  &resetAt,
+			RetryAfterSeconds: &retrySec,
+		}
+		dataRL, err := json.Marshal(actRL)
+		if err != nil {
+			t.Fatalf("json.Marshal rate limit failed: %v", err)
+		}
+		var decodedRL IAgentActivity
+		if err := json.Unmarshal(dataRL, &decodedRL); err != nil {
+			t.Fatalf("json.Unmarshal rate limit failed: %v", err)
+		}
+		if decodedRL.RateLimitResetAt == nil || *decodedRL.RateLimitResetAt != resetAt {
+			t.Errorf("expected RateLimitResetAt %d, got %v", resetAt, decodedRL.RateLimitResetAt)
+		}
+		if decodedRL.RetryAfterSeconds == nil || *decodedRL.RetryAfterSeconds != retrySec {
+			t.Errorf("expected RetryAfterSeconds %d, got %v", retrySec, decodedRL.RetryAfterSeconds)
+		}
+
+		snakeRLJSON := `{"lifecycle":"RUNNING","activity":"RATE_LIMITED","rate_limit_reset_at":1700000060000,"retry_after_seconds":30}`
+		var decodedSnakeRL IAgentActivity
+		if err := json.Unmarshal([]byte(snakeRLJSON), &decodedSnakeRL); err != nil {
+			t.Fatalf("json.Unmarshal snake_case rate limit failed: %v", err)
+		}
+		if decodedSnakeRL.RateLimitResetAt == nil || *decodedSnakeRL.RateLimitResetAt != resetAt {
+			t.Errorf("expected RateLimitResetAt %d from snake_case, got %v", resetAt, decodedSnakeRL.RateLimitResetAt)
+		}
+		if decodedSnakeRL.RetryAfterSeconds == nil || *decodedSnakeRL.RetryAfterSeconds != retrySec {
+			t.Errorf("expected RetryAfterSeconds %d from snake_case, got %v", retrySec, decodedSnakeRL.RetryAfterSeconds)
+		}
+
+		// When both camelCase and snake_case are provided, camelCase takes precedence
+		bothRLJSON := `{"lifecycle":"RUNNING","activity":"RATE_LIMITED","rateLimitResetAt":100,"rate_limit_reset_at":200,"retryAfterSeconds":10,"retry_after_seconds":20}`
+		var decodedBothRL IAgentActivity
+		if err := json.Unmarshal([]byte(bothRLJSON), &decodedBothRL); err != nil {
+			t.Fatalf("json.Unmarshal both RL failed: %v", err)
+		}
+		if decodedBothRL.RateLimitResetAt == nil || *decodedBothRL.RateLimitResetAt != 100 {
+			t.Errorf("expected camelCase 100 to win, got %v", decodedBothRL.RateLimitResetAt)
+		}
+		if decodedBothRL.RetryAfterSeconds == nil || *decodedBothRL.RetryAfterSeconds != 10 {
+			t.Errorf("expected camelCase 10 to win, got %v", decodedBothRL.RetryAfterSeconds)
 		}
 
 		var invalid IAgentActivity

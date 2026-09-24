@@ -21,6 +21,11 @@ const STATUS_CONFIGS: Record<LifecycleState, Record<ActivityState, IStatusBadgeC
       badgeClass: "bg-red-900/60 text-red-200 border border-red-600 animate-pulse",
       indicatorClass: "bg-red-400",
     },
+    RATE_LIMITED: {
+      label: "Rate Limited",
+      badgeClass: "bg-amber-900/60 text-amber-200 border border-amber-600 animate-pulse",
+      indicatorClass: "bg-amber-400",
+    },
     IDLE: {
       label: "Idle",
       badgeClass: "bg-slate-800 text-slate-300 border border-slate-700",
@@ -35,6 +40,11 @@ const STATUS_CONFIGS: Record<LifecycleState, Record<ActivityState, IStatusBadgeC
     },
     WAITING_QUESTION: {
       label: "Abandoned prompt",
+      badgeClass: "bg-amber-950/40 text-amber-400 border border-amber-800/80",
+      indicatorClass: "bg-amber-500",
+    },
+    RATE_LIMITED: {
+      label: "Rate limited",
       badgeClass: "bg-amber-950/40 text-amber-400 border border-amber-800/80",
       indicatorClass: "bg-amber-500",
     },
@@ -119,7 +129,7 @@ export function StatusBadge({
   const semanticStatus =
     activity === "ERROR"
       ? "error"
-      : activity === "WAITING_QUESTION"
+      : activity === "WAITING_QUESTION" || activity === "RATE_LIMITED"
         ? "warning"
         : lifecycle === "EXITED"
           ? "success"

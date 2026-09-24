@@ -15,6 +15,7 @@ const (
 	ActivityBusy            ActivityState = "BUSY"
 	ActivityWaitingQuestion ActivityState = "WAITING_QUESTION"
 	ActivityError           ActivityState = "ERROR"
+	ActivityRateLimited     ActivityState = "RATE_LIMITED"
 	ActivityIdle            ActivityState = "IDLE"
 )
 
@@ -116,6 +117,8 @@ type IAgentActivity struct {
 	Question            *string            `json:"question"`
 	LastThinkingExcerpt *string            `json:"lastThinkingExcerpt"`
 	LastError           *string            `json:"lastError"`
+	RateLimitResetAt    *int64             `json:"rateLimitResetAt,omitempty"`
+	RetryAfterSeconds   *int64             `json:"retryAfterSeconds,omitempty"`
 	Model               *string            `json:"model,omitempty"`
 	ContextWindow       *int64             `json:"contextWindow,omitempty"`
 	ContextFullness     *float64           `json:"contextFullness,omitempty"`
@@ -136,6 +139,8 @@ func (a *IAgentActivity) UnmarshalJSON(data []byte) error {
 		*Alias
 		SnakeHasUnseenCompletion *bool  `json:"has_unseen_completion"`
 		SnakeCompletedAt         *int64 `json:"completed_at"`
+		SnakeRateLimitResetAt    *int64 `json:"rate_limit_reset_at"`
+		SnakeRetryAfterSeconds   *int64 `json:"retry_after_seconds"`
 	}{
 		Alias: (*Alias)(a),
 	}
@@ -147,6 +152,12 @@ func (a *IAgentActivity) UnmarshalJSON(data []byte) error {
 	}
 	if a.CompletedAt == nil && aux.SnakeCompletedAt != nil {
 		a.CompletedAt = aux.SnakeCompletedAt
+	}
+	if a.RateLimitResetAt == nil && aux.SnakeRateLimitResetAt != nil {
+		a.RateLimitResetAt = aux.SnakeRateLimitResetAt
+	}
+	if a.RetryAfterSeconds == nil && aux.SnakeRetryAfterSeconds != nil {
+		a.RetryAfterSeconds = aux.SnakeRetryAfterSeconds
 	}
 	return nil
 }
@@ -211,6 +222,9 @@ type TelemetryFrameData struct {
 	FileModification *FileModification      `json:"fileModification,omitempty"`
 	ToolOutput       *string                `json:"toolOutput,omitempty"`
 	IsError          *bool                  `json:"isError,omitempty"`
+	IsRateLimit      *bool                  `json:"isRateLimit,omitempty"`
+	RateLimitResetAt *int64                 `json:"rateLimitResetAt,omitempty"`
+	RetryAfterSeconds *int64                `json:"retryAfterSeconds,omitempty"`
 	ExitCode         *int                   `json:"exitCode,omitempty"`
 	Question         *string                `json:"question,omitempty"`
 	StopReason       *string                `json:"stopReason,omitempty"`

@@ -579,13 +579,34 @@ func parseCodexLineWithState(line []byte, p *CodexParser) ([]ParsedEvent, error)
 			})
 
 		case "error":
+			var isRL *bool
+			var exitCode *int
+			if evt.Code != nil {
+				switch c := evt.Code.(type) {
+				case float64:
+					ic := int(c)
+					exitCode = &ic
+				case int:
+					exitCode = &c
+				}
+			}
+			lowerMsg := strings.ToLower(evt.Message)
+			if (exitCode != nil && *exitCode == 429) ||
+				strings.Contains(lowerMsg, "rate_limit") ||
+				strings.Contains(lowerMsg, "rate limit") ||
+				strings.Contains(lowerMsg, "overloaded") ||
+				strings.Contains(lowerMsg, "quota") {
+				isRL = boolPtr(true)
+			}
 			events = append(events, ParsedEvent{
 				EventType: "error",
 				Timestamp: ts,
 				Data: types.TelemetryFrameData{
-					Role:    stringPtr("assistant"),
-					Content: stringPtr(evt.Message),
-					IsError: boolPtr(true),
+					Role:        stringPtr("assistant"),
+					Content:     stringPtr(evt.Message),
+					IsError:     boolPtr(true),
+					ExitCode:    exitCode,
+					IsRateLimit: isRL,
 				},
 			})
 		}

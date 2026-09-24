@@ -103,7 +103,7 @@ func (s *Store) GetStatus(ctx context.Context) (*types.StatusResponse, error) {
 				WHEN current_run_id IS NOT NULL AND (
 					activity IN ('WAITING_QUESTION', 'ERROR') OR
 					(active_tool_started_at IS NOT NULL AND (? - active_tool_started_at) >= 180000) OR
-					(activity = 'BUSY' AND (? - updated_at) >= 120000)
+					(activity IN ('BUSY', 'RATE_LIMITED') AND (? - updated_at) >= 120000)
 				) THEN 1 ELSE 0 END), 0) AS attention_count,
 			SUM(cost_usd) AS total_spend
 		FROM agents

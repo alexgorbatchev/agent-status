@@ -204,6 +204,32 @@ describe("agentUtils", () => {
       expect(isAgentRequiringAttention(agent)).toBe(false);
     });
 
+    it("returns false for recently updated running RATE_LIMITED agent", () => {
+      const now = Date.now();
+      const agent = factory_createAgent({
+        activity: {
+          ...factory_createAgent().activity,
+          lifecycle: "RUNNING",
+          activity: "RATE_LIMITED",
+          updatedAt: now - 10000,
+        },
+      });
+      expect(isAgentRequiringAttention(agent, now)).toBe(false);
+    });
+
+    it("returns true for running RATE_LIMITED agent stalled for more than 2 minutes", () => {
+      const now = Date.now();
+      const agent = factory_createAgent({
+        activity: {
+          ...factory_createAgent().activity,
+          lifecycle: "RUNNING",
+          activity: "RATE_LIMITED",
+          updatedAt: now - 130000,
+        },
+      });
+      expect(isAgentRequiringAttention(agent, now)).toBe(true);
+    });
+
     it("returns false for RUNNING agent with BUSY or IDLE activity", () => {
       const now = Date.now();
       const busyAgent: IAgentState = factory_createAgent({

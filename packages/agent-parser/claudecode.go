@@ -811,16 +811,34 @@ func parseClaudeCodeLineEvents(
 				}
 			}
 
+			var isRL *bool
+			var exitCode *int
+			if raw.APIErrorStatus != nil {
+				exitCode = raw.APIErrorStatus
+			} else if raw.Message != nil && raw.Message.APIErrorStatus != nil {
+				exitCode = raw.Message.APIErrorStatus
+			}
+			lowerErr := strings.ToLower(errText)
+			if (exitCode != nil && *exitCode == 429) ||
+				strings.Contains(lowerErr, "rate_limit") ||
+				strings.Contains(lowerErr, "rate limit") ||
+				strings.Contains(lowerErr, "overloaded") ||
+				strings.Contains(lowerErr, "429") {
+				isRL = boolPtr(true)
+			}
+
 			events = append(events, ParsedEvent{
 				EventType: "error",
 				Timestamp: ts,
 				CWD:       raw.CWD,
 				GitBranch: raw.GitBranch,
 				Data: types.TelemetryFrameData{
-					Role:    stringPtr("assistant"),
-					Content: stringPtr(errText),
-					Model:   modelPtr,
-					IsError: boolPtr(true),
+					Role:        stringPtr("assistant"),
+					Content:     stringPtr(errText),
+					Model:       modelPtr,
+					IsError:     boolPtr(true),
+					ExitCode:    exitCode,
+					IsRateLimit: isRL,
 				},
 			})
 		}

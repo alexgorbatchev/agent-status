@@ -800,6 +800,7 @@ func TestFormatActivityStatus(t *testing.T) {
 		{"running busy", types.LifecycleRunning, types.ActivityBusy, nil, "Working"},
 		{"running question", types.LifecycleRunning, types.ActivityWaitingQuestion, nil, "Waiting on Question"},
 		{"running error", types.LifecycleRunning, types.ActivityError, nil, "Error"},
+		{"running rate limited", types.LifecycleRunning, types.ActivityRateLimited, nil, "Rate Limited"},
 		{"exited", types.LifecycleExited, types.ActivityIdle, nil, "Finished"},
 	}
 

@@ -27,8 +27,8 @@ func TestOpen_Memory(t *testing.T) {
 	if err := st.DB().QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("query user_version failed: %v", err)
 	}
-	if version != 5 {
-		t.Errorf("got user_version = %d, want 5", version)
+	if version != 6 {
+		t.Errorf("got user_version = %d, want 6", version)
 	}
 }
 
@@ -140,6 +140,36 @@ func TestMigrate_ErrorCases(t *testing.T) {
 	if err := Migrate(db4); err == nil {
 		t.Errorf("expected error running v4 migration without agents table, got nil")
 	}
+
+	// Test v5 failure when agents table does not exist
+	db5, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open failed: %v", err)
+	}
+	defer func() {
+		_ = db5.Close()
+	}()
+	if _, err := db5.Exec("PRAGMA user_version = 4;"); err != nil {
+		t.Fatalf("setting user_version = 4 failed: %v", err)
+	}
+	if err := Migrate(db5); err == nil {
+		t.Errorf("expected error running v5 migration without agents table, got nil")
+	}
+
+	// Test v6 failure when agents table does not exist
+	db6, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open failed: %v", err)
+	}
+	defer func() {
+		_ = db6.Close()
+	}()
+	if _, err := db6.Exec("PRAGMA user_version = 5;"); err != nil {
+		t.Fatalf("setting user_version = 5 failed: %v", err)
+	}
+	if err := Migrate(db6); err == nil {
+		t.Errorf("expected error running v6 migration without agents table, got nil")
+	}
 }
 
 func TestMigrate_V2ToV4(t *testing.T) {
@@ -173,8 +203,8 @@ func TestMigrate_V2ToV4(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 5 {
-		t.Errorf("got user_version = %d, want 5", version)
+	if version != 6 {
+		t.Errorf("got user_version = %d, want 6", version)
 	}
 }
 
@@ -215,8 +245,8 @@ func TestMigrate_V4ToV5(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 5 {
-		t.Errorf("got user_version = %d, want 5", version)
+	if version != 6 {
+		t.Errorf("got user_version = %d, want 6", version)
 	}
 
 	// Verify new columns exist by selecting them
@@ -226,6 +256,121 @@ func TestMigrate_V4ToV5(t *testing.T) {
 	err = db.QueryRow("SELECT model, context_window, context_fullness FROM agents LIMIT 1;").Scan(&model, &cw, &fullness)
 	if err != nil && err != sql.ErrNoRows {
 		t.Errorf("querying v5 columns failed: %v", err)
+	}
+}
+
+func TestMigrate_V5ToV6(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open failed: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	// Execute v1 schema manually with the old CHECK constraint (no RATE_LIMITED)
+	const schemaV1Old = `
+CREATE TABLE environments (
+    id                TEXT PRIMARY KEY,
+    label             TEXT NOT NULL,
+    hostname          TEXT NOT NULL,
+    platform          TEXT NOT NULL,
+    user              TEXT NOT NULL,
+    last_heartbeat_at INTEGER NOT NULL
+);
+
+CREATE TABLE runs (
+    id              TEXT PRIMARY KEY,
+    agent_id        TEXT NOT NULL,
+    pid             INTEGER NOT NULL,
+    harness_version TEXT NOT NULL,
+    started_at      INTEGER NOT NULL,
+    ended_at        INTEGER
+);
+
+CREATE TABLE agents (
+    id                    TEXT PRIMARY KEY,
+    session_id            TEXT NOT NULL,
+    environment_id        TEXT NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
+    harness               TEXT NOT NULL CHECK (harness IN ('claude-code','pi','codex','opencode')),
+    project_id            TEXT NOT NULL,
+    project_name          TEXT NOT NULL,
+    canonical_root        TEXT NOT NULL,
+    branch                TEXT NOT NULL,
+    is_detached           INTEGER NOT NULL DEFAULT 0,
+    is_worktree           INTEGER NOT NULL DEFAULT 0,
+    worktree_rel_path     TEXT,
+    cwd                   TEXT NOT NULL,
+    current_run_id        TEXT REFERENCES runs(id) ON DELETE SET NULL,
+    activity              TEXT NOT NULL CHECK (activity IN ('BUSY','WAITING_QUESTION','ERROR','IDLE')),
+    title                 TEXT NOT NULL DEFAULT '',
+    action                TEXT NOT NULL DEFAULT '',
+    action_stale          INTEGER NOT NULL DEFAULT 0,
+    phase                 TEXT CHECK (phase IS NULL OR phase IN ('planning','editing','testing','debugging','investigating')),
+    active_tool           TEXT,
+    active_target         TEXT,
+    question              TEXT,
+    last_thinking_excerpt TEXT,
+    last_error            TEXT,
+    tokens_input          INTEGER NOT NULL DEFAULT 0,
+    tokens_output         INTEGER NOT NULL DEFAULT 0,
+    tokens_cache_read     INTEGER NOT NULL DEFAULT 0,
+    tokens_cache_write    INTEGER NOT NULL DEFAULT 0,
+    tokens_reasoning      INTEGER NOT NULL DEFAULT 0,
+    tokens_total          INTEGER NOT NULL DEFAULT 0,
+    cost_usd              REAL,
+    subagent_count        INTEGER NOT NULL DEFAULT 0,
+    first_started_at      INTEGER NOT NULL,
+    updated_at            INTEGER NOT NULL,
+    is_hidden             INTEGER NOT NULL DEFAULT 0,
+    hidden_at             INTEGER,
+    active_tool_started_at INTEGER,
+    active_subagents      TEXT,
+    model                 TEXT,
+    context_window        INTEGER,
+    context_fullness      REAL,
+    UNIQUE (environment_id, harness, session_id)
+);
+`
+	if _, err := db.Exec(schemaV1Old); err != nil {
+		t.Fatalf("schemaV1Old failed: %v", err)
+	}
+	if _, err := db.Exec("INSERT INTO environments VALUES ('env-1', 'dev', 'host', 'linux', 'user', 1000);"); err != nil {
+		t.Fatalf("insert env failed: %v", err)
+	}
+	if _, err := db.Exec("PRAGMA user_version = 5;"); err != nil {
+		t.Fatalf("setting user_version = 5 failed: %v", err)
+	}
+
+	// In v5, attempting to insert an agent with RATE_LIMITED must fail check constraint
+	const insertAgent = `INSERT INTO agents (id, session_id, environment_id, harness, project_id, project_name, canonical_root, branch, cwd, first_started_at, updated_at, activity)
+		VALUES ('a1', 's1', 'env-1', 'claude-code', 'p1', 'p1', '/repo', 'main', '/repo', 1000, 1000, 'RATE_LIMITED');`
+	if _, err := db.Exec(insertAgent); err == nil {
+		t.Fatalf("expected CHECK constraint failure inserting RATE_LIMITED before migration v6")
+	}
+
+	// Now run Migrate to upgrade from v5 to v6
+	if err := Migrate(db); err != nil {
+		t.Fatalf("Migrate() from v5 to v6 failed: %v", err)
+	}
+
+	var version int
+	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
+		t.Fatalf("reading user_version: %v", err)
+	}
+	if version != 6 {
+		t.Errorf("got user_version = %d, want 6", version)
+	}
+
+	// Now inserting RATE_LIMITED must succeed
+	if _, err := db.Exec(insertAgent); err != nil {
+		t.Fatalf("failed to insert RATE_LIMITED agent after migration v6: %v", err)
+	}
+
+	var readActivity string
+	if err := db.QueryRow("SELECT activity FROM agents WHERE id = 'a1';").Scan(&readActivity); err != nil {
+		t.Fatalf("reading activity: %v", err)
+	}
+	if readActivity != "RATE_LIMITED" {
+		t.Errorf("got activity %q, want 'RATE_LIMITED'", readActivity)
 	}
 }
 
@@ -260,8 +405,8 @@ func TestMigrate_V3ToV4(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 5 {
-		t.Errorf("got user_version = %d, want 5", version)
+	if version != 6 {
+		t.Errorf("got user_version = %d, want 6", version)
 	}
 }
 
@@ -291,8 +436,8 @@ func TestMigrate_V1ToV2(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 5 {
-		t.Errorf("got user_version = %d, want 5", version)
+	if version != 6 {
+		t.Errorf("got user_version = %d, want 6", version)
 	}
 
 	var indexCount int
@@ -849,14 +994,137 @@ func TestAgentState_NilFieldsAndExitedRun(t *testing.T) {
 	}
 }
 
-func TestStore_PruneOldEventsAndExitedAgents_ClosedDB(t *testing.T) {
+func TestStore_PruneOldEventsAndExitedAgents_ErrorPaths(t *testing.T) {
+	// 1. Error on deleting telemetry_events
+	t.Run("error deleting telemetry_events", func(t *testing.T) {
+		st, err := Open(":memory:")
+		if err != nil {
+			t.Fatalf("Open failed: %v", err)
+		}
+		defer func() { _ = st.Close() }()
+
+		if _, err := st.db.Exec("INSERT INTO environments VALUES ('env-1', 'd', 'h', 'linux', 'u', 1000, 0);"); err != nil {
+			t.Fatalf("insert env failed: %v", err)
+		}
+		if _, err := st.db.Exec("INSERT INTO agents (id, session_id, environment_id, harness, project_id, project_name, canonical_root, branch, cwd, first_started_at, updated_at, activity) VALUES ('a', 's', 'env-1', 'claude-code', 'p', 'p', '/r', 'm', '/r', 50, 50, 'IDLE');"); err != nil {
+			t.Fatalf("insert ag failed: %v", err)
+		}
+		if _, err := st.db.Exec("INSERT INTO telemetry_events (agent_id, event_type, timestamp, data_json) VALUES ('a', 'e', 50, '{}');"); err != nil {
+			t.Fatalf("insert te failed: %v", err)
+		}
+		if _, err := st.db.Exec("CREATE TRIGGER prevent_te_del BEFORE DELETE ON telemetry_events BEGIN SELECT RAISE(ABORT, 'te error'); END;"); err != nil {
+			t.Fatalf("create trigger failed: %v", err)
+		}
+		if err := st.PruneOldEventsAndExitedAgents(100, 100); err == nil {
+			t.Errorf("expected error deleting telemetry_events")
+		}
+	})
+
+	// 2. Error on deleting agents
+	t.Run("error deleting agents", func(t *testing.T) {
+		st, err := Open(":memory:")
+		if err != nil {
+			t.Fatalf("Open failed: %v", err)
+		}
+		defer func() { _ = st.Close() }()
+
+		if _, err := st.db.Exec("INSERT INTO environments VALUES ('env-1', 'd', 'h', 'linux', 'u', 1000, 0);"); err != nil {
+			t.Fatalf("insert env failed: %v", err)
+		}
+		if _, err := st.db.Exec("INSERT INTO agents (id, session_id, environment_id, harness, project_id, project_name, canonical_root, branch, cwd, first_started_at, updated_at, activity) VALUES ('a', 's', 'env-1', 'claude-code', 'p', 'p', '/r', 'm', '/r', 50, 50, 'IDLE');"); err != nil {
+			t.Fatalf("insert ag failed: %v", err)
+		}
+		if _, err := st.db.Exec("CREATE TRIGGER prevent_ag_del BEFORE DELETE ON agents BEGIN SELECT RAISE(ABORT, 'ag error'); END;"); err != nil {
+			t.Fatalf("create trigger failed: %v", err)
+		}
+		if err := st.PruneOldEventsAndExitedAgents(100, 100); err == nil {
+			t.Errorf("expected error deleting agents")
+		}
+	})
+
+	// 3. Error on deleting runs
+	t.Run("error deleting runs", func(t *testing.T) {
+		st, err := Open(":memory:")
+		if err != nil {
+			t.Fatalf("Open failed: %v", err)
+		}
+		defer func() { _ = st.Close() }()
+
+		if _, err := st.db.Exec("INSERT INTO environments VALUES ('env-1', 'd', 'h', 'linux', 'u', 1000, 0);"); err != nil {
+			t.Fatalf("insert env failed: %v", err)
+		}
+		if _, err := st.db.Exec("INSERT INTO agents (id, session_id, environment_id, harness, project_id, project_name, canonical_root, branch, cwd, first_started_at, updated_at, activity) VALUES ('a', 's', 'env-1', 'claude-code', 'p', 'p', '/r', 'm', '/r', 50, 200, 'IDLE');"); err != nil {
+			t.Fatalf("insert ag failed: %v", err)
+		}
+		if _, err := st.db.Exec("INSERT INTO runs (id, agent_id, pid, harness_version, started_at, ended_at) VALUES ('r', 'a', 1, '1', 50, 50);"); err != nil {
+			t.Fatalf("insert run failed: %v", err)
+		}
+		if _, err := st.db.Exec("CREATE TRIGGER prevent_runs_del BEFORE DELETE ON runs BEGIN SELECT RAISE(ABORT, 'runs error'); END;"); err != nil {
+			t.Fatalf("create trigger failed: %v", err)
+		}
+		if err := st.PruneOldEventsAndExitedAgents(100, 100); err == nil {
+			t.Errorf("expected error deleting runs")
+		}
+	})
+
+	// 4. Closed DB
+	t.Run("closed db", func(t *testing.T) {
+		st, err := Open(":memory:")
+		if err != nil {
+			t.Fatalf("Open failed: %v", err)
+		}
+		_ = st.Close()
+		if err := st.PruneOldEventsAndExitedAgents(100, 100); err == nil {
+			t.Errorf("expected error from PruneOldEventsAndExitedAgents on closed DB")
+		}
+	})
+}
+
+func TestStore_EndCurrentRun_TriggerErrors(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	if _, err := st.db.Exec("INSERT INTO environments VALUES ('env-1', 'd', 'h', 'linux', 'u', 1000, 0);"); err != nil {
+		t.Fatalf("insert env failed: %v", err)
+	}
+	if _, err := st.db.Exec("INSERT INTO runs (id, agent_id, pid, harness_version, started_at) VALUES ('r1', 'a1', 1, '1', 1000);"); err != nil {
+		t.Fatalf("insert run failed: %v", err)
+	}
+	if _, err := st.db.Exec("INSERT INTO agents (id, session_id, environment_id, harness, project_id, project_name, canonical_root, branch, cwd, first_started_at, updated_at, activity, current_run_id) VALUES ('a1', 's1', 'env-1', 'claude-code', 'p1', 'p1', '/r', 'm', '/r', 1000, 1000, 'IDLE', 'r1');"); err != nil {
+		t.Fatalf("insert agent failed: %v", err)
+	}
+
+	// 1. Error updating runs
+	if _, err := st.db.Exec("CREATE TRIGGER prevent_run_upd BEFORE UPDATE ON runs BEGIN SELECT RAISE(ABORT, 'runs upd error'); END;"); err != nil {
+		t.Fatalf("create trigger failed: %v", err)
+	}
+	if err := st.EndCurrentRun("a1", 2000); err == nil {
+		t.Errorf("expected error updating runs in EndCurrentRun")
+	}
+	if _, err := st.db.Exec("DROP TRIGGER prevent_run_upd;"); err != nil {
+		t.Fatalf("drop trigger failed: %v", err)
+	}
+
+	// 2. Error updating agents
+	if _, err := st.db.Exec("CREATE TRIGGER prevent_agent_upd BEFORE UPDATE OF current_run_id ON agents BEGIN SELECT RAISE(ABORT, 'agents upd error'); END;"); err != nil {
+		t.Fatalf("create trigger failed: %v", err)
+	}
+	if err := st.EndCurrentRun("a1", 2000); err == nil {
+		t.Errorf("expected error updating agents in EndCurrentRun")
+	}
+}
+
+func TestStore_GetDistinctSubagentIDs_ClosedDB(t *testing.T) {
 	st, err := Open(":memory:")
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
 	_ = st.Close()
-	if err := st.PruneOldEventsAndExitedAgents(100, 100); err == nil {
-		t.Errorf("expected error from PruneOldEventsAndExitedAgents on closed DB")
+	if _, err := st.GetDistinctSubagentIDs("a1"); err == nil {
+		t.Errorf("expected error from GetDistinctSubagentIDs on closed DB")
 	}
 }
 
@@ -1349,6 +1617,11 @@ func TestAgentVisibility(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAgent after unhide failed: %v", err)
 	}
+
+	// Setting visibility on non-existent agent returns error
+	if _, err := st.SetAgentVisibility("non-existent-agent", true, nil); err == nil {
+		t.Errorf("expected error when setting visibility for non-existent agent")
+	}
 	if loaded.IsHidden {
 		t.Fatalf("expected loaded.IsHidden == false, got true")
 	}
@@ -1635,6 +1908,32 @@ func TestStore_RecordTelemetryEvent_SubagentAndCoverage(t *testing.T) {
 		t.Errorf("expected error with invalid activity in SaveAgentState")
 	}
 
+	rateLimitedAgent := types.IAgentState{
+		ID:        "agent-rl-saved",
+		SessionID: "sess-rl",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-1",
+			Platform: "darwin",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle:      types.LifecycleRunning,
+			Activity:       types.ActivityRateLimited,
+			FirstStartedAt: now,
+			UpdatedAt:      now,
+		},
+	}
+	if err := st.SaveAgentState(rateLimitedAgent); err != nil {
+		t.Fatalf("expected SaveAgentState to succeed with ActivityRateLimited: %v", err)
+	}
+	gotRL, err := st.GetAgent("agent-rl-saved")
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if gotRL.Activity.Activity != types.ActivityRateLimited {
+		t.Errorf("got activity %s, want %s", gotRL.Activity.Activity, types.ActivityRateLimited)
+	}
+
 	// Test Open error with inaccessible path
 	if _, err := Open("file:/nonexistent_dir/sub/test.db?mode=ro"); err == nil {
 		t.Errorf("expected error opening non-existent read-only path")
@@ -1876,6 +2175,25 @@ func TestStore_Migrate_ErrorPaths(t *testing.T) {
 		}
 	})
 
+	// Error on v2 duplicate hidden_at
+	t.Run("v2 error on duplicate hidden_at", func(t *testing.T) {
+		db, err := sql.Open("sqlite3", ":memory:")
+		if err != nil {
+			t.Fatalf("sql.Open failed: %v", err)
+		}
+		defer func() { _ = db.Close() }()
+
+		if _, err := db.Exec(schemaV1); err != nil {
+			t.Fatalf("schemaV1 failed: %v", err)
+		}
+		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN hidden_at INTEGER;"); err != nil {
+			t.Fatalf("pre-adding hidden_at failed: %v", err)
+		}
+		if err := Migrate(db); err == nil {
+			t.Errorf("expected error in Migrate v2 on duplicate hidden_at")
+		}
+	})
+
 	// 2. Error in v3 migration (e.g. duplicate active_tool_started_at column)
 	t.Run("v3 error on duplicate column", func(t *testing.T) {
 		db, err := sql.Open("sqlite3", ":memory:")
@@ -2034,6 +2352,66 @@ func TestStore_Migrate_ErrorPaths(t *testing.T) {
 		}
 		if err := Migrate(db); err == nil {
 			t.Errorf("expected error in Migrate v5 on duplicate context_fullness")
+		}
+	})
+
+	// 7. Error in v6 migration on conflicting agents_new
+	t.Run("v6 error on conflicting agents_new", func(t *testing.T) {
+		db, err := sql.Open("sqlite3", ":memory:")
+		if err != nil {
+			t.Fatalf("sql.Open failed: %v", err)
+		}
+		defer func() { _ = db.Close() }()
+
+		if _, err := db.Exec("CREATE VIEW agents_new AS SELECT 1;"); err != nil {
+			t.Fatalf("creating conflicting view failed: %v", err)
+		}
+		if _, err := db.Exec("PRAGMA user_version = 5;"); err != nil {
+			t.Fatalf("setting user_version = 5 failed: %v", err)
+		}
+		if err := Migrate(db); err == nil {
+			t.Errorf("expected error in Migrate v6 on conflicting agents_new view")
+		}
+	})
+
+	// 8. Error in v6 migration on copy data failure
+	t.Run("v6 error on copy data failure", func(t *testing.T) {
+		db, err := sql.Open("sqlite3", ":memory:")
+		if err != nil {
+			t.Fatalf("sql.Open failed: %v", err)
+		}
+		defer func() { _ = db.Close() }()
+
+		if _, err := db.Exec("CREATE TABLE agents (id TEXT PRIMARY KEY, invalid_col TEXT);"); err != nil {
+			t.Fatalf("creating invalid table failed: %v", err)
+		}
+		if _, err := db.Exec("PRAGMA user_version = 5;"); err != nil {
+			t.Fatalf("setting user_version = 5 failed: %v", err)
+		}
+		if err := Migrate(db); err == nil {
+			t.Errorf("expected error in Migrate v6 on copy data failure")
+		}
+	})
+
+	// 9. Error in v6 migration on index conflict
+	t.Run("v6 error on index conflict", func(t *testing.T) {
+		db, err := sql.Open("sqlite3", ":memory:")
+		if err != nil {
+			t.Fatalf("sql.Open failed: %v", err)
+		}
+		defer func() { _ = db.Close() }()
+
+		if _, err := db.Exec(schemaV1); err != nil {
+			t.Fatalf("schemaV1 failed: %v", err)
+		}
+		if _, err := db.Exec("DROP INDEX IF EXISTS idx_agents_project; CREATE VIEW idx_agents_project AS SELECT 1;"); err != nil {
+			t.Fatalf("creating conflicting view failed: %v", err)
+		}
+		if _, err := db.Exec("PRAGMA user_version = 5;"); err != nil {
+			t.Fatalf("setting user_version = 5 failed: %v", err)
+		}
+		if err := Migrate(db); err == nil {
+			t.Errorf("expected error in Migrate v6 on conflicting index name")
 		}
 	})
 }

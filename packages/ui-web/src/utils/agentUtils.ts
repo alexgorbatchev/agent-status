@@ -9,7 +9,10 @@ export function formatCurrency(amount: number, precision: number = 2): string {
 }
 
 export function filterActiveAgents(agents: IAgentState[]): IAgentState[] {
-  return agents.filter((a) => a.activity.lifecycle === "RUNNING" && a.activity.activity === "BUSY");
+  return agents.filter(
+    (a) =>
+      a.activity.lifecycle === "RUNNING" && (a.activity.activity === "BUSY" || a.activity.activity === "RATE_LIMITED"),
+  );
 }
 
 export function filterRunningAgents(agents: IAgentState[]): IAgentState[] {
@@ -87,6 +90,9 @@ export function isAgentRequiringAttention(agent: IAgentState, now: number = Date
   }
   if (agent.activity.activity === "WAITING_QUESTION" || agent.activity.activity === "ERROR") {
     return true;
+  }
+  if (agent.activity.activity === "RATE_LIMITED") {
+    return isSessionStalled(agent.activity.updatedAt, now);
   }
   const durationMs = getToolExecutionDuration(agent.activity, now);
   if (getToolStallTier(durationMs) === "stalled") {

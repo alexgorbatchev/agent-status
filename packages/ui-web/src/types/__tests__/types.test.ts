@@ -26,8 +26,8 @@ describe("TypeScript Shared Contracts", () => {
   });
 
   it("verifies all ActivityState values", () => {
-    const activities: ActivityState[] = ["BUSY", "WAITING_QUESTION", "ERROR", "IDLE"];
-    expect(activities.length).toBe(4);
+    const activities: ActivityState[] = ["BUSY", "WAITING_QUESTION", "ERROR", "RATE_LIMITED", "IDLE"];
+    expect(activities.length).toBe(5);
   });
 
   it("verifies HarnessType values", () => {
@@ -95,16 +95,18 @@ describe("TypeScript Shared Contracts", () => {
 
     const activity: IAgentActivity = {
       lifecycle: "RUNNING",
-      activity: "BUSY",
+      activity: "RATE_LIMITED",
       title: "Increase test coverage to 90%+",
-      action: "Writing automated tests",
+      action: "Rate limit reached — backoff/retry in progress",
       actionStale: false,
-      phase: "testing",
-      activeTool: "Bash",
-      activeTarget: "bun test --coverage",
+      phase: "planning",
+      activeTool: null,
+      activeTarget: null,
       question: null,
       lastThinkingExcerpt: "Checking statement coverage...",
-      lastError: null,
+      lastError: "rate_limit_exceeded: backoff in progress",
+      rateLimitResetAt: 1789850060000,
+      retryAfterSeconds: 60,
       usage,
       cost,
       subagentCount: 3,

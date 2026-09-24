@@ -809,7 +809,15 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			c.cancelIdleTimerLocked(agent.ID)
 			c.cancelSilenceTimerLocked(agent.ID)
 			c.mu.Unlock()
-			agent.Activity.Activity = types.ActivityError
+			if isRateLimitFrame(frame.Data) {
+				agent.Activity.Activity = types.ActivityRateLimited
+				agent.Activity.RateLimitResetAt = frame.Data.RateLimitResetAt
+				agent.Activity.RetryAfterSeconds = frame.Data.RetryAfterSeconds
+			} else {
+				agent.Activity.Activity = types.ActivityError
+				agent.Activity.RateLimitResetAt = nil
+				agent.Activity.RetryAfterSeconds = nil
+			}
 			agent.Activity.HasUnseenCompletion = nil
 			agent.Activity.ActiveTool = nil
 			agent.Activity.ActiveTarget = nil
@@ -991,8 +999,8 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				c.cancelSilenceTimerLocked(agent.ID)
 				c.mu.Unlock()
 				pendingJob = c.updateSummarization(agent, true)
-			} else if agent.Activity.Activity == types.ActivityError {
-				// Do not overwrite ERROR state on turn_end
+			} else if agent.Activity.Activity == types.ActivityError || agent.Activity.Activity == types.ActivityRateLimited {
+				// Do not overwrite ERROR or RATE_LIMITED state on turn_end
 				c.mu.Lock()
 				c.cancelIdleTimerLocked(agent.ID)
 				c.cancelTrailingTimerLocked(agent.ID)
@@ -1140,7 +1148,11 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			case "tool_result":
 				sub.inFlightTool = false
 				if frame.Data.IsError != nil && *frame.Data.IsError {
-					sub.activity = types.ActivityError
+					if isRateLimitFrame(frame.Data) {
+						sub.activity = types.ActivityRateLimited
+					} else {
+						sub.activity = types.ActivityError
+					}
 					if frame.Data.ToolOutput != nil {
 						out := *frame.Data.ToolOutput
 						if len(out) > 2000 {
@@ -1155,7 +1167,11 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				}
 			case "error":
 				sub.inFlightTool = false
-				sub.activity = types.ActivityError
+				if isRateLimitFrame(frame.Data) {
+					sub.activity = types.ActivityRateLimited
+				} else {
+					sub.activity = types.ActivityError
+				}
 				if frame.Data.Content != nil {
 					out := *frame.Data.Content
 					sub.lastError = &out
@@ -1778,6 +1794,7 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 
 	var subError *types.ISubagentSummary
 	var subQuestion *types.ISubagentSummary
+	var subRateLimited *types.ISubagentSummary
 	var subBusy *types.ISubagentSummary
 
 	for i := range summaries {
@@ -1787,6 +1804,9 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 		}
 		if s.Activity == types.ActivityWaitingQuestion && subQuestion == nil {
 			subQuestion = s
+		}
+		if s.Activity == types.ActivityRateLimited && subRateLimited == nil {
+			subRateLimited = s
 		}
 		if s.Activity == types.ActivityBusy && subBusy == nil {
 			subBusy = s
@@ -1827,6 +1847,21 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 		return
 	} else {
 		agent.Activity.Question = actx.rootQuestion
+	}
+
+	// 3. Rate Limited Precedence
+	if actx.rootActivity == types.ActivityRateLimited {
+		agent.Activity.Activity = types.ActivityRateLimited
+		agent.Activity.HasUnseenCompletion = nil
+		return
+	} else if subRateLimited != nil {
+		agent.Activity.Activity = types.ActivityRateLimited
+		agent.Activity.HasUnseenCompletion = nil
+		if subRateLimited.LastError != nil {
+			errStr := fmt.Sprintf("[Subagent %s] %s", subRateLimited.ID, *subRateLimited.LastError)
+			agent.Activity.LastError = &errStr
+		}
+		return
 	}
 
 	// 3. Busy vs Idle
@@ -1901,5 +1936,34 @@ func isToolUseStopReason(reason string) bool {
 	default:
 		return false
 	}
+}
+
+// isRateLimitFrame reports whether a telemetry frame represents an API rate limiting / throttling event.
+func isRateLimitFrame(data types.TelemetryFrameData) bool {
+	if data.IsRateLimit != nil && *data.IsRateLimit {
+		return true
+	}
+	if data.ExitCode != nil && *data.ExitCode == 429 {
+		return true
+	}
+	if data.RateLimitResetAt != nil || data.RetryAfterSeconds != nil {
+		return true
+	}
+	for _, strPtr := range []*string{data.Content, data.ToolOutput} {
+		if strPtr != nil && isRateLimitString(*strPtr) {
+			return true
+		}
+	}
+	return false
+}
+
+// isRateLimitString checks if an error message contains rate limiting indicators.
+func isRateLimitString(s string) bool {
+	lower := strings.ToLower(s)
+	return strings.Contains(lower, "rate_limit") ||
+		strings.Contains(lower, "rate limit") ||
+		strings.Contains(lower, "429") ||
+		strings.Contains(lower, "overloaded") ||
+		strings.Contains(lower, "quota")
 }
 

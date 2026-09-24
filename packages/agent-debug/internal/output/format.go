@@ -391,6 +391,8 @@ func FormatActivityStatus(lifecycle types.LifecycleState, activity types.Activit
 		return "Working"
 	case types.ActivityWaitingQuestion:
 		return "Waiting on Question"
+	case types.ActivityRateLimited:
+		return "Rate Limited"
 	case types.ActivityError:
 		return "Error"
 	case types.ActivityIdle:

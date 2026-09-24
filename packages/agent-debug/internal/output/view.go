@@ -38,7 +38,7 @@ func FormatHarnessBadge(h types.HarnessType, activity types.ActivityState) strin
 	switch activity {
 	case types.ActivityError:
 		return fmt.Sprintf("%s(%s)%s", AnsiRed, cleanLabel, AnsiReset)
-	case types.ActivityWaitingQuestion:
+	case types.ActivityWaitingQuestion, types.ActivityRateLimited:
 		return fmt.Sprintf("%s(%s)%s", AnsiYellow, cleanLabel, AnsiReset)
 	default:
 		brandColor := GetHarnessBrandColor(h)
@@ -408,6 +408,8 @@ func renderAgentViewAgentMode(w io.Writer, agent types.IAgentState) {
 		parts = append(parts, fmt.Sprintf("question:%q", *agent.Activity.Question))
 	} else if agent.Activity.Activity == types.ActivityError && agent.Activity.LastError != nil && *agent.Activity.LastError != "" {
 		parts = append(parts, fmt.Sprintf("error:%q", *agent.Activity.LastError))
+	} else if agent.Activity.Activity == types.ActivityRateLimited && agent.Activity.LastError != nil && *agent.Activity.LastError != "" {
+		parts = append(parts, fmt.Sprintf("rate_limit:%q", *agent.Activity.LastError))
 	}
 
 	parts = append(parts, fmt.Sprintf("lifecycle:%s", lifecycle))
@@ -453,6 +455,8 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 	statusLabel := lifecycle
 	if agent.Activity.Lifecycle == types.LifecycleRunning && agent.Activity.Activity == types.ActivityIdle && agent.Activity.HasUnseenCompletion != nil && *agent.Activity.HasUnseenCompletion {
 		statusLabel = AnsiGreen + "Completed" + AnsiReset
+	} else if agent.Activity.Lifecycle == types.LifecycleRunning && agent.Activity.Activity == types.ActivityRateLimited {
+		statusLabel = AnsiYellow + "Rate Limited" + AnsiReset
 	}
 	headerRight := fmt.Sprintf("(%s)", statusLabel)
 
@@ -481,12 +485,18 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 		}
 	}
 
-	// 3. Callout (question or error)
+	// 3. Callout (question or error or rate limited)
 	var callout string
 	if agent.Activity.Activity == types.ActivityWaitingQuestion && agent.Activity.Question != nil && *agent.Activity.Question != "" {
 		callout = fmt.Sprintf("%s%s %s%s", AnsiYellow, GlyphQuestion, *agent.Activity.Question, AnsiReset)
 	} else if agent.Activity.Activity == types.ActivityError && agent.Activity.LastError != nil && *agent.Activity.LastError != "" {
 		callout = fmt.Sprintf("%s%s %s%s", AnsiRed, GlyphAlert, *agent.Activity.LastError, AnsiReset)
+	} else if agent.Activity.Activity == types.ActivityRateLimited {
+		msg := "Rate limit reached — backoff/retry in progress"
+		if agent.Activity.LastError != nil && *agent.Activity.LastError != "" {
+			msg = *agent.Activity.LastError
+		}
+		callout = fmt.Sprintf("%s%s %s%s", AnsiYellow, GlyphWarn, msg, AnsiReset)
 	}
 
 	// 4. Badges

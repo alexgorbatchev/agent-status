@@ -344,6 +344,22 @@ export function AgentCard({
           </div>
         )}
 
+        {activity.activity === "RATE_LIMITED" && (
+          <div
+            data-testid="AgentCard--rate-limited"
+            role="status"
+            data-callout-type="warning"
+            className="mb-3 p-2 rounded-lg bg-amber-950/40 border border-amber-800/60 text-xs text-amber-200 flex items-start gap-1.5"
+          >
+            <IconWrapper size="md" tone="warning" align="top">
+              <Clock size={16} />
+            </IconWrapper>
+            <span className="line-clamp-2 font-mono text-[11px]">
+              {activity.lastError || "Rate limit reached — backoff/retry in progress"}
+            </span>
+          </div>
+        )}
+
         {(stallTier === "warning" || stallTier === "stalled") && formattedDuration && (
           <div
             data-testid="AgentCard--stall-warning"

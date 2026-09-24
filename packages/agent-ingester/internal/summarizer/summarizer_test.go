@@ -347,6 +347,14 @@ func TestDeterministicFallbackSummary(t *testing.T) {
 			wantPhase:  types.PhaseDebugging,
 		},
 		{
+			name: "rate limited activity",
+			input: SummaryInput{
+				Activity: types.ActivityRateLimited,
+			},
+			wantAction: "Rate limit reached — backoff/retry in progress",
+			wantPhase:  types.PhasePlanning,
+		},
+		{
 			name: "idle activity",
 			input: SummaryInput{
 				Activity: types.ActivityIdle,

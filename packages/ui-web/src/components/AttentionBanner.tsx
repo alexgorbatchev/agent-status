@@ -59,6 +59,7 @@ export function AttentionBanner({
       <div data-testid="AttentionBanner--grid" className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {actNowAgents.map((agent) => {
           const isQuestion = agent.activity.activity === "WAITING_QUESTION";
+          const isRateLimited = agent.activity.activity === "RATE_LIMITED";
           const durationMs = getToolExecutionDuration(agent.activity, now);
           const isToolStalled = getToolStallTier(durationMs) === "stalled";
           const isSilenceStalled =
@@ -71,6 +72,10 @@ export function AttentionBanner({
 
           if (isQuestion) {
             message = agent.activity.question || "Waiting on user question input";
+            calloutType = "warning";
+            iconTone = "warning";
+          } else if (isRateLimited) {
+            message = agent.activity.lastError || "Rate limit backoff stalled without response";
             calloutType = "warning";
             iconTone = "warning";
           } else if (isToolStalled && durationMs !== null) {
