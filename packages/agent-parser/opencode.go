@@ -61,6 +61,7 @@ type OpencodeMessageData struct {
 	Tokens     *OpencodeTokens        `json:"tokens,omitempty"`
 	Time       *OpencodeMessageTiming `json:"time,omitempty"`
 	Finish     *string                `json:"finish,omitempty"`
+	Error      interface{}            `json:"error,omitempty"`
 }
 
 // OpencodeToolPartTime holds execution start and end timestamps.
@@ -75,6 +76,7 @@ type OpencodeToolPartState struct {
 	Title    string                 `json:"title,omitempty"`
 	Input    map[string]interface{} `json:"input,omitempty"`
 	Output   string                 `json:"output,omitempty"`
+	Error    string                 `json:"error,omitempty"`
 	Metadata map[string]interface{} `json:"metadata,omitempty"`
 	Time     *OpencodeToolPartTime  `json:"time,omitempty"`
 }
@@ -94,6 +96,8 @@ type OpencodePartData struct {
 	Snapshot map[string]interface{}  `json:"snapshot,omitempty"`
 	Metadata map[string]interface{}  `json:"metadata,omitempty"`
 	Time     *OpencodeToolPartTime   `json:"time,omitempty"`
+	Error    interface{}             `json:"error,omitempty"`
+	Message  string                  `json:"message,omitempty"`
 }
 
 // OpencodeSession represents a fully parsed OpenCode session.
@@ -585,11 +589,13 @@ func ReconstructSessionEvents(session *OpencodeSession, messages []OpencodeMessa
 				})
 			}
 
-		case "assistant":
+		default:
 			msgModel := msg.Data.ModelID
 			if msgModel == "" {
 				msgModel = session.Model
 			}
+
+			var errorPartTexts []string
 
 			for _, p := range msgParts {
 				partTs := p.TimeCreated
@@ -654,12 +660,16 @@ func ReconstructSessionEvents(session *OpencodeSession, messages []OpencodeMessa
 						})
 
 						// Emit tool_result if execution state is finalized or output is available
-						if p.Data.State != nil && (p.Data.State.Status == "completed" || p.Data.State.Status == "error" || p.Data.State.Output != "") {
+						if p.Data.State != nil && (p.Data.State.Status == "completed" || p.Data.State.Status == "error" || p.Data.State.Output != "" || p.Data.State.Error != "") {
 							endTs := partTs
 							if p.Data.State.Time != nil && p.Data.State.Time.End != nil && *p.Data.State.Time.End > 0 {
 								endTs = *p.Data.State.Time.End
 							}
 							isError := p.Data.State.Status == "error"
+							toolOutput := p.Data.State.Output
+							if toolOutput == "" && p.Data.State.Error != "" {
+								toolOutput = p.Data.State.Error
+							}
 							events = append(events, ParsedEvent{
 								EventType: "tool_result",
 								Timestamp: endTs,
@@ -667,10 +677,30 @@ func ReconstructSessionEvents(session *OpencodeSession, messages []OpencodeMessa
 								Data: types.TelemetryFrameData{
 									Role:       stringPtr("toolResult"),
 									ToolCallID: stringPtr(p.Data.CallID),
-									ToolOutput: stringPtr(p.Data.State.Output),
+									ToolOutput: stringPtr(toolOutput),
 									IsError:    &isError,
 								},
 							})
+						}
+					}
+
+				case "error":
+					txt := p.Data.Text
+					if txt == "" {
+						txt = p.Data.Message
+					}
+					if txt == "" && p.Data.Error != nil {
+						txt = extractOpencodeError(p.Data.Error)
+					}
+					if txt != "" {
+						errorPartTexts = append(errorPartTexts, txt)
+					}
+
+				default:
+					if p.Data.Error != nil {
+						txt := extractOpencodeError(p.Data.Error)
+						if txt != "" {
+							errorPartTexts = append(errorPartTexts, txt)
 						}
 					}
 				}
@@ -699,23 +729,29 @@ func ReconstructSessionEvents(session *OpencodeSession, messages []OpencodeMessa
 				stopReason = msg.Data.Finish
 			}
 
-			if usage != nil || stopReason != nil || msg.Data.Cost != nil {
-				endTs := msg.TimeCreated
-				if msg.Data.Time != nil && msg.Data.Time.Completed != nil && *msg.Data.Time.Completed > 0 {
-					endTs = *msg.Data.Time.Completed
-				}
-
-				var contextWindowPtr *int64
-				var fullnessPtr *float64
-				if msgModel != "" {
-					cw := models.ResolveContextWindow(msgModel)
-					contextWindowPtr = &cw
-					if usage != nil && cw > 0 {
-						fn := models.CalculateContextFullness(usage.Total, cw)
-						fullnessPtr = &fn
+			endTs := msg.TimeCreated
+			if msg.Data.Time != nil && msg.Data.Time.Completed != nil && *msg.Data.Time.Completed > 0 {
+				endTs = *msg.Data.Time.Completed
+			} else {
+				for _, p := range msgParts {
+					if p.TimeCreated > endTs {
+						endTs = p.TimeCreated
 					}
 				}
+			}
 
+			var contextWindowPtr *int64
+			var fullnessPtr *float64
+			if msgModel != "" {
+				cw := models.ResolveContextWindow(msgModel)
+				contextWindowPtr = &cw
+				if usage != nil && cw > 0 {
+					fn := models.CalculateContextFullness(usage.Total, cw)
+					fullnessPtr = &fn
+				}
+			}
+
+			if usage != nil || stopReason != nil || msg.Data.Cost != nil {
 				events = append(events, ParsedEvent{
 					EventType: "turn_end",
 					Timestamp: endTs,
@@ -728,6 +764,39 @@ func ReconstructSessionEvents(session *OpencodeSession, messages []OpencodeMessa
 						StopReason:         stopReason,
 						Usage:              usage,
 						RawHarnessCost:     msg.Data.Cost,
+					},
+				})
+			}
+
+			hasError := (msg.Data.Finish != nil && *msg.Data.Finish == "error") ||
+				msg.Data.Error != nil ||
+				len(errorPartTexts) > 0
+
+			if hasError {
+				errText := ""
+				if msg.Data.Error != nil {
+					errText = extractOpencodeError(msg.Data.Error)
+				}
+				if errText == "" && len(errorPartTexts) > 0 {
+					errText = strings.Join(errorPartTexts, "\n")
+				}
+				if errText == "" && msg.Data.Finish != nil && *msg.Data.Finish == "error" {
+					errText = "error"
+				}
+				if errText == "" {
+					errText = "error"
+				}
+
+				events = append(events, ParsedEvent{
+					EventType: "error",
+					Timestamp: endTs,
+					CWD:       cwd,
+					Data: types.TelemetryFrameData{
+						Role:               stringPtr("assistant"),
+						Content:            stringPtr(errText),
+						Model:              stringPtr(msgModel),
+						ModelContextWindow: contextWindowPtr,
+						IsError:            boolPtr(true),
 					},
 				})
 			}
@@ -830,3 +899,77 @@ func scanOpencodeSessionRow(row *sql.Row) (*OpencodeSession, error) {
 	}
 	return sess, nil
 }
+
+// extractOpencodeError extracts a human-readable error message from arbitrary error payloads
+// serialized in OpenCode message data or part data (e.g. strings, NamedError maps, error objects).
+func extractOpencodeError(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	switch val := v.(type) {
+	case string:
+		return strings.TrimSpace(val)
+	case error:
+		return strings.TrimSpace(val.Error())
+	case map[string]interface{}:
+		// 1. Check data field (e.g. NamedError: {name: "...", data: {message: "..."}})
+		if dataVal, ok := val["data"]; ok && dataVal != nil {
+			if dataMap, ok := dataVal.(map[string]interface{}); ok {
+				if msg, ok := dataMap["message"].(string); ok && strings.TrimSpace(msg) != "" {
+					return strings.TrimSpace(msg)
+				}
+				if exc, ok := dataMap["exception"].(string); ok && strings.TrimSpace(exc) != "" {
+					return strings.TrimSpace(exc)
+				}
+				if errStr, ok := dataMap["error"].(string); ok && strings.TrimSpace(errStr) != "" {
+					return strings.TrimSpace(errStr)
+				}
+			} else if dataStr, ok := dataVal.(string); ok && strings.TrimSpace(dataStr) != "" {
+				return strings.TrimSpace(dataStr)
+			}
+		}
+		// 2. Check message field
+		if msg, ok := val["message"].(string); ok && strings.TrimSpace(msg) != "" {
+			return strings.TrimSpace(msg)
+		}
+		// 3. Check error field
+		if errVal, ok := val["error"]; ok && errVal != nil {
+			if sub := extractOpencodeError(errVal); sub != "" {
+				return sub
+			}
+		}
+		// 4. Check exception field
+		if excVal, ok := val["exception"]; ok && excVal != nil {
+			if sub := extractOpencodeError(excVal); sub != "" {
+				return sub
+			}
+		}
+		// 5. Check text field
+		if txt, ok := val["text"].(string); ok && strings.TrimSpace(txt) != "" {
+			return strings.TrimSpace(txt)
+		}
+		// 6. Check details field
+		if det, ok := val["details"].(string); ok && strings.TrimSpace(det) != "" {
+			return strings.TrimSpace(det)
+		}
+		// 7. Check name field
+		if name, ok := val["name"].(string); ok && strings.TrimSpace(name) != "" {
+			return strings.TrimSpace(name)
+		}
+		// Fallback to JSON serialization if non-empty
+		b, err := json.Marshal(val)
+		if err == nil && string(b) != "{}" {
+			return string(b)
+		}
+	case []interface{}:
+		var parts []string
+		for _, item := range val {
+			if s := extractOpencodeError(item); s != "" {
+				parts = append(parts, s)
+			}
+		}
+		return strings.Join(parts, "\n")
+	}
+	return fmt.Sprintf("%v", v)
+}
+

@@ -3,6 +3,7 @@ package parser
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
@@ -501,6 +502,18 @@ func TestOpencodeDB_QueriesAndReconstruction(t *testing.T) {
 	if turnEnd.Data.StopReason == nil || *turnEnd.Data.StopReason != "stop" {
 		t.Errorf("turn_end stopReason = %v", turnEnd.Data.StopReason)
 	}
+
+	// Test ReconstructSessionEvents with non-existent session
+	_, err = odb.ReconstructSessionEvents(ctx, "ses_non_existent")
+	if err == nil {
+		t.Errorf("expected error querying non-existent session, got nil")
+	}
+
+	// Test ReconstructSessionEvents with nil session
+	nilEvents := ReconstructSessionEvents(nil, nil, nil)
+	if len(nilEvents) != 0 {
+		t.Errorf("expected 0 events for nil session, got %d", len(nilEvents))
+	}
 }
 
 func TestOpencodeDB_ToolResultErrorStatus(t *testing.T) {
@@ -725,4 +738,604 @@ func TestOpencodeParser_NormalizedFileModification(t *testing.T) {
 		}
 	})
 }
+
+func TestOpencode_ErrorEventEmission(t *testing.T) {
+	session := &OpencodeSession{
+		ID:          "ses_err_test",
+		Directory:   "/workspace/project",
+		Title:       "Error Emission Test",
+		Model:       "claude-3-7-sonnet",
+		TimeCreated: 1700000000000,
+	}
+
+	finishErr := "error"
+	finishStop := "stop"
+	completedTs15 := int64(1700000015999)
+
+	tests := []struct {
+		name        string
+		message     OpencodeMessage
+		parts       []OpencodePart
+		wantError   bool
+		wantContent string
+		wantTurnEnd bool
+	}{
+		{
+			name: "finish_error_without_payload",
+			message: OpencodeMessage{
+				ID:          "msg_err_1",
+				SessionID:   session.ID,
+				TimeCreated: 1700000001000,
+				Data: OpencodeMessageData{
+					Role:   "assistant",
+					Finish: &finishErr,
+				},
+			},
+			wantError:   true,
+			wantContent: "error",
+			wantTurnEnd: true,
+		},
+		{
+			name: "finish_error_with_string_payload",
+			message: OpencodeMessage{
+				ID:          "msg_err_2",
+				SessionID:   session.ID,
+				TimeCreated: 1700000002000,
+				Data: OpencodeMessageData{
+					Role:   "assistant",
+					Finish: &finishErr,
+					Error:  "Rate limit exceeded: 429 too many requests",
+				},
+			},
+			wantError:   true,
+			wantContent: "Rate limit exceeded: 429 too many requests",
+			wantTurnEnd: true,
+		},
+		{
+			name: "structured_provider_auth_error",
+			message: OpencodeMessage{
+				ID:          "msg_err_3",
+				SessionID:   session.ID,
+				TimeCreated: 1700000003000,
+				Data: OpencodeMessageData{
+					Role:   "assistant",
+					Finish: &finishErr,
+					Error: map[string]interface{}{
+						"name": "ProviderAuthError",
+						"data": map[string]interface{}{
+							"message":    "Invalid API key provided for anthropic",
+							"providerID": "anthropic",
+						},
+					},
+				},
+			},
+			wantError:   true,
+			wantContent: "Invalid API key provided for anthropic",
+			wantTurnEnd: true,
+		},
+		{
+			name: "structured_api_error",
+			message: OpencodeMessage{
+				ID:          "msg_err_4",
+				SessionID:   session.ID,
+				TimeCreated: 1700000004000,
+				Data: OpencodeMessageData{
+					Role:   "assistant",
+					Finish: &finishErr,
+					Error: map[string]interface{}{
+						"name":    "APIError",
+						"message": "Upstream service timeout",
+					},
+				},
+			},
+			wantError:   true,
+			wantContent: "Upstream service timeout",
+			wantTurnEnd: true,
+		},
+		{
+			name: "error_payload_without_finish_error",
+			message: OpencodeMessage{
+				ID:          "msg_err_5",
+				SessionID:   session.ID,
+				TimeCreated: 1700000005000,
+				Data: OpencodeMessageData{
+					Role:   "assistant",
+					Finish: &finishStop,
+					Error: map[string]interface{}{
+						"message": "Stream interrupted before completion",
+					},
+				},
+			},
+			wantError:   true,
+			wantContent: "Stream interrupted before completion",
+			wantTurnEnd: true,
+		},
+		{
+			name: "error_part_with_text",
+			message: OpencodeMessage{
+				ID:          "msg_err_6",
+				SessionID:   session.ID,
+				TimeCreated: 1700000006000,
+				Data: OpencodeMessageData{
+					Role: "assistant",
+				},
+			},
+			parts: []OpencodePart{
+				{
+					ID:          "part_err_6",
+					MessageID:   "msg_err_6",
+					SessionID:   session.ID,
+					TimeCreated: 1700000006500,
+					Data: OpencodePartData{
+						Type: "error",
+						Text: "Context overflow: input tokens exceed model window",
+					},
+				},
+			},
+			wantError:   true,
+			wantContent: "Context overflow: input tokens exceed model window",
+			wantTurnEnd: false,
+		},
+		{
+			name: "error_part_with_nested_error",
+			message: OpencodeMessage{
+				ID:          "msg_err_7",
+				SessionID:   session.ID,
+				TimeCreated: 1700000007000,
+				Data: OpencodeMessageData{
+					Role: "assistant",
+				},
+			},
+			parts: []OpencodePart{
+				{
+					ID:          "part_err_7",
+					MessageID:   "msg_err_7",
+					SessionID:   session.ID,
+					TimeCreated: 1700000007500,
+					Data: OpencodePartData{
+						Type: "error",
+						Error: map[string]interface{}{
+							"message": "Stream connection broken",
+						},
+					},
+				},
+			},
+			wantError:   true,
+			wantContent: "Stream connection broken",
+			wantTurnEnd: false,
+		},
+		{
+			name: "unhandled_exception_payload",
+			message: OpencodeMessage{
+				ID:          "msg_err_8",
+				SessionID:   session.ID,
+				TimeCreated: 1700000008000,
+				Data: OpencodeMessageData{
+					Role:   "assistant",
+					Finish: &finishErr,
+					Error: map[string]interface{}{
+						"name": "UnhandledException",
+						"data": map[string]interface{}{
+							"exception": "panic: runtime error: nil pointer dereference",
+						},
+					},
+				},
+			},
+			wantError:   true,
+			wantContent: "panic: runtime error: nil pointer dereference",
+			wantTurnEnd: true,
+		},
+		{
+			name: "tool_use_with_turn_error",
+			message: OpencodeMessage{
+				ID:          "msg_err_9",
+				SessionID:   session.ID,
+				TimeCreated: 1700000009000,
+				Data: OpencodeMessageData{
+					Role:   "assistant",
+					Finish: &finishErr,
+					Error:  "Tool execution aborted by host",
+				},
+			},
+			parts: []OpencodePart{
+				{
+					ID:          "part_tool_9",
+					MessageID:   "msg_err_9",
+					SessionID:   session.ID,
+					TimeCreated: 1700000009100,
+					Data: OpencodePartData{
+						Type:   "tool",
+						Tool:   "bash",
+						CallID: "call_bash_9",
+						State: &OpencodeToolPartState{
+							Status: "error",
+							Output: "aborted",
+						},
+					},
+				},
+			},
+			wantError:   true,
+			wantContent: "Tool execution aborted by host",
+			wantTurnEnd: true,
+		},
+		{
+			name: "unhandled_role_with_error",
+			message: OpencodeMessage{
+				ID:          "msg_err_10",
+				SessionID:   session.ID,
+				TimeCreated: 1700000010000,
+				Data: OpencodeMessageData{
+					Role:  "error",
+					Error: "Worker process died unexpectedly",
+				},
+			},
+			wantError:   true,
+			wantContent: "Worker process died unexpectedly",
+			wantTurnEnd: false,
+		},
+		{
+			name: "error_part_with_message_field",
+			message: OpencodeMessage{
+				ID:          "msg_err_11",
+				SessionID:   session.ID,
+				TimeCreated: 1700000011000,
+				Data: OpencodeMessageData{
+					Role: "assistant",
+				},
+			},
+			parts: []OpencodePart{
+				{
+					ID:          "part_err_11",
+					MessageID:   "msg_err_11",
+					SessionID:   session.ID,
+					TimeCreated: 1700000011500,
+					Data: OpencodePartData{
+						Type:    "error",
+						Message: "Error reported via message field",
+					},
+				},
+			},
+			wantError:   true,
+			wantContent: "Error reported via message field",
+			wantTurnEnd: false,
+		},
+		{
+			name: "error_part_with_error_object_fallback",
+			message: OpencodeMessage{
+				ID:          "msg_err_12",
+				SessionID:   session.ID,
+				TimeCreated: 1700000012000,
+				Data: OpencodeMessageData{
+					Role: "assistant",
+				},
+			},
+			parts: []OpencodePart{
+				{
+					ID:          "part_err_12",
+					MessageID:   "msg_err_12",
+					SessionID:   session.ID,
+					TimeCreated: 1700000012500,
+					Data: OpencodePartData{
+						Type: "error",
+						Error: map[string]interface{}{
+							"error": "Error object nested string",
+						},
+					},
+				},
+			},
+			wantError:   true,
+			wantContent: "Error object nested string",
+			wantTurnEnd: false,
+		},
+		{
+			name: "unknown_part_with_error_payload",
+			message: OpencodeMessage{
+				ID:          "msg_err_13",
+				SessionID:   session.ID,
+				TimeCreated: 1700000013000,
+				Data: OpencodeMessageData{
+					Role: "assistant",
+				},
+			},
+			parts: []OpencodePart{
+				{
+					ID:          "part_err_13",
+					MessageID:   "msg_err_13",
+					SessionID:   session.ID,
+					TimeCreated: 1700000013500,
+					Data: OpencodePartData{
+						Type:  "custom_unknown",
+						Error: "Custom part error",
+					},
+				},
+			},
+			wantError:   true,
+			wantContent: "Custom part error",
+			wantTurnEnd: false,
+		},
+		{
+			name: "tool_part_error_output_fallback",
+			message: OpencodeMessage{
+				ID:          "msg_err_14",
+				SessionID:   session.ID,
+				TimeCreated: 1700000014000,
+				Data: OpencodeMessageData{
+					Role:   "assistant",
+					Finish: &finishErr,
+				},
+			},
+			parts: []OpencodePart{
+				{
+					ID:          "part_err_14",
+					MessageID:   "msg_err_14",
+					SessionID:   session.ID,
+					TimeCreated: 1700000014500,
+					Data: OpencodePartData{
+						Type:   "tool",
+						Tool:   "execute",
+						CallID: "call_14",
+						State: &OpencodeToolPartState{
+							Status: "error",
+							Output: "",
+							Error:  "failed to spawn binary",
+						},
+					},
+				},
+			},
+			wantError:   true,
+			wantContent: "error",
+			wantTurnEnd: true,
+		},
+		{
+			name: "unhandled_role_with_completed_time",
+			message: OpencodeMessage{
+				ID:          "msg_err_15",
+				SessionID:   session.ID,
+				TimeCreated: 1700000015000,
+				Data: OpencodeMessageData{
+					Role:   "system_error",
+					Finish: &finishErr,
+					Time: &OpencodeMessageTiming{
+						Created:   1700000015000,
+						Completed: &completedTs15,
+					},
+				},
+			},
+			wantError:   true,
+			wantContent: "error",
+			wantTurnEnd: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evs := ReconstructSessionEvents(session, []OpencodeMessage{tt.message}, tt.parts)
+
+			var errorEv *ParsedEvent
+			var turnEndEv *ParsedEvent
+			turnEndIdx := -1
+			errorIdx := -1
+
+			for i := range evs {
+				switch evs[i].EventType {
+				case "error":
+					errorEv = &evs[i]
+					errorIdx = i
+				case "turn_end":
+					turnEndEv = &evs[i]
+					turnEndIdx = i
+				}
+			}
+
+			if tt.wantError {
+				if errorEv == nil {
+					t.Fatalf("expected EventType 'error' event, but none was emitted. Events: %+v", evs)
+				}
+				if errorEv.Data.IsError == nil || !*errorEv.Data.IsError {
+					t.Errorf("error event IsError = %v, want true", errorEv.Data.IsError)
+				}
+				if errorEv.Data.Content == nil || *errorEv.Data.Content != tt.wantContent {
+					got := "<nil>"
+					if errorEv.Data.Content != nil {
+						got = *errorEv.Data.Content
+					}
+					t.Errorf("error event Content = %q, want %q", got, tt.wantContent)
+				}
+				if errorEv.Data.Role == nil || *errorEv.Data.Role != "assistant" {
+					t.Errorf("error event Role = %v, want 'assistant'", errorEv.Data.Role)
+				}
+				if tt.wantTurnEnd {
+					if turnEndEv == nil {
+						t.Errorf("expected turn_end event, but none found")
+					}
+					// Error event must follow turn_end event so classifier transitions to ActivityError
+					if errorIdx < turnEndIdx {
+						t.Errorf("error event index (%d) must follow turn_end index (%d)", errorIdx, turnEndIdx)
+					}
+				}
+			} else {
+				if errorEv != nil {
+					t.Errorf("did not expect error event, but got: %+v", errorEv)
+				}
+			}
+		})
+	}
+}
+
+func TestParseOpencodeMessageData_WithError(t *testing.T) {
+	raw := `{
+		"role": "assistant",
+		"finish": "error",
+		"error": {
+			"name": "ProviderAuthError",
+			"data": {
+				"message": "API key rejected"
+			}
+		}
+	}`
+	msg, err := ParseOpencodeMessageData(raw)
+	if err != nil {
+		t.Fatalf("ParseOpencodeMessageData failed: %v", err)
+	}
+	if msg.Finish == nil || *msg.Finish != "error" {
+		t.Errorf("Finish = %v, want 'error'", msg.Finish)
+	}
+	if msg.Error == nil {
+		t.Fatalf("Error is nil, expected map")
+	}
+	errMap, ok := msg.Error.(map[string]interface{})
+	if !ok {
+		t.Fatalf("Error is %T, want map[string]interface{}", msg.Error)
+	}
+	if errMap["name"] != "ProviderAuthError" {
+		t.Errorf("Error.name = %v, want 'ProviderAuthError'", errMap["name"])
+	}
+}
+
+func TestParseOpencodePartData_ErrorPart(t *testing.T) {
+	raw := `{
+		"type": "error",
+		"text": "Internal error in model stream",
+		"error": {
+			"message": "HTTP 500"
+		}
+	}`
+	part, err := ParseOpencodePartData(raw)
+	if err != nil {
+		t.Fatalf("ParseOpencodePartData failed: %v", err)
+	}
+	if part.Type != "error" {
+		t.Errorf("part.Type = %q, want 'error'", part.Type)
+	}
+	if part.Text != "Internal error in model stream" {
+		t.Errorf("part.Text = %q, want 'Internal error in model stream'", part.Text)
+	}
+	if part.Error == nil {
+		t.Fatalf("part.Error is nil, expected map")
+	}
+}
+
+func TestExtractOpencodeError(t *testing.T) {
+	tests := []struct {
+		name  string
+		input interface{}
+		want  string
+	}{
+		{"nil", nil, ""},
+		{"string", "   network timeout   ", "network timeout"},
+		{"error_interface", errors.New("underlying socket error"), "underlying socket error"},
+		{
+			"data_message",
+			map[string]interface{}{
+				"data": map[string]interface{}{
+					"message": "authorization token expired",
+				},
+			},
+			"authorization token expired",
+		},
+		{
+			"data_exception",
+			map[string]interface{}{
+				"data": map[string]interface{}{
+					"exception": "fatal: out of memory",
+				},
+			},
+			"fatal: out of memory",
+		},
+		{
+			"data_error",
+			map[string]interface{}{
+				"data": map[string]interface{}{
+					"error": "nested inner error",
+				},
+			},
+			"nested inner error",
+		},
+		{
+			"data_string",
+			map[string]interface{}{
+				"data": "raw data string failure",
+			},
+			"raw data string failure",
+		},
+		{
+			"message_field",
+			map[string]interface{}{
+				"message": "context deadline exceeded",
+			},
+			"context deadline exceeded",
+		},
+		{
+			"error_field_recursive",
+			map[string]interface{}{
+				"error": map[string]interface{}{
+					"message": "deep error message",
+				},
+			},
+			"deep error message",
+		},
+		{
+			"exception_field_recursive",
+			map[string]interface{}{
+				"exception": map[string]interface{}{
+					"message": "exception payload text",
+				},
+			},
+			"exception payload text",
+		},
+		{
+			"text_field",
+			map[string]interface{}{
+				"text": "error block text content",
+			},
+			"error block text content",
+		},
+		{
+			"details_field",
+			map[string]interface{}{
+				"details": "detailed stack trace information",
+			},
+			"detailed stack trace information",
+		},
+		{
+			"name_only",
+			map[string]interface{}{
+				"name": "MessageOutputLengthError",
+			},
+			"MessageOutputLengthError",
+		},
+		{
+			"json_marshal_fallback",
+			map[string]interface{}{
+				"code":    float64(503),
+				"unknown": true,
+			},
+			`{"code":503,"unknown":true}`,
+		},
+		{
+			"slice_of_errors",
+			[]interface{}{
+				"first failure",
+				map[string]interface{}{"message": "second failure"},
+			},
+			"first failure\nsecond failure",
+		},
+		{
+			"int_fallback",
+			12345,
+			"12345",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractOpencodeError(tt.input)
+			if got != tt.want {
+				t.Errorf("extractOpencodeError(%v) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+
 
