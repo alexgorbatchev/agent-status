@@ -26,6 +26,24 @@ import (
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/summarizer"
 )
 
+func TestMain(m *testing.M) {
+	tmpDir, err := os.MkdirTemp("", "air-ingester-test-logs-*")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to create test log dir: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := os.Setenv("AIR_LOG_DIR", tmpDir); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to set AIR_LOG_DIR: %v\n", err)
+		_ = os.RemoveAll(tmpDir)
+		os.Exit(1)
+	}
+
+	code := m.Run()
+	_ = os.RemoveAll(tmpDir)
+	os.Exit(code)
+}
+
 func TestIngesterCommandHelp(t *testing.T) {
 	cfg := config.Config{}
 	cmd := newRootCmd(&cfg)
@@ -867,6 +885,7 @@ func TestRunServer(t *testing.T) {
 			NoSummarize: true,
 			BearerToken: "test-secret-token",
 			LogLevel:    "info",
+			LogDir:      t.TempDir(),
 		}
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -957,6 +976,7 @@ func TestRunServer(t *testing.T) {
 			NotifySock:  shortTestSockPath(t),
 			NoSummarize: true,
 			LogLevel:    "info",
+			LogDir:      t.TempDir(),
 		}
 		ctx := context.Background()
 		cmd := newRootCmd(cfg)
@@ -978,6 +998,7 @@ func TestRunServer(t *testing.T) {
 			NotifySock:  "/invalid-nonexistent-dir/sub/path/notify.sock",
 			NoSummarize: true,
 			LogLevel:    "info",
+			LogDir:      t.TempDir(),
 		}
 		ctx := context.Background()
 		cmd := newRootCmd(cfg)
@@ -1000,6 +1021,7 @@ func TestRunServer(t *testing.T) {
 			NotifySock:  sockPath,
 			NoSummarize: true,
 			LogLevel:    "info",
+			LogDir:      t.TempDir(),
 		}
 		ctx := context.Background()
 		cmd := newRootCmd(cfg)
@@ -1071,6 +1093,7 @@ func TestNewRootCmd_Execution(t *testing.T) {
 		"--token", "test-token",
 		"--no-summarize",
 		"--log-level", "info",
+		"--log-dir", t.TempDir(),
 		"--litellm-url", "http://localhost:4000",
 		"--litellm-key", "sk-test",
 		"--summarizer-model", "test-model",
@@ -1110,3 +1133,134 @@ func TestMain_Version(t *testing.T) {
 	os.Args = []string{"air-ingester", "--version"}
 	main()
 }
+
+func TestRunServer_DoesNotLeakLogsToUserXDGStateHome(t *testing.T) {
+	origLogger := logging.Default()
+	t.Cleanup(func() {
+		logging.SetDefault(origLogger)
+	})
+
+	fakeStateHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", fakeStateHome)
+
+	t.Run("isolated via config LogDir", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		logDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "agent-status.db")
+		sockPath := shortTestSockPath(t)
+
+		cfg := &config.Config{
+			Addr:        "127.0.0.1:0",
+			DBPath:      dbPath,
+			NotifySock:  sockPath,
+			NoSummarize: true,
+			BearerToken: "test-secret-token",
+			LogLevel:    "info",
+			LogDir:      logDir,
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cmd := newRootCmd(cfg)
+		ready := make(chan string, 1)
+		errCh := make(chan error, 1)
+
+		go func() {
+			errCh <- runServer(ctx, cmd, cfg, ready)
+		}()
+
+		select {
+		case <-ready:
+		case err := <-errCh:
+			cancel()
+			t.Fatalf("runServer failed before ready: %v", err)
+		case <-time.After(5 * time.Second):
+			cancel()
+			t.Fatal("timed out waiting for server to bind ephemeral port")
+		}
+
+		cancel()
+
+		select {
+		case err := <-errCh:
+			if err != nil {
+				t.Fatalf("runServer returned error: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("runServer did not shut down within timeout")
+		}
+
+		_ = logging.Close()
+
+		entries, err := os.ReadDir(logDir)
+		if err != nil || len(entries) == 0 {
+			t.Fatalf("expected log file in cfg.LogDir (%s), got %v (err: %v)", logDir, entries, err)
+		}
+
+		leakDir := filepath.Join(fakeStateHome, "agent-status", "logs")
+		if entries, err := os.ReadDir(leakDir); err == nil && len(entries) > 0 {
+			var names []string
+			for _, e := range entries {
+				names = append(names, e.Name())
+			}
+			t.Fatalf("expected no log files to be created under XDG_STATE_HOME, but found %v in %s", names, leakDir)
+		}
+	})
+
+	t.Run("isolated via package TestMain AIR_LOG_DIR fallback", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		dbPath := filepath.Join(tmpDir, "agent-status.db")
+		sockPath := shortTestSockPath(t)
+
+		cfg := &config.Config{
+			Addr:        "127.0.0.1:0",
+			DBPath:      dbPath,
+			NotifySock:  sockPath,
+			NoSummarize: true,
+			BearerToken: "test-secret-token",
+			LogLevel:    "info",
+			// LogDir and LogFile deliberately empty; package TestMain AIR_LOG_DIR catches it
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cmd := newRootCmd(cfg)
+		ready := make(chan string, 1)
+		errCh := make(chan error, 1)
+
+		go func() {
+			errCh <- runServer(ctx, cmd, cfg, ready)
+		}()
+
+		select {
+		case <-ready:
+		case err := <-errCh:
+			cancel()
+			t.Fatalf("runServer failed before ready: %v", err)
+		case <-time.After(5 * time.Second):
+			cancel()
+			t.Fatal("timed out waiting for server to bind ephemeral port")
+		}
+
+		cancel()
+
+		select {
+		case err := <-errCh:
+			if err != nil {
+				t.Fatalf("runServer returned error: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("runServer did not shut down within timeout")
+		}
+
+		_ = logging.Close()
+
+		leakDir := filepath.Join(fakeStateHome, "agent-status", "logs")
+		if entries, err := os.ReadDir(leakDir); err == nil && len(entries) > 0 {
+			var names []string
+			for _, e := range entries {
+				names = append(names, e.Name())
+			}
+			t.Fatalf("expected no log files to be created under XDG_STATE_HOME, but found %v in %s", names, leakDir)
+		}
+	})
+}
+

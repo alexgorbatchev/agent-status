@@ -2,11 +2,31 @@ package main
 
 import (
 	"bytes"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-server/internal/config"
 )
+
+func TestMain(m *testing.M) {
+	tmpDir, err := os.MkdirTemp("", "air-server-test-logs-*")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to create test log dir: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := os.Setenv("AIR_LOG_DIR", tmpDir); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to set AIR_LOG_DIR: %v\n", err)
+		_ = os.RemoveAll(tmpDir)
+		os.Exit(1)
+	}
+
+	code := m.Run()
+	_ = os.RemoveAll(tmpDir)
+	os.Exit(code)
+}
 
 func TestServerCommandHelp(t *testing.T) {
 	cfg := config.DefaultConfig()

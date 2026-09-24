@@ -26,6 +26,24 @@ type testSyncBuffer struct {
 	buf bytes.Buffer
 }
 
+func TestMain(m *testing.M) {
+	tmpDir, err := os.MkdirTemp("", "air-observer-test-logs-*")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to create test log dir: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := os.Setenv("AIR_LOG_DIR", tmpDir); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to set AIR_LOG_DIR: %v\n", err)
+		_ = os.RemoveAll(tmpDir)
+		os.Exit(1)
+	}
+
+	code := m.Run()
+	_ = os.RemoveAll(tmpDir)
+	os.Exit(code)
+}
+
 func (s *testSyncBuffer) Write(p []byte) (n int, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -524,7 +542,7 @@ func TestRootCmdExecute_RunE(t *testing.T) {
 	}
 
 	cmd, _ := newRootCmd()
-	cmd.SetArgs([]string{"--cursor-path", corruptedCursor, "--env", "test-env"})
+	cmd.SetArgs([]string{"--cursor-path", corruptedCursor, "--env", "test-env", "--log-dir", tmpDir})
 
 	err := cmd.Execute()
 	if err == nil {
