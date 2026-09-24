@@ -16,9 +16,9 @@ stop:
 status:
     bun run scripts/dev-stack.ts status
 
-# Tail rotating daemon logs on disk
+# Tail rotating dev stack daemon logs on disk
 logs:
-    @tail -f ~/.local/state/agent-status/logs/*.log
+    @tail -f .tmp/dev-stack/logs/*.log
 
 # Run in human-facing interactive mode
 run *args:

@@ -2,6 +2,8 @@ import { describe, expect, it } from "bun:test";
 import {
   buildBinaries,
   getAction,
+  getDaemonEnv,
+  getDevStackPaths,
   getIngesterArgs,
   getLogLevel,
   shouldSkipBuild,
@@ -268,6 +270,86 @@ describe("dev-stack build controls (#72)", () => {
       expect(prd).toContain("AIR_NO_SUMMARIZE");
       expect(impl).toContain("LITELLM_KEY");
       expect(impl).toContain("AIR_NO_SUMMARIZE");
+    });
+  });
+});
+
+describe("dev-stack output isolation", () => {
+  const runDir = "/repo/.tmp/dev-stack";
+  const inheritedEnv = {
+    PATH: "/usr/bin",
+    XDG_STATE_HOME: "/home/dev/.local/state",
+    XDG_RUNTIME_DIR: "/tmp",
+    XDG_DATA_HOME: "/home/dev/.local/share",
+    XDG_CACHE_HOME: "/home/dev/.cache",
+    AIR_LOG_DIR: "/home/dev/logs",
+    AIR_LOG_FILE: "/home/dev/logs/shared.log",
+    AIR_SESSION_STATE_PATH: "/home/dev/.cache/observer-sessions.json",
+    CLAUDE_PROJECTS_DIR: "/home/dev/.claude/projects",
+  };
+
+  describe("getDevStackPaths", () => {
+    it("places every output location under the run directory", () => {
+      expect(getDevStackPaths(runDir)).toEqual({
+        dataDir: "/repo/.tmp/dev-stack/data",
+        cacheDir: "/repo/.tmp/dev-stack/cache",
+        logDir: "/repo/.tmp/dev-stack/logs",
+        runtimeDir: "/repo/.tmp/dev-stack/run",
+        notifySock: "/repo/.tmp/dev-stack/run/agent-status/notify.sock",
+      });
+    });
+
+    it("rejects run directories whose notify socket path exceeds the Unix socket limit", () => {
+      const deepRunDir = `/${"a".repeat(80)}/.tmp/dev-stack`;
+      expect(() => getDevStackPaths(deepRunDir)).toThrow(
+        `Notify socket path ${deepRunDir}/run/agent-status/notify.sock is 125 bytes; ` +
+          "Unix domain socket paths are limited to 103 bytes. Run the dev stack from a shorter checkout path.",
+      );
+    });
+  });
+
+  describe("getDaemonEnv", () => {
+    const paths = getDevStackPaths(runDir);
+
+    it("routes ingester database, socket, and logs into the run directory", () => {
+      expect(getDaemonEnv("ingester", paths, inheritedEnv)).toEqual({
+        PATH: "/usr/bin",
+        XDG_STATE_HOME: "/home/dev/.local/state",
+        XDG_CACHE_HOME: "/home/dev/.cache",
+        CLAUDE_PROJECTS_DIR: "/home/dev/.claude/projects",
+        AIR_INGESTER_ADDR: ":4501",
+        AIR_BEARER_TOKEN: "dev-secret-token",
+        XDG_DATA_HOME: "/repo/.tmp/dev-stack/data",
+        XDG_RUNTIME_DIR: "/repo/.tmp/dev-stack/run",
+        AIR_LOG_DIR: "/repo/.tmp/dev-stack/logs",
+      });
+    });
+
+    it("routes server database, socket, and logs into the run directory", () => {
+      expect(getDaemonEnv("server", paths, inheritedEnv)).toEqual({
+        PATH: "/usr/bin",
+        XDG_STATE_HOME: "/home/dev/.local/state",
+        XDG_CACHE_HOME: "/home/dev/.cache",
+        CLAUDE_PROJECTS_DIR: "/home/dev/.claude/projects",
+        AIR_SERVER_ADDR: ":4502",
+        AGENT_STATUS_TOKEN: "dev-secret-token",
+        XDG_DATA_HOME: "/repo/.tmp/dev-stack/data",
+        XDG_RUNTIME_DIR: "/repo/.tmp/dev-stack/run",
+        AIR_LOG_DIR: "/repo/.tmp/dev-stack/logs",
+      });
+    });
+
+    it("routes observer cursors, session state, and logs into the run directory", () => {
+      expect(getDaemonEnv("observer", paths, inheritedEnv)).toEqual({
+        PATH: "/usr/bin",
+        XDG_STATE_HOME: "/home/dev/.local/state",
+        XDG_RUNTIME_DIR: "/tmp",
+        XDG_DATA_HOME: "/home/dev/.local/share",
+        CLAUDE_PROJECTS_DIR: "/home/dev/.claude/projects",
+        AGENT_STATUS_TOKEN: "dev-secret-token",
+        XDG_CACHE_HOME: "/repo/.tmp/dev-stack/cache",
+        AIR_LOG_DIR: "/repo/.tmp/dev-stack/logs",
+      });
     });
   });
 });

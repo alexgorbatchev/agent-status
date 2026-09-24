@@ -40,6 +40,83 @@ export function getAction(argv: string[] = process.argv): string {
   return rawAction;
 }
 
+// Darwin's sockaddr_un.sun_path is 104 bytes including the NUL terminator.
+export const MAX_UNIX_SOCKET_PATH_BYTES = 103;
+
+// Inherited variables that would redirect daemon output outside the run directory.
+const OUTPUT_REDIRECT_ENV_KEYS = ["AIR_LOG_FILE", "AIR_SESSION_STATE_PATH"];
+
+const DEV_TOKEN = "dev-secret-token";
+
+export type DevStackDaemon = "ingester" | "server" | "observer";
+
+export type DevStackEnv = Record<string, string | undefined>;
+
+export interface IDevStackPaths {
+  dataDir: string;
+  cacheDir: string;
+  logDir: string;
+  runtimeDir: string;
+  notifySock: string;
+}
+
+export function getDevStackPaths(stackRunDir: string): IDevStackPaths {
+  const runtimeDir = resolve(stackRunDir, "run");
+  // Mirrors the daemons' default of $XDG_RUNTIME_DIR/agent-status/notify.sock.
+  const notifySock = resolve(runtimeDir, "agent-status", "notify.sock");
+  const notifySockBytes = new TextEncoder().encode(notifySock).byteLength;
+  if (notifySockBytes > MAX_UNIX_SOCKET_PATH_BYTES) {
+    throw new Error(
+      `Notify socket path ${notifySock} is ${notifySockBytes} bytes; ` +
+        `Unix domain socket paths are limited to ${MAX_UNIX_SOCKET_PATH_BYTES} bytes. ` +
+        "Run the dev stack from a shorter checkout path.",
+    );
+  }
+
+  return {
+    dataDir: resolve(stackRunDir, "data"),
+    cacheDir: resolve(stackRunDir, "cache"),
+    logDir: resolve(stackRunDir, "logs"),
+    runtimeDir,
+    notifySock,
+  };
+}
+
+export function getDaemonEnv(daemon: DevStackDaemon, paths: IDevStackPaths, baseEnv: DevStackEnv): DevStackEnv {
+  const inheritedEnv = Object.fromEntries(
+    Object.entries(baseEnv).filter(([key]) => !OUTPUT_REDIRECT_ENV_KEYS.includes(key)),
+  );
+
+  switch (daemon) {
+    case "ingester":
+      return {
+        ...inheritedEnv,
+        AIR_INGESTER_ADDR: ":4501",
+        AIR_BEARER_TOKEN: DEV_TOKEN,
+        XDG_DATA_HOME: paths.dataDir,
+        XDG_RUNTIME_DIR: paths.runtimeDir,
+        AIR_LOG_DIR: paths.logDir,
+      };
+    case "server":
+      return {
+        ...inheritedEnv,
+        AIR_SERVER_ADDR: ":4502",
+        AGENT_STATUS_TOKEN: DEV_TOKEN,
+        XDG_DATA_HOME: paths.dataDir,
+        XDG_RUNTIME_DIR: paths.runtimeDir,
+        AIR_LOG_DIR: paths.logDir,
+      };
+    case "observer":
+      // XDG_DATA_HOME stays inherited: the observer reads harness session directories from it.
+      return {
+        ...inheritedEnv,
+        AGENT_STATUS_TOKEN: DEV_TOKEN,
+        XDG_CACHE_HOME: paths.cacheDir,
+        AIR_LOG_DIR: paths.logDir,
+      };
+  }
+}
+
 export function shouldSkipBuild(argv: string[] = process.argv): boolean {
   return argv.includes("--no-build");
 }
@@ -288,9 +365,8 @@ async function startStack() {
   const procs: Subprocess[] = [];
 
   const logLevel = getLogLevel(process.argv);
-  const dbDir = resolve(runDir, "data");
-  mkdirSync(dbDir, { recursive: true });
-  const notifySock = "/tmp/agent-status/notify.sock";
+  const paths = getDevStackPaths(runDir);
+  mkdirSync(paths.dataDir, { recursive: true });
 
   const agent = isAgentMode();
   const ingesterPrefix = agent ? "[ingester]" : "\x1b[34m[ingester]\x1b[0m";
@@ -310,14 +386,7 @@ async function startStack() {
   });
   const ingester = Bun.spawn(ingesterArgs, {
     cwd: rootDir,
-    env: {
-      ...process.env,
-      AIR_INGESTER_ADDR: ":4501",
-      AIR_BEARER_TOKEN: "dev-secret-token",
-      AIR_NOTIFY_SOCK: notifySock,
-      XDG_DATA_HOME: dbDir,
-      XDG_RUNTIME_DIR: "/tmp",
-    },
+    env: getDaemonEnv("ingester", paths, process.env),
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -337,14 +406,7 @@ async function startStack() {
     [serverBin, "--cors-origin", "http://localhost:3000", "--log-level", logLevel],
     {
       cwd: rootDir,
-      env: {
-        ...process.env,
-        AIR_SERVER_ADDR: ":4502",
-        AGENT_STATUS_TOKEN: "dev-secret-token",
-        AIR_NOTIFY_SOCK: notifySock,
-        XDG_DATA_HOME: dbDir,
-        XDG_RUNTIME_DIR: "/tmp",
-      },
+      env: getDaemonEnv("server", paths, process.env),
       stdout: "pipe",
       stderr: "pipe",
     },
@@ -364,7 +426,7 @@ async function startStack() {
     [
       observerBin,
       "--token",
-      "dev-secret-token",
+      DEV_TOKEN,
       "--ingester-url",
       "ws://127.0.0.1:4501/ws/ingest",
       "--log-level",
@@ -372,11 +434,7 @@ async function startStack() {
     ],
     {
       cwd: rootDir,
-      env: {
-        ...process.env,
-        AGENT_STATUS_TOKEN: "dev-secret-token",
-        XDG_CACHE_HOME: resolve(runDir, "cache"),
-      },
+      env: getDaemonEnv("observer", paths, process.env),
       stdout: "pipe",
       stderr: "pipe",
     },

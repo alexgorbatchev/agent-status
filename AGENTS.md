@@ -10,7 +10,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - Start dev stack: `just start`
 - Stop dev stack: `just stop`
 - Check status: `just status`
-- Tail daemon logs: `just logs` (or `tail -f ~/.local/state/agent-status/logs/*.log`)
+- Tail dev stack logs: `just logs` (or `tail -f .tmp/dev-stack/logs/*.log`)
 - Run debug CLI: `just debug <args>`
 - Replay session offline: `just session-replay-[claude|pi|codex|opencode] <session-id>`
 - Build all: `just build-all`
@@ -36,7 +36,8 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - Dev stack execution -> Running `just start` directly in a synchronous tool call blocks indefinitely because `scripts/dev-stack.ts start` streams logs in the foreground and never exits; use background process management or let the user run it.
 - SQLite database concurrency -> `air-server` opens SQLite strictly in read-only mode (`?mode=ro`); all mutations occur through `air-ingester`.
 - Unix domain socket binding -> `air-ingester` creates `$XDG_RUNTIME_DIR/agent-status/notify.sock`; `air-server` reconnects automatically when the socket becomes available.
-- Daemon disk logs -> Stored at `~/.local/state/agent-status/logs/{observer,ingester,server}.log` (or `$AIR_LOG_DIR`). Active logs rotate at 10 MB with 5 backups, 14-day retention, and gzip compression. Tail with `just logs` or view directly on disk.
+- Daemon disk logs -> Installed daemons write `~/.local/state/agent-status/logs/{observer,ingester,server}.log` (or `$AIR_LOG_DIR`); the dev stack writes `.tmp/dev-stack/logs/`. Active logs rotate at 10 MB with 5 backups, 14-day retention, and gzip compression. Tail dev stack logs with `just logs`.
+- Dev stack file layout -> `scripts/dev-stack.ts` keeps everything under `.tmp/dev-stack/`: `data/` (SQLite), `cache/` (observer cursors and session state), `logs/`, `run/` (`XDG_RUNTIME_DIR`, notify socket), and `pids.json`. Deep checkout paths fail fast because Unix socket paths are capped at 103 bytes.
 
 ## Shared boundaries
 
@@ -49,6 +50,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - Always: run `just test-all` and `just lint-all` before committing changes
 - Ask first: adding database migrations in `packages/agent-ingester/internal/store/migrations.go` or modifying shared types in `packages/agent-common/types/types.go`
 - Never: run the full dev stack (`just start` or `scripts/dev-stack.ts start`) in a synchronous tool call; it runs in the foreground and never exits
+- Never: let the dev stack write files outside the repository; every database, cache, log, socket, and PID file it produces belongs under `.tmp/dev-stack/`
 - Never: publish releases automatically without explicit user authorization
 - Never: parse or transmit credentials, API keys, or session auth tokens from agent harnesses
 - Never: write directly to agent harness storage directories or mutate active harness logs
