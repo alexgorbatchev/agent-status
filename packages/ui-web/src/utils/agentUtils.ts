@@ -18,6 +18,25 @@ export function filterRunningAgents(agents: IAgentState[]): IAgentState[] {
 
 export type ToolStallTier = "healthy" | "notice" | "warning" | "stalled";
 
+export type IdleFreshness = "fresh" | "standard" | "stale";
+
+const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
+const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+
+export function getIdleFreshness(updatedAt: number, now: number = Date.now()): IdleFreshness {
+  if (!updatedAt || updatedAt <= 0 || Number.isNaN(updatedAt)) {
+    return "stale";
+  }
+  const diffMs = now - updatedAt;
+  if (diffMs < FIFTEEN_MINUTES_MS) {
+    return "fresh";
+  }
+  if (diffMs < TWO_HOURS_MS) {
+    return "standard";
+  }
+  return "stale";
+}
+
 export function getToolExecutionDuration(activity: IAgentActivity, now: number): number | null {
   if (
     activity.lifecycle !== "RUNNING" ||

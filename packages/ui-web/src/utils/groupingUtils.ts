@@ -26,6 +26,8 @@ export function groupAgentsByCategory(agents: IAgentState[]): Record<AgentCatego
     groups[category].push(agent);
   }
 
+  groups.idle.sort((a, b) => b.activity.updatedAt - a.activity.updatedAt);
+
   return groups;
 }
 

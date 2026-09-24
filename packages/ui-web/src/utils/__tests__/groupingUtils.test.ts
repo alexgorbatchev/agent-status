@@ -91,6 +91,24 @@ describe("groupingUtils", () => {
       expect(result.idle.map((a) => a.id)).toEqual(["idle-1", "idle-2"]);
       expect(result.finished.map((a) => a.id)).toEqual(["finished-1"]);
     });
+
+    it("sorts idle agents descending by updatedAt so fresher idle agents appear above stale idle agents", () => {
+      const staleIdle = factory_createAgent({
+        id: "idle-stale",
+        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "IDLE", updatedAt: 1000 },
+      });
+      const freshIdle = factory_createAgent({
+        id: "idle-fresh",
+        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "IDLE", updatedAt: 9000 },
+      });
+      const midIdle = factory_createAgent({
+        id: "idle-mid",
+        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "IDLE", updatedAt: 5000 },
+      });
+
+      const result = groupAgentsByCategory([staleIdle, freshIdle, midIdle]);
+      expect(result.idle.map((a) => a.id)).toEqual(["idle-fresh", "idle-mid", "idle-stale"]);
+    });
   });
 
   describe("groupAgentsByProject", () => {

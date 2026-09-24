@@ -26,6 +26,8 @@ import {
   formatDuration,
   isSessionStalled,
   trimProjectTitlePrefix,
+  getIdleFreshness,
+  type IdleFreshness,
 } from "../utils/agentUtils";
 import { focusAgent } from "../services/api";
 
@@ -89,6 +91,11 @@ export function AgentCard({
   const silenceMinutes = Math.floor(silenceMs / 60000);
   const silenceDuration = `${silenceMinutes}m`;
 
+  const freshness: IdleFreshness =
+    activity.lifecycle === "RUNNING" && activity.activity === "IDLE"
+      ? getIdleFreshness(activity.updatedAt, now)
+      : "fresh";
+
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.target !== event.currentTarget) {
       return;
@@ -111,6 +118,7 @@ export function AgentCard({
       role="button"
       tabIndex={0}
       data-semantic-status={semanticStatus}
+      data-freshness={freshness}
       aria-label={`View details for ${title}`}
       onClick={() => onOpenDrawer?.(agent)}
       onKeyDown={handleKeyDown}
@@ -125,6 +133,7 @@ export function AgentCard({
               : "border-slate-800 hover:border-slate-700",
         agent.isHidden && "border-dashed border-slate-700/60 opacity-60 hover:opacity-100",
         !agent.isHidden && isFinished && "opacity-60 hover:opacity-100",
+        freshness === "stale" && "opacity-60 bg-slate-950/40 border-slate-800/50 hover:opacity-100",
       )}
     >
       <div data-testid="AgentCard--body">

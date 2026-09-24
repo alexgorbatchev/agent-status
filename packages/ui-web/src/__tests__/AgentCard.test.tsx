@@ -806,4 +806,59 @@ describe("AgentCard Component", () => {
       expect(badgeClass).not.toContain("text-[var(--brand-pi)]");
     });
   });
+
+  describe("idle freshness tiers and visual dimming", () => {
+    it("sets data-freshness='fresh' on active RUNNING BUSY agents", () => {
+      const html = renderToStaticMarkup(<AgentCard agent={fixture_agentStateRunning} />);
+      expect(html).toContain('data-freshness="fresh"');
+      expect(html).not.toContain("bg-slate-950/40");
+    });
+
+    it("sets data-freshness='fresh' on RUNNING IDLE agents updated < 15m ago", () => {
+      const agent = factory_agentState({
+        activity: {
+          ...fixture_agentStateRunning.activity,
+          lifecycle: "RUNNING",
+          activity: "IDLE",
+          updatedAt: Date.now() - 5 * 60 * 1000,
+        },
+      });
+      const html = renderToStaticMarkup(<AgentCard agent={agent} />);
+      expect(html).toContain('data-freshness="fresh"');
+      expect(html).not.toContain("bg-slate-950/40");
+    });
+
+    it("sets data-freshness='standard' on RUNNING IDLE agents updated between 15m and 2h ago", () => {
+      const agent = factory_agentState({
+        activity: {
+          ...fixture_agentStateRunning.activity,
+          lifecycle: "RUNNING",
+          activity: "IDLE",
+          updatedAt: Date.now() - 30 * 60 * 1000,
+        },
+      });
+      const html = renderToStaticMarkup(<AgentCard agent={agent} />);
+      expect(html).toContain('data-freshness="standard"');
+      expect(html).not.toContain("bg-slate-950/40");
+    });
+
+    it("sets data-freshness='stale' and applies dimming classes on RUNNING IDLE agents updated >= 2h ago", () => {
+      const agent = factory_agentState({
+        activity: {
+          ...fixture_agentStateRunning.activity,
+          lifecycle: "RUNNING",
+          activity: "IDLE",
+          updatedAt: Date.now() - 3 * 60 * 60 * 1000,
+        },
+      });
+      const html = renderToStaticMarkup(<AgentCard agent={agent} />);
+      expect(html).toContain('data-freshness="stale"');
+      expect(html).toContain("opacity-60 bg-slate-950/40 border-slate-800/50 hover:opacity-100");
+    });
+
+    it("sets data-freshness='fresh' on finished EXITED agents", () => {
+      const html = renderToStaticMarkup(<AgentCard agent={fixture_agentStateExited} />);
+      expect(html).toContain('data-freshness="fresh"');
+    });
+  });
 });

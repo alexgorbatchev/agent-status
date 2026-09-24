@@ -665,6 +665,103 @@ func TestFormatHarnessBadge_ProhibitsRedAndGreen(t *testing.T) {
 	}
 }
 
+func TestGetIdleFreshness(t *testing.T) {
+	nowMs := int64(10000000)
+	tests := []struct {
+		name      string
+		updatedAt int64
+		want      IdleFreshness
+	}{
+		{"fresh recent", nowMs - 5*60*1000, FreshnessFresh},
+		{"fresh boundary", nowMs - (15*60*1000 - 1), FreshnessFresh},
+		{"standard at 15m", nowMs - 15*60*1000, FreshnessStandard},
+		{"standard mid", nowMs - 60*60*1000, FreshnessStandard},
+		{"standard boundary", nowMs - (2*60*60*1000 - 1), FreshnessStandard},
+		{"stale at 2h", nowMs - 2*60*60*1000, FreshnessStale},
+		{"stale older", nowMs - 5*60*60*1000, FreshnessStale},
+		{"stale zero", 0, FreshnessStale},
+		{"stale negative", -100, FreshnessStale},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := GetIdleFreshness(tt.updatedAt, nowMs)
+			if got != tt.want {
+				t.Errorf("GetIdleFreshness(%d, %d) = %v, want %v", tt.updatedAt, nowMs, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRenderAgentView_HumanMode_IdleStaleDimmed(t *testing.T) {
+	agent := types.IAgentState{
+		Harness: types.HarnessClaudeCode,
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityIdle,
+			Title:     "Dormant session",
+			Action:    "Idle",
+			UpdatedAt: 1000000,
+		},
+	}
+
+	var buf bytes.Buffer
+	// 3 hours later
+	nowMs := int64(1000000 + 3*60*60*1000)
+	RenderAgentViewAt(&buf, agent, false, nowMs)
+	out := buf.String()
+
+	if !strings.Contains(out, AnsiDim) {
+		t.Errorf("expected AnsiDim in human mode view for stale idle session (>2h), got:\n%s", out)
+	}
+}
+
+func TestRenderAgentView_HumanMode_IdleFreshNotDimmed(t *testing.T) {
+	agent := types.IAgentState{
+		Harness: types.HarnessClaudeCode,
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityIdle,
+			Title:     "Recent idle session",
+			Action:    "Idle",
+			UpdatedAt: 1000000,
+		},
+	}
+
+	var buf bytes.Buffer
+	// 5 minutes later
+	nowMs := int64(1000000 + 5*60*1000)
+	RenderAgentViewAt(&buf, agent, false, nowMs)
+	out := buf.String()
+
+	if strings.Contains(out, AnsiDim) {
+		t.Errorf("expected no AnsiDim in human mode view for fresh idle session (<15m), got:\n%s", out)
+	}
+}
+
+func TestRenderAgentView_HumanMode_BusyNotDimmed(t *testing.T) {
+	agent := types.IAgentState{
+		Harness: types.HarnessClaudeCode,
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityBusy,
+			Title:     "Long running busy session",
+			Action:    "Running build",
+			UpdatedAt: 1000000,
+		},
+	}
+
+	var buf bytes.Buffer
+	// 3 hours later
+	nowMs := int64(1000000 + 3*60*60*1000)
+	RenderAgentViewAt(&buf, agent, false, nowMs)
+	out := buf.String()
+
+	if strings.Contains(out, AnsiDim) {
+		t.Errorf("expected no AnsiDim in human mode view for busy session even if age > 2h, got:\n%s", out)
+	}
+}
+
+
 
 
 

@@ -13,6 +13,7 @@ import {
   formatDuration,
   isSessionStalled,
   trimProjectTitlePrefix,
+  getIdleFreshness,
 } from "../agentUtils";
 import { factory_createAgent, fixture_testEnvironment, fixture_testStaleEnvironment } from "./fixtures";
 import type { IAgentState } from "../../types";
@@ -613,6 +614,48 @@ describe("agentUtils", () => {
       expect(trimProjectTitlePrefix("", "agent-status")).toBe("");
       expect(trimProjectTitlePrefix("my title", "")).toBe("my title");
       expect(trimProjectTitlePrefix("my title", undefined)).toBe("my title");
+    });
+  });
+
+  describe("getIdleFreshness", () => {
+    it("returns 'fresh' when duration is less than 15 minutes", () => {
+      const now = 10_000_000;
+      expect(getIdleFreshness(now - 0, now)).toBe("fresh");
+      expect(getIdleFreshness(now - 60_000, now)).toBe("fresh");
+      expect(getIdleFreshness(now - (14 * 60 * 1000 + 59 * 1000), now)).toBe("fresh");
+      expect(getIdleFreshness(now - (15 * 60 * 1000 - 1), now)).toBe("fresh");
+    });
+
+    it("returns 'standard' when duration is between 15 minutes and 2 hours", () => {
+      const now = 10_000_000;
+      expect(getIdleFreshness(now - 15 * 60 * 1000, now)).toBe("standard");
+      expect(getIdleFreshness(now - 30 * 60 * 1000, now)).toBe("standard");
+      expect(getIdleFreshness(now - 60 * 60 * 1000, now)).toBe("standard");
+      expect(getIdleFreshness(now - (2 * 60 * 60 * 1000 - 1), now)).toBe("standard");
+    });
+
+    it("returns 'stale' when duration is at or exceeds 2 hours", () => {
+      const now = 10_000_000;
+      expect(getIdleFreshness(now - 2 * 60 * 60 * 1000, now)).toBe("stale");
+      expect(getIdleFreshness(now - 3 * 60 * 60 * 1000, now)).toBe("stale");
+      expect(getIdleFreshness(now - 72 * 60 * 60 * 1000, now)).toBe("stale");
+    });
+
+    it("returns 'stale' for missing, zero, negative, or NaN timestamps", () => {
+      const now = 10_000_000;
+      expect(getIdleFreshness(0, now)).toBe("stale");
+      expect(getIdleFreshness(-1000, now)).toBe("stale");
+      expect(getIdleFreshness(Number.NaN, now)).toBe("stale");
+      expect(getIdleFreshness(undefined as unknown as number, now)).toBe("stale");
+      expect(getIdleFreshness(null as unknown as number, now)).toBe("stale");
+    });
+
+    it("uses Date.now() when now parameter is omitted", () => {
+      const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+      expect(getIdleFreshness(fiveMinutesAgo)).toBe("fresh");
+
+      const threeHoursAgo = Date.now() - 3 * 60 * 60 * 1000;
+      expect(getIdleFreshness(threeHoursAgo)).toBe("stale");
     });
   });
 });

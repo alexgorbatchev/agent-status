@@ -52,6 +52,36 @@ func FormatHarnessBadge(h types.HarnessType, activity types.ActivityState) strin
 	}
 }
 
+// IdleFreshness represents the freshness tier of an idle agent session.
+type IdleFreshness string
+
+const (
+	FreshnessFresh    IdleFreshness = "fresh"
+	FreshnessStandard IdleFreshness = "standard"
+	FreshnessStale    IdleFreshness = "stale"
+)
+
+// Durations for freshness boundaries.
+const (
+	idleFreshThresholdMs int64 = 15 * 60 * 1000     // 15 minutes
+	idleStaleThresholdMs int64 = 2 * 60 * 60 * 1000 // 2 hours
+)
+
+// GetIdleFreshness returns the freshness tier for an idle session based on updatedAt timestamp.
+func GetIdleFreshness(updatedAt int64, nowMs int64) IdleFreshness {
+	if updatedAt <= 0 {
+		return FreshnessStale
+	}
+	diffMs := nowMs - updatedAt
+	if diffMs < idleFreshThresholdMs {
+		return FreshnessFresh
+	}
+	if diffMs < idleStaleThresholdMs {
+		return FreshnessStandard
+	}
+	return FreshnessStale
+}
+
 // FormatTokens formats an integer token count with commas, e.g. 14520 -> "14,520 tokens".
 func FormatTokens(tokens int64) string {
 	str := fmt.Sprintf("%d", tokens)
@@ -307,19 +337,35 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 	}
 	metricsLine := metricsLeft + strings.Repeat(" ", metricsSpace) + metricsRight
 
-	// Print lines
-	_, _ = fmt.Fprintln(w, divider)
-	_, _ = fmt.Fprintln(w, headerLine)
-	_, _ = fmt.Fprintln(w, divider)
-	_, _ = fmt.Fprintln(w, title)
-	_, _ = fmt.Fprintln(w, action)
-	if callout != "" {
-		_, _ = fmt.Fprintln(w)
-		_, _ = fmt.Fprintln(w, callout)
+	// Calculate idle freshness: if session is IDLE and age > 2h (stale), dim output with ANSI Dim
+	isStaleIdle := agent.Activity.Activity == types.ActivityIdle && GetIdleFreshness(agent.Activity.UpdatedAt, nowMs) == FreshnessStale
+
+	printLine := func(line string) {
+		if line == "" {
+			_, _ = fmt.Fprintln(w)
+			return
+		}
+		if isStaleIdle {
+			formatted := strings.ReplaceAll(line, AnsiReset, AnsiReset+AnsiDim)
+			_, _ = fmt.Fprintf(w, "%s%s%s\n", AnsiDim, formatted, AnsiReset)
+		} else {
+			_, _ = fmt.Fprintln(w, line)
+		}
 	}
-	_, _ = fmt.Fprintln(w)
-	_, _ = fmt.Fprintln(w, badgesLine)
-	_, _ = fmt.Fprintln(w, divider)
-	_, _ = fmt.Fprintln(w, metricsLine)
-	_, _ = fmt.Fprintln(w, divider)
+
+	// Print lines
+	printLine(divider)
+	printLine(headerLine)
+	printLine(divider)
+	printLine(title)
+	printLine(action)
+	if callout != "" {
+		printLine("")
+		printLine(callout)
+	}
+	printLine("")
+	printLine(badgesLine)
+	printLine(divider)
+	printLine(metricsLine)
+	printLine(divider)
 }
