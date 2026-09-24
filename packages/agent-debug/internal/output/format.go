@@ -9,14 +9,22 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/mattn/go-runewidth"
 	"github.com/olekukonko/tablewriter"
+	"github.com/olekukonko/tablewriter/tw"
 	"golang.org/x/term"
 )
 
-// Standard single-cell terminal status glyphs to prevent multi-cell/EAW visual misalignment.
+func init() {
+	// Pin runewidth DefaultCondition to single-cell EastAsianWidth: false to guarantee
+	// deterministic visual width calculations across all environments and locales (#112).
+	runewidth.DefaultCondition.EastAsianWidth = false
+}
+
+// Standard fixed-width ASCII status tag glyphs.
 const (
 	GlyphOK       = "[OK]"
 	GlyphFail     = "[FAIL]"
@@ -83,14 +91,9 @@ var escapeSequenceRegex = regexp.MustCompile(
 		`\x1b`, // Lone ESC
 )
 
-// stripANSI removes ANSI escape codes from s.
-func stripANSI(s string) string {
-	return escapeSequenceRegex.ReplaceAllString(s, "")
-}
-
 // StripANSI removes ANSI escape codes from s.
 func StripANSI(s string) string {
-	return stripANSI(s)
+	return escapeSequenceRegex.ReplaceAllString(s, "")
 }
 
 // SanitizeTranscriptText removes escape sequences and C0/C1 control characters from s,
@@ -210,10 +213,140 @@ func TrimProjectPrefix(title, projectName string) string {
 	return title
 }
 
-
 // VisualWidth returns the visual terminal cell width of s, excluding ANSI escape sequences.
 func VisualWidth(s string) int {
-	return runewidth.StringWidth(stripANSI(s))
+	return runewidth.StringWidth(StripANSI(s))
+}
+
+func isDanglingRune(r rune) bool {
+	return r == '\u200d' || r == '\u200c' ||
+		(r >= 0xfe00 && r <= 0xfe0f) ||
+		(r >= 0xe0100 && r <= 0xe01ef) ||
+		(r >= 0x1f3fb && r <= 0x1f3ff) ||
+		unicode.Is(unicode.M, r)
+}
+
+func stripTrailingDangling(s string) string {
+	for {
+		locs := escapeSequenceRegex.FindAllStringIndex(s, -1)
+		escStart := len(s)
+		for i := len(locs) - 1; i >= 0; i-- {
+			if locs[i][1] == escStart {
+				escStart = locs[i][0]
+			} else {
+				break
+			}
+		}
+		if escStart < len(s) {
+			before := s[:escStart]
+			trailingEscapes := s[escStart:]
+			r, size := utf8.DecodeLastRuneInString(before)
+			if r != utf8.RuneError && isDanglingRune(r) {
+				s = before[:len(before)-size] + trailingEscapes
+				continue
+			}
+			break
+		}
+		r, size := utf8.DecodeLastRuneInString(s)
+		if r != utf8.RuneError && isDanglingRune(r) {
+			s = s[:len(s)-size]
+			continue
+		}
+		break
+	}
+	return s
+}
+
+// TruncateVisual truncates s from the right such that its visual display width <= maxWidth.
+// It is ANSI-aware and rune-safe, preventing slicing inside multi-byte UTF-8 runes
+// or ANSI escape sequences. If truncated, tail is appended.
+func TruncateVisual(s string, maxWidth int, tail string) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+	if VisualWidth(s) <= maxWidth {
+		return s
+	}
+	tailWidth := VisualWidth(tail)
+	if tailWidth > maxWidth {
+		plainTail := StripANSI(tail)
+		var b strings.Builder
+		cur := 0
+		for _, r := range plainTail {
+			w := runewidth.RuneWidth(r)
+			if cur+w > maxWidth {
+				break
+			}
+			b.WriteRune(r)
+			cur += w
+		}
+		return stripTrailingDangling(b.String())
+	}
+
+	available := maxWidth - tailWidth
+	hasANSI := strings.Contains(s, "\x1b") ||
+		strings.ContainsRune(s, 0x90) ||
+		strings.ContainsRune(s, 0x98) ||
+		strings.ContainsRune(s, 0x9b) ||
+		strings.ContainsRune(s, 0x9d) ||
+		strings.ContainsRune(s, 0x9e) ||
+		strings.ContainsRune(s, 0x9f) ||
+		escapeSequenceRegex.MatchString(s)
+
+	if !hasANSI {
+		var b strings.Builder
+		cur := 0
+		for _, r := range s {
+			w := runewidth.RuneWidth(r)
+			if cur+w > available {
+				break
+			}
+			b.WriteRune(r)
+			cur += w
+		}
+		truncated := stripTrailingDangling(b.String())
+		return truncated + tail
+	}
+
+	matches := escapeSequenceRegex.FindAllStringIndex(s, -1)
+	var b strings.Builder
+	curWidth := 0
+	truncated := false
+
+	inEscape := func(idx int) (bool, int) {
+		for _, m := range matches {
+			if idx >= m[0] && idx < m[1] {
+				return true, m[1]
+			}
+		}
+		return false, idx
+	}
+
+	for i := 0; i < len(s); {
+		if isEsc, next := inEscape(i); isEsc {
+			b.WriteString(s[i:next])
+			i = next
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		w := runewidth.RuneWidth(r)
+		if curWidth+w > available {
+			truncated = true
+			break
+		}
+		b.WriteRune(r)
+		curWidth += w
+		i += size
+	}
+
+	str := stripTrailingDangling(b.String())
+	var res strings.Builder
+	res.WriteString(str)
+	res.WriteString(tail)
+	if truncated && hasANSI {
+		res.WriteString(AnsiReset)
+	}
+	return res.String()
 }
 
 // TruncateLeftVisual truncates s from the left, keeping the rightmost characters
@@ -221,14 +354,14 @@ func VisualWidth(s string) int {
 // It is ANSI-aware and strip-safe, operating on plain runes to prevent slicing
 // inside escape sequences or miscalculating escape code byte lengths as display cells.
 func TruncateLeftVisual(s string, maxWidth int, prefix string) string {
-	plain := stripANSI(s)
-	if runewidth.StringWidth(plain) <= maxWidth {
+	plain := StripANSI(s)
+	if VisualWidth(plain) <= maxWidth {
 		return s
 	}
-	prefixWidth := runewidth.StringWidth(stripANSI(prefix))
+	prefixWidth := VisualWidth(prefix)
 	available := maxWidth - prefixWidth
 	if available <= 0 {
-		return runewidth.Truncate(stripANSI(prefix), maxWidth, "")
+		return TruncateVisual(prefix, maxWidth, "")
 	}
 	runes := []rune(plain)
 	totalWidth := 0
@@ -240,6 +373,9 @@ func TruncateLeftVisual(s string, maxWidth int, prefix string) string {
 		}
 		totalWidth += w
 		cutIdx = i
+	}
+	for cutIdx < len(runes) && isDanglingRune(runes[cutIdx]) {
+		cutIdx++
 	}
 	return prefix + string(runes[cutIdx:])
 }
@@ -288,6 +424,16 @@ type SessionSummary struct {
 	Tokens    int64     `json:"tokens"`
 }
 
+// newTable creates a tablewriter configured with ASCII-only borders and runewidth condition
+// to guarantee deterministic single-cell visual alignment across all locales (#112).
+func newTable(w io.Writer, header []string) *tablewriter.Table {
+	return tablewriter.NewTable(w,
+		tablewriter.WithHeader(header),
+		tablewriter.WithSymbols(tw.NewSymbols(tw.StyleASCII)),
+		tablewriter.WithEastAsian(tw.Off),
+	)
+}
+
 // RenderSessionList writes the session list in either human table or agent flat mode.
 func RenderSessionList(w io.Writer, sessions []SessionSummary, agentMode bool) {
 	if agentMode {
@@ -309,7 +455,7 @@ func RenderSessionList(w io.Writer, sessions []SessionSummary, agentMode bool) {
 		return
 	}
 
-	table := tablewriter.NewTable(w, tablewriter.WithHeader([]string{"Session ID", "Title", "Directory", "Created", "Cost ($)", "Tokens"}))
+	table := newTable(w, []string{"Session ID", "Title", "Directory", "Created", "Cost ($)", "Tokens"})
 
 	for _, s := range sessions {
 		id := SanitizeTranscriptText(s.ID)
@@ -317,11 +463,11 @@ func RenderSessionList(w io.Writer, sessions []SessionSummary, agentMode bool) {
 		if title == "" {
 			title = "(untitled)"
 		}
-		if runewidth.StringWidth(stripANSI(title)) > 35 {
-			title = runewidth.Truncate(title, 35, "...")
+		if VisualWidth(title) > 35 {
+			title = TruncateVisual(title, 35, "...")
 		}
 		dir := SanitizeTranscriptText(s.Directory)
-		if runewidth.StringWidth(stripANSI(dir)) > 35 {
+		if VisualWidth(dir) > 35 {
 			dir = TruncateLeftVisual(dir, 35, "...")
 		}
 
@@ -426,16 +572,16 @@ type ReplaySummary struct {
 	IsLifecycleSynthetic bool                 `json:"isLifecycleSynthetic,omitempty"`
 	HasUnseenCompletion  *bool                `json:"hasUnseenCompletion,omitempty"`
 	Title                string               `json:"title"`
-	Action           string              `json:"action"`
-	TokensInput      int64               `json:"tokensInput"`
-	TokensOutput     int64               `json:"tokensOutput"`
-	TokensTotal      int64               `json:"tokensTotal"`
-	CostUSD          float64             `json:"costUSD"`
-	SubagentCount    int                 `json:"subagentCount"`
-	FramesProcessed  int                 `json:"framesProcessed"`
-	VerificationOK   bool                `json:"verificationOk"`
-	VerificationLogs int                 `json:"verificationLogs"`
-	DurationMs       int64               `json:"durationMs"`
+	Action               string               `json:"action"`
+	TokensInput          int64                `json:"tokensInput"`
+	TokensOutput         int64                `json:"tokensOutput"`
+	TokensTotal          int64                `json:"tokensTotal"`
+	CostUSD              float64              `json:"costUSD"`
+	SubagentCount        int                  `json:"subagentCount"`
+	FramesProcessed      int                  `json:"framesProcessed"`
+	VerificationOK       bool                 `json:"verificationOk"`
+	VerificationLogs     int                  `json:"verificationLogs"`
+	DurationMs           int64                `json:"durationMs"`
 }
 
 // FormatActivityStatus returns the human-readable status for a session.

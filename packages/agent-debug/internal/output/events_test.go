@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/db"
@@ -628,4 +629,72 @@ func TestRenderEventJSON(t *testing.T) {
 	if parsed.ID != 18588 || parsed.EventType != "run_exited" {
 		t.Errorf("unexpected parsed JSON item: %+v", parsed)
 	}
+}
+
+func TestFormatEventSummary_RuneSafeTruncation_CJKAndEmoji(t *testing.T) {
+	t.Run("tool_call command does not split runes or emit hex escapes", func(t *testing.T) {
+		cmd := "a日本語日本語日本語日本語日本語日本語日本語"
+		rec := db.EventRecord{
+			EventType: "tool_call",
+			Data: types.TelemetryFrameData{
+				ToolName:  strPtr("bash"),
+				ToolInput: map[string]interface{}{"command": cmd},
+			},
+		}
+		summary := FormatEventSummary(rec)
+		if strings.Contains(summary, `\x`) {
+			t.Errorf("summary contains escaped hex bytes indicating sliced rune: %s", summary)
+		}
+		if !utf8.ValidString(summary) {
+			t.Errorf("summary is not valid UTF-8: %s", summary)
+		}
+	})
+
+	t.Run("thinking len uses rune count not byte length", func(t *testing.T) {
+		content := "日本語"
+		rec := db.EventRecord{
+			EventType: "thinking",
+			Data: types.TelemetryFrameData{
+				Content: &content,
+			},
+		}
+		summary := FormatEventSummary(rec)
+		if summary != "len=3 chars" {
+			t.Errorf("got %q, want 'len=3 chars' (rune count, not byte count)", summary)
+		}
+	})
+
+	t.Run("user_message does not split runes or emit hex escapes", func(t *testing.T) {
+		prompt := "ab日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語"
+		rec := db.EventRecord{
+			EventType: "user_message",
+			Data: types.TelemetryFrameData{
+				LastPrompt: &prompt,
+			},
+		}
+		summary := FormatEventSummary(rec)
+		if strings.Contains(summary, `\x`) {
+			t.Errorf("summary contains escaped hex bytes indicating sliced rune: %s", summary)
+		}
+		if !utf8.ValidString(summary) {
+			t.Errorf("summary is not valid UTF-8: %s", summary)
+		}
+	})
+
+	t.Run("assistant_message does not split runes or emit hex escapes", func(t *testing.T) {
+		content := "ab日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語"
+		rec := db.EventRecord{
+			EventType: "assistant_message",
+			Data: types.TelemetryFrameData{
+				Content: &content,
+			},
+		}
+		summary := FormatEventSummary(rec)
+		if strings.Contains(summary, `\x`) {
+			t.Errorf("summary contains escaped hex bytes indicating sliced rune: %s", summary)
+		}
+		if !utf8.ValidString(summary) {
+			t.Errorf("summary is not valid UTF-8: %s", summary)
+		}
+	})
 }

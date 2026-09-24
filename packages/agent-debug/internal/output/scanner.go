@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/scanner"
-	"github.com/olekukonko/tablewriter"
 )
 
 // RenderScannerAudit renders process pairing audit records in human or agent mode.
@@ -38,9 +37,9 @@ func RenderScannerAudit(w io.Writer, records []scanner.AuditRecord, agentMode bo
 	_, _ = fmt.Fprintln(w, "Process Discovery & Session Pairing Audit")
 	RenderDivider(w, '-')
 
-	table := tablewriter.NewTable(w, tablewriter.WithHeader([]string{
+	table := newTable(w, []string{
 		"Harness", "PID", "Created At", "CWD", "Session ID", "Delta", "Status",
-	}))
+	})
 
 	for _, r := range records {
 		pidStr := "-"

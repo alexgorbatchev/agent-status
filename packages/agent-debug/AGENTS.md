@@ -29,7 +29,9 @@ Offline replay and validation CLI tool for agent session transcripts through the
 - Render hierarchical tree-view help screens with `cobra-help-tree`.
 - Dual-mode output: formatted tables and trees when `AGENT=0`, compact token-conservative key-value lines when `AGENT=1`.
 - Act strictly as an external driver; zero debug flags or conditional forks in production daemons.
-- Terminal width and alignment rely on `runewidth` cell calculations via `VisualWidth` (`runewidth.StringWidth(stripANSI(s))`) to account for wide Unicode characters and zero-width ANSI escape sequences.
+- Terminal width and alignment rely on `runewidth` cell calculations via `VisualWidth` (`runewidth.StringWidth(StripANSI(s))`) and rune-safe truncation via `TruncateVisual` to account for wide Unicode characters and zero-width ANSI escape sequences.
+- Default runewidth condition is pinned via `runewidth.DefaultCondition.EastAsianWidth = false` to guarantee deterministic single-cell width across all environments and locales (#112).
+- Tables enforce ASCII tablewriter configuration (`tw.StyleASCII`, `tw.Off` EastAsian), and tree structures use ASCII-only structural glyphs (`v`, `|-`, `+-`) to avoid ambiguous width misalignment (#112).
 - Redundant project prefixes in session titles are stripped using `TrimProjectPrefix` (`internal/output/format.go`) when displayed under project headers or tree views.
 - Semantic color precedence strictly reserves Red and Green for lifecycle and activity states; brand colors are sanitized via `SanitizeBrandColor` to prevent visual collision with error or running states (#106).
 - Idle freshness tiers categorize idle sessions as `fresh` (<15m), `standard` (15m–2h), or `stale` (>2h, rendered with `AnsiDim` in card and fleet views unless an unacknowledged completion is pending, #109).

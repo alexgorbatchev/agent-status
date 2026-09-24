@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/mattn/go-runewidth"
@@ -55,7 +56,7 @@ func TestRenderAgentView_HumanMode_Question(t *testing.T) {
 	out := buf.String()
 
 	// Assert semantic components
-	if !strings.Contains(stripANSI(out), "(Claude Code) [Focus] [Hide]") {
+	if !strings.Contains(StripANSI(out), "(Claude Code) [Focus] [Hide]") {
 		t.Errorf("expected header with harness, [Focus], and [Hide], got:\n%s", out)
 	}
 	if !strings.Contains(out, "(RUNNING)") {
@@ -119,7 +120,7 @@ func TestRenderAgentView_HumanMode_Error(t *testing.T) {
 	RenderAgentViewAt(&buf, agent, false, 50000+10000)
 	out := buf.String()
 
-	if !strings.Contains(stripANSI(out), "(Pi) [Focus] [Hide]") {
+	if !strings.Contains(StripANSI(out), "(Pi) [Focus] [Hide]") {
 		t.Errorf("expected header with Pi harness, [Focus], and [Hide], got:\n%s", out)
 	}
 	if !strings.Contains(out, "(prod-box)  (branch: fix-bug)") {
@@ -155,7 +156,7 @@ func TestRenderAgentView_HumanMode_Hidden(t *testing.T) {
 	RenderAgentViewAt(&buf, agent, false, 1000+2000)
 	out := buf.String()
 
-	if !strings.Contains(stripANSI(out), "(Codex) [Unhide]") {
+	if !strings.Contains(StripANSI(out), "(Codex) [Unhide]") {
 		t.Errorf("expected header with Codex harness and [Unhide], got:\n%s", out)
 	}
 	if !strings.Contains(out, "(local-dev)  (branch: main)") {
@@ -193,7 +194,7 @@ func TestRenderAgentView_HumanMode_Fallbacks(t *testing.T) {
 	if !strings.Contains(out, "Executing grep") {
 		t.Errorf("expected Executing grep from ActiveTool, got:\n%s", out)
 	}
-	if !strings.Contains(stripANSI(out), "(OpenCode) [Focus] [Hide]") {
+	if !strings.Contains(StripANSI(out), "(OpenCode) [Focus] [Hide]") {
 		t.Errorf("expected header with OpenCode harness, [Focus], and [Hide], got:\n%s", out)
 	}
 	if !strings.Contains(out, "(local-dev)  (branch: main)") {
@@ -345,7 +346,7 @@ func TestRenderAgentView_WallClock(t *testing.T) {
 	}
 	var buf bytes.Buffer
 	RenderAgentView(&buf, agent, false)
-	if !strings.Contains(stripANSI(buf.String()), "(Claude Code) [Focus] [Hide]") {
+	if !strings.Contains(StripANSI(buf.String()), "(Claude Code) [Focus] [Hide]") {
 		t.Errorf("expected (Claude Code) [Focus] [Hide] in wall clock rendering, got:\n%s", buf.String())
 	}
 }
@@ -384,16 +385,16 @@ func TestRenderAgentView_HumanMode_EastAsianWidthAlignment(t *testing.T) {
 		t.Fatalf("expected at least 5 lines, got %d", len(lines))
 	}
 
-	dividerWidth := runewidth.StringWidth(stripANSI(lines[0]))
+	dividerWidth := runewidth.StringWidth(StripANSI(lines[0]))
 	headerLine := lines[1]
-	headerWidth := runewidth.StringWidth(stripANSI(headerLine))
+	headerWidth := runewidth.StringWidth(StripANSI(headerLine))
 
 	if headerWidth != dividerWidth {
 		t.Errorf("headerLine visual width = %d, want %d (equal to divider width)", headerWidth, dividerWidth)
 	}
 
 	metricsLine := lines[len(lines)-2]
-	metricsWidth := runewidth.StringWidth(stripANSI(metricsLine))
+	metricsWidth := runewidth.StringWidth(StripANSI(metricsLine))
 	if metricsWidth != dividerWidth {
 		t.Errorf("metricsLine visual width = %d, want %d (equal to divider width)", metricsWidth, dividerWidth)
 	}
@@ -420,8 +421,8 @@ func TestRenderAgentView_HumanMode_EmojiWidthAlignment(t *testing.T) {
 	out := buf.String()
 
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	dividerWidth := runewidth.StringWidth(stripANSI(lines[0]))
-	headerWidth := runewidth.StringWidth(stripANSI(lines[1]))
+	dividerWidth := runewidth.StringWidth(StripANSI(lines[0]))
+	headerWidth := runewidth.StringWidth(StripANSI(lines[1]))
 
 	if headerWidth != dividerWidth {
 		t.Errorf("headerLine visual width = %d, want %d (equal to divider width)", headerWidth, dividerWidth)
@@ -452,8 +453,8 @@ func TestRenderAgentView_HumanMode_AnsiColorWidthAlignment(t *testing.T) {
 	out := buf.String()
 
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	dividerWidth := runewidth.StringWidth(stripANSI(lines[0]))
-	headerWidth := runewidth.StringWidth(stripANSI(lines[1]))
+	dividerWidth := runewidth.StringWidth(StripANSI(lines[0]))
+	headerWidth := runewidth.StringWidth(StripANSI(lines[1]))
 
 	if headerWidth != dividerWidth {
 		t.Errorf("headerLine visual width = %d, want %d (equal to divider width)", headerWidth, dividerWidth)
@@ -905,23 +906,23 @@ func TestRenderFleetView_HumanMode_HierarchicalWorktrees(t *testing.T) {
 	clean := StripANSI(out)
 
 	// Check parent project header
-	if !strings.Contains(clean, "▼ agent-status (github.com/alexgorbatchev/agent-status)") {
+	if !strings.Contains(clean, "v agent-status (github.com/alexgorbatchev/agent-status)") {
 		t.Errorf("expected project header in fleet view, got:\n%s", clean)
 	}
 
-	// Root branch should be first child branch with ├─
-	if !strings.Contains(clean, "├─ [main] (2 sessions)") {
-		t.Errorf("expected root branch header with ├─, got:\n%s", clean)
+	// Root branch should be first child branch with |-
+	if !strings.Contains(clean, "|- [main] (2 sessions)") {
+		t.Errorf("expected root branch header with |-, got:\n%s", clean)
 	}
 
-	// Middle worktree should have ├─
-	if !strings.Contains(clean, "├─ [worktree: feat-auth] (.workspaces/feat-auth) (1 session)") {
-		t.Errorf("expected wt1 branch header with ├─, got:\n%s", clean)
+	// Middle worktree should have |-
+	if !strings.Contains(clean, "|- [worktree: feat-auth] (.workspaces/feat-auth) (1 session)") {
+		t.Errorf("expected wt1 branch header with |-, got:\n%s", clean)
 	}
 
-	// Last worktree should have └─
-	if !strings.Contains(clean, "└─ [worktree: feat-ui] (.workspaces/feat-ui) (1 session)") {
-		t.Errorf("expected wt2 branch header with └─, got:\n%s", clean)
+	// Last worktree should have +-
+	if !strings.Contains(clean, "+- [worktree: feat-ui] (.workspaces/feat-ui) (1 session)") {
+		t.Errorf("expected wt2 branch header with +-, got:\n%s", clean)
 	}
 
 	// Child sessions should be indented and prefix trimmed
@@ -960,8 +961,8 @@ func TestRenderFleetView_HumanMode_OnlyWorktrees(t *testing.T) {
 	if strings.Contains(clean, "[main]") {
 		t.Errorf("did not expect [main] branch when no root agents exist, got:\n%s", clean)
 	}
-	if !strings.Contains(clean, "└─ [worktree: feat-auth] (.workspaces/feat-auth) (1 session)") {
-		t.Errorf("expected single worktree branch to have └─, got:\n%s", clean)
+	if !strings.Contains(clean, "+- [worktree: feat-auth] (.workspaces/feat-auth) (1 session)") {
+		t.Errorf("expected single worktree branch to have +-, got:\n%s", clean)
 	}
 }
 
@@ -1049,7 +1050,7 @@ func TestRenderAgentView_HumanMode_Completed(t *testing.T) {
 	RenderAgentViewAt(&buf, agent, false, 1000000+5000)
 	out := buf.String()
 
-	if !strings.Contains(stripANSI(out), "(Completed)") {
+	if !strings.Contains(StripANSI(out), "(Completed)") {
 		t.Errorf("expected header to contain (Completed) for unacknowledged completion, got:\n%s", out)
 	}
 }
@@ -1233,8 +1234,268 @@ func TestRenderFleetView_HumanMode_IdleStaleWithUnseenCompletionNotDimmed(t *tes
 	}
 }
 
+func TestRenderAgentView_HumanMode_CardLinesBoundedToTerminalWidth(t *testing.T) {
+	longTitle := strings.Repeat("Very long title with lots of words explaining the task in full detail ", 6)
+	longAction := strings.Repeat("Executing very long tool with multiple arguments and paths that exceed width ", 4)
+	longQuestion := strings.Repeat("Would you like to apply this massive changeset to the codebase right now? ", 4)
+	longRelPath := strings.Repeat("very/long/worktree/relative/path/segment/", 5)
 
+	agent := types.IAgentState{
+		ID:        "env-1:claude-code:ses-overflow",
+		SessionID: "ses-overflow",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			Label: strings.Repeat("custom-long-environment-label-", 3),
+		},
+		Project: types.IProjectInfo{
+			ID:   "proj-overflow",
+			Name: "my-project",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch:     strings.Repeat("feature/very-long-branch-name-with-details-", 3),
+			IsWorktree: true,
+			RelPath:    &longRelPath,
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle:     types.LifecycleRunning,
+			Activity:      types.ActivityWaitingQuestion,
+			Title:         longTitle,
+			Action:        longAction,
+			Question:      &longQuestion,
+			SubagentCount: 5,
+			ActiveSubagents: []types.ISubagentSummary{
+				{
+					ID:     "sub-1",
+					Action: "Subagent running a very long nested task description",
+				},
+			},
+			UpdatedAt: 1000,
+			Cost: &types.ICostInfo{
+				Total: 12345.6789,
+			},
+			Usage: types.ITokenUsage{
+				Total: 9999999999,
+			},
+		},
+	}
 
+	var buf bytes.Buffer
+	RenderAgentViewAt(&buf, agent, false, 2000)
+	out := buf.String()
 
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	termWidth := GetTerminalWidth()
+	if termWidth < 40 {
+		termWidth = 80
+	}
 
+	for i, line := range lines {
+		if !utf8.ValidString(line) {
+			t.Errorf("line %d is not valid UTF-8: %s", i, line)
+		}
+		w := VisualWidth(line)
+		if w > termWidth {
+			t.Errorf("line %d has visual width %d, exceeds terminal width %d: %q", i, w, termWidth, line)
+		}
+	}
+}
 
+func TestRenderFleetViewAt_BoundsToTerminalWidth(t *testing.T) {
+	longRelPath := strings.Repeat("worktree/nested/path/to/feature-branch-details/", 4)
+	agents := []types.IAgentState{
+		{
+			ID:        "env-1:claude-code:ses-long-1",
+			SessionID: "ses-long-1",
+			Harness:   types.HarnessClaudeCode,
+			Environment: types.IEnvironmentInfo{
+				Label: "production-workstation-environment",
+			},
+			Project: types.IProjectInfo{
+				ID:   strings.Repeat("organization-project-repository-identifier-", 4),
+				Name: strings.Repeat("Very Long Project Name For Enterprise Testing ", 4),
+			},
+			Workspace: types.IWorkspaceInfo{
+				Branch:     strings.Repeat("feature/very-long-branch-name-with-multiple-segments-", 3),
+				IsWorktree: false,
+			},
+			Activity: types.IAgentActivity{
+				Lifecycle: types.LifecycleRunning,
+				Activity:  types.ActivityBusy,
+				Title:     strings.Repeat("Investigating complex memory leak across distributed nodes ", 4),
+				Action:    "Profiling heap allocations and tracing goroutine leaks",
+				UpdatedAt: 1000,
+			},
+		},
+		{
+			ID:        "env-1:pi:ses-long-2",
+			SessionID: "ses-long-2",
+			Harness:   types.HarnessPi,
+			Environment: types.IEnvironmentInfo{
+				Label: "production-workstation-environment",
+			},
+			Project: types.IProjectInfo{
+				ID:   strings.Repeat("organization-project-repository-identifier-", 4),
+				Name: strings.Repeat("Very Long Project Name For Enterprise Testing ", 4),
+			},
+			Workspace: types.IWorkspaceInfo{
+				Branch:     strings.Repeat("feature/worktree-branch-with-lengthy-description-", 3),
+				IsWorktree: true,
+				RelPath:    &longRelPath,
+			},
+			Activity: types.IAgentActivity{
+				Lifecycle: types.LifecycleRunning,
+				Activity:  types.ActivityIdle,
+				Title:     strings.Repeat("Long worktree task title with lots of words ", 5),
+				UpdatedAt: 1000,
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderFleetViewAt(&buf, agents, false, 2000)
+	out := buf.String()
+
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	termWidth := GetTerminalWidth()
+	if termWidth <= 0 {
+		termWidth = 80
+	}
+
+	for i, line := range lines {
+		if line == "" {
+			continue
+		}
+		if !utf8.ValidString(line) {
+			t.Errorf("line %d is not valid UTF-8: %s", i, line)
+		}
+		w := VisualWidth(line)
+		if w > termWidth {
+			t.Errorf("line %d has visual width %d, exceeds terminal width %d: %q", i, w, termWidth, line)
+		}
+	}
+}
+
+func TestRenderAgentView_HumanMode_SubagentActionNewlines(t *testing.T) {
+	agent := types.IAgentState{
+		Harness: types.HarnessClaudeCode,
+		Activity: types.IAgentActivity{
+			Lifecycle:     types.LifecycleRunning,
+			Activity:      types.ActivityBusy,
+			Title:         "Session with subagent action containing newlines",
+			SubagentCount: 1,
+			ActiveSubagents: []types.ISubagentSummary{
+				{
+					ID:     "sub-multiline",
+					Action: "First line of action\nSecond line of action\r\nThird line",
+				},
+			},
+			UpdatedAt: 1000,
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderAgentViewAt(&buf, agent, false, 2000)
+	out := buf.String()
+
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	// Badge line containing subagent should not be split across multiple broken lines
+	foundSubagentBadge := false
+	for _, line := range lines {
+		if strings.Contains(line, "sub-multiline") {
+			foundSubagentBadge = true
+			if !strings.Contains(line, "(subagent sub-multiline: First line of action Second line of action Third line)") {
+				t.Errorf("expected newlines normalized to spaces in subagent badge, got line: %q", line)
+			}
+		}
+	}
+	if !foundSubagentBadge {
+		t.Errorf("expected to find subagent badge in rendered output:\n%s", out)
+	}
+}
+
+func TestCardRendering_EastAsianWidthConditions(t *testing.T) {
+	defer func() {
+		runewidth.DefaultCondition.EastAsianWidth = false
+	}()
+
+	agent := types.IAgentState{
+		ID:        "env-1:claude-code:ses-cjk",
+		SessionID: "ses-cjk",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			Label: "開発・検証用マシン",
+		},
+		Project: types.IProjectInfo{
+			ID:   "cjk-project",
+			Name: "日本語プロジェクト",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "フィーチャー/新機能",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityBusy,
+			Title:     "分散キャッシュ機構の再実装およびベンチマークテスト",
+			Action:    "Redisクラスタ接続の最適化を実行中",
+			UpdatedAt: 1000,
+			Cost: &types.ICostInfo{
+				Total: 0.0543,
+			},
+			Usage: types.ITokenUsage{
+				Total: 54321,
+			},
+		},
+	}
+
+	for _, eastAsian := range []bool{false, true} {
+		conditionName := "default (EastAsianWidth=false)"
+		if eastAsian {
+			conditionName = "east asian (EastAsianWidth=true)"
+		}
+
+		t.Run(conditionName, func(t *testing.T) {
+			runewidth.DefaultCondition.EastAsianWidth = eastAsian
+
+			var buf bytes.Buffer
+			RenderAgentViewAt(&buf, agent, false, 2000)
+			out := buf.String()
+
+			if !utf8.ValidString(out) {
+				t.Fatalf("RenderAgentViewAt produced invalid UTF-8 under %s:\n%s", conditionName, out)
+			}
+
+			lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+			termWidth := GetTerminalWidth()
+			if termWidth < 40 {
+				termWidth = 80
+			}
+
+			for i, line := range lines {
+				w := VisualWidth(line)
+				if w > termWidth {
+					t.Errorf("line %d visual width = %d, exceeds termWidth %d under %s: %q", i, w, termWidth, conditionName, line)
+				}
+			}
+
+			// Also test fleet view
+			var fleetBuf bytes.Buffer
+			RenderFleetViewAt(&fleetBuf, []types.IAgentState{agent}, false, 2000)
+			fleetOut := fleetBuf.String()
+
+			if !utf8.ValidString(fleetOut) {
+				t.Fatalf("RenderFleetViewAt produced invalid UTF-8 under %s:\n%s", conditionName, fleetOut)
+			}
+
+			fleetLines := strings.Split(strings.TrimRight(fleetOut, "\n"), "\n")
+			for i, line := range fleetLines {
+				if line == "" {
+					continue
+				}
+				w := VisualWidth(line)
+				if w > termWidth {
+					t.Errorf("fleet line %d visual width = %d, exceeds termWidth %d under %s: %q", i, w, termWidth, conditionName, line)
+				}
+			}
+		})
+	}
+}

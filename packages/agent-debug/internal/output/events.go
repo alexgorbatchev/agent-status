@@ -6,10 +6,10 @@ import (
 	"io"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/db"
-	"github.com/olekukonko/tablewriter"
 )
 
 // EventJSONItem represents the structured JSON output for an event.
@@ -129,8 +129,8 @@ func FormatEventSummary(rec db.EventRecord) string {
 		} else if rec.Data.ToolInput != nil {
 			if cmdVal, ok := rec.Data.ToolInput["command"].(string); ok && cmdVal != "" {
 				clean := strings.ReplaceAll(strings.TrimSpace(SanitizeTranscriptText(cmdVal)), "\n", " ")
-				if len(clean) > 30 {
-					clean = clean[:27] + "..."
+				if VisualWidth(clean) > 30 {
+					clean = TruncateVisual(clean, 30, "...")
 				}
 				parts = append(parts, fmt.Sprintf("cmd=%q", clean))
 			} else if pathVal, ok := rec.Data.ToolInput["path"].(string); ok && pathVal != "" {
@@ -148,22 +148,22 @@ func FormatEventSummary(rec db.EventRecord) string {
 
 	case "thinking":
 		if rec.Data.Content != nil {
-			return fmt.Sprintf("len=%d chars", len(*rec.Data.Content))
+			return fmt.Sprintf("len=%d chars", utf8.RuneCountInString(*rec.Data.Content))
 		}
 		return "thinking"
 
 	case "user_message":
 		if rec.Data.LastPrompt != nil && *rec.Data.LastPrompt != "" {
 			prompt := strings.ReplaceAll(strings.TrimSpace(SanitizeTranscriptText(*rec.Data.LastPrompt)), "\n", " ")
-			if len(prompt) > 40 {
-				prompt = prompt[:37] + "..."
+			if VisualWidth(prompt) > 40 {
+				prompt = TruncateVisual(prompt, 40, "...")
 			}
 			return fmt.Sprintf("%q", prompt)
 		}
 		if rec.Data.Content != nil && *rec.Data.Content != "" {
 			content := strings.ReplaceAll(strings.TrimSpace(SanitizeTranscriptText(*rec.Data.Content)), "\n", " ")
-			if len(content) > 40 {
-				content = content[:37] + "..."
+			if VisualWidth(content) > 40 {
+				content = TruncateVisual(content, 40, "...")
 			}
 			return fmt.Sprintf("%q", content)
 		}
@@ -172,8 +172,8 @@ func FormatEventSummary(rec db.EventRecord) string {
 	case "assistant_message":
 		if rec.Data.Content != nil && *rec.Data.Content != "" {
 			content := strings.ReplaceAll(strings.TrimSpace(SanitizeTranscriptText(*rec.Data.Content)), "\n", " ")
-			if len(content) > 40 {
-				content = content[:37] + "..."
+			if VisualWidth(content) > 40 {
+				content = TruncateVisual(content, 40, "...")
 			}
 			return fmt.Sprintf("%q", content)
 		}
@@ -256,7 +256,7 @@ func RenderEventsTable(w io.Writer, events []db.EventRecord, agentMode bool) err
 		return nil
 	}
 
-	table := tablewriter.NewTable(w, tablewriter.WithHeader([]string{"ID", "Timestamp (UTC)", "Event Type", "Subagent", "Summary"}))
+	table := newTable(w, []string{"ID", "Timestamp (UTC)", "Event Type", "Subagent", "Summary"})
 	for _, rec := range events {
 		tsUTC := time.UnixMilli(rec.Timestamp).UTC().Format("2006-01-02 15:04:05.000")
 		subagentStr := "-"

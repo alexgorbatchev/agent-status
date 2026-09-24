@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/db"
-	"github.com/olekukonko/tablewriter"
 )
 
 type DiscrepancyField struct {
@@ -54,7 +53,7 @@ func RenderComparison(w io.Writer, comp *ComparisonResult, agentMode bool) {
 	_, _ = fmt.Fprintf(w, "Live Database Comparison (%s)\n", filepath.Base(comp.DBPath))
 	RenderDivider(w, '-')
 
-	table := tablewriter.NewTable(w, tablewriter.WithHeader([]string{"Field", "Replayed (Transcript)", "Persisted (Database)", "Status"}))
+	table := newTable(w, []string{"Field", "Replayed (Transcript)", "Persisted (Database)", "Status"})
 	for _, f := range comp.Fields {
 		_ = table.Append([]string{
 			SanitizeTranscriptText(f.Name),

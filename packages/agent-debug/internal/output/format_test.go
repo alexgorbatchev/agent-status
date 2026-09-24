@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
@@ -596,6 +597,93 @@ func TestTruncateLeftVisual_EdgeCases(t *testing.T) {
 	}
 }
 
+func TestTruncateVisual_Comprehensive(t *testing.T) {
+	// 1. Fits within maxWidth
+	s := "hello world"
+	if got := TruncateVisual(s, 20, "..."); got != s {
+		t.Errorf("TruncateVisual(%q) = %q, want %q", s, got, s)
+	}
+
+	// 2. maxWidth <= 0
+	if got := TruncateVisual(s, 0, "..."); got != "" {
+		t.Errorf("TruncateVisual with 0 maxWidth = %q, want empty", got)
+	}
+	if got := TruncateVisual(s, -5, "..."); got != "" {
+		t.Errorf("TruncateVisual with negative maxWidth = %q, want empty", got)
+	}
+
+	// 3. tailWidth > maxWidth
+	if got := TruncateVisual("somelongstring", 2, "..."); got != ".." {
+		t.Errorf("TruncateVisual with tail > maxWidth = %q, want '..'", got)
+	}
+
+	// 4. Plain CJK text
+	cjk := "日本語タイトルでテーブルのアライメントを確認"
+	gotCJK := TruncateVisual(cjk, 15, "...")
+	if VisualWidth(gotCJK) > 15 {
+		t.Errorf("VisualWidth(%q) = %d > 15", gotCJK, VisualWidth(gotCJK))
+	}
+	if !strings.HasSuffix(gotCJK, "...") {
+		t.Errorf("expected suffix '...', got %q", gotCJK)
+	}
+	if !utf8.ValidString(gotCJK) {
+		t.Errorf("gotCJK is not valid UTF-8: %s", gotCJK)
+	}
+
+	// 5. ANSI text within maxWidth
+	ansiShort := "\x1b[32mhello\x1b[0m"
+	if got := TruncateVisual(ansiShort, 10, "..."); got != ansiShort {
+		t.Errorf("TruncateVisual(%q) = %q, want %q", ansiShort, got, ansiShort)
+	}
+
+	// 6. ANSI text exceeding maxWidth
+	ansiLong := "\x1b[31;1mvery long colored text exceeding maxWidth\x1b[0m"
+	gotANSI := TruncateVisual(ansiLong, 12, "...")
+	if VisualWidth(gotANSI) > 12 {
+		t.Errorf("VisualWidth(%q) = %d > 12", gotANSI, VisualWidth(gotANSI))
+	}
+	if !strings.HasSuffix(gotANSI, AnsiReset) {
+		t.Errorf("expected AnsiReset terminator on truncated ANSI string, got %q", gotANSI)
+	}
+
+	// 7. CJK with emoji
+	emojiCJK := "🚀 日本語テキスト 🌟"
+	gotEmoji := TruncateVisual(emojiCJK, 10, "...")
+	if VisualWidth(gotEmoji) > 10 {
+		t.Errorf("VisualWidth(%q) = %d > 10", gotEmoji, VisualWidth(gotEmoji))
+	}
+	if !utf8.ValidString(gotEmoji) {
+		t.Errorf("gotEmoji is not valid UTF-8: %s", gotEmoji)
+	}
+}
+
+func TestPinnedCondition_EastAsianDeterminism(t *testing.T) {
+	if runewidth.DefaultCondition.EastAsianWidth {
+		t.Errorf("expected DefaultCondition.EastAsianWidth to be false, got true")
+	}
+
+	// Structural ASCII glyphs must always be 1 cell
+	asciiGlyphs := []rune{'-', '|', '+', 'v', '*', '>'}
+	for _, r := range asciiGlyphs {
+		if w := runewidth.RuneWidth(r); w != 1 {
+			t.Errorf("ASCII glyph %c visual width = %d, want 1", r, w)
+		}
+	}
+
+	// Ambiguous box-drawing runes should evaluate as 1 cell under pinned condition
+	ambiguousBoxRunes := []rune{'─', '│', '┌', '┐', '└', '┘', '├', '┤', '┬', '┴', '┼'}
+	for _, r := range ambiguousBoxRunes {
+		if w := runewidth.RuneWidth(r); w != 1 {
+			t.Errorf("Ambiguous rune %c width = %d under pinned condition, want 1", r, w)
+		}
+	}
+
+	// Wide CJK runes must evaluate as 2 cells
+	if w := runewidth.RuneWidth('日'); w != 2 {
+		t.Errorf("CJK rune '日' width = %d, want 2", w)
+	}
+}
+
 func TestTrimProjectPrefix(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -881,5 +969,220 @@ func TestSanitizeBrandColor(t *testing.T) {
 	}
 	if got := SanitizeBrandColor(AnsiMagenta); got != AnsiMagenta {
 		t.Errorf("SanitizeBrandColor(AnsiMagenta) = %q, want %q", got, AnsiMagenta)
+	}
+}
+
+func TestTruncateVisual_ZWJEmojiSequences(t *testing.T) {
+	tail := "..."
+	tests := []struct {
+		name     string
+		input    string
+		maxWidth int
+	}{
+		{
+			name:     "technologist woman ZWJ sequence",
+			input:    "Developer: 👩‍💻 working on auth",
+			maxWidth: 16,
+		},
+		{
+			name:     "family emoji multi-ZWJ sequence",
+			input:    "Family 👨‍👩‍👧‍👦 vacation",
+			maxWidth: 12,
+		},
+		{
+			name:     "weightlifter with VS16 and ZWJ",
+			input:    "Athlete: 🏋️‍♀️ training",
+			maxWidth: 14,
+		},
+		{
+			name:     "heart on fire ZWJ sequence",
+			input:    "Status: ❤️‍🔥 hot fix",
+			maxWidth: 13,
+		},
+		{
+			name:     "technologist with ANSI color and ZWJ",
+			input:    "\x1b[32mAgent: 👩‍💻 coding\x1b[0m",
+			maxWidth: 13,
+		},
+		{
+			name:     "accented char with combining mark and ZWJ",
+			input:    "Accent: e\u0301\u200d test",
+			maxWidth: 12,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := TruncateVisual(tt.input, tt.maxWidth, tail)
+
+			// 1. Output must be valid UTF-8
+			if !utf8.ValidString(got) {
+				t.Fatalf("TruncateVisual produced invalid UTF-8: %q", got)
+			}
+
+			// 2. Output visual width must be <= maxWidth
+			w := VisualWidth(got)
+			if w > tt.maxWidth {
+				t.Errorf("VisualWidth(%q) = %d, want <= %d", got, w, tt.maxWidth)
+			}
+
+			// 3. The truncated body before tail must not end with dangling ZWJ, VS, or combining mark
+			plain := StripANSI(got)
+			if strings.HasSuffix(plain, tail) {
+				body := strings.TrimSuffix(plain, tail)
+				r, _ := utf8.DecodeLastRuneInString(body)
+				if r == '\u200d' || r == '\u200c' {
+					t.Errorf("body before tail ends with dangling joiner %U: %q", r, body)
+				}
+				if (r >= 0xfe00 && r <= 0xfe0f) || (r >= 0xe0100 && r <= 0xe01ef) {
+					t.Errorf("body before tail ends with variation selector %U: %q", r, body)
+				}
+				if unicode.Is(unicode.M, r) {
+					t.Errorf("body before tail ends with combining mark %U: %q", r, body)
+				}
+			}
+		})
+	}
+}
+
+func TestTruncateLeftVisual_ZWJEmojiSequences(t *testing.T) {
+	prefix := "..."
+	tests := []struct {
+		name     string
+		input    string
+		maxWidth int
+	}{
+		{
+			name:     "path with technologist woman ZWJ sequence",
+			input:    "path/to/👩‍💻/workspace/file.go",
+			maxWidth: 20,
+		},
+		{
+			name:     "path with family emoji multi-ZWJ sequence",
+			input:    "/home/user/👨‍👩‍👧‍👦/project",
+			maxWidth: 18,
+		},
+		{
+			name:     "weightlifter with VS16 and ZWJ",
+			input:    "task-prefix-🏋️‍♀️-details",
+			maxWidth: 16,
+		},
+		{
+			name:     "heart on fire ZWJ sequence",
+			input:    "status-label-❤️‍🔥-urgent",
+			maxWidth: 16,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := TruncateLeftVisual(tt.input, tt.maxWidth, prefix)
+
+			// 1. Output must be valid UTF-8
+			if !utf8.ValidString(got) {
+				t.Fatalf("TruncateLeftVisual produced invalid UTF-8: %q", got)
+			}
+
+			// 2. Output visual width must be <= maxWidth
+			w := VisualWidth(got)
+			if w > tt.maxWidth {
+				t.Errorf("VisualWidth(%q) = %d, want <= %d", got, w, tt.maxWidth)
+			}
+
+			// 3. The truncated body after prefix must not start with dangling ZWJ, VS, or combining mark
+			plain := StripANSI(got)
+			if strings.HasPrefix(plain, prefix) {
+				body := strings.TrimPrefix(plain, prefix)
+				r, _ := utf8.DecodeRuneInString(body)
+				if r == '\u200d' || r == '\u200c' {
+					t.Errorf("body after prefix starts with dangling joiner %U: %q", r, body)
+				}
+				if (r >= 0xfe00 && r <= 0xfe0f) || (r >= 0xe0100 && r <= 0xe01ef) {
+					t.Errorf("body after prefix starts with variation selector %U: %q", r, body)
+				}
+				if unicode.Is(unicode.M, r) {
+					t.Errorf("body after prefix starts with combining mark %U: %q", r, body)
+				}
+			}
+		})
+	}
+}
+
+func TestTruncateVisual_C1Introducers(t *testing.T) {
+	tail := "..."
+	c1Introducers := []struct {
+		name string
+		seq  string
+	}{
+		{"DCS 0x90", "\u0090P123\u009c"},
+		{"SOS 0x98", "\u0098S123\u009c"},
+		{"CSI 0x9b", "\u009b31m"},
+		{"OSC 0x9d", "\u009d0;Title\u0007"},
+		{"PM 0x9e", "\u009eM123\u009c"},
+		{"APC 0x9f", "\u009fA123\u009c"},
+	}
+
+	for _, tt := range c1Introducers {
+		t.Run(tt.name, func(t *testing.T) {
+			input := "Header: " + tt.seq + "Important content that exceeds max width"
+			got := TruncateVisual(input, 20, tail)
+			if !utf8.ValidString(got) {
+				t.Fatalf("TruncateVisual produced invalid UTF-8 with %s: %q", tt.name, got)
+			}
+			w := VisualWidth(got)
+			if w > 20 {
+				t.Errorf("VisualWidth(%q) = %d, want <= 20 with %s", got, w, tt.name)
+			}
+		})
+	}
+}
+
+func TestTableRendering_EastAsianWidthConditions(t *testing.T) {
+	defer func() {
+		runewidth.DefaultCondition.EastAsianWidth = false
+	}()
+
+	sessions := []SessionSummary{
+		{
+			ID:        "ses_eaw_test",
+			Title:     "テストタイトル（日本語）と英語 mixed",
+			Directory: "/home/ユーザー/プロジェクト/worktree",
+			CreatedAt: time.Date(2026, 9, 21, 14, 30, 0, 0, time.UTC),
+			CostUSD:   0.05,
+			Tokens:    12345,
+		},
+	}
+
+	for _, eastAsian := range []bool{false, true} {
+		conditionName := "default (EastAsianWidth=false)"
+		if eastAsian {
+			conditionName = "east asian (EastAsianWidth=true)"
+		}
+
+		t.Run(conditionName, func(t *testing.T) {
+			runewidth.DefaultCondition.EastAsianWidth = eastAsian
+
+			var buf bytes.Buffer
+			RenderSessionList(&buf, sessions, false)
+			out := buf.String()
+
+			if !utf8.ValidString(out) {
+				t.Fatalf("RenderSessionList produced invalid UTF-8 under %s:\n%s", conditionName, out)
+			}
+
+			lines := strings.Split(strings.TrimSpace(out), "\n")
+			if len(lines) < 3 {
+				t.Fatalf("expected table with at least 3 lines, got %d", len(lines))
+			}
+
+			// Table width must be uniform across all lines
+			firstWidth := runewidth.StringWidth(lines[0])
+			for i, line := range lines {
+				lw := runewidth.StringWidth(line)
+				if lw != firstWidth {
+					t.Errorf("line %d has width %d, want %d under %s: %q", i, lw, firstWidth, conditionName, line)
+				}
+			}
+		})
 	}
 }

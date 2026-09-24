@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
-	"github.com/mattn/go-runewidth"
 )
 
 var harnessLabels = map[types.HarnessType]string{
@@ -255,6 +254,8 @@ func RenderFleetViewAt(w io.Writer, agents []types.IAgentState, agentMode bool, 
 		return
 	}
 
+	width := GetTerminalWidth()
+
 	type fleetBranchItem struct {
 		header string
 		agents []types.IAgentState
@@ -267,7 +268,8 @@ func RenderFleetViewAt(w io.Writer, agents []types.IAgentState, agentMode bool, 
 		}
 		grpName := SanitizeTranscriptText(grp.name)
 		grpID := SanitizeTranscriptText(grp.id)
-		_, _ = fmt.Fprintf(w, "▼ %s (%s)\n", grpName, grpID)
+		projLine := TruncateVisual(fmt.Sprintf("v %s (%s)", grpName, grpID), width, "...")
+		_, _ = fmt.Fprintln(w, projLine)
 
 		var branches []fleetBranchItem
 		if len(grp.rootAgents) > 0 {
@@ -310,14 +312,15 @@ func RenderFleetViewAt(w io.Writer, agents []types.IAgentState, agentMode bool, 
 		numBranches := len(branches)
 		for bIdx, branch := range branches {
 			isLast := bIdx == numBranches-1
-			branchPrefix := "  ├─ "
-			childIndent := "  │    "
+			branchPrefix := "  |- "
+			childIndent := "  |    "
 			if isLast {
-				branchPrefix = "  └─ "
+				branchPrefix = "  +- "
 				childIndent = "       "
 			}
 
-			_, _ = fmt.Fprintf(w, "%s%s\n", branchPrefix, branch.header)
+			branchLine := TruncateVisual(fmt.Sprintf("%s%s", branchPrefix, branch.header), width, "...")
+			_, _ = fmt.Fprintln(w, branchLine)
 
 			for _, agent := range branch.agents {
 				title := SanitizeTranscriptText(agent.Activity.Title)
@@ -335,6 +338,7 @@ func RenderFleetViewAt(w io.Writer, agents []types.IAgentState, agentMode bool, 
 					activityStr = "completed"
 				}
 				line := fmt.Sprintf("%s%s %s (%s)", childIndent, harnessBadge, title, activityStr)
+				line = TruncateVisual(line, width, "...")
 				isStaleIdle := agent.Activity.Activity == types.ActivityIdle && GetIdleFreshness(agent.Activity.UpdatedAt, nowMs) == FreshnessStale && (agent.Activity.HasUnseenCompletion == nil || !*agent.Activity.HasUnseenCompletion)
 				if isStaleIdle {
 					formatted := strings.ReplaceAll(line, AnsiReset, AnsiReset+AnsiDim)
@@ -465,11 +469,21 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 	}
 	headerRight := fmt.Sprintf("(%s)", statusLabel)
 
-	headerSpace := width - runewidth.StringWidth(stripANSI(headerLeft)) - runewidth.StringWidth(stripANSI(headerRight))
+	headerSpace := width - VisualWidth(headerLeft) - VisualWidth(headerRight)
 	if headerSpace < 1 {
-		headerSpace = 1
+		availLeft := width - VisualWidth(headerRight) - 1
+		if availLeft > 0 {
+			headerLeft = TruncateVisual(headerLeft, availLeft, "...")
+		}
+		headerSpace = width - VisualWidth(headerLeft) - VisualWidth(headerRight)
+		if headerSpace < 1 {
+			headerSpace = 1
+		}
 	}
 	headerLine := headerLeft + strings.Repeat(" ", headerSpace) + headerRight
+	if VisualWidth(headerLine) > width {
+		headerLine = TruncateVisual(headerLine, width, "...")
+	}
 
 	// 2. Title & Action
 	title := SanitizeTranscriptText(agent.Activity.Title)
@@ -481,6 +495,8 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 		projectName = SanitizeTranscriptText(agent.Project.ID)
 	}
 	title = TrimProjectPrefix(title, projectName)
+	title = strings.ReplaceAll(title, "\n", " ")
+	title = TruncateVisual(title, width, "...")
 	action := SanitizeTranscriptText(agent.Activity.Action)
 	if action == "" {
 		if agent.Activity.ActiveTool != nil && *agent.Activity.ActiveTool != "" {
@@ -489,6 +505,8 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 			action = "Idle"
 		}
 	}
+	action = strings.ReplaceAll(action, "\n", " ")
+	action = TruncateVisual(action, width, "...")
 
 	// 3. Callout (question or error or rate limited)
 	var callout string
@@ -497,11 +515,15 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 	} else if agent.Activity.Activity == types.ActivityError && agent.Activity.LastError != nil && *agent.Activity.LastError != "" {
 		callout = fmt.Sprintf("%s%s %s%s", AnsiRed, GlyphAlert, SanitizeTranscriptText(*agent.Activity.LastError), AnsiReset)
 	} else if agent.Activity.Activity == types.ActivityRateLimited {
-		msg := "Rate limit reached — backoff/retry in progress"
+		msg := "Rate limit reached - backoff/retry in progress"
 		if agent.Activity.LastError != nil && *agent.Activity.LastError != "" {
 			msg = SanitizeTranscriptText(*agent.Activity.LastError)
 		}
 		callout = fmt.Sprintf("%s%s %s%s", AnsiYellow, GlyphWarn, msg, AnsiReset)
+	}
+	if callout != "" {
+		callout = strings.ReplaceAll(callout, "\n", " ")
+		callout = TruncateVisual(callout, width, "...")
 	}
 
 	// 4. Badges
@@ -512,16 +534,21 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 	if env == "" {
 		env = "local-dev"
 	}
+	env = strings.ReplaceAll(env, "\n", " ")
+
 	branch := SanitizeTranscriptText(agent.Workspace.Branch)
 	if branch == "" {
 		branch = "main"
 	}
+	branch = strings.ReplaceAll(branch, "\n", " ")
+
 	var badges []string
 	badges = append(badges, fmt.Sprintf("(%s)", env))
 	badges = append(badges, fmt.Sprintf("(branch: %s)", branch))
 
 	if agent.Workspace.IsWorktree && agent.Workspace.RelPath != nil && *agent.Workspace.RelPath != "" {
-		badges = append(badges, fmt.Sprintf("(worktree: %s)", SanitizeTranscriptText(*agent.Workspace.RelPath)))
+		cleanRelPath := strings.ReplaceAll(SanitizeTranscriptText(*agent.Workspace.RelPath), "\n", " ")
+		badges = append(badges, fmt.Sprintf("(worktree: %s)", cleanRelPath))
 	}
 	if agent.Activity.SubagentCount > 0 {
 		if agent.Activity.SubagentCount == 1 {
@@ -532,19 +559,41 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 	}
 	for _, sub := range agent.Activity.ActiveSubagents {
 		var subLabel string
-		subID := SanitizeTranscriptText(sub.ID)
+		subID := strings.ReplaceAll(SanitizeTranscriptText(sub.ID), "\n", " ")
 		if sub.ActiveTool != nil && *sub.ActiveTool != "" {
-			subLabel = fmt.Sprintf("%s: %s", subID, SanitizeTranscriptText(*sub.ActiveTool))
+			tool := strings.ReplaceAll(SanitizeTranscriptText(*sub.ActiveTool), "\n", " ")
+			subLabel = fmt.Sprintf("%s: %s", subID, tool)
 		} else if sub.Action != "" {
-			subLabel = fmt.Sprintf("%s: %s", subID, SanitizeTranscriptText(sub.Action))
+			action := strings.ReplaceAll(SanitizeTranscriptText(sub.Action), "\n", " ")
+			subLabel = fmt.Sprintf("%s: %s", subID, action)
 		} else {
-			subLabel = fmt.Sprintf("%s: %s", subID, SanitizeTranscriptText(string(sub.Activity)))
+			act := strings.ReplaceAll(SanitizeTranscriptText(string(sub.Activity)), "\n", " ")
+			subLabel = fmt.Sprintf("%s: %s", subID, act)
 		}
 		badges = append(badges, fmt.Sprintf("(subagent %s)", subLabel))
 	}
 	relTime := FormatRelativeTime(agent.Activity.UpdatedAt, nowMs)
 	badges = append(badges, fmt.Sprintf("(active: %s)", relTime))
-	badgesLine := strings.Join(badges, "  ")
+
+	for i := range badges {
+		badges[i] = strings.ReplaceAll(badges[i], "\n", " ")
+	}
+
+	var badgeLines []string
+	var currentBadgeLine string
+	for _, badge := range badges {
+		if currentBadgeLine == "" {
+			currentBadgeLine = badge
+		} else if VisualWidth(currentBadgeLine)+2+VisualWidth(badge) <= width {
+			currentBadgeLine += "  " + badge
+		} else {
+			badgeLines = append(badgeLines, currentBadgeLine)
+			currentBadgeLine = badge
+		}
+	}
+	if currentBadgeLine != "" {
+		badgeLines = append(badgeLines, currentBadgeLine)
+	}
 
 	// 5. Metrics row
 	cost := 0.0
@@ -554,11 +603,21 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 	tokens := agent.Activity.Usage.Total
 	metricsLeft := fmt.Sprintf("$%.4f USD", cost)
 	metricsRight := FormatTokens(tokens)
-	metricsSpace := width - runewidth.StringWidth(stripANSI(metricsLeft)) - runewidth.StringWidth(stripANSI(metricsRight))
+	metricsSpace := width - VisualWidth(metricsLeft) - VisualWidth(metricsRight)
 	if metricsSpace < 1 {
-		metricsSpace = 1
+		availLeft := width - VisualWidth(metricsRight) - 1
+		if availLeft > 0 {
+			metricsLeft = TruncateVisual(metricsLeft, availLeft, "...")
+		}
+		metricsSpace = width - VisualWidth(metricsLeft) - VisualWidth(metricsRight)
+		if metricsSpace < 1 {
+			metricsSpace = 1
+		}
 	}
 	metricsLine := metricsLeft + strings.Repeat(" ", metricsSpace) + metricsRight
+	if VisualWidth(metricsLine) > width {
+		metricsLine = TruncateVisual(metricsLine, width, "...")
+	}
 
 	// Calculate idle freshness: if session is IDLE and age > 2h (stale), dim output with ANSI Dim
 	isStaleIdle := agent.Activity.Activity == types.ActivityIdle && GetIdleFreshness(agent.Activity.UpdatedAt, nowMs) == FreshnessStale && (agent.Activity.HasUnseenCompletion == nil || !*agent.Activity.HasUnseenCompletion)
@@ -567,6 +626,9 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 		if line == "" {
 			_, _ = fmt.Fprintln(w)
 			return
+		}
+		if VisualWidth(line) > width {
+			line = TruncateVisual(line, width, "...")
 		}
 		if isStaleIdle {
 			formatted := strings.ReplaceAll(line, AnsiReset, AnsiReset+AnsiDim)
@@ -587,7 +649,9 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 		printLine(callout)
 	}
 	printLine("")
-	printLine(badgesLine)
+	for _, bLine := range badgeLines {
+		printLine(bLine)
+	}
 	printLine(divider)
 	printLine(metricsLine)
 	printLine(divider)
