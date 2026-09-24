@@ -503,7 +503,11 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 						if isNewSub {
 							agentID := fmt.Sprintf("%s:%s:%s", env.ID, types.HarnessClaudeCode, s.SessionID)
 							subNow := time.Now().UnixMilli()
-							if fi, statErr := os.Stat(sub.TranscriptPath); statErr == nil {
+							if lastTS, tsErr := scanner.ExtractLastActiveTimestamp(sub.TranscriptPath); tsErr == nil && lastTS > 0 {
+								if lastTS < subNow {
+									subNow = lastTS
+								}
+							} else if fi, statErr := os.Stat(sub.TranscriptPath); statErr == nil {
 								mod := fi.ModTime().UnixMilli()
 								if mod > 0 && mod < subNow {
 									subNow = mod

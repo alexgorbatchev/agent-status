@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -857,7 +858,8 @@ func TestObserverClaudeSubagentRunStartedEmission(t *testing.T) {
 		t.Fatalf("creating subagentsDir: %v", err)
 	}
 	subagentPath := filepath.Join(subagentsDir, "agent-sub-123.jsonl")
-	subagentData := []byte("{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"subagent response\"}]}}\n")
+	expectedSubTS := time.Now().UnixMilli() - 10000
+	subagentData := []byte(fmt.Sprintf("{\"type\":\"assistant\",\"timestamp\":%d,\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"subagent response\"}]}}\n", expectedSubTS))
 	if err := os.WriteFile(subagentPath, subagentData, 0644); err != nil {
 		t.Fatalf("writing subagent transcript: %v", err)
 	}
@@ -935,7 +937,22 @@ func TestObserverClaudeSubagentRunStartedEmission(t *testing.T) {
 
 	select {
 	case <-receivedSubagentRunStarted:
-		// Success!
+		// Success! Verify the recovered tail timestamp was used
+		receivedFramesMu.Lock()
+		var foundFrame *types.ITelemetryFrame
+		for _, f := range receivedFrames {
+			if f.EventType == "run_started" && f.SubagentID != nil && *f.SubagentID == "agent-sub-123" {
+				foundFrame = &f
+				break
+			}
+		}
+		receivedFramesMu.Unlock()
+		if foundFrame == nil {
+			t.Fatal("expected to find run_started frame for agent-sub-123")
+		}
+		if foundFrame.Timestamp != expectedSubTS {
+			t.Errorf("expected subagent run_started timestamp %d from tail, got %d", expectedSubTS, foundFrame.Timestamp)
+		}
 	case <-time.After(2 * time.Second):
 		receivedFramesMu.Lock()
 		t.Fatalf("timed out waiting for subagent run_started event, got %d frames", len(receivedFrames))

@@ -506,7 +506,8 @@ func TestCodexScanner_MultipleSessionsAndResumed(t *testing.T) {
 		},
 	}
 	mResumedBytes, _ := json.Marshal(metaResumed)
-	_ = os.WriteFile(resumedFile, append(mResumedBytes, '\n'), 0644)
+	resumedMsg := fmt.Sprintf(`{"type":"event_msg","timestamp":%q}`+"\n", baseTime.Format(time.RFC3339Nano))
+	_ = os.WriteFile(resumedFile, append(append(mResumedBytes, '\n'), []byte(resumedMsg)...), 0644)
 	_ = os.Chtimes(resumedFile, baseTime, baseTime)
 
 	// Mock process finder:

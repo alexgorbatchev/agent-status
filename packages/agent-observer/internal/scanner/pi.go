@@ -224,9 +224,11 @@ func (s *PiScanner) Scan(ctx context.Context) ([]PiSessionDescriptor, error) {
 				continue
 			}
 
-			modTime := int64(0)
-			if info, sErr := f.Info(); sErr == nil {
-				modTime = info.ModTime().UnixMilli()
+			modTime, sErr := ExtractLastActiveTimestamp(filePath)
+			if sErr != nil {
+				if info, infoErr := f.Info(); infoErr == nil {
+					modTime = info.ModTime().UnixMilli()
+				}
 			}
 
 			headerTime := int64(0)

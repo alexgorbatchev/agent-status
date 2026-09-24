@@ -346,7 +346,8 @@ func TestPiScanner_MultipleSessionsAndResumed(t *testing.T) {
 	}
 	resumedBytes, _ := json.Marshal(resumedHeader)
 	resumedFile := filepath.Join(resumedProjectDir, fmt.Sprintf("%d_%s.jsonl", threeDaysAgo.UnixMilli(), resumedID))
-	_ = os.WriteFile(resumedFile, append(resumedBytes, '\n'), 0644)
+	resumedMsg := fmt.Sprintf(`{"type":"message","timestamp":%q}`+"\n", baseTime.Format(time.RFC3339Nano))
+	_ = os.WriteFile(resumedFile, append(append(resumedBytes, '\n'), []byte(resumedMsg)...), 0644)
 	_ = os.Chtimes(resumedFile, baseTime, baseTime)
 
 	// Mock process finder:

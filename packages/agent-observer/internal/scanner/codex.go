@@ -278,9 +278,11 @@ func (s *CodexScanner) Scan(ctx context.Context) ([]CodexSessionDescriptor, erro
 			return nil
 		}
 
-		modTime := int64(0)
-		if info, sErr := d.Info(); sErr == nil {
-			modTime = info.ModTime().UnixMilli()
+		modTime, sErr := ExtractLastActiveTimestamp(path)
+		if sErr != nil {
+			if info, infoErr := d.Info(); infoErr == nil {
+				modTime = info.ModTime().UnixMilli()
+			}
 		}
 
 		headerTime := header.Timestamp
