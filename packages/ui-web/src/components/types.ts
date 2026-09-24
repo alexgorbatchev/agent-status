@@ -10,7 +10,11 @@ import type {
   ActivityState,
   IFileModification,
   HarnessType,
+  IProjectTreeGroup,
 } from "../types";
+
+export type AgentSelectCallback = (agent: IAgentState) => void;
+export type AgentToggleHideCallback = (agent: IAgentState) => void;
 
 export interface IStatusBadgeConfig {
   label: string;
@@ -79,14 +83,16 @@ export interface IAgentCardProps {
   onOpenDrawer?: (agent: IAgentState) => void;
   onToggleHide?: (agent: IAgentState) => void;
   defaultShowSubagents?: boolean;
+  hideWorktreeBadge?: boolean;
 }
 
 export interface IProjectGroupProps {
   projectName: string;
   projectId: string;
   agents: IAgentState[];
-  onSelectAgent: (agent: IAgentState) => void;
-  onToggleHide?: (agent: IAgentState) => void;
+  treeGroup?: IProjectTreeGroup;
+  onSelectAgent: AgentSelectCallback;
+  onToggleHide?: AgentToggleHideCallback;
 }
 
 export interface IEnvironmentGroupProps {

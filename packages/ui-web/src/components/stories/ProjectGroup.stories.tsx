@@ -1,7 +1,8 @@
+import React from "react";
 import type { Meta, StoryObj } from "@storybook/react";
 import { fn, userEvent, expect, within } from "@storybook/test";
 import { ProjectGroup } from "../ProjectGroup";
-import { fixture_agentStateRunning, fixture_agentStateWaitingQuestion } from "./fixtures";
+import { fixture_agentStateRunning, fixture_agentStateWaitingQuestion, fixture_agentStateWorktree } from "./fixtures";
 
 const meta: Meta<typeof ProjectGroup> = {
   component: ProjectGroup,
@@ -12,7 +13,7 @@ type Story = StoryObj<typeof ProjectGroup>;
 
 const onSelectAgent = fn();
 
-const Default: Story = {
+export const Default: Story = {
   args: {
     projectName: "agent-status",
     projectId: "github.com/alexgorbatchev/agent-status",
@@ -34,5 +35,32 @@ const Default: Story = {
   },
 };
 
+export const WithWorktrees: Story = {
+  args: {
+    projectName: "agent-status",
+    projectId: "github.com/alexgorbatchev/agent-status",
+    agents: [fixture_agentStateRunning, fixture_agentStateWorktree],
+    onSelectAgent,
+  },
+  async play({ canvasElement }) {
+    const canvas = within(canvasElement);
+    const group = canvas.getByTestId("ProjectGroup");
+    await expect(group).toBeInTheDocument();
+    await expect(canvas.getByTestId("ProjectGroup--title")).toHaveTextContent("agent-status");
+
+    // Verify root branch and worktree branch headers
+    const rootBranch = canvas.getByTestId("ProjectGroup--root-branch");
+    await expect(rootBranch).toBeInTheDocument();
+    await expect(rootBranch).toHaveTextContent("[main]");
+
+    const worktreeSection = canvas.getByTestId("ProjectGroup--worktree-section");
+    await expect(worktreeSection).toBeInTheDocument();
+    await expect(canvas.getByTestId("ProjectGroup--worktree-header")).toHaveTextContent("[worktree: feat-auth]");
+
+    // Two agent cards rendered
+    const agentCards = canvas.getAllByTestId("AgentCard");
+    await expect(agentCards).toHaveLength(2);
+  },
+};
+
 export default meta;
-export { Default as ProjectGroup };

@@ -761,6 +761,213 @@ func TestRenderAgentView_HumanMode_BusyNotDimmed(t *testing.T) {
 	}
 }
 
+func TestRenderFleetView_Empty(t *testing.T) {
+	var bufHuman bytes.Buffer
+	RenderFleetView(&bufHuman, nil, false)
+	if !strings.Contains(bufHuman.String(), "No active or recent agent runs detected.") {
+		t.Errorf("expected empty message in human mode, got: %s", bufHuman.String())
+	}
+
+	var bufAgent bytes.Buffer
+	RenderFleetView(&bufAgent, []types.IAgentState{}, true)
+	if bufAgent.Len() != 0 {
+		t.Errorf("expected empty output in agent mode, got: %s", bufAgent.String())
+	}
+}
+
+func TestRenderFleetView_HumanMode_HierarchicalWorktrees(t *testing.T) {
+	relPathAuth := ".workspaces/feat-auth"
+	relPathUI := ".workspaces/feat-ui"
+
+	root1 := types.IAgentState{
+		Harness: types.HarnessClaudeCode,
+		Project: types.IProjectInfo{
+			ID:   "github.com/alexgorbatchev/agent-status",
+			Name: "agent-status",
+		},
+		Workspace: types.IWorkspaceInfo{
+			IsWorktree: false,
+			Branch:     "main",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityBusy,
+			Title:     "agent-status: Fix CI build failure",
+		},
+	}
+	root2 := types.IAgentState{
+		Harness: types.HarnessClaudeCode,
+		Project: types.IProjectInfo{
+			ID:   "github.com/alexgorbatchev/agent-status",
+			Name: "agent-status",
+		},
+		Workspace: types.IWorkspaceInfo{
+			IsWorktree: false,
+			Branch:     "main",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityBusy,
+			Title:     "Refactor subscriber reconnect",
+		},
+	}
+	wt1 := types.IAgentState{
+		Harness: types.HarnessClaudeCode,
+		Project: types.IProjectInfo{
+			ID:   "github.com/alexgorbatchev/agent-status",
+			Name: "agent-status",
+		},
+		Workspace: types.IWorkspaceInfo{
+			IsWorktree: true,
+			Branch:     "feat-auth",
+			RelPath:    &relPathAuth,
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityBusy,
+			Title:     "Implement OAuth login flow",
+		},
+	}
+	wt2 := types.IAgentState{
+		Harness: types.HarnessPi,
+		Project: types.IProjectInfo{
+			ID:   "github.com/alexgorbatchev/agent-status",
+			Name: "agent-status",
+		},
+		Workspace: types.IWorkspaceInfo{
+			IsWorktree: true,
+			Branch:     "feat-ui",
+			RelPath:    &relPathUI,
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityIdle,
+			Title:     "Tweak dashboard styling",
+		},
+	}
+
+	agents := []types.IAgentState{root1, root2, wt1, wt2}
+
+	var buf bytes.Buffer
+	RenderFleetViewAt(&buf, agents, false, 1000)
+	out := buf.String()
+	clean := StripANSI(out)
+
+	// Check parent project header
+	if !strings.Contains(clean, "▼ agent-status (github.com/alexgorbatchev/agent-status)") {
+		t.Errorf("expected project header in fleet view, got:\n%s", clean)
+	}
+
+	// Root branch should be first child branch with ├─
+	if !strings.Contains(clean, "├─ [main] (2 sessions)") {
+		t.Errorf("expected root branch header with ├─, got:\n%s", clean)
+	}
+
+	// Middle worktree should have ├─
+	if !strings.Contains(clean, "├─ [worktree: feat-auth] (.workspaces/feat-auth) (1 session)") {
+		t.Errorf("expected wt1 branch header with ├─, got:\n%s", clean)
+	}
+
+	// Last worktree should have └─
+	if !strings.Contains(clean, "└─ [worktree: feat-ui] (.workspaces/feat-ui) (1 session)") {
+		t.Errorf("expected wt2 branch header with └─, got:\n%s", clean)
+	}
+
+	// Child sessions should be indented and prefix trimmed
+	if !strings.Contains(clean, "Fix CI build failure") {
+		t.Errorf("expected trimmed session title in output, got:\n%s", clean)
+	}
+	if !strings.Contains(clean, "Implement OAuth login flow") {
+		t.Errorf("expected worktree session title in output, got:\n%s", clean)
+	}
+}
+
+func TestRenderFleetView_HumanMode_OnlyWorktrees(t *testing.T) {
+	relPathAuth := ".workspaces/feat-auth"
+	wt := types.IAgentState{
+		Harness: types.HarnessClaudeCode,
+		Project: types.IProjectInfo{
+			ID:   "github.com/alexgorbatchev/agent-status",
+			Name: "agent-status",
+		},
+		Workspace: types.IWorkspaceInfo{
+			IsWorktree: true,
+			Branch:     "feat-auth",
+			RelPath:    &relPathAuth,
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityBusy,
+			Title:     "Implement OAuth login flow",
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderFleetViewAt(&buf, []types.IAgentState{wt}, false, 1000)
+	clean := StripANSI(buf.String())
+
+	if strings.Contains(clean, "[main]") {
+		t.Errorf("did not expect [main] branch when no root agents exist, got:\n%s", clean)
+	}
+	if !strings.Contains(clean, "└─ [worktree: feat-auth] (.workspaces/feat-auth) (1 session)") {
+		t.Errorf("expected single worktree branch to have └─, got:\n%s", clean)
+	}
+}
+
+func TestRenderFleetView_AgentMode(t *testing.T) {
+	relPathAuth := ".workspaces/feat-auth"
+	root := types.IAgentState{
+		Harness: types.HarnessClaudeCode,
+		Project: types.IProjectInfo{
+			ID:   "proj-1",
+			Name: "agent-status",
+		},
+		Workspace: types.IWorkspaceInfo{
+			IsWorktree: false,
+			Branch:     "main",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityBusy,
+			Title:     "Root session",
+		},
+	}
+	wt := types.IAgentState{
+		Harness: types.HarnessPi,
+		Project: types.IProjectInfo{
+			ID:   "proj-1",
+			Name: "agent-status",
+		},
+		Workspace: types.IWorkspaceInfo{
+			IsWorktree: true,
+			Branch:     "feat-auth",
+			RelPath:    &relPathAuth,
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityBusy,
+			Title:     "WT session",
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderFleetView(&buf, []types.IAgentState{root, wt}, true)
+	out := buf.String()
+
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 lines in agent mode, got %d:\n%s", len(lines), out)
+	}
+
+	if !strings.Contains(lines[0], "project:proj-1") || !strings.Contains(lines[0], "is_worktree:false") {
+		t.Errorf("expected line 0 to have project and is_worktree:false, got: %s", lines[0])
+	}
+	if !strings.Contains(lines[1], "project:proj-1") || !strings.Contains(lines[1], "is_worktree:true") || !strings.Contains(lines[1], "worktree:.workspaces/feat-auth") {
+		t.Errorf("expected line 1 to have project, is_worktree:true, and worktree path, got: %s", lines[1])
+	}
+}
+
+
 
 
 

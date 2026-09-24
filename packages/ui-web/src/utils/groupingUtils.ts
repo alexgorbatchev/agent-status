@@ -1,4 +1,10 @@
-import type { IAgentState, IEnvironmentGroupItem, IEnvironmentInfo, IProjectGroupItem } from "../types";
+import type {
+  IAgentState,
+  IEnvironmentGroupItem,
+  IEnvironmentInfo,
+  IProjectGroupItem,
+  IProjectTreeGroup,
+} from "../types";
 
 export type AgentCategory = "busy" | "idle" | "finished";
 
@@ -31,23 +37,58 @@ export function groupAgentsByCategory(agents: IAgentState[]): Record<AgentCatego
   return groups;
 }
 
-export function groupAgentsByProject(agents: IAgentState[]): IProjectGroupItem[] {
-  const groups: Record<string, IProjectGroupItem> = {};
+export function groupAgentsByProjectHierarchy(agents: IAgentState[]): IProjectTreeGroup[] {
+  const projectMap = new Map<string, IProjectTreeGroup>();
+
   for (const agent of agents) {
     const projectId = agent.project.id || "unknown";
-    const existing = groups[projectId];
-    if (existing) {
-      existing.agents.push(agent);
-    } else {
-      groups[projectId] = {
+    const projectName = agent.project.name || projectId;
+
+    let projectGroup = projectMap.get(projectId);
+    if (!projectGroup) {
+      projectGroup = {
         id: projectId,
-        name: agent.project.name || projectId,
-        agents: [agent],
+        name: projectName,
+        rootAgents: [],
+        worktrees: [],
+        allAgents: [],
       };
+      projectMap.set(projectId, projectGroup);
+    }
+
+    projectGroup.allAgents.push(agent);
+
+    if (agent.workspace.isWorktree) {
+      const worktreeKey = agent.workspace.relPath || agent.workspace.branch || agent.workspace.cwd || "unknown";
+      let wtGroup = projectGroup.worktrees.find((w) => w.worktreeKey === worktreeKey);
+      if (!wtGroup) {
+        wtGroup = {
+          worktreeKey,
+          branch: agent.workspace.branch || undefined,
+          relPath: agent.workspace.relPath || undefined,
+          isWorktree: true,
+          agents: [],
+        };
+        projectGroup.worktrees.push(wtGroup);
+      }
+      wtGroup.agents.push(agent);
+    } else {
+      projectGroup.rootAgents.push(agent);
     }
   }
 
-  return Object.values(groups);
+  return Array.from(projectMap.values());
+}
+
+export function groupAgentsByProject(agents: IAgentState[]): IProjectGroupItem[] {
+  const treeGroups = groupAgentsByProjectHierarchy(agents);
+  return treeGroups.map((tg) => ({
+    id: tg.id,
+    name: tg.name,
+    agents: tg.allAgents,
+    rootAgents: tg.rootAgents,
+    worktrees: tg.worktrees,
+  }));
 }
 
 export function groupAgentsByEnvironment(

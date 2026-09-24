@@ -103,7 +103,7 @@ describe("AgentGroupSection Component", () => {
     expect(staleHtml).toContain("Stale");
   });
 
-  it("delegates from ProjectGroup correctly", () => {
+  it("renders ProjectGroup with project header correctly", () => {
     const html = renderToString(
       <ProjectGroup
         projectName="agent-status"
@@ -113,12 +113,12 @@ describe("AgentGroupSection Component", () => {
       />,
     );
 
-    expect(html).toContain('data-testid="AgentGroupSection"');
-    expect(html).toContain('data-testid="AgentGroupSection--title"');
+    expect(html).toContain('data-testid="ProjectGroup"');
+    expect(html).toContain('data-testid="ProjectGroup--title"');
     expect(html).toContain("agent-status");
     expect(html).toContain("(github.com/alexgorbatchev/agent-status)");
     expect(html).toContain("1 active");
-    expect(html).toContain('data-testid="AgentGroupSection--grid"');
+    expect(html).toContain('data-testid="ProjectGroup--grid"');
   });
 
   it("groups cards into busy, idle, and finished sections in order with double vertical gap and no subtitles", () => {

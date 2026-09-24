@@ -1,6 +1,7 @@
 import { describe, it, expect } from "bun:test";
 import {
   groupAgentsByProject,
+  groupAgentsByProjectHierarchy,
   groupAgentsByEnvironment,
   getAgentCategory,
   groupAgentsByCategory,
@@ -275,6 +276,114 @@ describe("groupingUtils", () => {
       const groups = groupAgentsByEnvironment([idleOlder, busyNewer], [fixture_testEnvironment]);
       const agentIds = groups[0]?.agents.map((a) => a.id);
       expect(agentIds).toEqual(["env1-idle-older", "env1-busy-newer"]);
+    });
+  });
+
+  describe("groupAgentsByProjectHierarchy", () => {
+    it("returns empty array when agents list is empty", () => {
+      const groups = groupAgentsByProjectHierarchy([]);
+      expect(groups).toEqual([]);
+    });
+
+    it("separates root checkout agents and worktree branches hierarchically", () => {
+      const rootAgent1 = factory_createAgent({
+        id: "root-1",
+        project: { id: "proj-1", name: "agent-status", canonicalRoot: "/repo" },
+        workspace: { isWorktree: false, branch: "main", isDetached: false, relPath: null, cwd: "/repo" },
+      });
+      const rootAgent2 = factory_createAgent({
+        id: "root-2",
+        project: { id: "proj-1", name: "agent-status", canonicalRoot: "/repo" },
+        workspace: { isWorktree: false, branch: "main", isDetached: false, relPath: null, cwd: "/repo" },
+      });
+      const wtAgent1 = factory_createAgent({
+        id: "wt-1",
+        project: { id: "proj-1", name: "agent-status", canonicalRoot: "/repo" },
+        workspace: {
+          isWorktree: true,
+          branch: "feat-auth",
+          isDetached: false,
+          relPath: ".workspaces/feat-auth",
+          cwd: "/repo/.workspaces/feat-auth",
+        },
+      });
+      const wtAgent2 = factory_createAgent({
+        id: "wt-2",
+        project: { id: "proj-1", name: "agent-status", canonicalRoot: "/repo" },
+        workspace: {
+          isWorktree: true,
+          branch: "feat-ui",
+          isDetached: false,
+          relPath: ".workspaces/feat-ui",
+          cwd: "/repo/.workspaces/feat-ui",
+        },
+      });
+
+      const groups = groupAgentsByProjectHierarchy([rootAgent1, wtAgent1, rootAgent2, wtAgent2]);
+      expect(groups.length).toBe(1);
+
+      const projectGroup = groups[0];
+      expect(projectGroup?.id).toBe("proj-1");
+      expect(projectGroup?.name).toBe("agent-status");
+      expect(projectGroup?.allAgents.map((a) => a.id)).toEqual(["root-1", "wt-1", "root-2", "wt-2"]);
+      expect(projectGroup?.rootAgents.map((a) => a.id)).toEqual(["root-1", "root-2"]);
+
+      expect(projectGroup?.worktrees.length).toBe(2);
+      expect(projectGroup?.worktrees[0]?.worktreeKey).toBe(".workspaces/feat-auth");
+      expect(projectGroup?.worktrees[0]?.branch).toBe("feat-auth");
+      expect(projectGroup?.worktrees[0]?.relPath).toBe(".workspaces/feat-auth");
+      expect(projectGroup?.worktrees[0]?.isWorktree).toBe(true);
+      expect(projectGroup?.worktrees[0]?.agents.map((a) => a.id)).toEqual(["wt-1"]);
+
+      expect(projectGroup?.worktrees[1]?.worktreeKey).toBe(".workspaces/feat-ui");
+      expect(projectGroup?.worktrees[1]?.branch).toBe("feat-ui");
+      expect(projectGroup?.worktrees[1]?.relPath).toBe(".workspaces/feat-ui");
+      expect(projectGroup?.worktrees[1]?.isWorktree).toBe(true);
+      expect(projectGroup?.worktrees[1]?.agents.map((a) => a.id)).toEqual(["wt-2"]);
+    });
+
+    it("groups multiple agents sharing the same worktree together", () => {
+      const wtAgent1 = factory_createAgent({
+        id: "wt-1",
+        project: { id: "proj-1", name: "agent-status", canonicalRoot: "/repo" },
+        workspace: {
+          isWorktree: true,
+          branch: "feat-auth",
+          isDetached: false,
+          relPath: ".workspaces/feat-auth",
+          cwd: "/repo/.workspaces/feat-auth",
+        },
+      });
+      const wtAgent2 = factory_createAgent({
+        id: "wt-2",
+        project: { id: "proj-1", name: "agent-status", canonicalRoot: "/repo" },
+        workspace: {
+          isWorktree: true,
+          branch: "feat-auth",
+          isDetached: false,
+          relPath: ".workspaces/feat-auth",
+          cwd: "/repo/.workspaces/feat-auth",
+        },
+      });
+
+      const groups = groupAgentsByProjectHierarchy([wtAgent1, wtAgent2]);
+      expect(groups.length).toBe(1);
+      expect(groups[0]?.rootAgents).toEqual([]);
+      expect(groups[0]?.worktrees.length).toBe(1);
+      expect(groups[0]?.worktrees[0]?.agents.map((a) => a.id)).toEqual(["wt-1", "wt-2"]);
+    });
+
+    it("handles fallback project id and name when missing", () => {
+      const agent = factory_createAgent({
+        id: "no-proj",
+        project: { id: "", name: "", canonicalRoot: "" },
+        workspace: { isWorktree: false, branch: "main", isDetached: false, relPath: null, cwd: "" },
+      });
+
+      const groups = groupAgentsByProjectHierarchy([agent]);
+      expect(groups.length).toBe(1);
+      expect(groups[0]?.id).toBe("unknown");
+      expect(groups[0]?.name).toBe("unknown");
     });
   });
 });

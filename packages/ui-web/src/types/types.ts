@@ -182,10 +182,28 @@ export interface ITelemetryFrame {
   data: ITelemetryFrameData;
 }
 
+export interface IWorktreeBranchGroup {
+  worktreeKey: string;
+  branch?: string;
+  relPath?: string;
+  isWorktree: boolean;
+  agents: IAgentState[];
+}
+
+export interface IProjectTreeGroup {
+  id: string;
+  name: string;
+  rootAgents: IAgentState[]; // agents on main checkout (isWorktree != true)
+  worktrees: IWorktreeBranchGroup[]; // linked worktree branches
+  allAgents: IAgentState[]; // convenience flat list for counts / total spend
+}
+
 export interface IProjectGroupItem {
   id: string;
   name: string;
   agents: IAgentState[];
+  rootAgents?: IAgentState[];
+  worktrees?: IWorktreeBranchGroup[];
 }
 
 export interface IEnvironmentGroupItem {

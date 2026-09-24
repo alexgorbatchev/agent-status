@@ -146,6 +146,199 @@ func RenderAgentViewAt(w io.Writer, agent types.IAgentState, agentMode bool, now
 	renderAgentViewHumanMode(w, agent, nowMs)
 }
 
+type fleetWorktreeGroup struct {
+	key     string
+	branch  string
+	relPath string
+	agents  []types.IAgentState
+}
+
+type fleetProjectGroup struct {
+	id         string
+	name       string
+	rootAgents []types.IAgentState
+	worktrees  []*fleetWorktreeGroup
+}
+
+func groupAgentsForFleet(agents []types.IAgentState) []*fleetProjectGroup {
+	var projectGroups []*fleetProjectGroup
+	projectMap := make(map[string]*fleetProjectGroup)
+
+	for _, agent := range agents {
+		projID := agent.Project.ID
+		if projID == "" {
+			projID = "unknown"
+		}
+		projName := agent.Project.Name
+		if projName == "" {
+			projName = projID
+		}
+
+		grp, exists := projectMap[projID]
+		if !exists {
+			grp = &fleetProjectGroup{
+				id:   projID,
+				name: projName,
+			}
+			projectMap[projID] = grp
+			projectGroups = append(projectGroups, grp)
+		}
+
+		if !agent.Workspace.IsWorktree {
+			grp.rootAgents = append(grp.rootAgents, agent)
+		} else {
+			wtKey := ""
+			if agent.Workspace.RelPath != nil && *agent.Workspace.RelPath != "" {
+				wtKey = *agent.Workspace.RelPath
+			} else if agent.Workspace.Branch != "" {
+				wtKey = agent.Workspace.Branch
+			} else {
+				wtKey = "unknown"
+			}
+
+			var wtGroup *fleetWorktreeGroup
+			for _, wt := range grp.worktrees {
+				if wt.key == wtKey {
+					wtGroup = wt
+					break
+				}
+			}
+			if wtGroup == nil {
+				relPath := ""
+				if agent.Workspace.RelPath != nil {
+					relPath = *agent.Workspace.RelPath
+				}
+				wtGroup = &fleetWorktreeGroup{
+					key:     wtKey,
+					branch:  agent.Workspace.Branch,
+					relPath: relPath,
+				}
+				grp.worktrees = append(grp.worktrees, wtGroup)
+			}
+			wtGroup.agents = append(wtGroup.agents, agent)
+		}
+	}
+
+	return projectGroups
+}
+
+// RenderFleetView renders a terminal representation of multiple agent sessions grouped by project and worktree using the current wall clock.
+func RenderFleetView(w io.Writer, agents []types.IAgentState, agentMode bool) {
+	RenderFleetViewAt(w, agents, agentMode, time.Now().UnixMilli())
+}
+
+// RenderFleetViewAt renders a terminal representation of multiple agent sessions with a specified reference timestamp.
+func RenderFleetViewAt(w io.Writer, agents []types.IAgentState, agentMode bool, nowMs int64) {
+	if len(agents) == 0 {
+		if !agentMode {
+			_, _ = fmt.Fprintln(w, "No active or recent agent runs detected.")
+		}
+		return
+	}
+
+	if agentMode {
+		for _, agent := range agents {
+			projID := agent.Project.ID
+			if projID == "" {
+				projID = "unknown"
+			}
+			isWt := agent.Workspace.IsWorktree
+			wtPath := ""
+			if agent.Workspace.RelPath != nil {
+				wtPath = *agent.Workspace.RelPath
+			}
+			var prefixParts []string
+			prefixParts = append(prefixParts, fmt.Sprintf("project:%s", projID))
+			prefixParts = append(prefixParts, fmt.Sprintf("is_worktree:%t", isWt))
+			if isWt && wtPath != "" {
+				prefixParts = append(prefixParts, fmt.Sprintf("worktree:%s", wtPath))
+			}
+
+			var buf strings.Builder
+			renderAgentViewAgentMode(&buf, agent)
+			_, _ = fmt.Fprintf(w, "%s %s", strings.Join(prefixParts, " "), buf.String())
+		}
+		return
+	}
+
+	type fleetBranchItem struct {
+		header string
+		agents []types.IAgentState
+	}
+
+	projectGroups := groupAgentsForFleet(agents)
+	for grpIndex, grp := range projectGroups {
+		if grpIndex > 0 {
+			_, _ = fmt.Fprintln(w)
+		}
+		_, _ = fmt.Fprintf(w, "▼ %s (%s)\n", grp.name, grp.id)
+
+		var branches []fleetBranchItem
+		if len(grp.rootAgents) > 0 {
+			rootBranch := grp.rootAgents[0].Workspace.Branch
+			if rootBranch == "" {
+				rootBranch = "main"
+			}
+			sessionWord := "sessions"
+			if len(grp.rootAgents) == 1 {
+				sessionWord = "session"
+			}
+			branches = append(branches, fleetBranchItem{
+				header: fmt.Sprintf("[%s] (%d %s)", rootBranch, len(grp.rootAgents), sessionWord),
+				agents: grp.rootAgents,
+			})
+		}
+
+		for _, wt := range grp.worktrees {
+			sessionWord := "sessions"
+			if len(wt.agents) == 1 {
+				sessionWord = "session"
+			}
+			branchLabel := wt.branch
+			if branchLabel == "" {
+				branchLabel = "HEAD"
+			}
+			var wtHeader string
+			if wt.relPath != "" {
+				wtHeader = fmt.Sprintf("[worktree: %s] (%s) (%d %s)", branchLabel, wt.relPath, len(wt.agents), sessionWord)
+			} else {
+				wtHeader = fmt.Sprintf("[worktree: %s] (%d %s)", branchLabel, len(wt.agents), sessionWord)
+			}
+			branches = append(branches, fleetBranchItem{
+				header: wtHeader,
+				agents: wt.agents,
+			})
+		}
+
+		numBranches := len(branches)
+		for bIdx, branch := range branches {
+			isLast := bIdx == numBranches-1
+			branchPrefix := "  ├─ "
+			childIndent := "  │    "
+			if isLast {
+				branchPrefix = "  └─ "
+				childIndent = "       "
+			}
+
+			_, _ = fmt.Fprintf(w, "%s%s\n", branchPrefix, branch.header)
+
+			for _, agent := range branch.agents {
+				title := agent.Activity.Title
+				if title == "" {
+					title = "Untitled Agent Session"
+				}
+				title = TrimProjectPrefix(title, grp.name)
+				harnessBadge := FormatHarnessBadge(agent.Harness, agent.Activity.Activity)
+				activityStr := strings.ToLower(string(agent.Activity.Activity))
+				if activityStr == "" {
+					activityStr = "idle"
+				}
+				_, _ = fmt.Fprintf(w, "%s%s %s (%s)\n", childIndent, harnessBadge, title, activityStr)
+			}
+		}
+	}
+}
+
 func renderAgentViewAgentMode(w io.Writer, agent types.IAgentState) {
 	harness := string(agent.Harness)
 	if harness == "" {

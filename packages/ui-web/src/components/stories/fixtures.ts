@@ -607,6 +607,18 @@ export const fixture_telemetryFrameWithUsage: ITelemetryFrame = {
   },
 };
 
+export const fixture_agentStateWorktree: IAgentState = {
+  ...fixture_agentStateWaitingQuestion,
+  id: "env-1:claude-code:session-wt",
+  workspace: {
+    ...fixture_agentStateWaitingQuestion.workspace,
+    isWorktree: true,
+    branch: "feat-auth",
+    relPath: ".workspaces/feat-auth",
+    cwd: "/Users/alex/dev/agent-status/.workspaces/feat-auth",
+  },
+};
+
 export const fixture_telemetryFrameThinkingAnsi: ITelemetryFrame = {
   ...fixture_telemetryFrame,
   seq: 6,

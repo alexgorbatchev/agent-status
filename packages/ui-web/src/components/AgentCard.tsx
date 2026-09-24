@@ -59,6 +59,7 @@ export function AgentCard({
   onOpenDrawer,
   onToggleHide,
   defaultShowSubagents = false,
+  hideWorktreeBadge = false,
 }: IAgentCardProps): React.JSX.Element {
   const [isFocusing, setIsFocusing] = useState<boolean>(false);
   const [focusError, setFocusError] = useState<string | null>(null);
@@ -341,7 +342,7 @@ export function AgentCard({
             <span className="font-mono text-[11px] text-slate-300">{workspace.branch || "HEAD"}</span>
           </div>
 
-          {workspace.isWorktree && workspace.relPath && (
+          {!hideWorktreeBadge && workspace.isWorktree && workspace.relPath && (
             <div
               data-testid="AgentCard--worktree-badge"
               data-badge-type="worktree"
