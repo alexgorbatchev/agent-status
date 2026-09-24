@@ -67,19 +67,67 @@ func SanitizeBrandColor(color string) string {
 	return color
 }
 
-var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\].*?(?:\x07|\x1b\\)`)
+var escapeSequenceRegex = regexp.MustCompile(
+	`\x1b\][^\x07\x1b\x{9c}\r\n]*(?:\x07|\x1b\\|\x{9c}|$)` + // ESC OSC (terminated or unterminated)
+		`|` +
+		`\x{9d}[^\x07\x1b\x{9c}\r\n]*(?:\x07|\x1b\\|\x{9c}|$)` + // C1 OSC (terminated or unterminated)
+		`|` +
+		`(?:\x1b[P_X^]|[\x{90}\x{98}\x{9e}\x{9f}])[^\x07\x1b\x{9c}\r\n]*(?:\x07|\x1b\\|\x{9c}|$)` + // DCS, APC, PM, SOS (terminated or unterminated)
+		`|` +
+		`(?:\x1b\[|\x{9b})[0-9:;<=>?]*[ -/]*[@-~]` + // CSI
+		`|` +
+		`\x1b[()+*-./][0-~]` + // Charset designate
+		`|` +
+		`\x1b[@-Z\\-_=><78c]` + // 2-char ESC sequences
+		`|` +
+		`\x1b`, // Lone ESC
+)
 
 // stripANSI removes ANSI escape codes from s.
 func stripANSI(s string) string {
-	if !strings.Contains(s, "\x1b") {
-		return s
-	}
-	return ansiRegex.ReplaceAllString(s, "")
+	return escapeSequenceRegex.ReplaceAllString(s, "")
 }
 
 // StripANSI removes ANSI escape codes from s.
 func StripANSI(s string) string {
 	return stripANSI(s)
+}
+
+// SanitizeTranscriptText removes escape sequences and C0/C1 control characters from s,
+// while preserving newline ('\n') and horizontal tab ('\t') formatting characters.
+func SanitizeTranscriptText(s string) string {
+	if s == "" {
+		return ""
+	}
+
+	needsSanitize := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < 0x20 && c != '\n' && c != '\t') || c == 0x7f || c >= 0x80 {
+			needsSanitize = true
+			break
+		}
+	}
+	if !needsSanitize {
+		return s
+	}
+
+	clean := escapeSequenceRegex.ReplaceAllString(s, "")
+
+	var b strings.Builder
+	b.Grow(len(clean))
+	for _, r := range clean {
+		if r == '\n' || r == '\t' {
+			b.WriteRune(r)
+		} else if (r >= 0 && r < 0x20) || r == 0x7f {
+			continue
+		} else if r >= 0x80 && r <= 0x9f {
+			continue
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func extractProjectCandidates(projectName string) []string {
@@ -244,12 +292,14 @@ type SessionSummary struct {
 func RenderSessionList(w io.Writer, sessions []SessionSummary, agentMode bool) {
 	if agentMode {
 		for _, s := range sessions {
-			title := s.Title
+			id := SanitizeTranscriptText(s.ID)
+			title := SanitizeTranscriptText(s.Title)
 			if title == "" {
 				title = "(untitled)"
 			}
+			cwd := SanitizeTranscriptText(s.Directory)
 			_, _ = fmt.Fprintf(w, "session_id:%s title:%q cwd:%s created_at:%d cost_usd:%.4f tokens:%d\n",
-				s.ID, title, s.Directory, s.CreatedAt.UnixMilli(), s.CostUSD, s.Tokens)
+				id, title, cwd, s.CreatedAt.UnixMilli(), s.CostUSD, s.Tokens)
 		}
 		return
 	}
@@ -262,20 +312,21 @@ func RenderSessionList(w io.Writer, sessions []SessionSummary, agentMode bool) {
 	table := tablewriter.NewTable(w, tablewriter.WithHeader([]string{"Session ID", "Title", "Directory", "Created", "Cost ($)", "Tokens"}))
 
 	for _, s := range sessions {
-		title := s.Title
+		id := SanitizeTranscriptText(s.ID)
+		title := SanitizeTranscriptText(s.Title)
 		if title == "" {
 			title = "(untitled)"
 		}
 		if runewidth.StringWidth(stripANSI(title)) > 35 {
 			title = runewidth.Truncate(title, 35, "...")
 		}
-		dir := s.Directory
+		dir := SanitizeTranscriptText(s.Directory)
 		if runewidth.StringWidth(stripANSI(dir)) > 35 {
 			dir = TruncateLeftVisual(dir, 35, "...")
 		}
 
 		_ = table.Append([]string{
-			s.ID,
+			id,
 			title,
 			dir,
 			s.CreatedAt.Format("2006-01-02 15:04"),
@@ -308,14 +359,18 @@ type StateDiff struct {
 
 // RenderDiff formats and prints a step-by-step state transition diff.
 func RenderDiff(w io.Writer, diff StateDiff, agentMode bool) {
+	eventType := SanitizeTranscriptText(diff.EventType)
 	if agentMode {
 		muts := make([]string, 0, len(diff.Mutations))
 		for _, m := range diff.Mutations {
-			muts = append(muts, fmt.Sprintf("%s:%s->%s", m.Field, m.From, m.To))
+			from := SanitizeTranscriptText(m.From)
+			to := SanitizeTranscriptText(m.To)
+			field := SanitizeTranscriptText(m.Field)
+			muts = append(muts, fmt.Sprintf("%s:%s->%s", field, from, to))
 		}
 		subStr := ""
 		if diff.SubagentID != nil && *diff.SubagentID != "" {
-			subStr = fmt.Sprintf(" subagent:%s", *diff.SubagentID)
+			subStr = fmt.Sprintf(" subagent:%s", SanitizeTranscriptText(*diff.SubagentID))
 		}
 		syntheticStr := ""
 		if diff.IsSynthetic {
@@ -326,7 +381,7 @@ func RenderDiff(w io.Writer, diff StateDiff, agentMode bool) {
 			deltaStr = fmt.Sprintf(" in:+%d out:+%d cost:+$%.4f", diff.InputDelta, diff.OutputDelta, diff.CostDelta)
 		}
 		_, _ = fmt.Fprintf(w, "diff step:%d event:%s%s line:%d%s mutations:[%s]%s\n",
-			diff.StepIndex, diff.EventType, syntheticStr, diff.LineNumber, subStr, strings.Join(muts, ","), deltaStr)
+			diff.StepIndex, eventType, syntheticStr, diff.LineNumber, subStr, strings.Join(muts, ","), deltaStr)
 		return
 	}
 
@@ -335,16 +390,19 @@ func RenderDiff(w io.Writer, diff StateDiff, agentMode bool) {
 		loc = fmt.Sprintf(" (line %d)", diff.LineNumber)
 	}
 	if diff.SubagentID != nil && *diff.SubagentID != "" {
-		loc += fmt.Sprintf(" [subagent: %s]", *diff.SubagentID)
+		loc += fmt.Sprintf(" [subagent: %s]", SanitizeTranscriptText(*diff.SubagentID))
 	}
 	synth := ""
 	if diff.IsSynthetic {
 		synth = " (synthetic)"
 	}
 
-	_, _ = fmt.Fprintf(w, "Step %d [%s]%s%s:\n", diff.StepIndex, diff.EventType, synth, loc)
+	_, _ = fmt.Fprintf(w, "Step %d [%s]%s%s:\n", diff.StepIndex, eventType, synth, loc)
 	for _, m := range diff.Mutations {
-		_, _ = fmt.Fprintf(w, "  %-14s %s -> %s\n", m.Field+":", m.From, m.To)
+		field := SanitizeTranscriptText(m.Field)
+		from := SanitizeTranscriptText(m.From)
+		to := SanitizeTranscriptText(m.To)
+		_, _ = fmt.Fprintf(w, "  %-14s %s -> %s\n", field+":", from, to)
 	}
 	if diff.InputDelta != 0 || diff.OutputDelta != 0 {
 		_, _ = fmt.Fprintf(w, "  %-14s In: +%d | Out: +%d\n", "Tokens:", diff.InputDelta, diff.OutputDelta)
@@ -406,6 +464,15 @@ func FormatActivityStatus(lifecycle types.LifecycleState, activity types.Activit
 
 // RenderReplaySummary writes the summary of the replayed session.
 func RenderReplaySummary(w io.Writer, s ReplaySummary, agentMode bool) {
+	sessionID := SanitizeTranscriptText(s.SessionID)
+	agentID := SanitizeTranscriptText(s.AgentID)
+	harness := SanitizeTranscriptText(string(s.Harness))
+	title := SanitizeTranscriptText(s.Title)
+	action := SanitizeTranscriptText(s.Action)
+	proj := SanitizeTranscriptText(s.ProjectName)
+	branch := SanitizeTranscriptText(s.Branch)
+	cwd := SanitizeTranscriptText(s.CWD)
+
 	if agentMode {
 		verStatus := "OK"
 		if !s.VerificationOK {
@@ -424,24 +491,24 @@ func RenderReplaySummary(w io.Writer, s ReplaySummary, agentMode bool) {
 			activityStr = "COMPLETED"
 		}
 		_, _ = fmt.Fprintf(w, "harness:%s session_id:%s agent_id:%s project:%s branch:%s activity:%s lifecycle:%s tokens_in:%d tokens_out:%d tokens_total:%d cost_usd:%.4f subagents:%d frames:%d verification:%s ver_logs:%d duration_ms:%d\n",
-			s.Harness, s.SessionID, s.AgentID, s.ProjectName, s.Branch, activityStr, lifecycleStr,
+			harness, sessionID, agentID, proj, branch, activityStr, lifecycleStr,
 			s.TokensInput, s.TokensOutput, s.TokensTotal, s.CostUSD, s.SubagentCount,
 			s.FramesProcessed, verStatus, s.VerificationLogs, s.DurationMs)
 		return
 	}
 
 	RenderDivider(w, '-')
-	_, _ = fmt.Fprintf(w, "Session Replay Summary (%s)\n", s.Harness)
+	_, _ = fmt.Fprintf(w, "Session Replay Summary (%s)\n", harness)
 	RenderDivider(w, '-')
-	_, _ = fmt.Fprintf(w, "  Session ID:      %s\n", s.SessionID)
-	_, _ = fmt.Fprintf(w, "  Agent ID:        %s\n", s.AgentID)
-	_, _ = fmt.Fprintf(w, "  Project:         %s (branch: %s)\n", s.ProjectName, s.Branch)
-	_, _ = fmt.Fprintf(w, "  Directory:       %s\n", s.CWD)
-	if s.Title != "" {
-		_, _ = fmt.Fprintf(w, "  Title:           %s\n", s.Title)
+	_, _ = fmt.Fprintf(w, "  Session ID:      %s\n", sessionID)
+	_, _ = fmt.Fprintf(w, "  Agent ID:        %s\n", agentID)
+	_, _ = fmt.Fprintf(w, "  Project:         %s (branch: %s)\n", proj, branch)
+	_, _ = fmt.Fprintf(w, "  Directory:       %s\n", cwd)
+	if title != "" {
+		_, _ = fmt.Fprintf(w, "  Title:           %s\n", title)
 	}
-	if s.Action != "" {
-		_, _ = fmt.Fprintf(w, "  Action:          %s\n", s.Action)
+	if action != "" {
+		_, _ = fmt.Fprintf(w, "  Action:          %s\n", action)
 	}
 	lifecycleStr := string(s.Lifecycle)
 	if s.Lifecycle == types.LifecycleExited {
@@ -491,24 +558,29 @@ type ValidationReport struct {
 
 // RenderValidationReport writes the validation checklist.
 func RenderValidationReport(w io.Writer, r ValidationReport, agentMode bool) {
+	harness := SanitizeTranscriptText(string(r.Harness))
 	if agentMode {
 		status := "PASS"
 		if !r.Passed {
 			status = "FAIL"
 		}
-		_, _ = fmt.Fprintf(w, "validation target:%s harness:%s status:%s\n", r.Target, r.Harness, status)
+		target := SanitizeTranscriptText(r.Target)
+		_, _ = fmt.Fprintf(w, "validation target:%s harness:%s status:%s\n", target, harness, status)
 		for _, c := range r.Checks {
 			cStatus := "OK"
 			if !c.Passed {
 				cStatus = "FAIL"
 			}
-			_, _ = fmt.Fprintf(w, "  check:%s status:%s details:%q\n", c.Name, cStatus, c.Details)
+			cName := SanitizeTranscriptText(c.Name)
+			cDetails := SanitizeTranscriptText(c.Details)
+			_, _ = fmt.Fprintf(w, "  check:%s status:%s details:%q\n", cName, cStatus, cDetails)
 		}
 		return
 	}
 
+	target := SanitizeTranscriptText(r.Target)
 	RenderDivider(w, '=')
-	_, _ = fmt.Fprintf(w, "Validation Report: %s (%s)\n", r.Target, r.Harness)
+	_, _ = fmt.Fprintf(w, "Validation Report: %s (%s)\n", target, harness)
 	RenderDivider(w, '=')
 
 	for _, c := range r.Checks {
@@ -516,7 +588,9 @@ func RenderValidationReport(w io.Writer, r ValidationReport, agentMode bool) {
 		if !c.Passed {
 			tag = GlyphFail
 		}
-		_, _ = fmt.Fprintf(w, "%-6s %-32s %s\n", tag, c.Name, c.Details)
+		cName := SanitizeTranscriptText(c.Name)
+		cDetails := SanitizeTranscriptText(c.Details)
+		_, _ = fmt.Fprintf(w, "%-6s %-32s %s\n", tag, cName, cDetails)
 	}
 
 	RenderDivider(w, '-')

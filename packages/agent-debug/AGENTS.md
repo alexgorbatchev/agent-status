@@ -34,6 +34,7 @@ Offline replay and validation CLI tool for agent session transcripts through the
 - Semantic color precedence strictly reserves Red and Green for lifecycle and activity states; brand colors are sanitized via `SanitizeBrandColor` to prevent visual collision with error or running states (#106).
 - Idle freshness tiers categorize idle sessions as `fresh` (<15m), `standard` (15m–2h), or `stale` (>2h, rendered with `AnsiDim` in card and fleet views unless an unacknowledged completion is pending, #109).
 - Hierarchical worktree nesting in `RenderFleetView` groups sessions under project families with linked worktree branches (`internal/output/view.go`).
+- All transcript-derived fields (titles, actions, errors, harness labels, questions, branches, project names) must be passed through `SanitizeTranscriptText` before formatting to strip ANSI escape sequences and control characters (#122).
 
 ## Boundaries
 

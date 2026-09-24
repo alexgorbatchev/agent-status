@@ -872,6 +872,14 @@ func TestRenderReplaySummary_Completed(t *testing.T) {
 	}
 }
 
-
-
-
+func TestSanitizeBrandColor(t *testing.T) {
+	if got := SanitizeBrandColor(AnsiRed); got != AnsiWhite {
+		t.Errorf("SanitizeBrandColor(AnsiRed) = %q, want %q", got, AnsiWhite)
+	}
+	if got := SanitizeBrandColor(AnsiGreen); got != AnsiWhite {
+		t.Errorf("SanitizeBrandColor(AnsiGreen) = %q, want AnsiWhite", got)
+	}
+	if got := SanitizeBrandColor(AnsiMagenta); got != AnsiMagenta {
+		t.Errorf("SanitizeBrandColor(AnsiMagenta) = %q, want %q", got, AnsiMagenta)
+	}
+}

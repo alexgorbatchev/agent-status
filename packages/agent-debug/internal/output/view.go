@@ -33,7 +33,7 @@ func FormatHarnessLabel(h types.HarnessType) string {
 // Rule 2: In quiescent/working states, vendor brand color is applied (prohibiting Red or Green hues).
 func FormatHarnessBadge(h types.HarnessType, activity types.ActivityState) string {
 	rawLabel := FormatHarnessLabel(h)
-	cleanLabel := StripANSI(rawLabel)
+	cleanLabel := SanitizeTranscriptText(rawLabel)
 
 	switch activity {
 	case types.ActivityError:
@@ -42,12 +42,6 @@ func FormatHarnessBadge(h types.HarnessType, activity types.ActivityState) strin
 		return fmt.Sprintf("%s(%s)%s", AnsiYellow, cleanLabel, AnsiReset)
 	default:
 		brandColor := GetHarnessBrandColor(h)
-		if strings.Contains(rawLabel, "\x1b") {
-			if strings.Contains(rawLabel, AnsiRed) || strings.Contains(rawLabel, AnsiGreen) {
-				return fmt.Sprintf("%s(%s)%s", brandColor, cleanLabel, AnsiReset)
-			}
-			return fmt.Sprintf("(%s)", rawLabel)
-		}
 		return fmt.Sprintf("%s(%s)%s", brandColor, cleanLabel, AnsiReset)
 	}
 }
@@ -248,10 +242,10 @@ func RenderFleetViewAt(w io.Writer, agents []types.IAgentState, agentMode bool, 
 				wtPath = *agent.Workspace.RelPath
 			}
 			var prefixParts []string
-			prefixParts = append(prefixParts, fmt.Sprintf("project:%s", projID))
+			prefixParts = append(prefixParts, fmt.Sprintf("project:%s", SanitizeTranscriptText(projID)))
 			prefixParts = append(prefixParts, fmt.Sprintf("is_worktree:%t", isWt))
 			if isWt && wtPath != "" {
-				prefixParts = append(prefixParts, fmt.Sprintf("worktree:%s", wtPath))
+				prefixParts = append(prefixParts, fmt.Sprintf("worktree:%s", SanitizeTranscriptText(wtPath)))
 			}
 
 			var buf strings.Builder
@@ -271,11 +265,13 @@ func RenderFleetViewAt(w io.Writer, agents []types.IAgentState, agentMode bool, 
 		if grpIndex > 0 {
 			_, _ = fmt.Fprintln(w)
 		}
-		_, _ = fmt.Fprintf(w, "▼ %s (%s)\n", grp.name, grp.id)
+		grpName := SanitizeTranscriptText(grp.name)
+		grpID := SanitizeTranscriptText(grp.id)
+		_, _ = fmt.Fprintf(w, "▼ %s (%s)\n", grpName, grpID)
 
 		var branches []fleetBranchItem
 		if len(grp.rootAgents) > 0 {
-			rootBranch := grp.rootAgents[0].Workspace.Branch
+			rootBranch := SanitizeTranscriptText(grp.rootAgents[0].Workspace.Branch)
 			if rootBranch == "" {
 				rootBranch = "main"
 			}
@@ -294,13 +290,14 @@ func RenderFleetViewAt(w io.Writer, agents []types.IAgentState, agentMode bool, 
 			if len(wt.agents) == 1 {
 				sessionWord = "session"
 			}
-			branchLabel := wt.branch
+			branchLabel := SanitizeTranscriptText(wt.branch)
 			if branchLabel == "" {
 				branchLabel = "HEAD"
 			}
+			cleanRelPath := SanitizeTranscriptText(wt.relPath)
 			var wtHeader string
-			if wt.relPath != "" {
-				wtHeader = fmt.Sprintf("[worktree: %s] (%s) (%d %s)", branchLabel, wt.relPath, len(wt.agents), sessionWord)
+			if cleanRelPath != "" {
+				wtHeader = fmt.Sprintf("[worktree: %s] (%s) (%d %s)", branchLabel, cleanRelPath, len(wt.agents), sessionWord)
 			} else {
 				wtHeader = fmt.Sprintf("[worktree: %s] (%d %s)", branchLabel, len(wt.agents), sessionWord)
 			}
@@ -323,11 +320,12 @@ func RenderFleetViewAt(w io.Writer, agents []types.IAgentState, agentMode bool, 
 			_, _ = fmt.Fprintf(w, "%s%s\n", branchPrefix, branch.header)
 
 			for _, agent := range branch.agents {
-				title := agent.Activity.Title
+				title := SanitizeTranscriptText(agent.Activity.Title)
 				if title == "" {
 					title = "Untitled Agent Session"
 				}
-				title = TrimProjectPrefix(title, grp.name)
+				title = TrimProjectPrefix(title, grpName)
+				title = strings.ReplaceAll(title, "\n", " ")
 				harnessBadge := FormatHarnessBadge(agent.Harness, agent.Activity.Activity)
 				activityStr := strings.ToLower(string(agent.Activity.Activity))
 				if activityStr == "" {
@@ -350,30 +348,30 @@ func RenderFleetViewAt(w io.Writer, agents []types.IAgentState, agentMode bool, 
 }
 
 func renderAgentViewAgentMode(w io.Writer, agent types.IAgentState) {
-	harness := string(agent.Harness)
+	harness := SanitizeTranscriptText(string(agent.Harness))
 	if harness == "" {
 		harness = "unknown"
 	}
-	env := agent.Environment.Label
+	env := SanitizeTranscriptText(agent.Environment.Label)
 	if env == "" {
-		env = agent.Environment.ID
+		env = SanitizeTranscriptText(agent.Environment.ID)
 	}
 	if env == "" {
 		env = "local-dev"
 	}
-	title := agent.Activity.Title
+	title := SanitizeTranscriptText(agent.Activity.Title)
 	if title == "" {
 		title = "Untitled Agent Session"
 	}
-	projectName := agent.Project.Name
+	projectName := SanitizeTranscriptText(agent.Project.Name)
 	if projectName == "" {
-		projectName = agent.Project.ID
+		projectName = SanitizeTranscriptText(agent.Project.ID)
 	}
 	title = TrimProjectPrefix(title, projectName)
-	action := agent.Activity.Action
+	action := SanitizeTranscriptText(agent.Activity.Action)
 	if action == "" {
 		if agent.Activity.ActiveTool != nil && *agent.Activity.ActiveTool != "" {
-			action = fmt.Sprintf("Executing %s", *agent.Activity.ActiveTool)
+			action = fmt.Sprintf("Executing %s", SanitizeTranscriptText(*agent.Activity.ActiveTool))
 		} else {
 			action = "Idle"
 		}
@@ -390,7 +388,7 @@ func renderAgentViewAgentMode(w io.Writer, agent types.IAgentState) {
 	if lifecycle == "" {
 		lifecycle = string(types.LifecycleRunning)
 	}
-	branch := agent.Workspace.Branch
+	branch := SanitizeTranscriptText(agent.Workspace.Branch)
 	if branch == "" {
 		branch = "main"
 	}
@@ -412,18 +410,18 @@ func renderAgentViewAgentMode(w io.Writer, agent types.IAgentState) {
 	}
 
 	if agent.Activity.Activity == types.ActivityWaitingQuestion && agent.Activity.Question != nil && *agent.Activity.Question != "" {
-		parts = append(parts, fmt.Sprintf("question:%q", *agent.Activity.Question))
+		parts = append(parts, fmt.Sprintf("question:%q", SanitizeTranscriptText(*agent.Activity.Question)))
 	} else if agent.Activity.Activity == types.ActivityError && agent.Activity.LastError != nil && *agent.Activity.LastError != "" {
-		parts = append(parts, fmt.Sprintf("error:%q", *agent.Activity.LastError))
+		parts = append(parts, fmt.Sprintf("error:%q", SanitizeTranscriptText(*agent.Activity.LastError)))
 	} else if agent.Activity.Activity == types.ActivityRateLimited && agent.Activity.LastError != nil && *agent.Activity.LastError != "" {
-		parts = append(parts, fmt.Sprintf("rate_limit:%q", *agent.Activity.LastError))
+		parts = append(parts, fmt.Sprintf("rate_limit:%q", SanitizeTranscriptText(*agent.Activity.LastError)))
 	}
 
 	parts = append(parts, fmt.Sprintf("lifecycle:%s", lifecycle))
 	parts = append(parts, fmt.Sprintf("branch:%s", branch))
 
 	if agent.Workspace.IsWorktree && agent.Workspace.RelPath != nil && *agent.Workspace.RelPath != "" {
-		parts = append(parts, fmt.Sprintf("worktree:%s", *agent.Workspace.RelPath))
+		parts = append(parts, fmt.Sprintf("worktree:%s", SanitizeTranscriptText(*agent.Workspace.RelPath)))
 	}
 	if agent.Activity.SubagentCount > 0 {
 		parts = append(parts, fmt.Sprintf("subagents:%d", agent.Activity.SubagentCount))
@@ -474,19 +472,19 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 	headerLine := headerLeft + strings.Repeat(" ", headerSpace) + headerRight
 
 	// 2. Title & Action
-	title := agent.Activity.Title
+	title := SanitizeTranscriptText(agent.Activity.Title)
 	if title == "" {
 		title = "Untitled Agent Session"
 	}
-	projectName := agent.Project.Name
+	projectName := SanitizeTranscriptText(agent.Project.Name)
 	if projectName == "" {
-		projectName = agent.Project.ID
+		projectName = SanitizeTranscriptText(agent.Project.ID)
 	}
 	title = TrimProjectPrefix(title, projectName)
-	action := agent.Activity.Action
+	action := SanitizeTranscriptText(agent.Activity.Action)
 	if action == "" {
 		if agent.Activity.ActiveTool != nil && *agent.Activity.ActiveTool != "" {
-			action = fmt.Sprintf("Executing %s", *agent.Activity.ActiveTool)
+			action = fmt.Sprintf("Executing %s", SanitizeTranscriptText(*agent.Activity.ActiveTool))
 		} else {
 			action = "Idle"
 		}
@@ -495,26 +493,26 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 	// 3. Callout (question or error or rate limited)
 	var callout string
 	if agent.Activity.Activity == types.ActivityWaitingQuestion && agent.Activity.Question != nil && *agent.Activity.Question != "" {
-		callout = fmt.Sprintf("%s%s %s%s", AnsiYellow, GlyphQuestion, *agent.Activity.Question, AnsiReset)
+		callout = fmt.Sprintf("%s%s %s%s", AnsiYellow, GlyphQuestion, SanitizeTranscriptText(*agent.Activity.Question), AnsiReset)
 	} else if agent.Activity.Activity == types.ActivityError && agent.Activity.LastError != nil && *agent.Activity.LastError != "" {
-		callout = fmt.Sprintf("%s%s %s%s", AnsiRed, GlyphAlert, *agent.Activity.LastError, AnsiReset)
+		callout = fmt.Sprintf("%s%s %s%s", AnsiRed, GlyphAlert, SanitizeTranscriptText(*agent.Activity.LastError), AnsiReset)
 	} else if agent.Activity.Activity == types.ActivityRateLimited {
 		msg := "Rate limit reached — backoff/retry in progress"
 		if agent.Activity.LastError != nil && *agent.Activity.LastError != "" {
-			msg = *agent.Activity.LastError
+			msg = SanitizeTranscriptText(*agent.Activity.LastError)
 		}
 		callout = fmt.Sprintf("%s%s %s%s", AnsiYellow, GlyphWarn, msg, AnsiReset)
 	}
 
 	// 4. Badges
-	env := agent.Environment.Label
+	env := SanitizeTranscriptText(agent.Environment.Label)
 	if env == "" {
-		env = agent.Environment.ID
+		env = SanitizeTranscriptText(agent.Environment.ID)
 	}
 	if env == "" {
 		env = "local-dev"
 	}
-	branch := agent.Workspace.Branch
+	branch := SanitizeTranscriptText(agent.Workspace.Branch)
 	if branch == "" {
 		branch = "main"
 	}
@@ -523,7 +521,7 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 	badges = append(badges, fmt.Sprintf("(branch: %s)", branch))
 
 	if agent.Workspace.IsWorktree && agent.Workspace.RelPath != nil && *agent.Workspace.RelPath != "" {
-		badges = append(badges, fmt.Sprintf("(worktree: %s)", *agent.Workspace.RelPath))
+		badges = append(badges, fmt.Sprintf("(worktree: %s)", SanitizeTranscriptText(*agent.Workspace.RelPath)))
 	}
 	if agent.Activity.SubagentCount > 0 {
 		if agent.Activity.SubagentCount == 1 {
@@ -534,12 +532,13 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 	}
 	for _, sub := range agent.Activity.ActiveSubagents {
 		var subLabel string
+		subID := SanitizeTranscriptText(sub.ID)
 		if sub.ActiveTool != nil && *sub.ActiveTool != "" {
-			subLabel = fmt.Sprintf("%s: %s", sub.ID, *sub.ActiveTool)
+			subLabel = fmt.Sprintf("%s: %s", subID, SanitizeTranscriptText(*sub.ActiveTool))
 		} else if sub.Action != "" {
-			subLabel = fmt.Sprintf("%s: %s", sub.ID, sub.Action)
+			subLabel = fmt.Sprintf("%s: %s", subID, SanitizeTranscriptText(sub.Action))
 		} else {
-			subLabel = fmt.Sprintf("%s: %s", sub.ID, sub.Activity)
+			subLabel = fmt.Sprintf("%s: %s", subID, SanitizeTranscriptText(string(sub.Activity)))
 		}
 		badges = append(badges, fmt.Sprintf("(subagent %s)", subLabel))
 	}

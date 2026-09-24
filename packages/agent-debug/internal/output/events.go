@@ -60,13 +60,13 @@ func FormatEventSummary(rec db.EventRecord) string {
 			parts = append(parts, fmt.Sprintf("pid=%d", rec.PID))
 		}
 		if rec.Harness != "" {
-			parts = append(parts, fmt.Sprintf("harness=%s", rec.Harness))
+			parts = append(parts, fmt.Sprintf("harness=%s", SanitizeTranscriptText(rec.Harness)))
 		}
 		if rec.Data.Title != nil && *rec.Data.Title != "" {
-			parts = append(parts, fmt.Sprintf("title=%q", *rec.Data.Title))
+			parts = append(parts, fmt.Sprintf("title=%q", SanitizeTranscriptText(*rec.Data.Title)))
 		}
 		if rec.Data.Model != nil && *rec.Data.Model != "" {
-			parts = append(parts, fmt.Sprintf("model=%s", *rec.Data.Model))
+			parts = append(parts, fmt.Sprintf("model=%s", SanitizeTranscriptText(*rec.Data.Model)))
 		}
 		if len(parts) > 0 {
 			return strings.Join(parts, " ")
@@ -107,7 +107,7 @@ func FormatEventSummary(rec db.EventRecord) string {
 	case "tool_result":
 		var parts []string
 		if rec.Data.ToolName != nil && *rec.Data.ToolName != "" {
-			parts = append(parts, fmt.Sprintf("tool=%s", *rec.Data.ToolName))
+			parts = append(parts, fmt.Sprintf("tool=%s", SanitizeTranscriptText(*rec.Data.ToolName)))
 		}
 		status := "success"
 		if (rec.Data.IsError != nil && *rec.Data.IsError) || (rec.Data.ExitCode != nil && *rec.Data.ExitCode != 0) {
@@ -122,23 +122,23 @@ func FormatEventSummary(rec db.EventRecord) string {
 	case "tool_call":
 		var parts []string
 		if rec.Data.ToolName != nil && *rec.Data.ToolName != "" {
-			parts = append(parts, fmt.Sprintf("tool=%s", *rec.Data.ToolName))
+			parts = append(parts, fmt.Sprintf("tool=%s", SanitizeTranscriptText(*rec.Data.ToolName)))
 		}
 		if rec.Data.FileModification != nil && rec.Data.FileModification.FilePath != "" {
-			parts = append(parts, fmt.Sprintf("file=%s", rec.Data.FileModification.FilePath))
+			parts = append(parts, fmt.Sprintf("file=%s", SanitizeTranscriptText(rec.Data.FileModification.FilePath)))
 		} else if rec.Data.ToolInput != nil {
 			if cmdVal, ok := rec.Data.ToolInput["command"].(string); ok && cmdVal != "" {
-				clean := strings.ReplaceAll(strings.TrimSpace(cmdVal), "\n", " ")
+				clean := strings.ReplaceAll(strings.TrimSpace(SanitizeTranscriptText(cmdVal)), "\n", " ")
 				if len(clean) > 30 {
 					clean = clean[:27] + "..."
 				}
 				parts = append(parts, fmt.Sprintf("cmd=%q", clean))
 			} else if pathVal, ok := rec.Data.ToolInput["path"].(string); ok && pathVal != "" {
-				parts = append(parts, fmt.Sprintf("path=%s", pathVal))
+				parts = append(parts, fmt.Sprintf("path=%s", SanitizeTranscriptText(pathVal)))
 			} else if fileVal, ok := rec.Data.ToolInput["file_path"].(string); ok && fileVal != "" {
-				parts = append(parts, fmt.Sprintf("file=%s", fileVal))
+				parts = append(parts, fmt.Sprintf("file=%s", SanitizeTranscriptText(fileVal)))
 			} else if patternVal, ok := rec.Data.ToolInput["pattern"].(string); ok && patternVal != "" {
-				parts = append(parts, fmt.Sprintf("pattern=%q", patternVal))
+				parts = append(parts, fmt.Sprintf("pattern=%q", SanitizeTranscriptText(patternVal)))
 			}
 		}
 		if len(parts) > 0 {
@@ -154,14 +154,14 @@ func FormatEventSummary(rec db.EventRecord) string {
 
 	case "user_message":
 		if rec.Data.LastPrompt != nil && *rec.Data.LastPrompt != "" {
-			prompt := strings.ReplaceAll(strings.TrimSpace(*rec.Data.LastPrompt), "\n", " ")
+			prompt := strings.ReplaceAll(strings.TrimSpace(SanitizeTranscriptText(*rec.Data.LastPrompt)), "\n", " ")
 			if len(prompt) > 40 {
 				prompt = prompt[:37] + "..."
 			}
 			return fmt.Sprintf("%q", prompt)
 		}
 		if rec.Data.Content != nil && *rec.Data.Content != "" {
-			content := strings.ReplaceAll(strings.TrimSpace(*rec.Data.Content), "\n", " ")
+			content := strings.ReplaceAll(strings.TrimSpace(SanitizeTranscriptText(*rec.Data.Content)), "\n", " ")
 			if len(content) > 40 {
 				content = content[:37] + "..."
 			}
@@ -171,7 +171,7 @@ func FormatEventSummary(rec db.EventRecord) string {
 
 	case "assistant_message":
 		if rec.Data.Content != nil && *rec.Data.Content != "" {
-			content := strings.ReplaceAll(strings.TrimSpace(*rec.Data.Content), "\n", " ")
+			content := strings.ReplaceAll(strings.TrimSpace(SanitizeTranscriptText(*rec.Data.Content)), "\n", " ")
 			if len(content) > 40 {
 				content = content[:37] + "..."
 			}
@@ -181,18 +181,18 @@ func FormatEventSummary(rec db.EventRecord) string {
 
 	case "error":
 		if rec.Data.Content != nil && *rec.Data.Content != "" {
-			return *rec.Data.Content
+			return SanitizeTranscriptText(*rec.Data.Content)
 		}
 		return "error"
 
 	case "waiting_question", "question_prompt":
 		if rec.Data.Question != nil && *rec.Data.Question != "" {
-			return fmt.Sprintf("question=%q", *rec.Data.Question)
+			return fmt.Sprintf("question=%q", SanitizeTranscriptText(*rec.Data.Question))
 		}
 		return "waiting question"
 
 	default:
-		return rec.EventType
+		return SanitizeTranscriptText(rec.EventType)
 	}
 }
 
@@ -240,11 +240,11 @@ func RenderEventsTable(w io.Writer, events []db.EventRecord, agentMode bool) err
 		for _, rec := range events {
 			subagentStr := "-"
 			if rec.SubagentID != nil && *rec.SubagentID != "" {
-				subagentStr = *rec.SubagentID
+				subagentStr = SanitizeTranscriptText(*rec.SubagentID)
 			}
 			summary := FormatEventSummary(rec)
 			if _, err := fmt.Fprintf(w, "id:%d ts:%d type:%s subagent:%s summary:%q\n",
-				rec.ID, rec.Timestamp, rec.EventType, subagentStr, summary); err != nil {
+				rec.ID, rec.Timestamp, SanitizeTranscriptText(rec.EventType), subagentStr, summary); err != nil {
 				return err
 			}
 		}
@@ -261,10 +261,10 @@ func RenderEventsTable(w io.Writer, events []db.EventRecord, agentMode bool) err
 		tsUTC := time.UnixMilli(rec.Timestamp).UTC().Format("2006-01-02 15:04:05.000")
 		subagentStr := "-"
 		if rec.SubagentID != nil && *rec.SubagentID != "" {
-			subagentStr = *rec.SubagentID
+			subagentStr = SanitizeTranscriptText(*rec.SubagentID)
 		}
 		summary := FormatEventSummary(rec)
-		eventType := rec.EventType
+		eventType := SanitizeTranscriptText(rec.EventType)
 		if IsIntermediateToolTurnEnd(rec) {
 			eventType = "turn_end (API RESPONSE)"
 		}
@@ -281,9 +281,15 @@ func RenderEventsTable(w io.Writer, events []db.EventRecord, agentMode bool) err
 
 // RenderEventDetail writes a detailed view of a single telemetry event.
 func RenderEventDetail(w io.Writer, rec db.EventRecord, agentMode bool) error {
+	sessionID := SanitizeTranscriptText(rec.SessionID)
+	agentID := SanitizeTranscriptText(rec.AgentID)
+	eventType := SanitizeTranscriptText(rec.EventType)
+	rec.SessionID = sessionID
+	rec.AgentID = agentID
+	rec.EventType = eventType
 	subagentStr := "-"
 	if rec.SubagentID != nil && *rec.SubagentID != "" {
-		subagentStr = *rec.SubagentID
+		subagentStr = SanitizeTranscriptText(*rec.SubagentID)
 	}
 	summary := FormatEventSummary(rec)
 
@@ -293,8 +299,9 @@ func RenderEventDetail(w io.Writer, rec db.EventRecord, agentMode bool) error {
 			b, _ := json.Marshal(rec.Data)
 			dataStr = string(b)
 		}
+		dataStr = SanitizeTranscriptText(dataStr)
 		_, err := fmt.Fprintf(w, "id:%d session_id:%s agent_id:%s type:%s ts:%d subagent:%s summary:%q data:%s\n",
-			rec.ID, rec.SessionID, rec.AgentID, rec.EventType, rec.Timestamp, subagentStr, summary, dataStr)
+			rec.ID, sessionID, agentID, eventType, rec.Timestamp, subagentStr, summary, dataStr)
 		return err
 	}
 
@@ -320,25 +327,25 @@ func RenderEventDetail(w io.Writer, rec db.EventRecord, agentMode bool) error {
 	divider := strings.Repeat("-", 80)
 	_, _ = fmt.Fprintln(w, divider)
 	_, _ = fmt.Fprintf(w, "Event ID:        %d\n", rec.ID)
-	_, _ = fmt.Fprintf(w, "Session ID:      %s\n", rec.SessionID)
-	_, _ = fmt.Fprintf(w, "Agent ID:        %s\n", rec.AgentID)
+	_, _ = fmt.Fprintf(w, "Session ID:      %s\n", sessionID)
+	_, _ = fmt.Fprintf(w, "Agent ID:        %s\n", agentID)
 	if rec.Harness != "" {
-		_, _ = fmt.Fprintf(w, "Harness:         %s\n", rec.Harness)
+		_, _ = fmt.Fprintf(w, "Harness:         %s\n", SanitizeTranscriptText(rec.Harness))
 	}
 	if rec.PID > 0 {
 		_, _ = fmt.Fprintf(w, "PID:             %d\n", rec.PID)
 	}
-	eventType := rec.EventType
+	displayEventType := eventType
 	if IsIntermediateToolTurnEnd(rec) {
-		eventType = "turn_end (API RESPONSE)"
+		displayEventType = "turn_end (API RESPONSE)"
 	}
-	_, _ = fmt.Fprintf(w, "Event Type:      %s\n", eventType)
+	_, _ = fmt.Fprintf(w, "Event Type:      %s\n", displayEventType)
 	_, _ = fmt.Fprintf(w, "Timestamp:       %s UTC (%d)\n", tsUTC, rec.Timestamp)
 	_, _ = fmt.Fprintf(w, "Subagent:        %s\n", subagentStr)
 	_, _ = fmt.Fprintf(w, "Summary:         %s\n", summary)
 	_, _ = fmt.Fprintln(w, divider)
 	_, _ = fmt.Fprintln(w, "Payload Data:")
-	_, _ = fmt.Fprintln(w, formattedData)
+	_, _ = fmt.Fprintln(w, SanitizeTranscriptText(formattedData))
 	_, _ = fmt.Fprintln(w, divider)
 	return nil
 }

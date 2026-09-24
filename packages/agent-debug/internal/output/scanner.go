@@ -29,7 +29,7 @@ func RenderScannerAudit(w io.Writer, records []scanner.AuditRecord, agentMode bo
 				deltaStr = fmt.Sprintf("%d", *r.DeltaMs)
 			}
 			_, _ = fmt.Fprintf(w, "scanner_audit harness:%s pid:%d created_at:%d cwd:%q session_id:%q delta_ms:%s status:%s status_details:%q\n",
-				r.Harness, r.PID, r.CreatedAt, r.CWD, r.SessionID, deltaStr, r.Status, r.StatusDetails)
+				SanitizeTranscriptText(r.Harness), r.PID, r.CreatedAt, SanitizeTranscriptText(r.CWD), SanitizeTranscriptText(r.SessionID), deltaStr, r.Status, SanitizeTranscriptText(r.StatusDetails))
 		}
 		return
 	}
@@ -54,8 +54,8 @@ func RenderScannerAudit(w io.Writer, records []scanner.AuditRecord, agentMode bo
 		}
 
 		sessID := "-"
-		if r.SessionID != "" {
-			sessID = r.SessionID
+		if clean := SanitizeTranscriptText(r.SessionID); clean != "" {
+			sessID = clean
 		}
 
 		deltaStr := "-"
@@ -69,14 +69,14 @@ func RenderScannerAudit(w io.Writer, records []scanner.AuditRecord, agentMode bo
 
 		statusStr := string(r.Status)
 		if r.Status == scanner.StatusPaired && r.StatusDetails != "" {
-			statusStr = fmt.Sprintf("PAIRED (%s)", r.StatusDetails)
+			statusStr = fmt.Sprintf("PAIRED (%s)", SanitizeTranscriptText(r.StatusDetails))
 		}
 
 		_ = table.Append([]string{
-			r.Harness,
+			SanitizeTranscriptText(r.Harness),
 			pidStr,
 			createdStr,
-			r.CWD,
+			SanitizeTranscriptText(r.CWD),
 			sessID,
 			deltaStr,
 			statusStr,
