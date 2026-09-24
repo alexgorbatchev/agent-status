@@ -406,7 +406,17 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 		sessionTails[sessionID] = append(sessionTails[sessionID], path)
 		mu.Unlock()
 
-		logging.Info("session_attached", "harness", harness, "sessionId", sessionID, "pid", pid, "cwd", cwd)
+		attrs := []any{
+			"harness", harness,
+			"sessionId", sessionID,
+			"pid", pid,
+			"cwd", cwd,
+			"path", path,
+		}
+		if subagentID != nil {
+			attrs = append(attrs, "subagentId", *subagentID)
+		}
+		logging.Info("session_attached", attrs...)
 
 		go func() {
 			_ = t.Start(tailCtx)

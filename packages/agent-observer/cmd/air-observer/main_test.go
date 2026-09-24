@@ -1277,6 +1277,145 @@ func TestObserverTranscriptRunStartedOnlyCommitsCursorOffset(t *testing.T) {
 	}
 }
 
+func TestAttachTailer(t *testing.T) {
+	t.Setenv("AGENT_STATUS_TEST_MOCK_PROC", "1")
+
+	buf := &testSyncBuffer{}
+	logger := logging.NewWithMode(buf, "observer", "info", false)
+	logging.SetDefault(logger)
+
+	tmpDir := t.TempDir()
+	cursorPath := filepath.Join(tmpDir, "cursors.json")
+	claudeDir := filepath.Join(tmpDir, "claude-sessions")
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		t.Fatalf("creating claudeDir: %v", err)
+	}
+
+	transcriptPath := filepath.Join(tmpDir, "root-session.jsonl")
+	transcriptData := []byte("{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hello root\"}]}}\n")
+	if err := os.WriteFile(transcriptPath, transcriptData, 0644); err != nil {
+		t.Fatalf("writing transcript: %v", err)
+	}
+
+	subagentsDir := filepath.Join(tmpDir, "subagents")
+	if err := os.MkdirAll(subagentsDir, 0755); err != nil {
+		t.Fatalf("creating subagentsDir: %v", err)
+	}
+	subagentPath := filepath.Join(subagentsDir, "agent-sub-456.jsonl")
+	subagentData := []byte("{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"subagent hello\"}]}}\n")
+	if err := os.WriteFile(subagentPath, subagentData, 0644); err != nil {
+		t.Fatalf("writing subagent transcript: %v", err)
+	}
+
+	sessionID := "claude-test-session"
+	metaPath := filepath.Join(claudeDir, "session-1.json")
+	metaData := []byte(`{"pid":99998,"sessionId":"` + sessionID + `","cwd":"` + tmpDir + `","transcriptPath":"` + transcriptPath + `"}`)
+	if err := os.WriteFile(metaPath, metaData, 0644); err != nil {
+		t.Fatalf("writing session metadata: %v", err)
+	}
+
+	mockIngester := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close(websocket.StatusNormalClosure, "done") }()
+		for {
+			_, data, err := conn.Read(r.Context())
+			if err != nil {
+				return
+			}
+			var msg types.IObserverMessage
+			if err := json.Unmarshal(data, &msg); err == nil && msg.Type == "frames" && len(msg.Frames) > 0 {
+				lastSeq := msg.Frames[len(msg.Frames)-1].Seq
+				ack := types.IIngesterMessage{
+					Type: "ack",
+					UpTo: lastSeq,
+				}
+				ackBytes, _ := json.Marshal(ack)
+				_ = conn.Write(r.Context(), websocket.MessageText, ackBytes)
+			}
+		}
+	}))
+	defer mockIngester.Close()
+
+	opts := observerOptions{
+		ingesterURL:       "ws" + strings.TrimPrefix(mockIngester.URL, "http") + "/ws/ingest",
+		cursorPath:        cursorPath,
+		claudeSessionsDir: claudeDir,
+		scanInterval:      50 * time.Millisecond,
+		envFlag:           "test-env",
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runObserverContext(ctx, opts)
+	}()
+
+	var attachLines []string
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		logs := buf.String()
+		attachLines = nil
+		for _, line := range strings.Split(logs, "\n") {
+			if strings.Contains(line, "session_attached") {
+				attachLines = append(attachLines, line)
+			}
+		}
+		if len(attachLines) >= 2 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	cancel()
+	<-errCh
+
+	if len(attachLines) < 2 {
+		t.Fatalf("expected at least 2 session_attached log lines, got %d:\n%s", len(attachLines), buf.String())
+	}
+
+	var rootAttachLine string
+	var subagentAttachLine string
+	for _, line := range attachLines {
+		if strings.Contains(line, transcriptPath) {
+			rootAttachLine = line
+		}
+		if strings.Contains(line, subagentPath) {
+			subagentAttachLine = line
+		}
+	}
+
+	if rootAttachLine == "" {
+		t.Errorf("expected root session attach log line containing path %q, but none found in attach lines:\n%s", transcriptPath, strings.Join(attachLines, "\n"))
+	} else if strings.Contains(rootAttachLine, "subagentId") {
+		t.Errorf("expected root session attach log not to contain subagentId, but got:\n%s", rootAttachLine)
+	}
+
+	if subagentAttachLine == "" {
+		t.Errorf("expected subagent attach log line containing path %q, but none found in attach lines:\n%s", subagentPath, strings.Join(attachLines, "\n"))
+	} else if !strings.Contains(subagentAttachLine, "subagentId=agent-sub-456") {
+		t.Errorf("expected subagent attach log to contain subagentId=agent-sub-456, but got:\n%s", subagentAttachLine)
+	}
+
+	// Verify the attach lines are not identical duplicate lines
+	if len(attachLines) >= 2 {
+		stripTS := func(s string) string {
+			if len(s) > 9 && s[8] == ' ' {
+				return s[9:]
+			}
+			return s
+		}
+		if stripTS(attachLines[0]) == stripTS(attachLines[1]) {
+			t.Errorf("attach lines should not be identical duplicates:\nline 1: %s\nline 2: %s", attachLines[0], attachLines[1])
+		}
+	}
+}
+
+
 
 
 
