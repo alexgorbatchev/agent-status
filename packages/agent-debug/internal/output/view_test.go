@@ -55,7 +55,7 @@ func TestRenderAgentView_HumanMode_Question(t *testing.T) {
 	out := buf.String()
 
 	// Assert semantic components
-	if !strings.Contains(out, "(Claude Code) [Focus] [Hide]") {
+	if !strings.Contains(stripANSI(out), "(Claude Code) [Focus] [Hide]") {
 		t.Errorf("expected header with harness, [Focus], and [Hide], got:\n%s", out)
 	}
 	if !strings.Contains(out, "(RUNNING)") {
@@ -119,7 +119,7 @@ func TestRenderAgentView_HumanMode_Error(t *testing.T) {
 	RenderAgentViewAt(&buf, agent, false, 50000+10000)
 	out := buf.String()
 
-	if !strings.Contains(out, "(Pi) [Focus] [Hide]") {
+	if !strings.Contains(stripANSI(out), "(Pi) [Focus] [Hide]") {
 		t.Errorf("expected header with Pi harness, [Focus], and [Hide], got:\n%s", out)
 	}
 	if !strings.Contains(out, "(prod-box)  (branch: fix-bug)") {
@@ -155,7 +155,7 @@ func TestRenderAgentView_HumanMode_Hidden(t *testing.T) {
 	RenderAgentViewAt(&buf, agent, false, 1000+2000)
 	out := buf.String()
 
-	if !strings.Contains(out, "(Codex) [Unhide]") {
+	if !strings.Contains(stripANSI(out), "(Codex) [Unhide]") {
 		t.Errorf("expected header with Codex harness and [Unhide], got:\n%s", out)
 	}
 	if !strings.Contains(out, "(local-dev)  (branch: main)") {
@@ -193,7 +193,7 @@ func TestRenderAgentView_HumanMode_Fallbacks(t *testing.T) {
 	if !strings.Contains(out, "Executing grep") {
 		t.Errorf("expected Executing grep from ActiveTool, got:\n%s", out)
 	}
-	if !strings.Contains(out, "(OpenCode) [Focus] [Hide]") {
+	if !strings.Contains(stripANSI(out), "(OpenCode) [Focus] [Hide]") {
 		t.Errorf("expected header with OpenCode harness, [Focus], and [Hide], got:\n%s", out)
 	}
 	if !strings.Contains(out, "(local-dev)  (branch: main)") {
@@ -345,7 +345,7 @@ func TestRenderAgentView_WallClock(t *testing.T) {
 	}
 	var buf bytes.Buffer
 	RenderAgentView(&buf, agent, false)
-	if !strings.Contains(buf.String(), "(Claude Code) [Focus] [Hide]") {
+	if !strings.Contains(stripANSI(buf.String()), "(Claude Code) [Focus] [Hide]") {
 		t.Errorf("expected (Claude Code) [Focus] [Hide] in wall clock rendering, got:\n%s", buf.String())
 	}
 }
@@ -384,16 +384,16 @@ func TestRenderAgentView_HumanMode_EastAsianWidthAlignment(t *testing.T) {
 		t.Fatalf("expected at least 5 lines, got %d", len(lines))
 	}
 
-	dividerWidth := runewidth.StringWidth(lines[0])
+	dividerWidth := runewidth.StringWidth(stripANSI(lines[0]))
 	headerLine := lines[1]
-	headerWidth := runewidth.StringWidth(headerLine)
+	headerWidth := runewidth.StringWidth(stripANSI(headerLine))
 
 	if headerWidth != dividerWidth {
 		t.Errorf("headerLine visual width = %d, want %d (equal to divider width)", headerWidth, dividerWidth)
 	}
 
 	metricsLine := lines[len(lines)-2]
-	metricsWidth := runewidth.StringWidth(metricsLine)
+	metricsWidth := runewidth.StringWidth(stripANSI(metricsLine))
 	if metricsWidth != dividerWidth {
 		t.Errorf("metricsLine visual width = %d, want %d (equal to divider width)", metricsWidth, dividerWidth)
 	}
@@ -420,8 +420,8 @@ func TestRenderAgentView_HumanMode_EmojiWidthAlignment(t *testing.T) {
 	out := buf.String()
 
 	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	dividerWidth := runewidth.StringWidth(lines[0])
-	headerWidth := runewidth.StringWidth(lines[1])
+	dividerWidth := runewidth.StringWidth(stripANSI(lines[0]))
+	headerWidth := runewidth.StringWidth(stripANSI(lines[1]))
 
 	if headerWidth != dividerWidth {
 		t.Errorf("headerLine visual width = %d, want %d (equal to divider width)", headerWidth, dividerWidth)
@@ -543,6 +543,125 @@ func TestRenderAgentView_AgentMode_TrimsProjectPrefix(t *testing.T) {
 	}
 	if strings.Contains(out, `title:"[agent-status] Run scanner audit"`) {
 		t.Errorf("expected redundant project prefix to be stripped from agent mode output, got:\n%s", out)
+	}
+}
+
+func TestRenderAgentView_HumanMode_SemanticPrecedence_Question(t *testing.T) {
+	q := "Should we apply migration?"
+	agent := types.IAgentState{
+		ID:        "env-1:claude-code:ses-q",
+		SessionID: "ses-q",
+		Harness:   types.HarnessClaudeCode,
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityWaitingQuestion,
+			Title:     "Ask user confirmation",
+			Action:    "Waiting for answer",
+			Question:  &q,
+			UpdatedAt: 1000,
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderAgentViewAt(&buf, agent, false, 1000)
+	out := buf.String()
+
+	// 1. In WAITING_QUESTION, prompt style (ANSI Yellow) must override vendor badge coloring in header
+	expectedBadge := AnsiYellow + "(Claude Code)" + AnsiReset
+	if !strings.Contains(out, expectedBadge) {
+		t.Errorf("expected harness badge to have prompt yellow style %q in WAITING_QUESTION, got:\n%s", expectedBadge, out)
+	}
+	// It must NOT contain vendor brand color (AnsiMagenta)
+	if strings.Contains(out, AnsiMagenta+"(Claude Code)") {
+		t.Errorf("harness badge must not use vendor brand color AnsiMagenta during WAITING_QUESTION state")
+	}
+
+	// 2. Callout must use prompt style (ANSI Yellow)
+	expectedCallout := AnsiYellow + GlyphQuestion + " Should we apply migration?" + AnsiReset
+	if !strings.Contains(out, expectedCallout) {
+		t.Errorf("expected callout to have prompt yellow style %q, got:\n%s", expectedCallout, out)
+	}
+}
+
+func TestRenderAgentView_HumanMode_SemanticPrecedence_Error(t *testing.T) {
+	errMsg := "connection refused on port 5432"
+	agent := types.IAgentState{
+		ID:        "env-1:pi:ses-err",
+		SessionID: "ses-err",
+		Harness:   types.HarnessPi,
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityError,
+			Title:     "Database connect failure",
+			Action:    "Retrying",
+			LastError: &errMsg,
+			UpdatedAt: 1000,
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderAgentViewAt(&buf, agent, false, 1000)
+	out := buf.String()
+
+	// 1. In ERROR, error style (ANSI Red) must override vendor badge coloring in header
+	expectedBadge := AnsiRed + "(Pi)" + AnsiReset
+	if !strings.Contains(out, expectedBadge) {
+		t.Errorf("expected harness badge to have error red style %q in ERROR state, got:\n%s", expectedBadge, out)
+	}
+	// It must NOT contain vendor brand color (AnsiBlue or AnsiMagenta)
+	if strings.Contains(out, AnsiBlue+"(Pi)") || strings.Contains(out, AnsiMagenta+"(Pi)") {
+		t.Errorf("harness badge must not use vendor brand color during ERROR state")
+	}
+
+	// 2. Callout must use error style (ANSI Red)
+	expectedCallout := AnsiRed + GlyphAlert + " connection refused on port 5432" + AnsiReset
+	if !strings.Contains(out, expectedCallout) {
+		t.Errorf("expected callout to have error red style %q, got:\n%s", expectedCallout, out)
+	}
+}
+
+func TestRenderAgentView_HumanMode_VendorBadge_WorkingState(t *testing.T) {
+	agent := types.IAgentState{
+		ID:        "env-1:claude-code:ses-busy",
+		SessionID: "ses-busy",
+		Harness:   types.HarnessClaudeCode,
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityBusy,
+			Title:     "Active working session",
+			Action:    "Compiling",
+			UpdatedAt: 1000,
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderAgentViewAt(&buf, agent, false, 1000)
+	out := buf.String()
+
+	// In working state, harness badge uses vendor brand color (AnsiMagenta)
+	expectedBadge := AnsiMagenta + "(Claude Code)" + AnsiReset
+	if !strings.Contains(out, expectedBadge) {
+		t.Errorf("expected harness badge to have vendor brand color %q in working state, got:\n%s", expectedBadge, out)
+	}
+
+	// Must strictly NOT contain Red or Green
+	if strings.Contains(out, AnsiRed+"(Claude Code)") || strings.Contains(out, AnsiGreen+"(Claude Code)") {
+		t.Errorf("vendor badge must never use Red or Green hues in working state")
+	}
+}
+
+func TestFormatHarnessBadge_ProhibitsRedAndGreen(t *testing.T) {
+	// Custom or unknown harness should never be assigned Red or Green
+	badge := FormatHarnessBadge(types.HarnessType("custom-harness"), types.ActivityBusy)
+	if strings.Contains(badge, AnsiRed) || strings.Contains(badge, AnsiGreen) {
+		t.Errorf("FormatHarnessBadge must never assign Red or Green as vendor brand color, got: %q", badge)
+	}
+
+	// Prohibited red input must be sanitized/prohibited
+	prohibitedHarness := types.HarnessType(AnsiRed + "EvilHarness" + AnsiReset)
+	sanitized := FormatHarnessBadge(prohibitedHarness, types.ActivityBusy)
+	if strings.Contains(sanitized, AnsiRed) {
+		t.Errorf("FormatHarnessBadge must sanitize prohibited red hue from vendor input in working state, got: %q", sanitized)
 	}
 }
 

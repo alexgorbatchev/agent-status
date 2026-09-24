@@ -704,4 +704,106 @@ describe("AgentCard Component", () => {
       expect(html).toContain("agent-status");
     });
   });
+
+  describe("Semantic Precedence over Harness Branding (#106)", () => {
+    it("enforces red card border and suppresses brand color on harness mark during ERROR state", () => {
+      const html = renderToStaticMarkup(<AgentCard agent={fixture_agentStateError} />);
+
+      // Outer card border highlight must switch to semantic error red
+      const cardMatch = html.match(/data-testid="AgentCard"[^>]*class="([^"]*)"/);
+      assert(cardMatch);
+      const cardClass = cardMatch[1];
+      expect(cardClass).toContain("border-red-600/80");
+      expect(cardClass).not.toContain("border-slate-800");
+      expect(html).toContain('data-semantic-status="error"');
+
+      // Harness mark badge must be suppressed to muted brand state and must not carry active brand color
+      expect(html).toContain('data-brand-state="muted"');
+      const badgeMatch = html.match(/data-testid="AgentCard--harness-badge"[^>]*class="([^"]*)"/);
+      assert(badgeMatch);
+      const badgeClass = badgeMatch[1];
+      expect(badgeClass).toContain("text-slate-500");
+      expect(badgeClass).not.toContain("text-[var(--brand-claude)]");
+
+      // Attention callout strictly uses semantic red
+      expect(html).toContain('data-testid="AgentCard--error"');
+      expect(html).toContain('data-callout-type="error"');
+      expect(html).toContain("border-red-800/60");
+    });
+
+    it("enforces amber card border and suppresses brand color on harness mark during WAITING_QUESTION state", () => {
+      const html = renderToStaticMarkup(<AgentCard agent={fixture_agentStateWaitingQuestion} />);
+
+      // Outer card border highlight must switch to semantic warning amber
+      const cardMatch = html.match(/data-testid="AgentCard"[^>]*class="([^"]*)"/);
+      assert(cardMatch);
+      const cardClass = cardMatch[1];
+      expect(cardClass).toContain("border-amber-600/80");
+      expect(cardClass).not.toContain("border-slate-800");
+      expect(html).toContain('data-semantic-status="warning"');
+
+      // Harness mark badge must be suppressed to muted brand state and must not carry active brand color
+      expect(html).toContain('data-brand-state="muted"');
+      const badgeMatch = html.match(/data-testid="AgentCard--harness-badge"[^>]*class="([^"]*)"/);
+      assert(badgeMatch);
+      const badgeClass = badgeMatch[1];
+      expect(badgeClass).toContain("text-slate-500");
+      expect(badgeClass).not.toContain("text-[var(--brand-claude)]");
+
+      // Attention callout strictly uses semantic amber
+      expect(html).toContain('data-testid="AgentCard--question"');
+      expect(html).toContain('data-callout-type="warning"');
+      expect(html).toContain("border-amber-800/60");
+    });
+
+    it("renders active brand color on harness mark only during neutral working state", () => {
+      const workingAgent = factory_agentState({
+        harness: "claude-code",
+        activity: {
+          ...fixture_agentStateRunning.activity,
+          lifecycle: "RUNNING",
+          activity: "BUSY",
+          updatedAt: Date.now(), // not stalled
+        },
+      });
+
+      const html = renderToStaticMarkup(<AgentCard agent={workingAgent} />);
+
+      // Card border must be neutral slate, not error red or warning amber
+      const cardMatch = html.match(/data-testid="AgentCard"[^>]*class="([^"]*)"/);
+      assert(cardMatch);
+      const cardClass = cardMatch[1];
+      expect(cardClass).toContain("border-slate-800");
+      expect(cardClass).not.toContain("border-red-600/80");
+      expect(cardClass).not.toContain("border-amber-600/80");
+
+      // Harness badge has active brand color token
+      expect(html).toContain('data-brand-state="active"');
+      const badgeMatch = html.match(/data-testid="AgentCard--harness-badge"[^>]*class="([^"]*)"/);
+      assert(badgeMatch);
+      const badgeClass = badgeMatch[1];
+      expect(badgeClass).toContain("text-[var(--brand-claude)]");
+      expect(badgeClass).not.toContain("text-slate-500");
+    });
+
+    it("renders quiescent muted ink for finished agents without brand dominance", () => {
+      const finishedAgent = factory_agentState({
+        harness: "pi",
+        activity: {
+          ...fixture_agentStateExited.activity,
+          lifecycle: "EXITED",
+          activity: "IDLE",
+        },
+      });
+
+      const html = renderToStaticMarkup(<AgentCard agent={finishedAgent} />);
+
+      expect(html).toContain('data-brand-state="quiescent"');
+      const badgeMatch = html.match(/data-testid="AgentCard--harness-badge"[^>]*class="([^"]*)"/);
+      assert(badgeMatch);
+      const badgeClass = badgeMatch[1];
+      expect(badgeClass).toContain("text-slate-400");
+      expect(badgeClass).not.toContain("text-[var(--brand-pi)]");
+    });
+  });
 });

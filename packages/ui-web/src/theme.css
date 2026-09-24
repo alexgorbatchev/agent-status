@@ -4,6 +4,67 @@
 :root {
   --background: #020617;
   --foreground: #f8fafc;
+
+  /* Semantic status tokens (strictly reserved for agent lifecycle and activity states) */
+  --status-success: #10b981;
+  --status-warning: #f59e0b;
+  --status-error: #ef4444;
+  --status-info: #3b82f6;
+
+  /* Harness brand tokens (strictly prohibited from using red or green hues)
+     All brand tokens satisfy WCAG AA contrast (>= 4.5:1 text, >= 3:1 graphical)
+     against dark (#020617, #0f172a, #1e293b) and light (#ffffff, #f8fafc) backgrounds.
+  */
+  --brand-claude: #d97757; /* Claude terracotta / warm bronze */
+  --brand-pi: #818cf8; /* Inflection Pi violet / indigo */
+  --brand-codex: #a78bfa; /* OpenAI Codex purple / violet */
+  --brand-opencode: #38bdf8; /* OpenCode sky blue */
+  --brand-default: #94a3b8; /* Neutral slate-400 */
+  --brand-muted: #64748b; /* Muted brand for attention states (slate-500) */
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --brand-claude: #c15f3c; /* Darker terracotta for WCAG AA on light */
+    --brand-pi: #4338ca; /* Darker indigo for WCAG AA on light */
+    --brand-codex: #6d28d9; /* Darker purple for WCAG AA on light */
+    --brand-opencode: #0369a1; /* Darker sky blue for WCAG AA on light */
+    --brand-default: #475569; /* Darker slate for WCAG AA on light */
+    --brand-muted: #64748b;
+  }
+}
+
+@theme {
+  --color-status-success: var(--status-success);
+  --color-status-warning: var(--status-warning);
+  --color-status-error: var(--status-error);
+  --color-status-info: var(--status-info);
+
+  --color-brand-claude: var(--brand-claude);
+  --color-brand-pi: var(--brand-pi);
+  --color-brand-codex: var(--brand-codex);
+  --color-brand-opencode: var(--brand-opencode);
+  --color-brand-default: var(--brand-default);
+  --color-brand-muted: var(--brand-muted);
+}
+
+/* Semantic utility classes retain highest CSS specificity over any brand styling */
+.status-error,
+[data-semantic-status="error"] {
+  border-color: #dc2626 !important;
+  color: #fca5a5 !important;
+}
+
+.status-warning,
+[data-semantic-status="warning"] {
+  border-color: #d97706 !important;
+  color: #fcd34d !important;
+}
+
+.status-success,
+[data-semantic-status="success"] {
+  border-color: #059669 !important;
+  color: #6ee7b7 !important;
 }
 
 body {

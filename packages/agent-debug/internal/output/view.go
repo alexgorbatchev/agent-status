@@ -28,6 +28,30 @@ func FormatHarnessLabel(h types.HarnessType) string {
 	return string(h)
 }
 
+// FormatHarnessBadge formats the harness badge with semantic color precedence (#106).
+// Rule 1: Error (ANSI Red) and Prompt (ANSI Yellow) styles override vendor badge coloring.
+// Rule 2: In quiescent/working states, vendor brand color is applied (prohibiting Red or Green hues).
+func FormatHarnessBadge(h types.HarnessType, activity types.ActivityState) string {
+	rawLabel := FormatHarnessLabel(h)
+	cleanLabel := StripANSI(rawLabel)
+
+	switch activity {
+	case types.ActivityError:
+		return fmt.Sprintf("%s(%s)%s", AnsiRed, cleanLabel, AnsiReset)
+	case types.ActivityWaitingQuestion:
+		return fmt.Sprintf("%s(%s)%s", AnsiYellow, cleanLabel, AnsiReset)
+	default:
+		brandColor := GetHarnessBrandColor(h)
+		if strings.Contains(rawLabel, "\x1b") {
+			if strings.Contains(rawLabel, AnsiRed) || strings.Contains(rawLabel, AnsiGreen) {
+				return fmt.Sprintf("%s(%s)%s", brandColor, cleanLabel, AnsiReset)
+			}
+			return fmt.Sprintf("(%s)", rawLabel)
+		}
+		return fmt.Sprintf("%s(%s)%s", brandColor, cleanLabel, AnsiReset)
+	}
+}
+
 // FormatTokens formats an integer token count with commas, e.g. 14520 -> "14,520 tokens".
 func FormatTokens(tokens int64) string {
 	str := fmt.Sprintf("%d", tokens)
@@ -182,7 +206,7 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 		lifecycle = string(types.LifecycleRunning)
 	}
 
-	harness := FormatHarnessLabel(agent.Harness)
+	harnessBadge := FormatHarnessBadge(agent.Harness, agent.Activity.Activity)
 	hideButton := "[Hide]"
 	if agent.IsHidden {
 		hideButton = "[Unhide]"
@@ -192,7 +216,7 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 		buttons = append(buttons, "[Focus]")
 	}
 	buttons = append(buttons, hideButton)
-	headerLeft := fmt.Sprintf("(%s) %s", harness, strings.Join(buttons, " "))
+	headerLeft := fmt.Sprintf("%s %s", harnessBadge, strings.Join(buttons, " "))
 	headerRight := fmt.Sprintf("(%s)", lifecycle)
 
 	headerSpace := width - runewidth.StringWidth(stripANSI(headerLeft)) - runewidth.StringWidth(stripANSI(headerRight))
@@ -223,9 +247,9 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 	// 3. Callout (question or error)
 	var callout string
 	if agent.Activity.Activity == types.ActivityWaitingQuestion && agent.Activity.Question != nil && *agent.Activity.Question != "" {
-		callout = fmt.Sprintf("%s %s", GlyphQuestion, *agent.Activity.Question)
+		callout = fmt.Sprintf("%s%s %s%s", AnsiYellow, GlyphQuestion, *agent.Activity.Question, AnsiReset)
 	} else if agent.Activity.Activity == types.ActivityError && agent.Activity.LastError != nil && *agent.Activity.LastError != "" {
-		callout = fmt.Sprintf("%s %s", GlyphAlert, *agent.Activity.LastError)
+		callout = fmt.Sprintf("%s%s %s%s", AnsiRed, GlyphAlert, *agent.Activity.LastError, AnsiReset)
 	}
 
 	// 4. Badges

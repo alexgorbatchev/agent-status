@@ -36,6 +36,17 @@ const HARNESS_LABELS: Record<HarnessType, string> = {
   opencode: "OpenCode",
 };
 
+const HARNESS_BRAND_TEXT_CLASSES: Record<HarnessType, string> = {
+  "claude-code": "text-[var(--brand-claude)]",
+  pi: "text-[var(--brand-pi)]",
+  codex: "text-[var(--brand-codex)]",
+  opencode: "text-[var(--brand-opencode)]",
+};
+
+function getHarnessBrandTextColor(harness: HarnessType): string {
+  return HARNESS_BRAND_TEXT_CLASSES[harness] || "text-[var(--brand-default)]";
+}
+
 function resolveCurrentTime(): number {
   return Date.now();
 }
@@ -88,19 +99,30 @@ export function AgentCard({
     }
   };
 
+  const isError = activity.activity === "ERROR";
+  const isWaitingQuestion = activity.activity === "WAITING_QUESTION";
+  const isAttentionState = isError || isWaitingQuestion;
+  const brandState = isAttentionState ? "muted" : isFinished ? "quiescent" : "active";
+  const semanticStatus = isError ? "error" : isWaitingQuestion || isStalled || sessionStalled ? "warning" : undefined;
+
   return (
     <div
       data-testid="AgentCard"
       role="button"
       tabIndex={0}
+      data-semantic-status={semanticStatus}
       aria-label={`View details for ${title}`}
       onClick={() => onOpenDrawer?.(agent)}
       onKeyDown={handleKeyDown}
       className={clsx(
         "group relative flex flex-col justify-between p-4 rounded-xl bg-slate-900/80 border transition-all cursor-pointer shadow-lg hover:shadow-slate-950/50",
-        isStalled || sessionStalled
-          ? "border-amber-500/80 shadow-amber-950/40"
-          : "border-slate-800 hover:border-slate-700",
+        isError
+          ? "border-red-600/80 shadow-red-950/40"
+          : isWaitingQuestion
+            ? "border-amber-600/80 shadow-amber-950/40"
+            : isStalled || sessionStalled
+              ? "border-amber-500/80 shadow-amber-950/40"
+              : "border-slate-800 hover:border-slate-700",
         agent.isHidden && "border-dashed border-slate-700/60 opacity-60 hover:opacity-100",
         !agent.isHidden && isFinished && "opacity-60 hover:opacity-100",
       )}
@@ -111,9 +133,14 @@ export function AgentCard({
           <div className="flex items-center gap-2 text-xs text-slate-400">
             <span
               data-testid="AgentCard--harness-badge"
+              data-harness={harness}
+              data-brand-state={brandState}
               role="status"
               aria-label={HARNESS_LABELS[harness] || harness}
-              className="flex items-center gap-1 font-medium text-slate-300"
+              className={clsx(
+                "flex items-center gap-1 font-medium transition-colors",
+                isAttentionState ? "text-slate-500" : isFinished ? "text-slate-400" : getHarnessBrandTextColor(harness),
+              )}
             >
               <IconWrapper size="sm">
                 <Bot size={14} />
@@ -210,6 +237,7 @@ export function AgentCard({
               toolDuration={formattedDuration ?? undefined}
               isSessionStalled={sessionStalled}
               silenceDuration={sessionStalled ? silenceDuration : undefined}
+              harness={harness}
             />
           </div>
         </div>

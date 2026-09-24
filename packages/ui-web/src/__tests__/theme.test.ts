@@ -17,4 +17,37 @@ describe("Theme Scrollbar CSS", () => {
     expect(themeCss).toContain("#475569"); // slate-600 hover
     expect(themeCss).toContain("#64748b"); // slate-500 active
   });
+
+  it("defines dedicated brand tokens and enforces semantic specificity (#106)", async () => {
+    const themeCss = await Bun.file(`${import.meta.dir}/../theme.css`).text();
+
+    // Semantic tokens
+    expect(themeCss).toContain("--status-success:");
+    expect(themeCss).toContain("--status-warning:");
+    expect(themeCss).toContain("--status-error:");
+    expect(themeCss).toContain("--status-info:");
+
+    // Brand tokens
+    expect(themeCss).toContain("--brand-claude:");
+    expect(themeCss).toContain("--brand-pi:");
+    expect(themeCss).toContain("--brand-codex:");
+    expect(themeCss).toContain("--brand-opencode:");
+    expect(themeCss).toContain("--brand-default:");
+    expect(themeCss).toContain("--brand-muted:");
+
+    // Tailwind theme bindings
+    expect(themeCss).toContain("--color-brand-claude: var(--brand-claude);");
+    expect(themeCss).toContain("--color-brand-pi: var(--brand-pi);");
+    expect(themeCss).toContain("--color-brand-codex: var(--brand-codex);");
+    expect(themeCss).toContain("--color-brand-opencode: var(--brand-opencode);");
+
+    // Semantic specificity overrides
+    expect(themeCss).toContain('[data-semantic-status="error"]');
+    expect(themeCss).toContain('[data-semantic-status="warning"]');
+    expect(themeCss).toContain('[data-semantic-status="success"]');
+    expect(themeCss).toContain("!important");
+
+    // Light mode WCAG AA overrides
+    expect(themeCss).toContain("@media (prefers-color-scheme: light)");
+  });
 });

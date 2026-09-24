@@ -9,6 +9,7 @@ import type {
   LifecycleState,
   ActivityState,
   IFileModification,
+  HarnessType,
 } from "../types";
 
 export interface IStatusBadgeConfig {
@@ -49,6 +50,7 @@ export interface IStatusBadgeProps {
   toolDuration?: string;
   isSessionStalled?: boolean;
   silenceDuration?: string;
+  harness?: HarnessType;
 }
 
 export interface IHeaderProps {

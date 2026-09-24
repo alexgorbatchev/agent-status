@@ -70,6 +70,7 @@ export function StatusBadge({
         role="status"
         data-lifecycle={lifecycle}
         data-stall-tier={stallTier}
+        data-semantic-status="warning"
         className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-950/60 text-amber-300 border border-amber-600/80 animate-pulse"
       >
         <IconWrapper size="xs" tone="warning">
@@ -89,6 +90,7 @@ export function StatusBadge({
         role="status"
         data-lifecycle={lifecycle}
         data-stall-type="silence"
+        data-semantic-status="warning"
         className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-950/60 text-amber-300 border border-amber-600/80"
       >
         <span data-testid="StatusBadge--indicator" className="w-2 h-2 rounded-full bg-amber-400" />
@@ -98,11 +100,23 @@ export function StatusBadge({
   }
 
   const config = STATUS_CONFIGS[lifecycle]?.[activity] ?? STATUS_CONFIGS.RUNNING.IDLE;
+  const semanticStatus =
+    activity === "ERROR"
+      ? "error"
+      : activity === "WAITING_QUESTION"
+        ? "warning"
+        : lifecycle === "EXITED"
+          ? "success"
+          : activity === "BUSY"
+            ? "info"
+            : "neutral";
+
   return (
     <span
       data-testid="StatusBadge"
       role="status"
       data-lifecycle={lifecycle}
+      data-semantic-status={semanticStatus}
       className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium ${config.badgeClass}`}
     >
       <span data-testid="StatusBadge--indicator" className={`w-2 h-2 rounded-full ${config.indicatorClass}`} />

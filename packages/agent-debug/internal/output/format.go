@@ -26,6 +26,47 @@ const (
 	GlyphAlert    = "[!]"
 )
 
+// Standard ANSI escape sequences for terminal styling.
+const (
+	AnsiReset   = "\x1b[0m"
+	AnsiBold    = "\x1b[1m"
+	AnsiDim     = "\x1b[2m"
+	AnsiRed     = "\x1b[31m"
+	AnsiGreen   = "\x1b[32m"
+	AnsiYellow  = "\x1b[33m"
+	AnsiBlue    = "\x1b[34m"
+	AnsiMagenta = "\x1b[35m"
+	AnsiCyan    = "\x1b[36m"
+	AnsiWhite   = "\x1b[37m"
+	AnsiGray    = "\x1b[90m"
+)
+
+// GetHarnessBrandColor returns the non-semantic ANSI vendor brand color for a harness.
+// Strictly enforces that neither Red (ANSI Red) nor Green (ANSI Green) can ever be returned (#106).
+func GetHarnessBrandColor(h types.HarnessType) string {
+	switch h {
+	case types.HarnessClaudeCode:
+		return AnsiMagenta
+	case types.HarnessPi:
+		return AnsiBlue
+	case types.HarnessCodex:
+		return AnsiCyan
+	case types.HarnessOpencode:
+		return AnsiCyan
+	default:
+		return AnsiWhite
+	}
+}
+
+// SanitizeBrandColor ensures a brand color string does not contain prohibited Red or Green hues.
+// Red and Green are strictly reserved for agent lifecycle and activity states (#106).
+func SanitizeBrandColor(color string) string {
+	if strings.Contains(color, AnsiRed) || strings.Contains(color, AnsiGreen) {
+		return AnsiWhite
+	}
+	return color
+}
+
 var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\].*?(?:\x07|\x1b\\)`)
 
 // stripANSI removes ANSI escape codes from s.
