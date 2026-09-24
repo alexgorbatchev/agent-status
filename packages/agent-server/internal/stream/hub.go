@@ -115,6 +115,22 @@ func (h *Hub) Broadcast(event *types.IServerEvent) {
 	}
 }
 
+// BroadcastSnapshot creates and broadcasts a synthetic snapshot event containing agents and environments to all global subscribers.
+func (h *Hub) BroadcastSnapshot(agents []types.IAgentState, envs []types.IEnvironmentInfo) {
+	if agents == nil {
+		agents = []types.IAgentState{}
+	}
+	if envs == nil {
+		envs = []types.IEnvironmentInfo{}
+	}
+	h.Broadcast(&types.IServerEvent{
+		Type:         "snapshot",
+		At:           time.Now().UnixMilli(),
+		Agents:       agents,
+		Environments: envs,
+	})
+}
+
 // Close closes the hub and all active subscriber channels.
 func (h *Hub) Close() {
 	h.mu.Lock()

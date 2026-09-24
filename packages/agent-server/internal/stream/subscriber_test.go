@@ -44,6 +44,18 @@ func (m *mockStoreReader) GetAgents(ctx context.Context, filter store.AgentFilte
 	return m.agents, nil
 }
 
+func (m *mockStoreReader) setAgents(agents []types.IAgentState) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.agents = agents
+}
+
+func (m *mockStoreReader) setEnvironments(envs []types.IEnvironmentInfo) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.envs = envs
+}
+
 func TestNewSubscriber_Defaults(t *testing.T) {
 	mockStore := &mockStoreReader{}
 	hub := NewHub()
@@ -59,6 +71,69 @@ func TestNewSubscriber_Defaults(t *testing.T) {
 	if sub.logger == nil {
 		t.Errorf("expected non-nil default logger")
 	}
+}
+
+func TestSubscriber_ReconcileSnapshot(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		hub := NewHub()
+		defer hub.Close()
+
+		ch := hub.SubscribeGlobal()
+
+		mockStore := &mockStoreReader{
+			envs: []types.IEnvironmentInfo{
+				{ID: "env1", Label: "test-env"},
+			},
+			agents: []types.IAgentState{
+				{ID: "agent-1"},
+			},
+		}
+
+		sub := NewSubscriber(SubscriberConfig{}, mockStore, hub)
+		if err := sub.reconcileSnapshot(context.Background()); err != nil {
+			t.Fatalf("reconcileSnapshot() error = %v", err)
+		}
+
+		select {
+		case event := <-ch:
+			if event.Type != "snapshot" {
+				t.Errorf("event.Type = %q, want 'snapshot'", event.Type)
+			}
+			if len(event.Agents) != 1 || len(event.Environments) != 1 {
+				t.Errorf("unexpected snapshot payload: %+v", event)
+			}
+		case <-time.After(100 * time.Millisecond):
+			t.Fatal("timed out waiting for snapshot event")
+		}
+	})
+
+	t.Run("environments error", func(t *testing.T) {
+		hub := NewHub()
+		defer hub.Close()
+
+		mockStore := &mockStoreReader{
+			envsErr: errors.New("db failure"),
+		}
+		sub := NewSubscriber(SubscriberConfig{}, mockStore, hub)
+		err := sub.reconcileSnapshot(context.Background())
+		if err == nil {
+			t.Fatalf("expected error, got nil")
+		}
+	})
+
+	t.Run("agents error", func(t *testing.T) {
+		hub := NewHub()
+		defer hub.Close()
+
+		mockStore := &mockStoreReader{
+			agentsErr: errors.New("agents db failure"),
+		}
+		sub := NewSubscriber(SubscriberConfig{}, mockStore, hub)
+		err := sub.reconcileSnapshot(context.Background())
+		if err == nil {
+			t.Fatalf("expected error, got nil")
+		}
+	})
 }
 
 func TestSubscriber_ResyncAndBroadcast(t *testing.T) {
@@ -345,3 +420,130 @@ func TestDefaultSocketPath(t *testing.T) {
 		t.Errorf("DefaultSocketPath() with XDG_RUNTIME_DIR = %q, want /custom/runtime/agent-status/notify.sock", path)
 	}
 }
+
+func TestSubscriber_ReconcileSnapshotOnReconnectionAfterMissedEvents(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "subtest-reconnect-*")
+	if err != nil {
+		t.Fatalf("creating temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+	sockPath := filepath.Join(tmpDir, "notify.sock")
+
+	listener, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("creating test unix socket: %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+
+	mockStore := &mockStoreReader{
+		envs: []types.IEnvironmentInfo{
+			{ID: "env-1", Label: "local"},
+		},
+		agents: []types.IAgentState{
+			{
+				ID:        "agent-1",
+				SessionID: "sess-1",
+				Activity: types.IAgentActivity{
+					Lifecycle: types.LifecycleRunning,
+					Activity:  types.ActivityBusy,
+					Title:     "Initial task",
+				},
+			},
+		},
+	}
+
+	hub := NewHub()
+	t.Cleanup(func() { hub.Close() })
+	globalCh := hub.SubscribeGlobal()
+
+	sub := NewSubscriber(SubscriberConfig{
+		SocketPath:    sockPath,
+		ReconnectWait: 20 * time.Millisecond,
+	}, mockStore, hub)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	go sub.Run(ctx)
+
+	// Accept initial connection
+	conn1, err := listener.Accept()
+	if err != nil {
+		t.Fatalf("failed to accept initial conn: %v", err)
+	}
+
+	// 1. Verify initial snapshot received upon first connection
+	select {
+	case evt := <-globalCh:
+		if evt.Type != "snapshot" {
+			t.Fatalf("expected initial snapshot event, got %q", evt.Type)
+		}
+		if len(evt.Agents) != 1 || evt.Agents[0].ID != "agent-1" {
+			t.Fatalf("unexpected initial snapshot agents: %+v", evt.Agents)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for initial snapshot")
+	}
+
+	// 2. Disconnect socket to simulate network drop / ingester restart
+	_ = conn1.Close()
+
+	// 3. While disconnected, simulate mutations occurring in SQLite that missed socket delivery
+	updatedAgent1 := types.IAgentState{
+		ID:        "agent-1",
+		SessionID: "sess-1",
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleExited,
+			Activity:  types.ActivityIdle,
+			Title:     "Initial task (finished)",
+		},
+	}
+	newAgent2 := types.IAgentState{
+		ID:        "agent-2",
+		SessionID: "sess-2",
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityBusy,
+			Title:     "Second task",
+		},
+	}
+	mockStore.setAgents([]types.IAgentState{updatedAgent1, newAgent2})
+	mockStore.setEnvironments([]types.IEnvironmentInfo{
+		{ID: "env-1", Label: "local"},
+		{ID: "env-2", Label: "remote-worker"},
+	})
+
+	// 4. Accept reconnected socket connection
+	conn2, err := listener.Accept()
+	if err != nil {
+		t.Fatalf("failed to accept reconnected conn: %v", err)
+	}
+	t.Cleanup(func() { _ = conn2.Close() })
+
+	// 5. Verify that upon reconnection, reconcileSnapshot queries the store and broadcasts the full snapshot
+	select {
+	case evt := <-globalCh:
+		if evt.Type != "snapshot" {
+			t.Fatalf("expected snapshot event on reconnection, got %q", evt.Type)
+		}
+		if len(evt.Agents) != 2 {
+			t.Fatalf("expected 2 agents in reconnected snapshot, got %d", len(evt.Agents))
+		}
+		if len(evt.Environments) != 2 {
+			t.Fatalf("expected 2 environments in reconnected snapshot, got %d", len(evt.Environments))
+		}
+		agentMap := make(map[string]types.IAgentState)
+		for _, a := range evt.Agents {
+			agentMap[a.ID] = a
+		}
+		if a1, ok := agentMap["agent-1"]; !ok || a1.Activity.Lifecycle != types.LifecycleExited {
+			t.Errorf("expected agent-1 to be EXITED in reconnected snapshot, got %+v", a1)
+		}
+		if a2, ok := agentMap["agent-2"]; !ok || a2.Activity.Lifecycle != types.LifecycleRunning {
+			t.Errorf("expected agent-2 to be RUNNING in reconnected snapshot, got %+v", a2)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for snapshot event on reconnection after missed events")
+	}
+}
+

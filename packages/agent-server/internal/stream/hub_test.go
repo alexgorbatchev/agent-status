@@ -246,3 +246,61 @@ func TestHub_ClosedHubOperations(t *testing.T) {
 	// Broadcast on closed hub should be a no-op
 	hub.Broadcast(&types.IServerEvent{Type: "test"})
 }
+
+func TestHub_BroadcastSnapshot(t *testing.T) {
+	t.Run("with agents and environments", func(t *testing.T) {
+		hub := NewHub()
+		defer hub.Close()
+
+		ch := hub.SubscribeGlobal()
+
+		agents := []types.IAgentState{
+			{ID: "agent-1", SessionID: "sess-1"},
+		}
+		envs := []types.IEnvironmentInfo{
+			{ID: "env-1", Label: "local"},
+		}
+
+		hub.BroadcastSnapshot(agents, envs)
+
+		select {
+		case evt := <-ch:
+			if evt.Type != "snapshot" {
+				t.Errorf("expected snapshot event, got %q", evt.Type)
+			}
+			if len(evt.Agents) != 1 || evt.Agents[0].ID != "agent-1" {
+				t.Errorf("unexpected agents in snapshot: %+v", evt.Agents)
+			}
+			if len(evt.Environments) != 1 || evt.Environments[0].ID != "env-1" {
+				t.Errorf("unexpected environments in snapshot: %+v", evt.Environments)
+			}
+		case <-time.After(100 * time.Millisecond):
+			t.Fatal("timed out waiting for snapshot event")
+		}
+	})
+
+	t.Run("with nil slices", func(t *testing.T) {
+		hub := NewHub()
+		defer hub.Close()
+
+		ch := hub.SubscribeGlobal()
+
+		hub.BroadcastSnapshot(nil, nil)
+
+		select {
+		case evt := <-ch:
+			if evt.Type != "snapshot" {
+				t.Errorf("expected snapshot event, got %q", evt.Type)
+			}
+			if evt.Agents == nil || len(evt.Agents) != 0 {
+				t.Errorf("expected non-nil empty agents slice, got %+v", evt.Agents)
+			}
+			if evt.Environments == nil || len(evt.Environments) != 0 {
+				t.Errorf("expected non-nil empty environments slice, got %+v", evt.Environments)
+			}
+		case <-time.After(100 * time.Millisecond):
+			t.Fatal("timed out waiting for snapshot event")
+		}
+	})
+}
+

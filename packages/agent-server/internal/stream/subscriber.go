@@ -62,28 +62,27 @@ func NewSubscriber(cfg SubscriberConfig, store StoreReader, hub *Hub) *Subscribe
 	}
 }
 
-// ResyncAndBroadcast queries SQLite to build a full snapshot of all active environments and agents,
-// then broadcasts it to the hub.
-func (s *Subscriber) ResyncAndBroadcast(ctx context.Context) error {
+// reconcileSnapshot queries SQLite to build a full snapshot of all active environments and agents,
+// then broadcasts it to the hub via BroadcastSnapshot.
+func (s *Subscriber) reconcileSnapshot(ctx context.Context) error {
 	envs, err := s.store.GetEnvironments(ctx)
 	if err != nil {
-		return fmt.Errorf("resyncing environments: %w", err)
+		return fmt.Errorf("reconciling environments: %w", err)
 	}
 
 	agents, err := s.store.GetAgents(ctx, store.AgentFilter{})
 	if err != nil {
-		return fmt.Errorf("resyncing agents: %w", err)
+		return fmt.Errorf("reconciling agents: %w", err)
 	}
 
-	snapshot := &types.IServerEvent{
-		Type:         "snapshot",
-		At:           time.Now().UnixMilli(),
-		Agents:       agents,
-		Environments: envs,
-	}
-
-	s.hub.Broadcast(snapshot)
+	s.hub.BroadcastSnapshot(agents, envs)
 	return nil
+}
+
+// ResyncAndBroadcast queries SQLite to build a full snapshot of all active environments and agents,
+// then broadcasts it to the hub. It delegates to reconcileSnapshot.
+func (s *Subscriber) ResyncAndBroadcast(ctx context.Context) error {
+	return s.reconcileSnapshot(ctx)
 }
 
 // Run starts the subscriber loop, connecting to the unix domain socket with automatic reconnect.
@@ -109,7 +108,7 @@ func (s *Subscriber) Run(ctx context.Context) {
 		}
 
 		s.logger.InfoContext(ctx, "notify_socket_connected")
-		if err := s.ResyncAndBroadcast(ctx); err != nil {
+		if err := s.reconcileSnapshot(ctx); err != nil {
 			s.logger.ErrorContext(ctx, "notify_snapshot_resync_failed", "err", err)
 		}
 
