@@ -618,3 +618,263 @@ func TestPiParser_NormalizedFileModification(t *testing.T) {
 		}
 	})
 }
+
+func TestParsePiError(t *testing.T) {
+	tests := []struct {
+		name          string
+		line          string
+		wantError     bool
+		wantContent   string
+		wantTurnEnd   bool
+	}{
+		{
+			name: "assistant message with stopReason == 'error' and errorMessage",
+			line: `{
+				"type": "message",
+				"id": "err-1",
+				"timestamp": "2026-09-18T20:55:00.000Z",
+				"cwd": "/workspace",
+				"message": {
+					"role": "assistant",
+					"model": "claude-sonnet-4-5",
+					"stopReason": "error",
+					"errorMessage": "Rate limit exceeded: 429",
+					"content": []
+				}
+			}`,
+			wantError:   true,
+			wantContent: "Rate limit exceeded: 429",
+			wantTurnEnd: true,
+		},
+		{
+			name: "assistant message with stopReason == 'error' fallback to text content",
+			line: `{
+				"type": "message",
+				"id": "err-2",
+				"message": {
+					"role": "assistant",
+					"stopReason": "error",
+					"content": [{"type": "text", "text": "An internal error occurred"}]
+				}
+			}`,
+			wantError:   true,
+			wantContent: "An internal error occurred",
+			wantTurnEnd: true,
+		},
+		{
+			name: "assistant message with stopReason == 'error' and no message or content defaults to 'error'",
+			line: `{
+				"type": "message",
+				"id": "err-3",
+				"message": {
+					"role": "assistant",
+					"stopReason": "error",
+					"content": []
+				}
+			}`,
+			wantError:   true,
+			wantContent: "error",
+			wantTurnEnd: true,
+		},
+		{
+			name: "assistant message with snake_case stop_reason and error_message",
+			line: `{
+				"type": "message",
+				"id": "err-4",
+				"message": {
+					"role": "assistant",
+					"stop_reason": "error",
+					"error_message": "Context window exceeded",
+					"content": []
+				}
+			}`,
+			wantError:   true,
+			wantContent: "Context window exceeded",
+			wantTurnEnd: true,
+		},
+		{
+			name: "assistant message with errorMessage and stopReason == 'stop'",
+			line: `{
+				"type": "message",
+				"id": "err-5",
+				"message": {
+					"role": "assistant",
+					"stopReason": "stop",
+					"errorMessage": "Model returned an unexpected error header",
+					"content": [{"type": "text", "text": "Partial response"}]
+				}
+			}`,
+			wantError:   true,
+			wantContent: "Model returned an unexpected error header",
+			wantTurnEnd: true,
+		},
+		{
+			name: "assistant message with message.error field",
+			line: `{
+				"type": "message",
+				"id": "err-6",
+				"message": {
+					"role": "assistant",
+					"error": "Provider connection timeout",
+					"content": []
+				}
+			}`,
+			wantError:   true,
+			wantContent: "Provider connection timeout",
+			wantTurnEnd: true,
+		},
+		{
+			name: "line with top-level raw.error",
+			line: `{
+				"type": "message",
+				"id": "err-7",
+				"error": "Failed to parse stream chunk",
+				"message": {
+					"role": "assistant",
+					"content": []
+				}
+			}`,
+			wantError:   true,
+			wantContent: "Failed to parse stream chunk",
+			wantTurnEnd: true,
+		},
+		{
+			name: "line with top-level raw.errorMessage",
+			line: `{
+				"type": "message",
+				"id": "err-8",
+				"errorMessage": "WebSocket connection lost",
+				"message": {
+					"role": "assistant",
+					"content": []
+				}
+			}`,
+			wantError:   true,
+			wantContent: "WebSocket connection lost",
+			wantTurnEnd: true,
+		},
+		{
+			name: "line with top-level raw.error_message",
+			line: `{
+				"type": "message",
+				"id": "err-8b",
+				"error_message": "Connection reset by peer",
+				"message": {
+					"role": "assistant",
+					"content": []
+				}
+			}`,
+			wantError:   true,
+			wantContent: "Connection reset by peer",
+			wantTurnEnd: true,
+		},
+		{
+			name: "line with type == 'error'",
+			line: `{
+				"type": "error",
+				"id": "err-9",
+				"error": "Process crashed with SIGKILL"
+			}`,
+			wantError:   true,
+			wantContent: "Process crashed with SIGKILL",
+			wantTurnEnd: false,
+		},
+		{
+			name: "line with raw.error when message is nil",
+			line: `{
+				"type": "message",
+				"id": "err-10",
+				"error": "Message payload truncated"
+			}`,
+			wantError:   true,
+			wantContent: "Message payload truncated",
+			wantTurnEnd: false,
+		},
+		{
+			name: "normal assistant message without error does not emit error event",
+			line: `{
+				"type": "message",
+				"id": "ok-1",
+				"message": {
+					"role": "assistant",
+					"stopReason": "stop",
+					"content": [{"type": "text", "text": "All good"}]
+				}
+			}`,
+			wantError:   false,
+			wantContent: "",
+			wantTurnEnd: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evs, err := ParsePiLine([]byte(tt.line), "/test/cwd")
+			if err != nil {
+				t.Fatalf("ParsePiLine failed: %v", err)
+			}
+
+			var errorEv *ParsedEvent
+			var hasTurnEnd bool
+			for i := range evs {
+				if evs[i].EventType == "error" {
+					errorEv = &evs[i]
+				}
+				if evs[i].EventType == "turn_end" {
+					hasTurnEnd = true
+				}
+			}
+
+			if tt.wantTurnEnd != hasTurnEnd {
+				t.Errorf("hasTurnEnd = %v, want %v", hasTurnEnd, tt.wantTurnEnd)
+			}
+
+			if !tt.wantError {
+				if errorEv != nil {
+					t.Errorf("expected no error event, got %+v", errorEv)
+				}
+				return
+			}
+
+			if errorEv == nil {
+				t.Fatalf("expected error event, but none was emitted. Events: %+v", evs)
+			}
+
+			if errorEv.EventType != "error" {
+				t.Errorf("EventType = %q, want 'error'", errorEv.EventType)
+			}
+			if errorEv.Data.IsError == nil || !*errorEv.Data.IsError {
+				t.Errorf("Data.IsError = %v, want true", errorEv.Data.IsError)
+			}
+			if errorEv.Data.Content == nil || *errorEv.Data.Content != tt.wantContent {
+				got := "<nil>"
+				if errorEv.Data.Content != nil {
+					got = *errorEv.Data.Content
+				}
+				t.Errorf("Data.Content = %q, want %q", got, tt.wantContent)
+			}
+			if errorEv.Data.Role == nil || *errorEv.Data.Role != "assistant" {
+				t.Errorf("Data.Role = %v, want 'assistant'", errorEv.Data.Role)
+			}
+
+			// When both turn_end and error are emitted, error must come AFTER turn_end
+			// so the ingester classifier sets activity to ActivityError rather than ActivityIdle.
+			if tt.wantTurnEnd {
+				turnEndIdx := -1
+				errorIdx := -1
+				for i, ev := range evs {
+					switch ev.EventType {
+					case "turn_end":
+						turnEndIdx = i
+					case "error":
+						errorIdx = i
+					}
+				}
+				if errorIdx < turnEndIdx {
+					t.Errorf("error event index (%d) must follow turn_end index (%d)", errorIdx, turnEndIdx)
+				}
+			}
+		})
+	}
+}
+
