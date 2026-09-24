@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestLoad_Defaults(t *testing.T) {
@@ -24,6 +25,9 @@ func TestLoad_Defaults(t *testing.T) {
 		"AIR_SUMMARIZER_MODEL",
 		"AIR_LOG_DIR",
 		"AIR_LOG_FILE",
+		"AIR_TURN_END_GRACE",
+		"AIR_TURN_END_GRACE_MS",
+		"AIR_TURN_END_GRACE_WINDOW",
 	}
 	for _, k := range envKeys {
 		t.Setenv(k, "")
@@ -62,6 +66,12 @@ func TestLoad_Defaults(t *testing.T) {
 	}
 	if cfg.LogLevel != "info" {
 		t.Errorf("got LogLevel %q, want info", cfg.LogLevel)
+	}
+	if cfg.TurnEndGraceWindow != 2500*time.Millisecond {
+		t.Errorf("got TurnEndGraceWindow %v, want 2500ms", cfg.TurnEndGraceWindow)
+	}
+	if cfg.TurnEndGrace != 2500*time.Millisecond {
+		t.Errorf("got TurnEndGrace %v, want 2500ms", cfg.TurnEndGrace)
 	}
 }
 
@@ -270,4 +280,72 @@ func TestLoad_Precedence_APIKey(t *testing.T) {
 		})
 	}
 }
+
+func TestLoad_TurnEndGrace(t *testing.T) {
+	tests := []struct {
+		name      string
+		envGrace  string
+		envMS     string
+		wantGrace time.Duration
+	}{
+		{
+			name:      "duration string 1500ms",
+			envGrace:  "1500ms",
+			wantGrace: 1500 * time.Millisecond,
+		},
+		{
+			name:      "duration string 3s",
+			envGrace:  "3s",
+			wantGrace: 3 * time.Second,
+		},
+		{
+			name:      "duration string 0s disabled",
+			envGrace:  "0s",
+			wantGrace: 0,
+		},
+		{
+			name:      "integer string milliseconds 3000",
+			envGrace:  "3000",
+			wantGrace: 3000 * time.Millisecond,
+		},
+		{
+			name:      "integer string milliseconds 0 disabled",
+			envGrace:  "0",
+			wantGrace: 0,
+		},
+		{
+			name:      "fallback to AIR_TURN_END_GRACE_MS",
+			envGrace:  "",
+			envMS:     "1200",
+			wantGrace: 1200 * time.Millisecond,
+		},
+		{
+			name:      "invalid duration falls back to default 2500ms",
+			envGrace:  "invalid-duration",
+			wantGrace: 2500 * time.Millisecond,
+		},
+		{
+			name:      "unspecified falls back to default 2500ms",
+			envGrace:  "",
+			wantGrace: 2500 * time.Millisecond,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("AIR_TURN_END_GRACE", tt.envGrace)
+			t.Setenv("AIR_TURN_END_GRACE_MS", tt.envMS)
+			t.Setenv("AIR_TURN_END_GRACE_WINDOW", "")
+
+			cfg := Load()
+			if cfg.TurnEndGraceWindow != tt.wantGrace {
+				t.Errorf("got TurnEndGraceWindow %v, want %v", cfg.TurnEndGraceWindow, tt.wantGrace)
+			}
+			if cfg.TurnEndGrace != tt.wantGrace {
+				t.Errorf("got TurnEndGrace %v, want %v", cfg.TurnEndGrace, tt.wantGrace)
+			}
+		})
+	}
+}
+
 

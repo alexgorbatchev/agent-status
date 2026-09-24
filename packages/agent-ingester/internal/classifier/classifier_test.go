@@ -6859,6 +6859,520 @@ func TestClassifier_Subagent_DwellTimer_OnUpdateAndEdgeCases(t *testing.T) {
 	c.handleSubagentDwellExpired(agentID, "sub-update")
 }
 
+func TestClassifier_TurnEndGraceWindow_Defaults(t *testing.T) {
+	s, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("store.Open(:memory:) failed: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+
+	p, err := pricing.NewPricingEngine()
+	if err != nil {
+		t.Fatalf("pricing.NewPricingEngine() failed: %v", err)
+	}
+
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+
+	c := New(s, p, sum)
+	defer func() { _ = c.Close() }()
+
+	if c.TurnEndGraceWindow() != 2500*time.Millisecond {
+		t.Errorf("expected default TurnEndGraceWindow to be 2500ms, got %v", c.TurnEndGraceWindow())
+	}
+}
+
+func TestClassifier_TurnEndGraceWindow_SubSecondGapsKeepBusy(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+
+	c, s := newTestClassifier(t, sum)
+	c.SetTurnEndGraceWindow(500 * time.Millisecond)
+	defer func() { _ = c.Close() }()
+
+	agentID := "env-test:claude:sess-subsecond"
+	base := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       "env-test",
+		Environment: types.IEnvironmentInfo{ID: "env-test", Platform: "linux"},
+		AgentID:     agentID,
+		SessionID:   "sess-subsecond",
+		PID:         101,
+		Harness:     types.HarnessClaudeCode,
+		Timestamp:   1000,
+	}
+
+	// 1. run_started
+	f1 := base
+	f1.Seq = 1
+	f1.EventType = "run_started"
+	if _, err := c.ProcessFrame(f1); err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+
+	// 2. turn_start
+	prompt := "Run build"
+	f2 := base
+	f2.Seq = 2
+	f2.Timestamp = 1010
+	f2.EventType = "turn_start"
+	f2.Data = types.TelemetryFrameData{Content: &prompt}
+	if _, err := c.ProcessFrame(f2); err != nil {
+		t.Fatalf("turn_start failed: %v", err)
+	}
+
+	// 3. tool_call
+	tool := "Bash"
+	f3 := base
+	f3.Seq = 3
+	f3.Timestamp = 1020
+	f3.EventType = "tool_call"
+	f3.Data = types.TelemetryFrameData{ToolName: &tool}
+	if _, err := c.ProcessFrame(f3); err != nil {
+		t.Fatalf("tool_call failed: %v", err)
+	}
+
+	// 4. tool_result
+	f4 := base
+	f4.Seq = 4
+	f4.Timestamp = 1030
+	f4.EventType = "tool_result"
+	if _, err := c.ProcessFrame(f4); err != nil {
+		t.Fatalf("tool_result failed: %v", err)
+	}
+
+	// 5. turn_end finishes turn (no tool use)
+	f5 := base
+	f5.Seq = 5
+	f5.Timestamp = 1040
+	f5.EventType = "turn_end"
+	ag, err := c.ProcessFrame(f5)
+	if err != nil {
+		t.Fatalf("turn_end failed: %v", err)
+	}
+
+	// Immediate state must REMAIN BUSY under grace window
+	if ag.Activity.Activity != types.ActivityBusy {
+		t.Fatalf("expected Activity to remain BUSY immediately after turn_end within grace window, got %v", ag.Activity.Activity)
+	}
+
+	// Sub-second idle gap (100ms gap, well within 500ms grace window)
+	time.Sleep(100 * time.Millisecond)
+
+	reloaded, err := s.GetAgent(agentID)
+	if err != nil {
+		t.Fatalf("getting agent failed: %v", err)
+	}
+	if reloaded.Activity.Activity != types.ActivityBusy {
+		t.Errorf("expected Activity to remain BUSY during sub-second idle gap, got %v", reloaded.Activity.Activity)
+	}
+}
+
+func TestClassifier_TurnEndGraceWindow_GapsExceedingGraceTransitionToIdle(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+
+	c, s := newTestClassifier(t, sum)
+	grace := 60 * time.Millisecond
+	c.SetTurnEndGraceWindow(grace)
+	defer func() { _ = c.Close() }()
+
+	agentID := "env-test:claude:sess-exceed"
+	base := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       "env-test",
+		Environment: types.IEnvironmentInfo{ID: "env-test", Platform: "linux"},
+		AgentID:     agentID,
+		SessionID:   "sess-exceed",
+		PID:         102,
+		Harness:     types.HarnessClaudeCode,
+		Timestamp:   1000,
+	}
+
+	f1 := base
+	f1.Seq = 1
+	f1.EventType = "run_started"
+	_, _ = c.ProcessFrame(f1)
+
+	prompt := "Check status"
+	f2 := base
+	f2.Seq = 2
+	f2.Timestamp = 1010
+	f2.EventType = "turn_start"
+	f2.Data = types.TelemetryFrameData{Content: &prompt}
+	_, _ = c.ProcessFrame(f2)
+
+	stopReason := "end_turn"
+	f3 := base
+	f3.Seq = 3
+	f3.Timestamp = 1020
+	f3.EventType = "turn_end"
+	f3.Data = types.TelemetryFrameData{StopReason: &stopReason}
+	ag, err := c.ProcessFrame(f3)
+	if err != nil {
+		t.Fatalf("turn_end failed: %v", err)
+	}
+	if ag.Activity.Activity != types.ActivityBusy {
+		t.Fatalf("expected agent to be BUSY in grace window, got %v", ag.Activity.Activity)
+	}
+
+	// Wait past the grace window (90ms > 60ms)
+	time.Sleep(90 * time.Millisecond)
+
+	reloaded, err := s.GetAgent(agentID)
+	if err != nil {
+		t.Fatalf("getting agent failed: %v", err)
+	}
+	if reloaded.Activity.Activity != types.ActivityIdle {
+		t.Errorf("expected Activity to transition to IDLE after grace window elapsed, got %v", reloaded.Activity.Activity)
+	}
+}
+
+func TestClassifier_TurnEndGraceWindow_AttentionStatesBypassGraceWindow(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+
+	c, _ := newTestClassifier(t, sum)
+	c.SetTurnEndGraceWindow(2500 * time.Millisecond)
+	defer func() { _ = c.Close() }()
+
+	agentID := "env-test:claude:sess-attention"
+	base := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       "env-test",
+		Environment: types.IEnvironmentInfo{ID: "env-test", Platform: "linux"},
+		AgentID:     agentID,
+		SessionID:   "sess-attention",
+		PID:         103,
+		Harness:     types.HarnessClaudeCode,
+		Timestamp:   1000,
+	}
+
+	f1 := base
+	f1.Seq = 1
+	f1.EventType = "run_started"
+	_, _ = c.ProcessFrame(f1)
+
+	// --- 1. WAITING_QUESTION bypasses grace window instantly ---
+	prompt := "Deploy to prod"
+	f2 := base
+	f2.Seq = 2
+	f2.Timestamp = 1010
+	f2.EventType = "turn_start"
+	f2.Data = types.TelemetryFrameData{Content: &prompt}
+	_, _ = c.ProcessFrame(f2)
+
+	// Enter grace window via turn_end
+	f3 := base
+	f3.Seq = 3
+	f3.Timestamp = 1020
+	f3.EventType = "turn_end"
+	ag, _ := c.ProcessFrame(f3)
+	if ag.Activity.Activity != types.ActivityBusy {
+		t.Fatalf("expected BUSY during grace window, got %v", ag.Activity.Activity)
+	}
+
+	// question_prompt arrives while in grace window
+	q := "Proceed with deploy?"
+	f4 := base
+	f4.Seq = 4
+	f4.Timestamp = 1030
+	f4.EventType = "question_prompt"
+	f4.Data = types.TelemetryFrameData{Question: &q}
+	ag, err = c.ProcessFrame(f4)
+	if err != nil {
+		t.Fatalf("question_prompt failed: %v", err)
+	}
+	if ag.Activity.Activity != types.ActivityWaitingQuestion {
+		t.Fatalf("expected immediate transition to WAITING_QUESTION with 0-ms delay, got %v", ag.Activity.Activity)
+	}
+
+	// Subsequent turn_end does not drop WAITING_QUESTION
+	f5 := base
+	f5.Seq = 5
+	f5.Timestamp = 1040
+	f5.EventType = "turn_end"
+	ag, _ = c.ProcessFrame(f5)
+	if ag.Activity.Activity != types.ActivityWaitingQuestion {
+		t.Errorf("expected WAITING_QUESTION preserved across turn_end, got %v", ag.Activity.Activity)
+	}
+
+	// --- 2. ERROR bypasses grace window instantly ---
+	// Start next turn
+	prompt2 := "Fix error"
+	f6 := base
+	f6.Seq = 6
+	f6.Timestamp = 1050
+	f6.EventType = "turn_start"
+	f6.Data = types.TelemetryFrameData{Content: &prompt2}
+	_, _ = c.ProcessFrame(f6)
+
+	// Enter grace window
+	f7 := base
+	f7.Seq = 7
+	f7.Timestamp = 1060
+	f7.EventType = "turn_end"
+	ag, _ = c.ProcessFrame(f7)
+	if ag.Activity.Activity != types.ActivityBusy {
+		t.Fatalf("expected BUSY during grace window, got %v", ag.Activity.Activity)
+	}
+
+	// error arrives while in grace window
+	errMsg := "fatal: build failed"
+	f8 := base
+	f8.Seq = 8
+	f8.Timestamp = 1070
+	f8.EventType = "error"
+	f8.Data = types.TelemetryFrameData{Content: &errMsg}
+	ag, err = c.ProcessFrame(f8)
+	if err != nil {
+		t.Fatalf("error frame failed: %v", err)
+	}
+	if ag.Activity.Activity != types.ActivityError {
+		t.Fatalf("expected immediate transition to ERROR with 0-ms delay, got %v", ag.Activity.Activity)
+	}
+
+	// Subsequent turn_end does not drop ERROR
+	f9 := base
+	f9.Seq = 9
+	f9.Timestamp = 1080
+	f9.EventType = "turn_end"
+	ag, _ = c.ProcessFrame(f9)
+	if ag.Activity.Activity != types.ActivityError {
+		t.Errorf("expected ERROR preserved across turn_end, got %v", ag.Activity.Activity)
+	}
+
+	// --- 3. AskUserQuestion tool call bypasses grace window instantly ---
+	prompt3 := "Ask something"
+	f10 := base
+	f10.Seq = 10
+	f10.Timestamp = 1090
+	f10.EventType = "turn_start"
+	f10.Data = types.TelemetryFrameData{Content: &prompt3}
+	_, _ = c.ProcessFrame(f10)
+
+	askTool := "AskUserQuestion"
+	f11 := base
+	f11.Seq = 11
+	f11.Timestamp = 1100
+	f11.EventType = "tool_call"
+	f11.Data = types.TelemetryFrameData{
+		ToolName: &askTool,
+		Question: &q,
+	}
+	ag, err = c.ProcessFrame(f11)
+	if err != nil {
+		t.Fatalf("AskUserQuestion failed: %v", err)
+	}
+	if ag.Activity.Activity != types.ActivityWaitingQuestion {
+		t.Fatalf("expected immediate transition to WAITING_QUESTION on AskUserQuestion, got %v", ag.Activity.Activity)
+	}
+}
+
+func TestClassifier_TurnEndGraceWindow_IncomingBusyEventsCancelPendingIdleTimers(t *testing.T) {
+	busyEventTypes := []struct {
+		name      string
+		eventType string
+		setupData func() types.TelemetryFrameData
+	}{
+		{
+			name:      "thinking",
+			eventType: "thinking",
+			setupData: func() types.TelemetryFrameData {
+				th := "Analyzing repo structure..."
+				return types.TelemetryFrameData{Content: &th}
+			},
+		},
+		{
+			name:      "tool_call",
+			eventType: "tool_call",
+			setupData: func() types.TelemetryFrameData {
+				tn := "Read"
+				return types.TelemetryFrameData{ToolName: &tn}
+			},
+		},
+		{
+			name:      "tool_use",
+			eventType: "tool_use",
+			setupData: func() types.TelemetryFrameData {
+				tn := "Bash"
+				return types.TelemetryFrameData{ToolName: &tn}
+			},
+		},
+		{
+			name:      "user_prompt",
+			eventType: "user_prompt",
+			setupData: func() types.TelemetryFrameData {
+				p := "Continue next step"
+				return types.TelemetryFrameData{Content: &p}
+			},
+		},
+		{
+			name:      "text",
+			eventType: "text",
+			setupData: func() types.TelemetryFrameData {
+				txt := "I have completed the first step and am now continuing..."
+				return types.TelemetryFrameData{Content: &txt}
+			},
+		},
+	}
+
+	for _, tc := range busyEventTypes {
+		t.Run(tc.name, func(t *testing.T) {
+			sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+			if err != nil {
+				t.Fatalf("summarizer.New() failed: %v", err)
+			}
+
+			c, s := newTestClassifier(t, sum)
+			grace := 80 * time.Millisecond
+			c.SetTurnEndGraceWindow(grace)
+			defer func() { _ = c.Close() }()
+
+			agentID := fmt.Sprintf("env-test:claude:sess-busy-%s", tc.name)
+			base := types.ITelemetryFrame{
+				Version:     "1.0",
+				EnvID:       "env-test",
+				Environment: types.IEnvironmentInfo{ID: "env-test", Platform: "linux"},
+				AgentID:     agentID,
+				SessionID:   "sess-busy-" + tc.name,
+				PID:         200,
+				Harness:     types.HarnessClaudeCode,
+				Timestamp:   1000,
+			}
+
+			// 1. run_started
+			f1 := base
+			f1.Seq = 1
+			f1.EventType = "run_started"
+			_, _ = c.ProcessFrame(f1)
+
+			// 2. turn_start
+			p := "Initial prompt"
+			f2 := base
+			f2.Seq = 2
+			f2.Timestamp = 1010
+			f2.EventType = "turn_start"
+			f2.Data = types.TelemetryFrameData{Content: &p}
+			_, _ = c.ProcessFrame(f2)
+
+			// 3. turn_end (enters grace window)
+			stopReason := "end_turn"
+			f3 := base
+			f3.Seq = 3
+			f3.Timestamp = 1020
+			f3.EventType = "turn_end"
+			f3.Data = types.TelemetryFrameData{StopReason: &stopReason}
+			ag, err := c.ProcessFrame(f3)
+			if err != nil {
+				t.Fatalf("turn_end failed: %v", err)
+			}
+			if ag.Activity.Activity != types.ActivityBusy {
+				t.Fatalf("expected BUSY during grace window, got %v", ag.Activity.Activity)
+			}
+
+			// 4. Within grace window (20ms < 80ms), incoming busy frame arrives
+			time.Sleep(20 * time.Millisecond)
+			fBusy := base
+			fBusy.Seq = 4
+			fBusy.Timestamp = 1040
+			fBusy.EventType = tc.eventType
+			fBusy.Data = tc.setupData()
+			ag, err = c.ProcessFrame(fBusy)
+			if err != nil {
+				t.Fatalf("busy event %s failed: %v", tc.eventType, err)
+			}
+			if ag.Activity.Activity != types.ActivityBusy {
+				t.Fatalf("expected BUSY after %s event, got %v", tc.eventType, ag.Activity.Activity)
+			}
+
+			// 5. Wait another 80ms (total time since turn_end is 100ms > 80ms grace window)
+			time.Sleep(80 * time.Millisecond)
+
+			reloaded, err := s.GetAgent(agentID)
+			if err != nil {
+				t.Fatalf("getting agent failed: %v", err)
+			}
+			// Because incoming busy frame cancelled the pending idle timer, agent must STILL be BUSY
+			if reloaded.Activity.Activity != types.ActivityBusy {
+				t.Errorf("expected agent to REMAIN BUSY because %s cancelled idle timer, got %v", tc.eventType, reloaded.Activity.Activity)
+			}
+		})
+	}
+}
+
+func TestClassifier_TurnEndGraceWindow_StopAndCloseCleansTimers(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+
+	c, _ := newTestClassifier(t, sum)
+	c.SetTurnEndGraceWindow(500 * time.Millisecond)
+
+	agentID := "env-test:claude:sess-stop-clean"
+	base := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       "env-test",
+		Environment: types.IEnvironmentInfo{ID: "env-test", Platform: "linux"},
+		AgentID:     agentID,
+		SessionID:   "sess-stop-clean",
+		PID:         301,
+		Harness:     types.HarnessClaudeCode,
+		Timestamp:   1000,
+	}
+
+	f1 := base
+	f1.Seq = 1
+	f1.EventType = "run_started"
+	_, _ = c.ProcessFrame(f1)
+
+	p := "Work"
+	f2 := base
+	f2.Seq = 2
+	f2.Timestamp = 1010
+	f2.EventType = "turn_start"
+	f2.Data = types.TelemetryFrameData{Content: &p}
+	_, _ = c.ProcessFrame(f2)
+
+	stopReason := "end_turn"
+	f3 := base
+	f3.Seq = 3
+	f3.Timestamp = 1020
+	f3.EventType = "turn_end"
+	f3.Data = types.TelemetryFrameData{StopReason: &stopReason}
+	_, _ = c.ProcessFrame(f3)
+
+	// Pending timer should exist
+	c.mu.Lock()
+	timerCount := len(c.idleTimers)
+	c.mu.Unlock()
+	if timerCount != 1 {
+		t.Fatalf("expected 1 idleTimer scheduled, got %d", timerCount)
+	}
+
+	// Calling Stop() cleans up all timers
+	if err := c.Stop(); err != nil {
+		t.Fatalf("Stop() failed: %v", err)
+	}
+
+	c.mu.Lock()
+	timerCountAfter := len(c.idleTimers)
+	c.mu.Unlock()
+	if timerCountAfter != 0 {
+		t.Errorf("expected 0 idleTimers after Stop(), got %d", timerCountAfter)
+	}
+}
+
+
 
 
 

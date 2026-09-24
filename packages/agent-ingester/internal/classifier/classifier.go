@@ -69,7 +69,9 @@ type agentWorker struct {
 }
 
 const (
-	DefaultIdleGracePeriod    = 5 * time.Second
+	DefaultIdleGracePeriod    = 2500 * time.Millisecond
+	DefaultTurnEndGraceWindow = DefaultIdleGracePeriod
+	DefaultTurnEndGrace       = DefaultIdleGracePeriod
 	DefaultDebounceWindow     = 10 * time.Second
 	DefaultTurnFloor          = 20 * time.Second
 	DefaultTurnSilenceTimeout = 30 * time.Minute
@@ -135,6 +137,28 @@ func (c *Classifier) SetIdleGracePeriod(d time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.idleGracePeriod = d
+}
+
+// SetTurnEndGraceWindow sets the debounce window before transitioning from BUSY to IDLE on turn_end.
+func (c *Classifier) SetTurnEndGraceWindow(d time.Duration) {
+	c.SetIdleGracePeriod(d)
+}
+
+// SetTurnEndGrace sets the debounce window before transitioning from BUSY to IDLE on turn_end.
+func (c *Classifier) SetTurnEndGrace(d time.Duration) {
+	c.SetIdleGracePeriod(d)
+}
+
+// TurnEndGraceWindow returns the turn-end grace window duration.
+func (c *Classifier) TurnEndGraceWindow() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.idleGracePeriod
+}
+
+// Stop gracefully stops all per-agent async workers and cancels pending timers.
+func (c *Classifier) Stop() error {
+	return c.Close()
 }
 
 // SetTurnFloor sets the thinking latency floor during which an agent remains latched to BUSY (Thinking).
@@ -504,9 +528,13 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		if isAfterHide {
 			isActiveEvent := frame.EventType == "run_started" ||
 				frame.EventType == "turn_start" ||
+				frame.EventType == "user_prompt" ||
 				frame.EventType == "tool_call" ||
+				frame.EventType == "tool_use" ||
 				frame.EventType == "tool_result" ||
 				frame.EventType == "thinking" ||
+				frame.EventType == "text" ||
+				frame.EventType == "agent_message" ||
 				frame.EventType == "question_prompt" ||
 				frame.EventType == "error"
 			if isActiveEvent {
@@ -792,7 +820,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			agent.Activity.ActiveToolStartedAt = nil
 			pendingJob = c.updateSummarization(agent, false)
 
-		case "tool_call":
+		case "tool_call", "tool_use":
 			c.mu.Lock()
 			c.cancelIdleTimerLocked(agent.ID)
 			actx.inFlightTool = true
@@ -844,7 +872,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				}
 			}
 
-		case "turn_start":
+		case "turn_start", "user_prompt":
 			c.mu.Lock()
 			c.cancelIdleTimerLocked(agent.ID)
 			c.cancelTrailingTimerLocked(agent.ID)
@@ -867,6 +895,19 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			agent.Activity.Action = "Thinking"
 			p := types.PhasePlanning
 			agent.Activity.Phase = &p
+
+		case "text", "agent_message":
+			c.mu.Lock()
+			c.cancelIdleTimerLocked(agent.ID)
+			c.scheduleSilenceTimerLocked(agent.ID, actx.rootGeneration)
+			c.mu.Unlock()
+			agent.Activity.Activity = types.ActivityBusy
+			agent.Activity.LastError = nil
+			if frame.Data.Content != nil && strings.TrimSpace(*frame.Data.Content) != "" {
+				c.mu.Lock()
+				actx.lastAssistantResponse = strings.TrimSpace(*frame.Data.Content)
+				c.mu.Unlock()
+			}
 
 		case "thinking":
 			c.mu.Lock()
@@ -1030,7 +1071,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			}
 
 			switch frame.EventType {
-			case "tool_call":
+			case "tool_call", "tool_use":
 				sub.completedAt = nil
 				sub.status = types.SubagentRunning
 				c.cancelSubagentTimerLocked(agent.ID, subID)
@@ -1103,10 +1144,15 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 					sub.question = &q
 				}
 				sub.activeTool = nil
-			case "turn_start":
+			case "turn_start", "user_prompt":
 				sub.activity = types.ActivityBusy
 				sub.activeTool = nil
 				sub.lastError = nil
+				sub.completedAt = nil
+				sub.status = types.SubagentRunning
+				c.cancelSubagentTimerLocked(agent.ID, subID)
+			case "text", "agent_message":
+				sub.activity = types.ActivityBusy
 				sub.completedAt = nil
 				sub.status = types.SubagentRunning
 				c.cancelSubagentTimerLocked(agent.ID, subID)

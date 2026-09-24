@@ -131,6 +131,7 @@ func runServer(ctx context.Context, cmd *cobra.Command, cfg *config.Config, read
 	}()
 
 	cls := classifier.New(st, priceEngine, sumEngine)
+	cls.SetTurnEndGraceWindow(cfg.TurnEndGraceWindow)
 	defer func() {
 		_ = cls.Close()
 	}()

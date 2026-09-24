@@ -7,5 +7,7 @@ import (
 type Classifier = internalclassifier.Classifier
 
 const DefaultIdleGracePeriod = internalclassifier.DefaultIdleGracePeriod
+const DefaultTurnEndGraceWindow = internalclassifier.DefaultTurnEndGraceWindow
+const DefaultTurnEndGrace = internalclassifier.DefaultTurnEndGrace
 
 var New = internalclassifier.New

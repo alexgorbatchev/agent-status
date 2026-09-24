@@ -3,25 +3,52 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strconv"
+	"time"
 )
 
 type Config struct {
-	Addr            string
-	BearerToken     string
-	DBPath          string
-	NotifySock        string
-	NoSummarize       bool
-	NoSummarizeByFlag bool
-	NoSummarizeByEnv  bool
-	NoSummarizeSource string
-	LiteLLMBaseURL    string
-	LiteLLMAPIKey   string
-	GeminiAPIKey    string
-	AnthropicAPIKey string
-	SummarizerModel string
-	LogLevel        string
-	LogDir          string
-	LogFile         string
+	Addr               string
+	BearerToken        string
+	DBPath             string
+	NotifySock         string
+	NoSummarize        bool
+	NoSummarizeByFlag  bool
+	NoSummarizeByEnv   bool
+	NoSummarizeSource  string
+	LiteLLMBaseURL     string
+	LiteLLMAPIKey      string
+	GeminiAPIKey       string
+	AnthropicAPIKey    string
+	SummarizerModel    string
+	LogLevel           string
+	LogDir             string
+	LogFile            string
+	TurnEndGraceWindow time.Duration
+	TurnEndGrace       time.Duration
+}
+
+func parseTurnEndGrace() time.Duration {
+	defaultGrace := 2500 * time.Millisecond
+	raw := os.Getenv("AIR_TURN_END_GRACE")
+	if raw == "" {
+		raw = os.Getenv("AIR_TURN_END_GRACE_WINDOW")
+	}
+	if raw != "" {
+		if d, err := time.ParseDuration(raw); err == nil {
+			return d
+		}
+		if ms, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			return time.Duration(ms) * time.Millisecond
+		}
+		return defaultGrace
+	}
+	if msStr := os.Getenv("AIR_TURN_END_GRACE_MS"); msStr != "" {
+		if ms, err := strconv.ParseInt(msStr, 10, 64); err == nil {
+			return time.Duration(ms) * time.Millisecond
+		}
+	}
+	return defaultGrace
 }
 
 func Load() *Config {
@@ -67,6 +94,8 @@ func Load() *Config {
 		noSummarizeSource = "env"
 	}
 
+	turnEndGrace := parseTurnEndGrace()
+
 	return &Config{
 		Addr:              addr,
 		BearerToken:       token,
@@ -84,5 +113,7 @@ func Load() *Config {
 		LogLevel:          "info",
 		LogDir:            os.Getenv("AIR_LOG_DIR"),
 		LogFile:           os.Getenv("AIR_LOG_FILE"),
+		TurnEndGraceWindow: turnEndGrace,
+		TurnEndGrace:       turnEndGrace,
 	}
 }
