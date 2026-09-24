@@ -36,6 +36,8 @@ type subagentState struct {
 }
 
 type agentContext struct {
+	persistMu               sync.Mutex
+	saveGeneration          uint64
 	lastPrompt              string
 	lastAssistantResponse   string
 	lastToolArgs            string
@@ -110,6 +112,8 @@ type Classifier struct {
 	syncMode           bool
 
 	beforeIdleSummarizeHook func(agentID string)
+	beforeIdleSaveHook      func(agentID string)
+	beforeSilenceSaveHook   func(agentID string)
 }
 
 func New(s *store.Store, p *pricing.Engine, sum *summarizer.Summarizer) *Classifier {
@@ -693,6 +697,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 	}
 
 	c.mu.Lock()
+	actx.saveGeneration++
 	if !isSubagent {
 		actx.rootGeneration++
 		agent.Activity.Activity = actx.rootActivity
@@ -1222,10 +1227,21 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		agent.Activity.ActiveSubagents = nil
 		actx.hasUnseenCompletion = nil
 	}
+	var persistMu *sync.Mutex
+	if actx != nil {
+		persistMu = &actx.persistMu
+	}
 	c.mu.Unlock()
 
-	if err := c.store.SaveAgentState(*agent); err != nil {
-		return nil, fmt.Errorf("saving agent state: %w", err)
+	if persistMu != nil {
+		persistMu.Lock()
+	}
+	saveErr := c.store.SaveAgentState(*agent)
+	if persistMu != nil {
+		persistMu.Unlock()
+	}
+	if saveErr != nil {
+		return nil, fmt.Errorf("saving agent state: %w", saveErr)
 	}
 
 	// Record the raw event after agent exists in DB
@@ -1554,6 +1570,9 @@ func (c *Classifier) handleIdleTransition(agentID string, scheduledGen uint64) {
 		c.mu.Unlock()
 		return
 	}
+
+	scheduledSaveGen := actx.saveGeneration
+	targetActx := actx
 	c.mu.Unlock()
 
 	agent, err := c.store.GetAgent(agentID)
@@ -1586,8 +1605,24 @@ func (c *Classifier) handleIdleTransition(agentID string, scheduledGen uint64) {
 
 	c.mu.Lock()
 	actx, ok = c.agentCtx[agentID]
-	if !ok || actx.rootGeneration != scheduledGen || actx.rootActivity != types.ActivityBusy {
+	if !ok || actx != targetActx || actx.rootGeneration != scheduledGen || actx.saveGeneration != scheduledSaveGen || actx.rootActivity != types.ActivityBusy {
 		c.mu.Unlock()
+		return
+	}
+	persistMu := &actx.persistMu
+	c.mu.Unlock()
+
+	if c.beforeIdleSaveHook != nil {
+		c.beforeIdleSaveHook(agentID)
+	}
+
+	persistMu.Lock()
+
+	c.mu.Lock()
+	actx, ok = c.agentCtx[agentID]
+	if !ok || actx != targetActx || actx.rootGeneration != scheduledGen || actx.saveGeneration != scheduledSaveGen || actx.rootActivity != types.ActivityBusy {
+		c.mu.Unlock()
+		persistMu.Unlock()
 		return
 	}
 
@@ -1614,8 +1649,11 @@ func (c *Classifier) handleIdleTransition(agentID string, scheduledGen uint64) {
 	actx.completedAt = agent.Activity.CompletedAt
 	c.mu.Unlock()
 
-	if err := c.store.SaveAgentState(*agent); err != nil {
-		logging.Error("saving_idle_agent_failed", "err", err, "agentId", agentID)
+	saveErr := c.store.SaveAgentState(*agent)
+	persistMu.Unlock()
+
+	if saveErr != nil {
+		logging.Error("saving_idle_agent_failed", "err", saveErr, "agentId", agentID)
 		return
 	}
 
@@ -1645,6 +1683,8 @@ func (c *Classifier) handleSilenceTransition(agentID string, scheduledGen uint64
 		c.mu.Unlock()
 		return
 	}
+	scheduledSaveGen := actx.saveGeneration
+	targetActx := actx
 	c.mu.Unlock()
 
 	agent, err := c.store.GetAgent(agentID)
@@ -1672,8 +1712,24 @@ func (c *Classifier) handleSilenceTransition(agentID string, scheduledGen uint64
 
 	c.mu.Lock()
 	actx, ok = c.agentCtx[agentID]
-	if !ok || actx.rootGeneration != scheduledGen || actx.rootActivity != types.ActivityBusy {
+	if !ok || actx != targetActx || actx.rootGeneration != scheduledGen || actx.saveGeneration != scheduledSaveGen || actx.rootActivity != types.ActivityBusy {
 		c.mu.Unlock()
+		return
+	}
+	persistMu := &actx.persistMu
+	c.mu.Unlock()
+
+	if c.beforeSilenceSaveHook != nil {
+		c.beforeSilenceSaveHook(agentID)
+	}
+
+	persistMu.Lock()
+
+	c.mu.Lock()
+	actx, ok = c.agentCtx[agentID]
+	if !ok || actx != targetActx || actx.rootGeneration != scheduledGen || actx.saveGeneration != scheduledSaveGen || actx.rootActivity != types.ActivityBusy {
+		c.mu.Unlock()
+		persistMu.Unlock()
 		return
 	}
 
@@ -1699,8 +1755,11 @@ func (c *Classifier) handleSilenceTransition(agentID string, scheduledGen uint64
 	actx.completedAt = agent.Activity.CompletedAt
 	c.mu.Unlock()
 
-	if err := c.store.SaveAgentState(*agent); err != nil {
-		logging.Error("saving_silent_idle_agent_failed", "err", err, "agentId", agentID)
+	saveErr := c.store.SaveAgentState(*agent)
+	persistMu.Unlock()
+
+	if saveErr != nil {
+		logging.Error("saving_silent_idle_agent_failed", "err", saveErr, "agentId", agentID)
 		return
 	}
 

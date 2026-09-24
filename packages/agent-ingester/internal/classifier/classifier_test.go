@@ -5810,6 +5810,926 @@ func TestClassifier_HandleIdleTransition_AbortedGenerationDoesNotDropPendingSumm
 	}
 }
 
+func TestClassifier_HandleIdleTransition_DoesNotOverwriteNewerFrameState(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, _ := newTestClassifier(t, sum)
+	c.syncMode = false
+	c.SetIdleGracePeriod(10 * time.Second)
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{
+		ID:       "env-race",
+		Label:    "workstation",
+		Hostname: "workstation",
+		Platform: "darwin",
+		User:     "engineer",
+	}
+	ws := types.IWorkspaceInfo{
+		Branch: "main",
+		CWD:    "/path/to/repo",
+	}
+	proj := types.IProjectInfo{
+		ID:            "repo",
+		Name:          "repo",
+		CanonicalRoot: "/path/to/repo",
+	}
+	agentID := "env-race:claude-code:sess-race-save"
+
+	baseFrame := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-race-save",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+	}
+
+	// 1. run_started
+	fStart := baseFrame
+	fStart.Seq = 1
+	fStart.Timestamp = 1000
+	fStart.EventType = "run_started"
+	if _, err := c.ProcessFrame(fStart); err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+
+	// 2. turn_start -> agent is BUSY
+	prompt := "Write tests"
+	fPrompt := baseFrame
+	fPrompt.Seq = 2
+	fPrompt.Timestamp = 1010
+	fPrompt.EventType = "turn_start"
+	fPrompt.Data = types.TelemetryFrameData{
+		Title:   &prompt,
+		Content: &prompt,
+	}
+	if _, err := c.ProcessFrame(fPrompt); err != nil {
+		t.Fatalf("turn_start failed: %v", err)
+	}
+
+	// 3. turn_end -> schedules idle transition timer
+	stopReason := "end_turn"
+	respText := "I have inspected the file."
+	fEnd := baseFrame
+	fEnd.Seq = 3
+	fEnd.Timestamp = 1020
+	fEnd.EventType = "turn_end"
+	fEnd.Data = types.TelemetryFrameData{
+		StopReason: &stopReason,
+		Content:    &respText,
+	}
+	if _, err := c.ProcessFrame(fEnd); err != nil {
+		t.Fatalf("turn_end failed: %v", err)
+	}
+
+	// Capture scheduled generation
+	c.mu.Lock()
+	actx := c.agentCtx[agentID]
+	if actx == nil {
+		c.mu.Unlock()
+		t.Fatalf("expected agentContext to exist")
+	}
+	scheduledGen := actx.rootGeneration
+	c.mu.Unlock()
+
+	// 4. Register hook: inject newer frame (e.g. tool_call) between unlock and save
+	hookCalled := false
+	newerToolName := "Edit"
+	newerToolPath := "main.go"
+	c.beforeIdleSaveHook = func(id string) {
+		hookCalled = true
+		fNewer := baseFrame
+		fNewer.Seq = 4
+		fNewer.Timestamp = 1050
+		fNewer.EventType = "tool_call"
+		fNewer.Data = types.TelemetryFrameData{
+			ToolName: &newerToolName,
+			ToolInput: map[string]interface{}{
+				"file_path": newerToolPath,
+			},
+		}
+		if _, err := c.ProcessFrame(fNewer); err != nil {
+			t.Fatalf("ProcessFrame inside hook failed: %v", err)
+		}
+	}
+
+	// 5. Trigger handleIdleTransition with the scheduled generation
+	c.handleIdleTransition(agentID, scheduledGen)
+
+	if !hookCalled {
+		t.Fatalf("expected beforeIdleSaveHook to be called")
+	}
+
+	// 6. Verify SQLite: newer frame's state (ActivityBusy, ActiveTool="Edit") must NOT be overwritten by idle transition!
+	loaded, err := c.store.GetAgent(agentID)
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if loaded == nil {
+		t.Fatalf("expected agent to exist in store")
+	}
+	if loaded.Activity.Activity != types.ActivityBusy {
+		t.Errorf("FAIL: idle transition overwrote newer frame state: expected Activity BUSY, got %v", loaded.Activity.Activity)
+	}
+	if loaded.Activity.ActiveTool == nil || *loaded.Activity.ActiveTool != newerToolName {
+		t.Errorf("expected ActiveTool %q, got %v", newerToolName, loaded.Activity.ActiveTool)
+	}
+	if loaded.Activity.ActiveTarget == nil || *loaded.Activity.ActiveTarget != newerToolPath {
+		t.Errorf("expected ActiveTarget %q, got %v", newerToolPath, loaded.Activity.ActiveTarget)
+	}
+	if loaded.Activity.HasUnseenCompletion != nil {
+		t.Errorf("expected HasUnseenCompletion to be nil, got %v", *loaded.Activity.HasUnseenCompletion)
+	}
+
+	// 7. Verify in-memory agentContext: state must NOT be mutated by aborted idle transition!
+	c.mu.Lock()
+	actxAfter := c.agentCtx[agentID]
+	c.mu.Unlock()
+	if actxAfter == nil {
+		t.Fatalf("expected agentContext to exist")
+	}
+	if actxAfter.rootActivity != types.ActivityBusy {
+		t.Errorf("expected actx.rootActivity to remain ActivityBusy, got %v", actxAfter.rootActivity)
+	}
+	if !actxAfter.inFlightTool {
+		t.Errorf("expected actx.inFlightTool to remain true, got false")
+	}
+	if actxAfter.inFlightToolName != newerToolName {
+		t.Errorf("expected actx.inFlightToolName to remain %q, got %q", newerToolName, actxAfter.inFlightToolName)
+	}
+}
+
+func TestClassifier_HandleIdleTransition_SubagentFrameDoesNotOverwriteState(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, _ := newTestClassifier(t, sum)
+	c.syncMode = false
+	c.SetIdleGracePeriod(10 * time.Second)
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{
+		ID:       "env-race",
+		Label:    "workstation",
+		Hostname: "workstation",
+		Platform: "darwin",
+		User:     "engineer",
+	}
+	ws := types.IWorkspaceInfo{
+		Branch: "main",
+		CWD:    "/path/to/repo",
+	}
+	proj := types.IProjectInfo{
+		ID:            "repo",
+		Name:          "repo",
+		CanonicalRoot: "/path/to/repo",
+	}
+	agentID := "env-race:claude-code:sess-race-subagent"
+
+	baseFrame := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-race-subagent",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+	}
+
+	// 1. run_started
+	fStart := baseFrame
+	fStart.Seq = 1
+	fStart.Timestamp = 1000
+	fStart.EventType = "run_started"
+	if _, err := c.ProcessFrame(fStart); err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+
+	// 2. turn_start -> agent is BUSY
+	prompt := "Delegate to helper"
+	fPrompt := baseFrame
+	fPrompt.Seq = 2
+	fPrompt.Timestamp = 1010
+	fPrompt.EventType = "turn_start"
+	fPrompt.Data = types.TelemetryFrameData{
+		Title:   &prompt,
+		Content: &prompt,
+	}
+	if _, err := c.ProcessFrame(fPrompt); err != nil {
+		t.Fatalf("turn_start failed: %v", err)
+	}
+
+	// 3. turn_end -> schedules idle transition timer
+	stopReason := "end_turn"
+	respText := "I will start a helper subagent."
+	fEnd := baseFrame
+	fEnd.Seq = 3
+	fEnd.Timestamp = 1020
+	fEnd.EventType = "turn_end"
+	fEnd.Data = types.TelemetryFrameData{
+		StopReason: &stopReason,
+		Content:    &respText,
+	}
+	if _, err := c.ProcessFrame(fEnd); err != nil {
+		t.Fatalf("turn_end failed: %v", err)
+	}
+
+	// Capture scheduled root generation
+	c.mu.Lock()
+	actx := c.agentCtx[agentID]
+	if actx == nil {
+		c.mu.Unlock()
+		t.Fatalf("expected agentContext to exist")
+	}
+	scheduledGen := actx.rootGeneration
+	c.mu.Unlock()
+
+	// 4. Register hook: inject SUBAGENT frame between unlock and save
+	// Subagent frames do NOT increment rootGeneration, but MUST increment saveGeneration!
+	hookCalled := false
+	subagentID := "sub-race-1"
+	subToolName := "Bash"
+	c.beforeIdleSaveHook = func(id string) {
+		hookCalled = true
+		fSub := baseFrame
+		fSub.Seq = 4
+		fSub.Timestamp = 1050
+		fSub.SubagentID = &subagentID
+		fSub.EventType = "tool_call"
+		fSub.Data = types.TelemetryFrameData{
+			ToolName: &subToolName,
+			ToolInput: map[string]interface{}{
+				"command": "go test ./...",
+			},
+		}
+		if _, err := c.ProcessFrame(fSub); err != nil {
+			t.Fatalf("ProcessFrame for subagent frame failed: %v", err)
+		}
+	}
+
+	// 5. Trigger handleIdleTransition with the scheduled generation
+	c.handleIdleTransition(agentID, scheduledGen)
+
+	if !hookCalled {
+		t.Fatalf("expected beforeIdleSaveHook to be called")
+	}
+
+	// 6. Verify SQLite: subagent's state must NOT be overwritten by idle transition!
+	loaded, err := c.store.GetAgent(agentID)
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if loaded == nil {
+		t.Fatalf("expected agent to exist in store")
+	}
+	if loaded.Activity.Activity != types.ActivityBusy {
+		t.Errorf("FAIL: idle transition overwrote subagent state: expected Activity BUSY, got %v", loaded.Activity.Activity)
+	}
+	if len(loaded.Activity.ActiveSubagents) != 1 {
+		t.Fatalf("expected 1 active subagent in store, got %d", len(loaded.Activity.ActiveSubagents))
+	}
+	sub := loaded.Activity.ActiveSubagents[0]
+	if sub.ID != subagentID {
+		t.Errorf("expected active subagent ID %q, got %q", subagentID, sub.ID)
+	}
+	if sub.Status != types.SubagentRunning {
+		t.Errorf("expected subagent status %q, got %q", types.SubagentRunning, sub.Status)
+	}
+	if loaded.Activity.HasUnseenCompletion != nil {
+		t.Errorf("expected HasUnseenCompletion to be nil, got %v", *loaded.Activity.HasUnseenCompletion)
+	}
+	if loaded.Activity.SubagentCount != 1 {
+		t.Errorf("FAIL: idle transition overwrote SubagentCount: expected 1, got %d", loaded.Activity.SubagentCount)
+	}
+
+	// 7. Verify in-memory agentContext: subagent state intact, rootActivity not overwritten
+	c.mu.Lock()
+	actxAfter := c.agentCtx[agentID]
+	c.mu.Unlock()
+	if actxAfter == nil {
+		t.Fatalf("expected agentContext to exist")
+	}
+	if actxAfter.rootActivity != types.ActivityBusy {
+		t.Errorf("FAIL: idle transition overwrote actx.rootActivity: expected ActivityBusy, got %v", actxAfter.rootActivity)
+	}
+	if len(actxAfter.subagents) != 1 {
+		t.Fatalf("expected 1 subagent in memory, got %d", len(actxAfter.subagents))
+	}
+	if actxAfter.subagents[subagentID] == nil {
+		t.Fatalf("expected subagent %q to exist in actx.subagents", subagentID)
+	}
+}
+
+func TestClassifier_HandleIdleTransition_RootFrameDuringSummarizeHookDoesNotOverwriteState(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, _ := newTestClassifier(t, sum)
+	c.syncMode = false
+	c.SetIdleGracePeriod(10 * time.Second)
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{
+		ID:       "env-race-root-sum",
+		Label:    "workstation",
+		Hostname: "workstation",
+		Platform: "darwin",
+		User:     "engineer",
+	}
+	ws := types.IWorkspaceInfo{
+		Branch: "main",
+		CWD:    "/path/to/repo",
+	}
+	proj := types.IProjectInfo{
+		ID:            "repo",
+		Name:          "repo",
+		CanonicalRoot: "/path/to/repo",
+	}
+	agentID := "env-race-root-sum:claude-code:sess-root-sum"
+
+	baseFrame := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-root-sum",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+	}
+
+	// 1. run_started
+	fStart := baseFrame
+	fStart.Seq = 1
+	fStart.Timestamp = 1000
+	fStart.EventType = "run_started"
+	if _, err := c.ProcessFrame(fStart); err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+
+	// 2. turn_start -> agent is BUSY
+	prompt := "Write tests"
+	fPrompt := baseFrame
+	fPrompt.Seq = 2
+	fPrompt.Timestamp = 1010
+	fPrompt.EventType = "turn_start"
+	fPrompt.Data = types.TelemetryFrameData{
+		Title:   &prompt,
+		Content: &prompt,
+	}
+	if _, err := c.ProcessFrame(fPrompt); err != nil {
+		t.Fatalf("turn_start failed: %v", err)
+	}
+
+	// 3. turn_end -> schedules idle transition timer
+	stopReason := "end_turn"
+	respText := "I have inspected the file."
+	fEnd := baseFrame
+	fEnd.Seq = 3
+	fEnd.Timestamp = 1020
+	fEnd.EventType = "turn_end"
+	fEnd.Data = types.TelemetryFrameData{
+		StopReason: &stopReason,
+		Content:    &respText,
+	}
+	if _, err := c.ProcessFrame(fEnd); err != nil {
+		t.Fatalf("turn_end failed: %v", err)
+	}
+
+	// Capture scheduled root generation
+	c.mu.Lock()
+	actx := c.agentCtx[agentID]
+	if actx == nil {
+		c.mu.Unlock()
+		t.Fatalf("expected agentContext to exist")
+	}
+	scheduledGen := actx.rootGeneration
+	c.mu.Unlock()
+
+	// 4. Register hook: inject newer root frame during beforeIdleSummarizeHook (right after GetAgent)
+	hookCalled := false
+	newerToolName := "Edit"
+	newerToolPath := "main.go"
+	c.beforeIdleSummarizeHook = func(id string) {
+		hookCalled = true
+		fNewer := baseFrame
+		fNewer.Seq = 4
+		fNewer.Timestamp = 1050
+		fNewer.EventType = "tool_call"
+		fNewer.Data = types.TelemetryFrameData{
+			ToolName: &newerToolName,
+			ToolInput: map[string]interface{}{
+				"file_path": newerToolPath,
+			},
+		}
+		if _, err := c.ProcessFrame(fNewer); err != nil {
+			t.Fatalf("ProcessFrame inside hook failed: %v", err)
+		}
+	}
+
+	// 5. Trigger handleIdleTransition with the scheduled generation
+	c.handleIdleTransition(agentID, scheduledGen)
+
+	if !hookCalled {
+		t.Fatalf("expected beforeIdleSummarizeHook to be called")
+	}
+
+	// 6. Verify SQLite: newer frame's state (ActivityBusy, ActiveTool="Edit") must NOT be overwritten by idle transition!
+	loaded, err := c.store.GetAgent(agentID)
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if loaded == nil {
+		t.Fatalf("expected agent to exist in store")
+	}
+	if loaded.Activity.Activity != types.ActivityBusy {
+		t.Errorf("FAIL: idle transition overwrote newer frame state: expected Activity BUSY, got %v", loaded.Activity.Activity)
+	}
+	if loaded.Activity.ActiveTool == nil || *loaded.Activity.ActiveTool != newerToolName {
+		t.Errorf("expected ActiveTool %q, got %v", newerToolName, loaded.Activity.ActiveTool)
+	}
+	if loaded.Activity.ActiveTarget == nil || *loaded.Activity.ActiveTarget != newerToolPath {
+		t.Errorf("expected ActiveTarget %q, got %v", newerToolPath, loaded.Activity.ActiveTarget)
+	}
+	if loaded.Activity.HasUnseenCompletion != nil {
+		t.Errorf("expected HasUnseenCompletion to be nil, got %v", *loaded.Activity.HasUnseenCompletion)
+	}
+
+	// 7. Verify in-memory agentContext: state must NOT be mutated by aborted idle transition!
+	c.mu.Lock()
+	actxAfter := c.agentCtx[agentID]
+	c.mu.Unlock()
+	if actxAfter == nil {
+		t.Fatalf("expected agentContext to exist")
+	}
+	if actxAfter.rootActivity != types.ActivityBusy {
+		t.Errorf("expected actx.rootActivity to remain ActivityBusy, got %v", actxAfter.rootActivity)
+	}
+	if !actxAfter.inFlightTool {
+		t.Errorf("expected actx.inFlightTool to remain true, got false")
+	}
+	if actxAfter.inFlightToolName != newerToolName {
+		t.Errorf("expected actx.inFlightToolName to remain %q, got %q", newerToolName, actxAfter.inFlightToolName)
+	}
+}
+
+func TestClassifier_HandleIdleTransition_SubagentFrameDuringSummarizeHookDoesNotOverwriteState(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, _ := newTestClassifier(t, sum)
+	c.syncMode = false
+	c.SetIdleGracePeriod(10 * time.Second)
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{
+		ID:       "env-race-sub-sum",
+		Label:    "workstation",
+		Hostname: "workstation",
+		Platform: "darwin",
+		User:     "engineer",
+	}
+	ws := types.IWorkspaceInfo{
+		Branch: "main",
+		CWD:    "/path/to/repo",
+	}
+	proj := types.IProjectInfo{
+		ID:            "repo",
+		Name:          "repo",
+		CanonicalRoot: "/path/to/repo",
+	}
+	agentID := "env-race-sub-sum:claude-code:sess-sub-sum"
+
+	baseFrame := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-sub-sum",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+	}
+
+	// 1. run_started
+	fStart := baseFrame
+	fStart.Seq = 1
+	fStart.Timestamp = 1000
+	fStart.EventType = "run_started"
+	if _, err := c.ProcessFrame(fStart); err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+
+	// 2. turn_start -> agent is BUSY
+	prompt := "Delegate to helper"
+	fPrompt := baseFrame
+	fPrompt.Seq = 2
+	fPrompt.Timestamp = 1010
+	fPrompt.EventType = "turn_start"
+	fPrompt.Data = types.TelemetryFrameData{
+		Title:   &prompt,
+		Content: &prompt,
+	}
+	if _, err := c.ProcessFrame(fPrompt); err != nil {
+		t.Fatalf("turn_start failed: %v", err)
+	}
+
+	// 3. turn_end -> schedules idle transition timer
+	stopReason := "end_turn"
+	respText := "I will start a helper subagent."
+	fEnd := baseFrame
+	fEnd.Seq = 3
+	fEnd.Timestamp = 1020
+	fEnd.EventType = "turn_end"
+	fEnd.Data = types.TelemetryFrameData{
+		StopReason: &stopReason,
+		Content:    &respText,
+	}
+	if _, err := c.ProcessFrame(fEnd); err != nil {
+		t.Fatalf("turn_end failed: %v", err)
+	}
+
+	// Capture scheduled root generation
+	c.mu.Lock()
+	actx := c.agentCtx[agentID]
+	if actx == nil {
+		c.mu.Unlock()
+		t.Fatalf("expected agentContext to exist")
+	}
+	scheduledGen := actx.rootGeneration
+	c.mu.Unlock()
+
+	// 4. Register hook: inject SUBAGENT frame during beforeIdleSummarizeHook (right after GetAgent)
+	// Subagent frames do NOT increment rootGeneration, but MUST increment saveGeneration!
+	hookCalled := false
+	subagentID := "sub-race-sum-1"
+	subToolName := "Bash"
+	c.beforeIdleSummarizeHook = func(id string) {
+		hookCalled = true
+		fSub := baseFrame
+		fSub.Seq = 4
+		fSub.Timestamp = 1050
+		fSub.SubagentID = &subagentID
+		fSub.EventType = "tool_call"
+		fSub.Data = types.TelemetryFrameData{
+			ToolName: &subToolName,
+			ToolInput: map[string]interface{}{
+				"command": "go test ./...",
+			},
+		}
+		if _, err := c.ProcessFrame(fSub); err != nil {
+			t.Fatalf("ProcessFrame for subagent frame failed: %v", err)
+		}
+	}
+
+	// 5. Trigger handleIdleTransition with the scheduled generation
+	c.handleIdleTransition(agentID, scheduledGen)
+
+	if !hookCalled {
+		t.Fatalf("expected beforeIdleSummarizeHook to be called")
+	}
+
+	// 6. Verify SQLite: subagent's state must NOT be overwritten by idle transition!
+	loaded, err := c.store.GetAgent(agentID)
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if loaded == nil {
+		t.Fatalf("expected agent to exist in store")
+	}
+	if loaded.Activity.Activity != types.ActivityBusy {
+		t.Errorf("FAIL: idle transition overwrote subagent state: expected Activity BUSY, got %v", loaded.Activity.Activity)
+	}
+	if len(loaded.Activity.ActiveSubagents) != 1 {
+		t.Fatalf("expected 1 active subagent in store, got %d", len(loaded.Activity.ActiveSubagents))
+	}
+	sub := loaded.Activity.ActiveSubagents[0]
+	if sub.ID != subagentID {
+		t.Errorf("expected active subagent ID %q, got %q", subagentID, sub.ID)
+	}
+	if sub.Status != types.SubagentRunning {
+		t.Errorf("expected subagent status %q, got %q", types.SubagentRunning, sub.Status)
+	}
+	if loaded.Activity.HasUnseenCompletion != nil {
+		t.Errorf("expected HasUnseenCompletion to be nil, got %v", *loaded.Activity.HasUnseenCompletion)
+	}
+	if loaded.Activity.SubagentCount != 1 {
+		t.Errorf("FAIL: idle transition overwrote SubagentCount: expected 1, got %d", loaded.Activity.SubagentCount)
+	}
+
+	// 7. Verify in-memory agentContext: subagent state intact, rootActivity not overwritten
+	c.mu.Lock()
+	actxAfter := c.agentCtx[agentID]
+	c.mu.Unlock()
+	if actxAfter == nil {
+		t.Fatalf("expected agentContext to exist")
+	}
+	if actxAfter.rootActivity != types.ActivityBusy {
+		t.Errorf("FAIL: idle transition overwrote actx.rootActivity: expected ActivityBusy, got %v", actxAfter.rootActivity)
+	}
+	if len(actxAfter.subagents) != 1 {
+		t.Fatalf("expected 1 subagent in memory, got %d", len(actxAfter.subagents))
+	}
+	if actxAfter.subagents[subagentID] == nil {
+		t.Fatalf("expected subagent %q to exist in actx.subagents", subagentID)
+	}
+}
+
+func TestClassifier_HandleSilenceTransition_DoesNotOverwriteNewerFrameState(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, _ := newTestClassifier(t, sum)
+	c.syncMode = false
+	c.SetIdleGracePeriod(10 * time.Second)
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{
+		ID:       "env-silence-race",
+		Label:    "workstation",
+		Hostname: "workstation",
+		Platform: "darwin",
+		User:     "engineer",
+	}
+	ws := types.IWorkspaceInfo{
+		Branch: "main",
+		CWD:    "/path/to/repo",
+	}
+	proj := types.IProjectInfo{
+		ID:            "repo",
+		Name:          "repo",
+		CanonicalRoot: "/path/to/repo",
+	}
+	agentID := "env-silence-race:claude-code:sess-silence-race"
+
+	baseFrame := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-silence-race",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+	}
+
+	// 1. run_started
+	fStart := baseFrame
+	fStart.Seq = 1
+	fStart.Timestamp = 1000
+	fStart.EventType = "run_started"
+	if _, err := c.ProcessFrame(fStart); err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+
+	// 2. turn_start -> agent is BUSY
+	prompt := "Run long command"
+	fPrompt := baseFrame
+	fPrompt.Seq = 2
+	fPrompt.Timestamp = 1010
+	fPrompt.EventType = "turn_start"
+	fPrompt.Data = types.TelemetryFrameData{
+		Title:   &prompt,
+		Content: &prompt,
+	}
+	if _, err := c.ProcessFrame(fPrompt); err != nil {
+		t.Fatalf("turn_start failed: %v", err)
+	}
+
+	// Capture scheduled root generation
+	c.mu.Lock()
+	actx := c.agentCtx[agentID]
+	if actx == nil {
+		c.mu.Unlock()
+		t.Fatalf("expected agentContext to exist")
+	}
+	scheduledGen := actx.rootGeneration
+	c.mu.Unlock()
+
+	// 3. Register hook: inject newer frame (tool_call) between unlock and save
+	hookCalled := false
+	newerToolName := "Edit"
+	newerToolPath := "handler.go"
+	c.beforeSilenceSaveHook = func(id string) {
+		hookCalled = true
+		fNewer := baseFrame
+		fNewer.Seq = 3
+		fNewer.Timestamp = 1050
+		fNewer.EventType = "tool_call"
+		fNewer.Data = types.TelemetryFrameData{
+			ToolName: &newerToolName,
+			ToolInput: map[string]interface{}{
+				"file_path": newerToolPath,
+			},
+		}
+		if _, err := c.ProcessFrame(fNewer); err != nil {
+			t.Fatalf("ProcessFrame inside hook failed: %v", err)
+		}
+	}
+
+	// 4. Trigger handleSilenceTransition with the scheduled generation
+	c.handleSilenceTransition(agentID, scheduledGen)
+
+	if !hookCalled {
+		t.Fatalf("expected beforeSilenceSaveHook to be called")
+	}
+
+	// 5. Verify SQLite: newer frame's state (ActivityBusy, ActiveTool="Edit") must NOT be overwritten by silence transition!
+	loaded, err := c.store.GetAgent(agentID)
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if loaded == nil {
+		t.Fatalf("expected agent to exist in store")
+	}
+	if loaded.Activity.Activity != types.ActivityBusy {
+		t.Errorf("FAIL: silence transition overwrote newer frame state: expected Activity BUSY, got %v", loaded.Activity.Activity)
+	}
+	if loaded.Activity.ActiveTool == nil || *loaded.Activity.ActiveTool != newerToolName {
+		t.Errorf("expected ActiveTool %q, got %v", newerToolName, loaded.Activity.ActiveTool)
+	}
+	if loaded.Activity.ActiveTarget == nil || *loaded.Activity.ActiveTarget != newerToolPath {
+		t.Errorf("expected ActiveTarget %q, got %v", newerToolPath, loaded.Activity.ActiveTarget)
+	}
+	if loaded.Activity.HasUnseenCompletion != nil {
+		t.Errorf("expected HasUnseenCompletion to be nil, got %v", *loaded.Activity.HasUnseenCompletion)
+	}
+
+	// 6. Verify in-memory agentContext: state must NOT be mutated by aborted silence transition!
+	c.mu.Lock()
+	actxAfter := c.agentCtx[agentID]
+	c.mu.Unlock()
+	if actxAfter == nil {
+		t.Fatalf("expected agentContext to exist")
+	}
+	if actxAfter.rootActivity != types.ActivityBusy {
+		t.Errorf("expected actx.rootActivity to remain ActivityBusy, got %v", actxAfter.rootActivity)
+	}
+	if !actxAfter.inFlightTool {
+		t.Errorf("expected actx.inFlightTool to remain true, got false")
+	}
+	if actxAfter.inFlightToolName != newerToolName {
+		t.Errorf("expected actx.inFlightToolName to remain %q, got %q", newerToolName, actxAfter.inFlightToolName)
+	}
+}
+
+func TestClassifier_HandleSilenceTransition_SubagentFrameDoesNotOverwriteState(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, _ := newTestClassifier(t, sum)
+	c.syncMode = false
+	c.SetIdleGracePeriod(10 * time.Second)
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{
+		ID:       "env-silence-subagent",
+		Label:    "workstation",
+		Hostname: "workstation",
+		Platform: "darwin",
+		User:     "engineer",
+	}
+	ws := types.IWorkspaceInfo{
+		Branch: "main",
+		CWD:    "/path/to/repo",
+	}
+	proj := types.IProjectInfo{
+		ID:            "repo",
+		Name:          "repo",
+		CanonicalRoot: "/path/to/repo",
+	}
+	agentID := "env-silence-subagent:claude-code:sess-silence-subagent"
+
+	baseFrame := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-silence-subagent",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+	}
+
+	// 1. run_started
+	fStart := baseFrame
+	fStart.Seq = 1
+	fStart.Timestamp = 1000
+	fStart.EventType = "run_started"
+	if _, err := c.ProcessFrame(fStart); err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+
+	// 2. turn_start -> agent is BUSY
+	prompt := "Run long command with subagent"
+	fPrompt := baseFrame
+	fPrompt.Seq = 2
+	fPrompt.Timestamp = 1010
+	fPrompt.EventType = "turn_start"
+	fPrompt.Data = types.TelemetryFrameData{
+		Title:   &prompt,
+		Content: &prompt,
+	}
+	if _, err := c.ProcessFrame(fPrompt); err != nil {
+		t.Fatalf("turn_start failed: %v", err)
+	}
+
+	// Capture scheduled root generation
+	c.mu.Lock()
+	actx := c.agentCtx[agentID]
+	if actx == nil {
+		c.mu.Unlock()
+		t.Fatalf("expected agentContext to exist")
+	}
+	scheduledGen := actx.rootGeneration
+	c.mu.Unlock()
+
+	// 3. Register hook: inject SUBAGENT frame between unlock and save
+	hookCalled := false
+	subagentID := "sub-silence-1"
+	subToolName := "Bash"
+	c.beforeSilenceSaveHook = func(id string) {
+		hookCalled = true
+		fSub := baseFrame
+		fSub.Seq = 3
+		fSub.Timestamp = 1050
+		fSub.SubagentID = &subagentID
+		fSub.EventType = "tool_call"
+		fSub.Data = types.TelemetryFrameData{
+			ToolName: &subToolName,
+			ToolInput: map[string]interface{}{
+				"command": "go test ./...",
+			},
+		}
+		if _, err := c.ProcessFrame(fSub); err != nil {
+			t.Fatalf("ProcessFrame for subagent frame failed: %v", err)
+		}
+	}
+
+	// 4. Trigger handleSilenceTransition with the scheduled generation
+	c.handleSilenceTransition(agentID, scheduledGen)
+
+	if !hookCalled {
+		t.Fatalf("expected beforeSilenceSaveHook to be called")
+	}
+
+	// 5. Verify SQLite: subagent's state must NOT be overwritten by silence transition!
+	loaded, err := c.store.GetAgent(agentID)
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if loaded == nil {
+		t.Fatalf("expected agent to exist in store")
+	}
+	if loaded.Activity.Activity != types.ActivityBusy {
+		t.Errorf("FAIL: silence transition overwrote subagent state: expected Activity BUSY, got %v", loaded.Activity.Activity)
+	}
+	if len(loaded.Activity.ActiveSubagents) != 1 {
+		t.Fatalf("expected 1 active subagent in store, got %d", len(loaded.Activity.ActiveSubagents))
+	}
+	sub := loaded.Activity.ActiveSubagents[0]
+	if sub.ID != subagentID {
+		t.Errorf("expected active subagent ID %q, got %q", subagentID, sub.ID)
+	}
+	if sub.Status != types.SubagentRunning {
+		t.Errorf("expected subagent status %q, got %q", types.SubagentRunning, sub.Status)
+	}
+	if loaded.Activity.HasUnseenCompletion != nil {
+		t.Errorf("expected HasUnseenCompletion to be nil, got %v", *loaded.Activity.HasUnseenCompletion)
+	}
+	if loaded.Activity.SubagentCount != 1 {
+		t.Errorf("FAIL: silence transition overwrote SubagentCount: expected 1, got %d", loaded.Activity.SubagentCount)
+	}
+
+	// 6. Verify in-memory agentContext: subagent state intact, rootActivity not overwritten
+	c.mu.Lock()
+	actxAfter := c.agentCtx[agentID]
+	c.mu.Unlock()
+	if actxAfter == nil {
+		t.Fatalf("expected agentContext to exist")
+	}
+	if actxAfter.rootActivity != types.ActivityBusy {
+		t.Errorf("FAIL: silence transition overwrote actx.rootActivity: expected ActivityBusy, got %v", actxAfter.rootActivity)
+	}
+	if len(actxAfter.subagents) != 1 {
+		t.Fatalf("expected 1 subagent in memory, got %d", len(actxAfter.subagents))
+	}
+	if actxAfter.subagents[subagentID] == nil {
+		t.Fatalf("expected subagent %q to exist in actx.subagents", subagentID)
+	}
+}
+
 func TestClassifier_PrepareSummaryInput_NoSideEffects(t *testing.T) {
 	c, _ := newTestClassifier(t, nil)
 	defer func() { _ = c.Close() }()
