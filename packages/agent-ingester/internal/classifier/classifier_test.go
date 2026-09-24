@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/pricing"
@@ -4324,7 +4325,7 @@ func TestClassifier_SubagentActivity_Rollup_ErrorPrecedence(t *testing.T) {
 		Project:     proj,
 		Workspace:   ws,
 		Timestamp:   2000,
-		EventType:   "tool_result",
+		EventType:   "error",
 		Data: types.TelemetryFrameData{
 			IsError:    &isErr,
 			ToolOutput: &errMsg,
@@ -7747,6 +7748,241 @@ func TestClassifier_RateLimitedActivity(t *testing.T) {
 		}
 	})
 }
+
+func TestClassifier_Subagent_ToolResultError_StaysBusy(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, _ := newTestClassifier(t, sum)
+	c.SetSyncMode(true)
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{ID: "env-sub-err", Label: "devbox", Hostname: "devbox", Platform: "linux", User: "testuser"}
+	ws := types.IWorkspaceInfo{Branch: "main", CWD: "/workspace"}
+	proj := types.IProjectInfo{ID: "repo-sub-err", Name: "repo", CanonicalRoot: "/workspace"}
+	agentID := "env-sub-err:claude-code:sess-sub-err"
+
+	// 1. Root starts turn -> BUSY
+	_, err = c.ProcessFrame(types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-sub-err",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   1000,
+		EventType:   "turn_start",
+	})
+	if err != nil {
+		t.Fatalf("root turn_start failed: %v", err)
+	}
+
+	subID := "sub-worker"
+	toolName := "Bash"
+
+	// 2. Subagent tool_call -> BUSY
+	_, err = c.ProcessFrame(types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		SubagentID:  &subID,
+		SessionID:   "sess-sub-err",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   1100,
+		EventType:   "tool_call",
+		Data: types.TelemetryFrameData{
+			ToolName:  &toolName,
+			ToolInput: map[string]interface{}{"command": "go test ./..."},
+		},
+	})
+	if err != nil {
+		t.Fatalf("subagent tool_call failed: %v", err)
+	}
+
+	// 3. Subagent emits failed tool_result with generic error
+	isErr := true
+	genericErr := "exit status 1: tests failed"
+	agent, err := c.ProcessFrame(types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		SubagentID:  &subID,
+		SessionID:   "sess-sub-err",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   1200,
+		EventType:   "tool_result",
+		Data: types.TelemetryFrameData{
+			IsError:    &isErr,
+			ToolOutput: &genericErr,
+		},
+	})
+	if err != nil {
+		t.Fatalf("subagent tool_result failed: %v", err)
+	}
+
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Errorf("expected root activity BUSY after subagent failed tool_result, got %s", agent.Activity.Activity)
+	}
+	if agent.Activity.LastError != nil {
+		t.Errorf("expected root LastError nil after subagent failed tool_result, got %v", *agent.Activity.LastError)
+	}
+	if len(agent.Activity.ActiveSubagents) != 1 {
+		t.Fatalf("expected 1 active subagent, got %d", len(agent.Activity.ActiveSubagents))
+	}
+	if agent.Activity.ActiveSubagents[0].Activity != types.ActivityBusy {
+		t.Errorf("expected subagent activity BUSY, got %s", agent.Activity.ActiveSubagents[0].Activity)
+	}
+	if agent.Activity.ActiveSubagents[0].LastError != nil {
+		t.Errorf("expected subagent LastError nil, got %v", *agent.Activity.ActiveSubagents[0].LastError)
+	}
+
+	// 4. Subagent emits failed tool_result with rate-limit-looking output ("expected 200 got 4290")
+	rlLookingErr := "assertion failed: expected 200 got 4290 responses"
+	agent, err = c.ProcessFrame(types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		SubagentID:  &subID,
+		SessionID:   "sess-sub-err",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   1300,
+		EventType:   "tool_result",
+		Data: types.TelemetryFrameData{
+			IsError:    &isErr,
+			ToolOutput: &rlLookingErr,
+		},
+	})
+	if err != nil {
+		t.Fatalf("subagent tool_result with rate-limit-looking output failed: %v", err)
+	}
+
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Errorf("expected root activity BUSY after subagent tool_result with '4290' in output, got %s", agent.Activity.Activity)
+	}
+	if agent.Activity.LastError != nil {
+		t.Errorf("expected root LastError nil after subagent tool_result with '4290' in output, got %v", *agent.Activity.LastError)
+	}
+	if len(agent.Activity.ActiveSubagents) != 1 {
+		t.Fatalf("expected 1 active subagent, got %d", len(agent.Activity.ActiveSubagents))
+	}
+	if agent.Activity.ActiveSubagents[0].Activity != types.ActivityBusy {
+		t.Errorf("expected subagent activity BUSY, got %s", agent.Activity.ActiveSubagents[0].Activity)
+	}
+	if agent.Activity.ActiveSubagents[0].LastError != nil {
+		t.Errorf("expected subagent LastError nil, got %v", *agent.Activity.ActiveSubagents[0].LastError)
+	}
+
+	// 5. Genuine subagent error event SHOULD escalate to root agent
+	genuineErr := "process killed by OOM killer"
+	agent, err = c.ProcessFrame(types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		SubagentID:  &subID,
+		SessionID:   "sess-sub-err",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   1400,
+		EventType:   "error",
+		Data: types.TelemetryFrameData{
+			Content: &genuineErr,
+		},
+	})
+	if err != nil {
+		t.Fatalf("subagent error frame failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityError {
+		t.Errorf("expected root activity ERROR after genuine subagent error, got %s", agent.Activity.Activity)
+	}
+	if agent.Activity.LastError == nil || !strings.Contains(*agent.Activity.LastError, genuineErr) {
+		t.Errorf("expected root LastError to contain genuine error, got %v", agent.Activity.LastError)
+	}
+}
+
+func TestClassifier_TruncateRunesBoundary(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, _ := newTestClassifier(t, sum)
+	c.SetSyncMode(true)
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{ID: "env-rune", Label: "devbox", Hostname: "devbox", Platform: "linux", User: "testuser"}
+	ws := types.IWorkspaceInfo{Branch: "main", CWD: "/workspace"}
+	proj := types.IProjectInfo{ID: "repo-rune", Name: "repo", CanonicalRoot: "/workspace"}
+	agentID := "env-rune:claude-code:sess-rune"
+
+	// Construct a 2005-byte string: 1999 single-byte ASCII chars + two 3-byte UTF-8 runes (世 = \xe4\xb8\x96)
+	// In total: 2001 runes, 2005 bytes.
+	// A raw byte slice at 2000 would split the first '世' at byte 1, producing invalid UTF-8.
+	// Rune truncation must keep the first 2000 runes (1999 ASCII + 1 '世' = 2002 bytes) without splitting.
+	prefix := strings.Repeat("a", 1999)
+	longMultiByte := prefix + "世界"
+
+	subID := "sub-worker"
+	agent, err := c.ProcessFrame(types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		SubagentID:  &subID,
+		SessionID:   "sess-rune",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   1000,
+		EventType:   "error",
+		Data: types.TelemetryFrameData{
+			ToolOutput: &longMultiByte,
+		},
+	})
+	if err != nil {
+		t.Fatalf("subagent error frame failed: %v", err)
+	}
+
+	if truncateRunes("abc", 0) != "" {
+		t.Errorf("expected empty string for maxRunes <= 0")
+	}
+	if truncateRunes("abc", -1) != "" {
+		t.Errorf("expected empty string for negative maxRunes")
+	}
+	if truncateRunes("hello", 10) != "hello" {
+		t.Errorf("expected unchanged string when shorter than maxRunes")
+	}
+
+	if len(agent.Activity.ActiveSubagents) != 1 {
+		t.Fatalf("expected 1 active subagent, got %d", len(agent.Activity.ActiveSubagents))
+	}
+	subErr := agent.Activity.ActiveSubagents[0].LastError
+	if subErr == nil {
+		t.Fatalf("expected subagent LastError non-nil")
+	}
+	if !utf8.ValidString(*subErr) {
+		t.Errorf("expected LastError to be valid UTF-8, but found invalid sequence")
+	}
+	if utf8.RuneCountInString(*subErr) != 2000 {
+		t.Errorf("expected LastError to have 2000 runes, got %d", utf8.RuneCountInString(*subErr))
+	}
+	if !strings.HasSuffix(*subErr, "世") {
+		t.Errorf("expected LastError to end with complete rune '世', got %q", (*subErr)[len(*subErr)-10:])
+	}
+}
+
 
 
 

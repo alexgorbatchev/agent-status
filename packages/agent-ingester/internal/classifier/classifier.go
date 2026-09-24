@@ -823,10 +823,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			agent.Activity.ActiveTarget = nil
 			agent.Activity.ActiveToolStartedAt = nil
 			if frame.Data.Content != nil {
-				errStr := *frame.Data.Content
-				if len(errStr) > 2000 {
-					errStr = errStr[:2000]
-				}
+				errStr := truncateRunes(*frame.Data.Content, 2000)
 				agent.Activity.LastError = &errStr
 			}
 			pendingJob = c.updateSummarization(agent, true)
@@ -1147,24 +1144,9 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				}
 			case "tool_result":
 				sub.inFlightTool = false
-				if frame.Data.IsError != nil && *frame.Data.IsError {
-					if isRateLimitFrame(frame.Data) {
-						sub.activity = types.ActivityRateLimited
-					} else {
-						sub.activity = types.ActivityError
-					}
-					if frame.Data.ToolOutput != nil {
-						out := *frame.Data.ToolOutput
-						if len(out) > 2000 {
-							out = out[:2000]
-						}
-						sub.lastError = &out
-					}
-					sub.activeTool = nil
-				} else {
-					sub.activity = types.ActivityBusy
-					sub.activeTool = nil
-				}
+				sub.activity = types.ActivityBusy
+				sub.activeTool = nil
+				sub.lastError = nil
 			case "error":
 				sub.inFlightTool = false
 				if isRateLimitFrame(frame.Data) {
@@ -1173,10 +1155,10 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 					sub.activity = types.ActivityError
 				}
 				if frame.Data.Content != nil {
-					out := *frame.Data.Content
+					out := truncateRunes(*frame.Data.Content, 2000)
 					sub.lastError = &out
 				} else if frame.Data.ToolOutput != nil {
-					out := *frame.Data.ToolOutput
+					out := truncateRunes(*frame.Data.ToolOutput, 2000)
 					sub.lastError = &out
 				}
 				sub.activeTool = nil
@@ -1965,5 +1947,20 @@ func isRateLimitString(s string) bool {
 		strings.Contains(lower, "429") ||
 		strings.Contains(lower, "overloaded") ||
 		strings.Contains(lower, "quota")
+}
+
+// truncateRunes truncates string s to at most maxRunes, preserving valid UTF-8 on rune boundaries.
+func truncateRunes(s string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return ""
+	}
+	count := 0
+	for i := range s {
+		if count == maxRunes {
+			return s[:i]
+		}
+		count++
+	}
+	return s
 }
 
