@@ -597,6 +597,7 @@ func ReconstructSessionEvents(session *OpencodeSession, messages []OpencodeMessa
 			}
 
 			var errorPartTexts []string
+			var toolErrorTexts []string
 
 			for _, p := range msgParts {
 				partTs := p.TimeCreated
@@ -683,6 +684,15 @@ func ReconstructSessionEvents(session *OpencodeSession, messages []OpencodeMessa
 								},
 							})
 						}
+
+						if p.Data.State != nil && strings.TrimSpace(p.Data.State.Error) != "" {
+							toolErrorTexts = append(toolErrorTexts, strings.TrimSpace(p.Data.State.Error))
+						} else if p.Data.Error != nil {
+							txt := extractOpencodeError(p.Data.Error)
+							if txt != "" {
+								toolErrorTexts = append(toolErrorTexts, txt)
+							}
+						}
 					}
 
 				case "retry":
@@ -757,11 +767,12 @@ func ReconstructSessionEvents(session *OpencodeSession, messages []OpencodeMessa
 				})
 			}
 
-			hasError := (msg.Data.Finish != nil && *msg.Data.Finish == "error") ||
-				msg.Data.Error != nil ||
-				len(errorPartTexts) > 0
+			isAborted := isOpencodeMessageAborted(msg.Data.Error)
+			hasTerminalError := !isAborted && (
+				(msg.Data.Finish != nil && *msg.Data.Finish == "error") ||
+					(msg.Data.Error != nil && extractOpencodeError(msg.Data.Error) != ""))
 
-			if hasError {
+			if hasTerminalError {
 				errText := ""
 				if msg.Data.Error != nil {
 					errText = extractOpencodeError(msg.Data.Error)
@@ -769,8 +780,8 @@ func ReconstructSessionEvents(session *OpencodeSession, messages []OpencodeMessa
 				if errText == "" && len(errorPartTexts) > 0 {
 					errText = strings.Join(errorPartTexts, "\n")
 				}
-				if errText == "" && msg.Data.Finish != nil && *msg.Data.Finish == "error" {
-					errText = "error"
+				if errText == "" && len(toolErrorTexts) > 0 {
+					errText = strings.Join(toolErrorTexts, "\n")
 				}
 				if errText == "" {
 					errText = "error"
@@ -889,10 +900,70 @@ func scanOpencodeSessionRow(row *sql.Row) (*OpencodeSession, error) {
 	return sess, nil
 }
 
+// isEmptyErrorPayload returns true if the error payload contains no meaningful error information
+// (e.g. nil, empty strings, empty maps, empty slices, or maps containing only empty payloads).
+func isEmptyErrorPayload(v interface{}) bool {
+	if v == nil {
+		return true
+	}
+	switch val := v.(type) {
+	case string:
+		return strings.TrimSpace(val) == ""
+	case map[string]interface{}:
+		if len(val) == 0 {
+			return true
+		}
+		for _, v := range val {
+			if !isEmptyErrorPayload(v) {
+				return false
+			}
+		}
+		return true
+	case []interface{}:
+		if len(val) == 0 {
+			return true
+		}
+		for _, v := range val {
+			if !isEmptyErrorPayload(v) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// isOpencodeMessageAborted returns true if the error payload indicates a user cancellation (MessageAbortedError).
+func isOpencodeMessageAborted(err interface{}) bool {
+	if err == nil {
+		return false
+	}
+	switch val := err.(type) {
+	case string:
+		return strings.Contains(val, "MessageAbortedError")
+	case error:
+		return strings.Contains(val.Error(), "MessageAbortedError")
+	case map[string]interface{}:
+		if name, ok := val["name"].(string); ok && name == "MessageAbortedError" {
+			return true
+		}
+		if msg, ok := val["message"].(string); ok && strings.Contains(msg, "MessageAbortedError") {
+			return true
+		}
+		if errVal, ok := val["error"]; ok && isOpencodeMessageAborted(errVal) {
+			return true
+		}
+		if dataVal, ok := val["data"]; ok && isOpencodeMessageAborted(dataVal) {
+			return true
+		}
+	}
+	return false
+}
+
 // extractOpencodeError extracts a human-readable error message from arbitrary error payloads
 // serialized in OpenCode message data or part data (e.g. strings, NamedError maps, error objects).
 func extractOpencodeError(v interface{}) string {
-	if v == nil {
+	if isEmptyErrorPayload(v) {
 		return ""
 	}
 	switch val := v.(type) {
@@ -950,6 +1021,7 @@ func extractOpencodeError(v interface{}) string {
 		if err == nil && string(b) != "{}" {
 			return string(b)
 		}
+		return ""
 	case []interface{}:
 		var parts []string
 		for _, item := range val {
@@ -959,6 +1031,10 @@ func extractOpencodeError(v interface{}) string {
 		}
 		return strings.Join(parts, "\n")
 	}
-	return fmt.Sprintf("%v", v)
+	res := fmt.Sprintf("%v", v)
+	if res == "map[]" || res == "[]" {
+		return ""
+	}
+	return res
 }
 

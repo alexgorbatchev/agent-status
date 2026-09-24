@@ -13,7 +13,7 @@ Pure Go parsing routines for extracting structured events from Claude Code, Pi, 
 - Go parser types and unmarshaling structs must be kept strictly in sync with the canonical TypeScript definitions in `docs/harness-logs/*.ts`.
 - Parsers must be pure functions without filesystem I/O, network requests, or global state.
 - Pi logs emit error events (`EventType: "error"`, `IsError: true`) when assistant `stopReason` is `"error"`, extracting error text from `errorMessage` (or text content fallback) (`pi.go`). Aborted turns (`stopReason: "aborted"`) indicate cancellation and do not emit error events.
-- OpenCode parsers emit error events (`EventType: "error"`, `IsError: true`) on tool execution failures (`status: "error"`, `p.Data.State.Error`), retry parts (`type: "retry"`, `extractOpencodeError`), or message-level error finish reasons and typed error payloads (`msg.Data.Error`, `opencode.go`).
+- OpenCode tool execution failures emit `tool_result` frames with `IsError: true`, and `EventType: "error"` is emitted on assistant message termination failures (`finish: "error"` or non-aborted `msg.Data.Error`), extracting tool error diagnostic details when available (`opencode.go`). Transient retry parts (`type: "retry"`) do not emit terminal error events if the assistant message finishes cleanly (e.g. `finish: "stop"` or nil), and user aborts (`MessageAbortedError`) are treated as non-errors and do not emit error events.
 - Codex parsers emit error events (`EventType: "error"`, `IsError: true`) on error event messages, extracting rate limit and status info from `codex_error_info` (`RateLimitExceeded`, `UsageLimitExceeded`, `ServerOverloaded`, `HttpConnectionFailed`) and error message text (`codex.go`).
 
 ## Local gotchas

@@ -892,13 +892,67 @@ func TestOpencode_ErrorEventEmission(t *testing.T) {
 			wantTurnEnd: true,
 		},
 		{
+			name: "message_aborted_error_does_not_emit_error",
+			message: OpencodeMessage{
+				ID:          "msg_err_abort",
+				SessionID:   session.ID,
+				TimeCreated: 1700000005700,
+				Data: OpencodeMessageData{
+					Role:   "assistant",
+					Finish: &finishStop,
+					Error: map[string]interface{}{
+						"name": "MessageAbortedError",
+						"data": map[string]interface{}{
+							"message": "Message aborted by user",
+						},
+					},
+				},
+			},
+			wantError:   false,
+			wantTurnEnd: true,
+		},
+		{
+			name: "retry_part_with_successful_finish_does_not_emit_error",
+			message: OpencodeMessage{
+				ID:          "msg_retry_success",
+				SessionID:   session.ID,
+				TimeCreated: 1700000005800,
+				Data: OpencodeMessageData{
+					Role:   "assistant",
+					Finish: &finishStop,
+				},
+			},
+			parts: []OpencodePart{
+				{
+					ID:          "part_retry_success",
+					MessageID:   "msg_retry_success",
+					SessionID:   session.ID,
+					TimeCreated: 1700000005900,
+					Data: OpencodePartData{
+						Type:    "retry",
+						Attempt: intPtr(1),
+						Error: map[string]interface{}{
+							"name": "APIError",
+							"data": map[string]interface{}{
+								"message":    "Rate limit exceeded: 429",
+								"statusCode": 429,
+							},
+						},
+					},
+				},
+			},
+			wantError:   false,
+			wantTurnEnd: true,
+		},
+		{
 			name: "retry_part_with_api_error",
 			message: OpencodeMessage{
 				ID:          "msg_err_retry",
 				SessionID:   session.ID,
 				TimeCreated: 1700000006000,
 				Data: OpencodeMessageData{
-					Role: "assistant",
+					Role:   "assistant",
+					Finish: &finishErr,
 				},
 			},
 			parts: []OpencodePart{
@@ -922,6 +976,55 @@ func TestOpencode_ErrorEventEmission(t *testing.T) {
 			},
 			wantError:   true,
 			wantContent: "Rate limit exceeded: 429",
+			wantTurnEnd: true,
+		},
+		{
+			name: "retry_part_with_nil_finish_does_not_emit_error",
+			message: OpencodeMessage{
+				ID:          "msg_retry_nil_finish",
+				SessionID:   session.ID,
+				TimeCreated: 1700000006600,
+				Data: OpencodeMessageData{
+					Role: "assistant",
+				},
+			},
+			parts: []OpencodePart{
+				{
+					ID:          "part_retry_nil_finish",
+					MessageID:   "msg_retry_nil_finish",
+					SessionID:   session.ID,
+					TimeCreated: 1700000006700,
+					Data: OpencodePartData{
+						Type:    "retry",
+						Attempt: intPtr(1),
+						Error: map[string]interface{}{
+							"name": "APIError",
+							"data": map[string]interface{}{
+								"message":    "Rate limit exceeded: 429",
+								"statusCode": 429,
+							},
+						},
+					},
+				},
+			},
+			wantError:   false,
+			wantTurnEnd: false,
+		},
+		{
+			name: "error_payload_with_nil_finish",
+			message: OpencodeMessage{
+				ID:          "msg_err_nil_finish",
+				SessionID:   session.ID,
+				TimeCreated: 1700000006800,
+				Data: OpencodeMessageData{
+					Role: "assistant",
+					Error: map[string]interface{}{
+						"message": "Stream interrupted before completion",
+					},
+				},
+			},
+			wantError:   true,
+			wantContent: "Stream interrupted before completion",
 			wantTurnEnd: false,
 		},
 		{
@@ -979,7 +1082,7 @@ func TestOpencode_ErrorEventEmission(t *testing.T) {
 			wantTurnEnd: true,
 		},
 		{
-			name: "tool_part_error_output_fallback",
+			name: "tool_part_state_error",
 			message: OpencodeMessage{
 				ID:          "msg_err_14",
 				SessionID:   session.ID,
@@ -1008,7 +1111,39 @@ func TestOpencode_ErrorEventEmission(t *testing.T) {
 				},
 			},
 			wantError:   true,
-			wantContent: "error",
+			wantContent: "failed to spawn binary",
+			wantTurnEnd: true,
+		},
+		{
+			name: "tool_part_error_with_successful_finish_does_not_emit_error",
+			message: OpencodeMessage{
+				ID:          "msg_tool_err_success",
+				SessionID:   session.ID,
+				TimeCreated: 1700000014600,
+				Data: OpencodeMessageData{
+					Role:   "assistant",
+					Finish: &finishStop,
+				},
+			},
+			parts: []OpencodePart{
+				{
+					ID:          "part_tool_err_success",
+					MessageID:   "msg_tool_err_success",
+					SessionID:   session.ID,
+					TimeCreated: 1700000014700,
+					Data: OpencodePartData{
+						Type:   "tool",
+						Tool:   "execute",
+						CallID: "call_14_success",
+						State: &OpencodeToolPartState{
+							Status: "error",
+							Output: "",
+							Error:  "failed to spawn binary",
+						},
+					},
+				},
+			},
+			wantError:   false,
 			wantTurnEnd: true,
 		},
 	}
@@ -1050,18 +1185,23 @@ func TestOpencode_ErrorEventEmission(t *testing.T) {
 				if errorEv.Data.Role == nil || *errorEv.Data.Role != "assistant" {
 					t.Errorf("error event Role = %v, want 'assistant'", errorEv.Data.Role)
 				}
-				if tt.wantTurnEnd {
-					if turnEndEv == nil {
-						t.Errorf("expected turn_end event, but none found")
-					}
-					// Error event must follow turn_end event so classifier transitions to ActivityError
-					if errorIdx < turnEndIdx {
-						t.Errorf("error event index (%d) must follow turn_end index (%d)", errorIdx, turnEndIdx)
-					}
-				}
 			} else {
 				if errorEv != nil {
 					t.Errorf("did not expect error event, but got: %+v", errorEv)
+				}
+			}
+
+			if tt.wantTurnEnd {
+				if turnEndEv == nil {
+					t.Errorf("expected turn_end event, but none found")
+				}
+				// Error event must follow turn_end event so classifier transitions to ActivityError
+				if tt.wantError && errorIdx < turnEndIdx {
+					t.Errorf("error event index (%d) must follow turn_end index (%d)", errorIdx, turnEndIdx)
+				}
+			} else {
+				if turnEndEv != nil {
+					t.Errorf("did not expect turn_end event, but got: %+v", turnEndEv)
 				}
 			}
 		})
@@ -1133,6 +1273,8 @@ func TestExtractOpencodeError(t *testing.T) {
 		want  string
 	}{
 		{"nil", nil, ""},
+		{"empty_map", map[string]interface{}{}, ""},
+		{"empty_nested_data", map[string]interface{}{"data": map[string]interface{}{}}, ""},
 		{"string", "   network timeout   ", "network timeout"},
 		{"error_interface", errors.New("underlying socket error"), "underlying socket error"},
 		{
@@ -1247,6 +1389,72 @@ func TestExtractOpencodeError(t *testing.T) {
 		})
 	}
 }
+
+func TestIsOpencodeMessageAborted(t *testing.T) {
+	tests := []struct {
+		name  string
+		input interface{}
+		want  bool
+	}{
+		{"nil", nil, false},
+		{"string_match", "MessageAbortedError", true},
+		{"string_contains", "Error occurred: MessageAbortedError", true},
+		{"string_mismatch", "APIError", false},
+		{"error_match", errors.New("MessageAbortedError: user cancelled"), true},
+		{"error_mismatch", errors.New("APIError: something failed"), false},
+		{
+			"map_name_match",
+			map[string]interface{}{
+				"name": "MessageAbortedError",
+				"data": map[string]interface{}{"message": "aborted by user"},
+			},
+			true,
+		},
+		{
+			"map_message_match",
+			map[string]interface{}{
+				"message": "Operation cancelled: MessageAbortedError",
+			},
+			true,
+		},
+		{
+			"nested_error_match",
+			map[string]interface{}{
+				"error": map[string]interface{}{
+					"name": "MessageAbortedError",
+				},
+			},
+			true,
+		},
+		{
+			"nested_data_match",
+			map[string]interface{}{
+				"data": map[string]interface{}{
+					"name": "MessageAbortedError",
+				},
+			},
+			true,
+		},
+		{
+			"unrelated_map",
+			map[string]interface{}{
+				"name": "APIError",
+				"data": map[string]interface{}{"message": "rate limit"},
+			},
+			false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isOpencodeMessageAborted(tt.input)
+			if got != tt.want {
+				t.Errorf("isOpencodeMessageAborted(%v) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 
 
 
