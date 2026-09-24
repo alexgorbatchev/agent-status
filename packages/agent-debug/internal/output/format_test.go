@@ -6,9 +6,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/db"
+	"github.com/mattn/go-runewidth"
 )
 
 func TestIsAgentMode(t *testing.T) {
@@ -462,3 +464,106 @@ func TestRenderSessionInspect(t *testing.T) {
 		}
 	})
 }
+
+func TestRenderSessionList_EastAsianTruncation(t *testing.T) {
+	sessions := []SessionSummary{
+		{
+			ID:        "ses_eaw_12345",
+			Title:     "日本語タイトルでテーブルのアライメントを確認するためのテストセッション",
+			Directory: "/home/ユーザー/プロジェクト/サブディレクトリ/agent-status",
+			CreatedAt: time.Date(2026, 9, 21, 14, 30, 0, 0, time.UTC),
+			CostUSD:   0.05,
+			Tokens:    20000,
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderSessionList(&buf, sessions, false)
+	out := buf.String()
+
+	// 1. Output must be valid UTF-8 (no broken rune bytes from naive byte slicing)
+	if !utf8.ValidString(out) {
+		t.Errorf("RenderSessionList produced invalid UTF-8 string due to mid-rune slicing:\n%s", out)
+	}
+
+	// 2. All table rows must have matching visual width
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) < 3 {
+		t.Fatalf("expected table with at least 3 lines, got %d", len(lines))
+	}
+
+	expectedWidth := runewidth.StringWidth(lines[0])
+	for i, line := range lines {
+		w := runewidth.StringWidth(line)
+		if w != expectedWidth {
+			t.Errorf("table line %d has visual width %d, want %d: %q", i, w, expectedWidth, line)
+		}
+	}
+}
+
+func TestRenderDivider_EastAsianWideRune(t *testing.T) {
+	orig := os.Getenv("AGENT")
+	defer func() { _ = os.Setenv("AGENT", orig) }()
+	_ = os.Setenv("AGENT", "0")
+
+	var buf bytes.Buffer
+	// Fullwidth hyphen-minus (East Asian wide character, width 2)
+	RenderDivider(&buf, '－')
+	line := strings.TrimRight(buf.String(), "\n")
+	w := runewidth.StringWidth(line)
+	expected := GetTerminalWidth()
+	if w != expected {
+		t.Errorf("RenderDivider with wide rune visual width = %d, want %d", w, expected)
+	}
+}
+
+func TestStripANSI_And_VisualWidth(t *testing.T) {
+	plain := "Hello World"
+	colored := "\x1b[31;1mHello \x1b[32mWorld\x1b[0m"
+	osc := "\x1b]0;Title\x07Hello World"
+
+	if got := StripANSI(plain); got != plain {
+		t.Errorf("StripANSI(%q) = %q, want %q", plain, got, plain)
+	}
+	if got := StripANSI(colored); got != plain {
+		t.Errorf("StripANSI(%q) = %q, want %q", colored, got, plain)
+	}
+	if got := StripANSI(osc); got != plain {
+		t.Errorf("StripANSI(%q) = %q, want %q", osc, got, plain)
+	}
+
+	if got := VisualWidth(plain); got != 11 {
+		t.Errorf("VisualWidth(%q) = %d, want 11", plain, got)
+	}
+	if got := VisualWidth(colored); got != 11 {
+		t.Errorf("VisualWidth(%q) = %d, want 11", colored, got)
+	}
+	if got := VisualWidth("日本語"); got != 6 {
+		t.Errorf("VisualWidth('日本語') = %d, want 6", got)
+	}
+}
+
+func TestTruncateLeftVisual_EdgeCases(t *testing.T) {
+	// 1. String already fits
+	short := "/short/path"
+	if got := TruncateLeftVisual(short, 20, "..."); got != short {
+		t.Errorf("TruncateLeftVisual(%q) = %q, want %q", short, got, short)
+	}
+
+	// 2. maxWidth smaller than prefix
+	if got := TruncateLeftVisual("longstring", 2, "..."); got != ".." {
+		t.Errorf("TruncateLeftVisual with small maxWidth = %q, want '..'", got)
+	}
+
+	// 3. ASCII long string
+	longASCII := "1234567890abcdefghijklmnopqrstuvwxyz"
+	gotASCII := TruncateLeftVisual(longASCII, 10, "...")
+	if VisualWidth(gotASCII) > 10 {
+		t.Errorf("VisualWidth(%q) = %d > 10", gotASCII, VisualWidth(gotASCII))
+	}
+	if !strings.HasPrefix(gotASCII, "...") {
+		t.Errorf("expected prefix '...', got %q", gotASCII)
+	}
+}
+
+

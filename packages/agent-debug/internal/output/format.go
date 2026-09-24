@@ -4,13 +4,71 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
+	"github.com/mattn/go-runewidth"
 	"github.com/olekukonko/tablewriter"
 	"golang.org/x/term"
 )
+
+// Standard single-cell terminal status glyphs to prevent multi-cell/EAW visual misalignment.
+const (
+	GlyphOK       = "[OK]"
+	GlyphFail     = "[FAIL]"
+	GlyphWarn     = "[WARN]"
+	GlyphError    = "[ERROR]"
+	GlyphQuestion = "[?]"
+	GlyphAlert    = "[!]"
+)
+
+var ansiRegex = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\].*?(?:\x07|\x1b\\)`)
+
+// stripANSI removes ANSI escape codes from s.
+func stripANSI(s string) string {
+	if !strings.Contains(s, "\x1b") {
+		return s
+	}
+	return ansiRegex.ReplaceAllString(s, "")
+}
+
+// StripANSI removes ANSI escape codes from s.
+func StripANSI(s string) string {
+	return stripANSI(s)
+}
+
+// VisualWidth returns the visual terminal cell width of s, excluding ANSI escape sequences.
+func VisualWidth(s string) int {
+	return runewidth.StringWidth(stripANSI(s))
+}
+
+// TruncateLeftVisual truncates s from the left, keeping the rightmost characters
+// such that prefix + tail has visual display width <= maxWidth.
+func TruncateLeftVisual(s string, maxWidth int, prefix string) string {
+	plain := stripANSI(s)
+	if runewidth.StringWidth(plain) <= maxWidth {
+		return s
+	}
+	prefixWidth := runewidth.StringWidth(stripANSI(prefix))
+	available := maxWidth - prefixWidth
+	if available <= 0 {
+		return runewidth.Truncate(prefix, maxWidth, "")
+	}
+	runes := []rune(s)
+	totalWidth := 0
+	cutIdx := len(runes)
+	for i := len(runes) - 1; i >= 0; i-- {
+		w := runewidth.RuneWidth(runes[i])
+		if totalWidth+w > available {
+			break
+		}
+		totalWidth += w
+		cutIdx = i
+	}
+	return prefix + string(runes[cutIdx:])
+}
 
 // IsAgentMode returns true if AGENT=1, true, or yes in the environment.
 func IsAgentMode() bool {
@@ -35,7 +93,15 @@ func RenderDivider(w io.Writer, char rune) {
 		return
 	}
 	width := GetTerminalWidth()
-	_, _ = fmt.Fprintln(w, strings.Repeat(string(char), width))
+	rw := runewidth.RuneWidth(char)
+	if rw < 1 {
+		rw = 1
+	}
+	count := width / rw
+	if count < 1 {
+		count = 1
+	}
+	_, _ = fmt.Fprintln(w, strings.Repeat(string(char), count))
 }
 
 // SessionSummary represents a session listed from OpenCode database or multi-session files.
@@ -74,12 +140,12 @@ func RenderSessionList(w io.Writer, sessions []SessionSummary, agentMode bool) {
 		if title == "" {
 			title = "(untitled)"
 		}
-		if len(title) > 35 {
-			title = title[:32] + "..."
+		if runewidth.StringWidth(stripANSI(title)) > 35 {
+			title = runewidth.Truncate(title, 35, "...")
 		}
 		dir := s.Directory
-		if len(dir) > 35 {
-			dir = "..." + dir[len(dir)-32:]
+		if runewidth.StringWidth(stripANSI(dir)) > 35 {
+			dir = TruncateLeftVisual(dir, 35, "...")
 		}
 
 		_ = table.Append([]string{
@@ -242,9 +308,9 @@ func RenderReplaySummary(w io.Writer, s ReplaySummary, agentMode bool) {
 	RenderDivider(w, '-')
 
 	if s.VerificationOK {
-		_, _ = fmt.Fprintf(w, "[OK] Read-side query verification passed (GetAgentByID, %d logs scanned)\n", s.VerificationLogs)
+		_, _ = fmt.Fprintf(w, "%s Read-side query verification passed (GetAgentByID, %d logs scanned)\n", GlyphOK, s.VerificationLogs)
 	} else {
-		_, _ = fmt.Fprintf(w, "[ERROR] Read-side query verification failed!\n")
+		_, _ = fmt.Fprintf(w, "%s Read-side query verification failed!\n", GlyphError)
 	}
 	RenderDivider(w, '-')
 }
@@ -287,18 +353,18 @@ func RenderValidationReport(w io.Writer, r ValidationReport, agentMode bool) {
 	RenderDivider(w, '=')
 
 	for _, c := range r.Checks {
-		tag := "[OK]"
+		tag := GlyphOK
 		if !c.Passed {
-			tag = "[FAIL]"
+			tag = GlyphFail
 		}
 		_, _ = fmt.Fprintf(w, "%-6s %-32s %s\n", tag, c.Name, c.Details)
 	}
 
 	RenderDivider(w, '-')
 	if r.Passed {
-		_, _ = fmt.Fprintln(w, "[OK] Session transcript is VALID and passes all assertions.")
+		_, _ = fmt.Fprintf(w, "%s Session transcript is VALID and passes all assertions.\n", GlyphOK)
 	} else {
-		_, _ = fmt.Fprintln(w, "[FAIL] Session transcript failed one or more validation checks.")
+		_, _ = fmt.Fprintf(w, "%s Session transcript failed one or more validation checks.\n", GlyphFail)
 	}
 	RenderDivider(w, '=')
 }

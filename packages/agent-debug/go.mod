@@ -17,6 +17,7 @@ require (
 	github.com/alexgorbatchev/agent-status/packages/agent-parser v0.0.0-00010101000000-000000000000
 	github.com/alexgorbatchev/agent-status/packages/agent-server v0.0.0-00010101000000-000000000000
 	github.com/alexgorbatchev/cobra-help-tree v1.1.0
+	github.com/mattn/go-runewidth v0.0.30
 	github.com/ncruces/go-sqlite3 v0.35.5
 	github.com/olekukonko/tablewriter v1.1.5
 	github.com/shirou/gopsutil/v4 v4.26.8
@@ -44,7 +45,6 @@ require (
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/mattn/go-runewidth v0.0.19 // indirect
 	github.com/mozilla-ai/any-llm-go v0.9.0 // indirect
 	github.com/ncruces/go-sqlite3-wasm/v6 v6.2.35304 // indirect
 	github.com/ncruces/julianday v1.0.0 // indirect

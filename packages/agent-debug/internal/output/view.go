@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
+	"github.com/mattn/go-runewidth"
 )
 
 var harnessLabels = map[types.HarnessType]string{
@@ -189,7 +190,7 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 	headerLeft := fmt.Sprintf("(%s) %s", harness, strings.Join(buttons, " "))
 	headerRight := fmt.Sprintf("(%s)", lifecycle)
 
-	headerSpace := width - len(headerLeft) - len(headerRight)
+	headerSpace := width - runewidth.StringWidth(stripANSI(headerLeft)) - runewidth.StringWidth(stripANSI(headerRight))
 	if headerSpace < 1 {
 		headerSpace = 1
 	}
@@ -212,9 +213,9 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 	// 3. Callout (question or error)
 	var callout string
 	if agent.Activity.Activity == types.ActivityWaitingQuestion && agent.Activity.Question != nil && *agent.Activity.Question != "" {
-		callout = fmt.Sprintf("[?] %s", *agent.Activity.Question)
+		callout = fmt.Sprintf("%s %s", GlyphQuestion, *agent.Activity.Question)
 	} else if agent.Activity.Activity == types.ActivityError && agent.Activity.LastError != nil && *agent.Activity.LastError != "" {
-		callout = fmt.Sprintf("[!] %s", *agent.Activity.LastError)
+		callout = fmt.Sprintf("%s %s", GlyphAlert, *agent.Activity.LastError)
 	}
 
 	// 4. Badges
@@ -266,7 +267,7 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 	tokens := agent.Activity.Usage.Total
 	metricsLeft := fmt.Sprintf("$%.4f USD", cost)
 	metricsRight := FormatTokens(tokens)
-	metricsSpace := width - len(metricsLeft) - len(metricsRight)
+	metricsSpace := width - runewidth.StringWidth(stripANSI(metricsLeft)) - runewidth.StringWidth(stripANSI(metricsRight))
 	if metricsSpace < 1 {
 		metricsSpace = 1
 	}

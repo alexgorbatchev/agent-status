@@ -68,7 +68,7 @@ func RenderComparison(w io.Writer, comp *ComparisonResult, agentMode bool) {
 	if len(comp.Warnings) > 0 {
 		RenderDivider(w, '-')
 		for _, warn := range comp.Warnings {
-			_, _ = fmt.Fprintf(w, "[WARN] %s\n", warn)
+			_, _ = fmt.Fprintf(w, "%s %s\n", GlyphWarn, warn)
 		}
 	}
 	RenderDivider(w, '-')

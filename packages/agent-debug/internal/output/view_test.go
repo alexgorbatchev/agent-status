@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
+	"github.com/mattn/go-runewidth"
 )
 
 func TestRenderAgentView_HumanMode_Question(t *testing.T) {
@@ -348,4 +349,116 @@ func TestRenderAgentView_WallClock(t *testing.T) {
 		t.Errorf("expected (Claude Code) [Focus] [Hide] in wall clock rendering, got:\n%s", buf.String())
 	}
 }
+
+func TestRenderAgentView_HumanMode_EastAsianWidthAlignment(t *testing.T) {
+	agent := types.IAgentState{
+		ID:        "env-1:custom:ses-eaw",
+		SessionID: "ses-eaw",
+		Harness:   types.HarnessType("日本語ハーネス"), // 7 CJK characters = 14 visual cells, 21 UTF-8 bytes
+		Environment: types.IEnvironmentInfo{
+			Label: "開発環境", // 4 CJK chars = 8 visual cells, 12 UTF-8 bytes
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "機能追加", // 4 CJK chars = 8 visual cells, 12 UTF-8 bytes
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityBusy,
+			Title:     "日本語タイトルのエージェントセッション",
+			Action:    "ソースコードを編集中",
+			Cost: &types.ICostInfo{
+				Total: 0.1234,
+			},
+			Usage: types.ITokenUsage{
+				Total: 9876,
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderAgentViewAt(&buf, agent, false, 1000)
+	out := buf.String()
+
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) < 5 {
+		t.Fatalf("expected at least 5 lines, got %d", len(lines))
+	}
+
+	dividerWidth := runewidth.StringWidth(lines[0])
+	headerLine := lines[1]
+	headerWidth := runewidth.StringWidth(headerLine)
+
+	if headerWidth != dividerWidth {
+		t.Errorf("headerLine visual width = %d, want %d (equal to divider width)", headerWidth, dividerWidth)
+	}
+
+	metricsLine := lines[len(lines)-2]
+	metricsWidth := runewidth.StringWidth(metricsLine)
+	if metricsWidth != dividerWidth {
+		t.Errorf("metricsLine visual width = %d, want %d (equal to divider width)", metricsWidth, dividerWidth)
+	}
+}
+
+func TestRenderAgentView_HumanMode_EmojiWidthAlignment(t *testing.T) {
+	agent := types.IAgentState{
+		ID:        "env-1:custom:ses-emoji",
+		SessionID: "ses-emoji",
+		Harness:   types.HarnessType("Claude 🚀"), // Emoji 🚀 is 2 visual cells, 4 UTF-8 bytes
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityIdle,
+			Title:     "Task with emoji",
+			Action:    "Waiting",
+			Usage: types.ITokenUsage{
+				Total: 100,
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderAgentViewAt(&buf, agent, false, 1000)
+	out := buf.String()
+
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	dividerWidth := runewidth.StringWidth(lines[0])
+	headerWidth := runewidth.StringWidth(lines[1])
+
+	if headerWidth != dividerWidth {
+		t.Errorf("headerLine visual width = %d, want %d (equal to divider width)", headerWidth, dividerWidth)
+	}
+}
+
+func TestRenderAgentView_HumanMode_AnsiColorWidthAlignment(t *testing.T) {
+	agent := types.IAgentState{
+		ID:        "env-1:custom:ses-ansi",
+		SessionID: "ses-ansi",
+		Harness:   types.HarnessType("\x1b[34mClaude Code\x1b[0m"), // ANSI colored harness label
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleState("\x1b[32mRUNNING\x1b[0m"), // ANSI colored lifecycle
+			Activity:  types.ActivityBusy,
+			Title:     "Session with ANSI styling",
+			Action:    "Testing ANSI width calculations",
+			Cost: &types.ICostInfo{
+				Total: 0.5,
+			},
+			Usage: types.ITokenUsage{
+				Total: 5000,
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderAgentViewAt(&buf, agent, false, 1000)
+	out := buf.String()
+
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	dividerWidth := runewidth.StringWidth(stripANSI(lines[0]))
+	headerWidth := runewidth.StringWidth(stripANSI(lines[1]))
+
+	if headerWidth != dividerWidth {
+		t.Errorf("headerLine visual width = %d, want %d (equal to divider width)", headerWidth, dividerWidth)
+	}
+}
+
+
 
