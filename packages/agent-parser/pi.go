@@ -77,43 +77,37 @@ func (u *rawPiUsage) UnmarshalJSON(data []byte) error {
 }
 
 type rawPiMessage struct {
-	Role              string      `json:"role"` // "user" | "assistant" | "toolResult" | "tool_result" | "system"
-	Model             string      `json:"model,omitempty"`
-	Provider          string      `json:"provider,omitempty"`
-	Content           interface{} `json:"content,omitempty"`
-	Usage             *rawPiUsage `json:"usage,omitempty"`
-	StopReason        string      `json:"stopReason,omitempty"`
-	StopReasonSnake   string      `json:"stop_reason,omitempty"`
-	ErrorMessage      string      `json:"errorMessage,omitempty"`
-	ErrorMessageSnake string      `json:"error_message,omitempty"`
-	Error             string      `json:"error,omitempty"`
-	ToolName          string      `json:"toolName,omitempty"`
-	ToolNameSnake     string      `json:"tool_name,omitempty"`
-	ToolCallID        string      `json:"toolCallId,omitempty"`
-	ToolCallIDSnake   string      `json:"tool_call_id,omitempty"`
-	IsError           *bool       `json:"isError,omitempty"`
-	IsErrorSnake      *bool       `json:"is_error,omitempty"`
+	Role            string      `json:"role"` // "user" | "assistant" | "toolResult" | "tool_result" | "system"
+	Model           string      `json:"model,omitempty"`
+	Provider        string      `json:"provider,omitempty"`
+	Content         interface{} `json:"content,omitempty"`
+	Usage           *rawPiUsage `json:"usage,omitempty"`
+	StopReason      string      `json:"stopReason,omitempty"`
+	ErrorMessage    string      `json:"errorMessage,omitempty"`
+	ToolName        string      `json:"toolName,omitempty"`
+	ToolNameSnake   string      `json:"tool_name,omitempty"`
+	ToolCallID      string      `json:"toolCallId,omitempty"`
+	ToolCallIDSnake string      `json:"tool_call_id,omitempty"`
+	IsError         *bool       `json:"isError,omitempty"`
+	IsErrorSnake    *bool       `json:"is_error,omitempty"`
 }
 
 type rawPiLine struct {
-	Type              string        `json:"type"` // "session" | "message" | "model_change" | "thinking_level_change" | "custom_message" | "label" | "session_info"
-	ID                string        `json:"id"`
-	ParentID          *string       `json:"parentId"`
-	Timestamp         interface{}   `json:"timestamp"`
-	CWD               string        `json:"cwd,omitempty"`
-	Message           *rawPiMessage `json:"message,omitempty"`
-	Model             string        `json:"model,omitempty"`
-	ModelID           string        `json:"modelId,omitempty"`
-	Model_ID          string        `json:"model_id,omitempty"`
-	Provider          string        `json:"provider,omitempty"`
-	Title             string        `json:"title,omitempty"`
-	Name              string        `json:"name,omitempty"`
-	Label             string        `json:"label,omitempty"`
-	TargetID          string        `json:"targetId,omitempty"`
-	ThinkingLevel     string        `json:"thinkingLevel,omitempty"`
-	Error             string        `json:"error,omitempty"`
-	ErrorMessage      string        `json:"errorMessage,omitempty"`
-	ErrorMessageSnake string        `json:"error_message,omitempty"`
+	Type          string        `json:"type"` // "session" | "message" | "model_change" | "thinking_level_change" | "custom_message" | "label" | "session_info"
+	ID            string        `json:"id"`
+	ParentID      *string       `json:"parentId"`
+	Timestamp     interface{}   `json:"timestamp"`
+	CWD           string        `json:"cwd,omitempty"`
+	Message       *rawPiMessage `json:"message,omitempty"`
+	Model         string        `json:"model,omitempty"`
+	ModelID       string        `json:"modelId,omitempty"`
+	Model_ID      string        `json:"model_id,omitempty"`
+	Provider      string        `json:"provider,omitempty"`
+	Title         string        `json:"title,omitempty"`
+	Name          string        `json:"name,omitempty"`
+	Label         string        `json:"label,omitempty"`
+	TargetID      string        `json:"targetId,omitempty"`
+	ThinkingLevel string        `json:"thinkingLevel,omitempty"`
 }
 
 // ExtractPiTitleFromPrompt extracts a session title / task description from user prompt text.
@@ -247,28 +241,6 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 				},
 			})
 		}
-
-	case "error":
-		errText := raw.ErrorMessage
-		if errText == "" {
-			errText = raw.ErrorMessageSnake
-		}
-		if errText == "" {
-			errText = raw.Error
-		}
-		if errText == "" {
-			errText = "error"
-		}
-		events = append(events, ParsedEvent{
-			EventType: "error",
-			Timestamp: ts,
-			CWD:       cwd,
-			Data: types.TelemetryFrameData{
-				Role:    stringPtr("assistant"),
-				Content: stringPtr(errText),
-				IsError: boolPtr(true),
-			},
-		})
 
 	case "message":
 		if raw.Message == nil {
@@ -485,13 +457,9 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 				harnessCost = u.Cost
 			}
 
-			stopReasonVal := msg.StopReason
-			if stopReasonVal == "" {
-				stopReasonVal = msg.StopReasonSnake
-			}
 			var stopReason *string
-			if stopReasonVal != "" {
-				stopReason = stringPtr(stopReasonVal)
+			if msg.StopReason != "" {
+				stopReason = stringPtr(msg.StopReason)
 			}
 
 			var modelPtr *string
@@ -527,32 +495,9 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 				},
 			})
 
-			hasError := stopReasonVal == "error" ||
-				msg.ErrorMessage != "" ||
-				msg.ErrorMessageSnake != "" ||
-				msg.Error != "" ||
-				raw.Error != "" ||
-				raw.ErrorMessage != "" ||
-				raw.ErrorMessageSnake != ""
-
-			if hasError {
+			if msg.StopReason == "error" {
 				errText := msg.ErrorMessage
 				if errText == "" {
-					errText = msg.ErrorMessageSnake
-				}
-				if errText == "" {
-					errText = msg.Error
-				}
-				if errText == "" {
-					errText = raw.ErrorMessage
-				}
-				if errText == "" {
-					errText = raw.ErrorMessageSnake
-				}
-				if errText == "" {
-					errText = raw.Error
-				}
-				if errText == "" && stopReasonVal == "error" {
 					if len(textParts) > 0 {
 						errText = strings.Join(textParts, "\n")
 					}
@@ -575,33 +520,6 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 				})
 			}
 		}
-	}
-
-	hasErrorEv := false
-	for _, ev := range events {
-		if ev.EventType == "error" {
-			hasErrorEv = true
-			break
-		}
-	}
-	if !hasErrorEv && (raw.Error != "" || raw.ErrorMessage != "" || raw.ErrorMessageSnake != "") {
-		errText := raw.ErrorMessage
-		if errText == "" {
-			errText = raw.ErrorMessageSnake
-		}
-		if errText == "" {
-			errText = raw.Error
-		}
-		events = append(events, ParsedEvent{
-			EventType: "error",
-			Timestamp: ts,
-			CWD:       cwd,
-			Data: types.TelemetryFrameData{
-				Role:    stringPtr("assistant"),
-				Content: stringPtr(errText),
-				IsError: boolPtr(true),
-			},
-		})
 	}
 
 	return events, nil

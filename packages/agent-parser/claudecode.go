@@ -117,6 +117,10 @@ func boolPtr(b bool) *bool {
 	return &b
 }
 
+func intPtr(i int) *int {
+	return &i
+}
+
 // CleanClaudeCodePrompt cleans synthetic XML blocks and caveat wrappers from Claude Code prompt text.
 func CleanClaudeCodePrompt(promptText string) string {
 	trimmed := strings.TrimSpace(promptText)

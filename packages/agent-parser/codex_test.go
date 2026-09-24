@@ -426,14 +426,13 @@ func TestParseCodexLine(t *testing.T) {
 		}
 	})
 
-	t.Run("event_msg error", func(t *testing.T) {
+	t.Run("event_msg error rate limit from text", func(t *testing.T) {
 		line := `{
 			"type": "event_msg",
 			"timestamp": "2026-06-12T16:08:43.000Z",
 			"payload": {
 				"type": "error",
-				"message": "Connection rate limit exceeded",
-				"code": 429
+				"message": "Connection rate limit exceeded"
 			}
 		}`
 		evs, err := ParseCodexLine([]byte(line))
@@ -444,7 +443,159 @@ func TestParseCodexLine(t *testing.T) {
 			t.Errorf("unexpected error event: %+v", evs[0])
 		}
 		if evs[0].Data.IsRateLimit == nil || !*evs[0].Data.IsRateLimit {
-			t.Errorf("expected isRateLimit = true for 429 rate limit error")
+			t.Errorf("expected isRateLimit = true for rate limit text")
+		}
+	})
+
+	t.Run("event_msg error with codex_error_info RateLimitExceeded", func(t *testing.T) {
+		line := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:43.000Z",
+			"payload": {
+				"type": "error",
+				"message": "Failed to complete request",
+				"codex_error_info": "RateLimitExceeded"
+			}
+		}`
+		evs, err := ParseCodexLine([]byte(line))
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("failed error event parsing: evs=%v err=%v", evs, err)
+		}
+		if evs[0].EventType != "error" || *evs[0].Data.Content != "Failed to complete request" || !*evs[0].Data.IsError {
+			t.Errorf("unexpected error event: %+v", evs[0])
+		}
+		if evs[0].Data.IsRateLimit == nil || !*evs[0].Data.IsRateLimit {
+			t.Errorf("expected isRateLimit = true for RateLimitExceeded")
+		}
+	})
+
+	t.Run("event_msg error with codex_error_info UsageLimitExceeded", func(t *testing.T) {
+		line := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:43.000Z",
+			"payload": {
+				"type": "error",
+				"message": "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits.",
+				"codex_error_info": "usage_limit_exceeded"
+			}
+		}`
+		evs, err := ParseCodexLine([]byte(line))
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("failed error event parsing: evs=%v err=%v", evs, err)
+		}
+		if evs[0].EventType != "error" || !*evs[0].Data.IsError {
+			t.Errorf("unexpected error event: %+v", evs[0])
+		}
+		if evs[0].Data.IsRateLimit == nil || !*evs[0].Data.IsRateLimit {
+			t.Errorf("expected isRateLimit = true for usage_limit_exceeded")
+		}
+	})
+
+	t.Run("event_msg error with codex_error_info ServerOverloaded", func(t *testing.T) {
+		line := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:43.000Z",
+			"payload": {
+				"type": "error",
+				"message": "Backend server overloaded",
+				"codex_error_info": "ServerOverloaded"
+			}
+		}`
+		evs, err := ParseCodexLine([]byte(line))
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("failed error event parsing: evs=%v err=%v", evs, err)
+		}
+		if evs[0].EventType != "error" || !*evs[0].Data.IsError {
+			t.Errorf("unexpected error event: %+v", evs[0])
+		}
+		if evs[0].Data.IsRateLimit == nil || !*evs[0].Data.IsRateLimit {
+			t.Errorf("expected isRateLimit = true for ServerOverloaded")
+		}
+	})
+
+	t.Run("event_msg error with codex_error_info HttpConnectionFailed 429", func(t *testing.T) {
+		line := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:43.000Z",
+			"payload": {
+				"type": "error",
+				"message": "Failed to connect to backend",
+				"codex_error_info": {
+					"HttpConnectionFailed": {
+						"http_status_code": 429
+					}
+				}
+			}
+		}`
+		evs, err := ParseCodexLine([]byte(line))
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("failed error event parsing: evs=%v err=%v", evs, err)
+		}
+		if evs[0].EventType != "error" {
+			t.Errorf("unexpected event type: %+v", evs[0])
+		}
+		if evs[0].Data.ExitCode == nil || *evs[0].Data.ExitCode != 429 {
+			t.Errorf("ExitCode = %v, want 429", evs[0].Data.ExitCode)
+		}
+		if evs[0].Data.IsRateLimit == nil || !*evs[0].Data.IsRateLimit {
+			t.Errorf("expected isRateLimit = true for HttpConnectionFailed 429")
+		}
+	})
+
+	t.Run("event_msg error with codex_error_info HttpConnectionFailed 503", func(t *testing.T) {
+		line := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:43.000Z",
+			"payload": {
+				"type": "error",
+				"message": "Service unavailable",
+				"codex_error_info": {
+					"http_connection_failed": {
+						"http_status_code": 503
+					}
+				}
+			}
+		}`
+		evs, err := ParseCodexLine([]byte(line))
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("failed error event parsing: evs=%v err=%v", evs, err)
+		}
+		if evs[0].EventType != "error" {
+			t.Errorf("unexpected event type: %+v", evs[0])
+		}
+		if evs[0].Data.ExitCode == nil || *evs[0].Data.ExitCode != 503 {
+			t.Errorf("ExitCode = %v, want 503", evs[0].Data.ExitCode)
+		}
+		if evs[0].Data.IsRateLimit != nil && *evs[0].Data.IsRateLimit {
+			t.Errorf("expected isRateLimit = false/nil for 503")
+		}
+	})
+
+	t.Run("stateful codex parser parse and reset", func(t *testing.T) {
+		parser := NewCodexParser()
+		line := `{"type": "turn_context", "payload": {"model": "gpt-5.4"}}`
+		evs, err := parser.ParseLine([]byte(line))
+		if err != nil {
+			t.Fatalf("parser.ParseLine failed: %v", err)
+		}
+		if len(evs) != 1 || evs[0].EventType != "model_change" {
+			t.Errorf("expected 1 model_change event for turn_context, got %d (%+v)", len(evs), evs)
+		}
+		parser.Reset()
+	})
+
+	t.Run("extractInt cases", func(t *testing.T) {
+		if got := extractInt(float64(429)); got == nil || *got != 429 {
+			t.Errorf("extractInt(float64) = %v, want 429", got)
+		}
+		if got := extractInt(int(500)); got == nil || *got != 500 {
+			t.Errorf("extractInt(int) = %v, want 500", got)
+		}
+		if got := extractInt(int64(503)); got == nil || *got != 503 {
+			t.Errorf("extractInt(int64) = %v, want 503", got)
+		}
+		if got := extractInt("invalid"); got != nil {
+			t.Errorf("extractInt(string) = %v, want nil", got)
 		}
 	})
 

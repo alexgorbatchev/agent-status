@@ -750,7 +750,6 @@ func TestOpencode_ErrorEventEmission(t *testing.T) {
 
 	finishErr := "error"
 	finishStop := "stop"
-	completedTs15 := int64(1700000015999)
 
 	tests := []struct {
 		name        string
@@ -851,9 +850,51 @@ func TestOpencode_ErrorEventEmission(t *testing.T) {
 			wantTurnEnd: true,
 		},
 		{
-			name: "error_part_with_text",
+			name: "typed_unknown_error",
 			message: OpencodeMessage{
-				ID:          "msg_err_6",
+				ID:          "msg_err_unknown",
+				SessionID:   session.ID,
+				TimeCreated: 1700000005500,
+				Data: OpencodeMessageData{
+					Role:   "assistant",
+					Finish: &finishErr,
+					Error: map[string]interface{}{
+						"name": "UnknownError",
+						"data": map[string]interface{}{
+							"message": "Internal gateway failure",
+						},
+					},
+				},
+			},
+			wantError:   true,
+			wantContent: "Internal gateway failure",
+			wantTurnEnd: true,
+		},
+		{
+			name: "typed_message_output_length_error",
+			message: OpencodeMessage{
+				ID:          "msg_err_length",
+				SessionID:   session.ID,
+				TimeCreated: 1700000005600,
+				Data: OpencodeMessageData{
+					Role:   "assistant",
+					Finish: &finishErr,
+					Error: map[string]interface{}{
+						"name": "MessageOutputLengthError",
+						"data": map[string]interface{}{
+							"message": "Maximum output token length exceeded",
+						},
+					},
+				},
+			},
+			wantError:   true,
+			wantContent: "Maximum output token length exceeded",
+			wantTurnEnd: true,
+		},
+		{
+			name: "retry_part_with_api_error",
+			message: OpencodeMessage{
+				ID:          "msg_err_retry",
 				SessionID:   session.ID,
 				TimeCreated: 1700000006000,
 				Data: OpencodeMessageData{
@@ -862,46 +903,25 @@ func TestOpencode_ErrorEventEmission(t *testing.T) {
 			},
 			parts: []OpencodePart{
 				{
-					ID:          "part_err_6",
-					MessageID:   "msg_err_6",
+					ID:          "part_err_retry",
+					MessageID:   "msg_err_retry",
 					SessionID:   session.ID,
 					TimeCreated: 1700000006500,
 					Data: OpencodePartData{
-						Type: "error",
-						Text: "Context overflow: input tokens exceed model window",
-					},
-				},
-			},
-			wantError:   true,
-			wantContent: "Context overflow: input tokens exceed model window",
-			wantTurnEnd: false,
-		},
-		{
-			name: "error_part_with_nested_error",
-			message: OpencodeMessage{
-				ID:          "msg_err_7",
-				SessionID:   session.ID,
-				TimeCreated: 1700000007000,
-				Data: OpencodeMessageData{
-					Role: "assistant",
-				},
-			},
-			parts: []OpencodePart{
-				{
-					ID:          "part_err_7",
-					MessageID:   "msg_err_7",
-					SessionID:   session.ID,
-					TimeCreated: 1700000007500,
-					Data: OpencodePartData{
-						Type: "error",
+						Type:    "retry",
+						Attempt: intPtr(1),
 						Error: map[string]interface{}{
-							"message": "Stream connection broken",
+							"name": "APIError",
+							"data": map[string]interface{}{
+								"message":    "Rate limit exceeded: 429",
+								"statusCode": 429,
+							},
 						},
 					},
 				},
 			},
 			wantError:   true,
-			wantContent: "Stream connection broken",
+			wantContent: "Rate limit exceeded: 429",
 			wantTurnEnd: false,
 		},
 		{
@@ -959,101 +979,6 @@ func TestOpencode_ErrorEventEmission(t *testing.T) {
 			wantTurnEnd: true,
 		},
 		{
-			name: "unhandled_role_with_error",
-			message: OpencodeMessage{
-				ID:          "msg_err_10",
-				SessionID:   session.ID,
-				TimeCreated: 1700000010000,
-				Data: OpencodeMessageData{
-					Role:  "error",
-					Error: "Worker process died unexpectedly",
-				},
-			},
-			wantError:   true,
-			wantContent: "Worker process died unexpectedly",
-			wantTurnEnd: false,
-		},
-		{
-			name: "error_part_with_message_field",
-			message: OpencodeMessage{
-				ID:          "msg_err_11",
-				SessionID:   session.ID,
-				TimeCreated: 1700000011000,
-				Data: OpencodeMessageData{
-					Role: "assistant",
-				},
-			},
-			parts: []OpencodePart{
-				{
-					ID:          "part_err_11",
-					MessageID:   "msg_err_11",
-					SessionID:   session.ID,
-					TimeCreated: 1700000011500,
-					Data: OpencodePartData{
-						Type:    "error",
-						Message: "Error reported via message field",
-					},
-				},
-			},
-			wantError:   true,
-			wantContent: "Error reported via message field",
-			wantTurnEnd: false,
-		},
-		{
-			name: "error_part_with_error_object_fallback",
-			message: OpencodeMessage{
-				ID:          "msg_err_12",
-				SessionID:   session.ID,
-				TimeCreated: 1700000012000,
-				Data: OpencodeMessageData{
-					Role: "assistant",
-				},
-			},
-			parts: []OpencodePart{
-				{
-					ID:          "part_err_12",
-					MessageID:   "msg_err_12",
-					SessionID:   session.ID,
-					TimeCreated: 1700000012500,
-					Data: OpencodePartData{
-						Type: "error",
-						Error: map[string]interface{}{
-							"error": "Error object nested string",
-						},
-					},
-				},
-			},
-			wantError:   true,
-			wantContent: "Error object nested string",
-			wantTurnEnd: false,
-		},
-		{
-			name: "unknown_part_with_error_payload",
-			message: OpencodeMessage{
-				ID:          "msg_err_13",
-				SessionID:   session.ID,
-				TimeCreated: 1700000013000,
-				Data: OpencodeMessageData{
-					Role: "assistant",
-				},
-			},
-			parts: []OpencodePart{
-				{
-					ID:          "part_err_13",
-					MessageID:   "msg_err_13",
-					SessionID:   session.ID,
-					TimeCreated: 1700000013500,
-					Data: OpencodePartData{
-						Type:  "custom_unknown",
-						Error: "Custom part error",
-					},
-				},
-			},
-			wantError:   true,
-			wantContent: "Custom part error",
-			wantTurnEnd: false,
-		},
-		{
 			name: "tool_part_error_output_fallback",
 			message: OpencodeMessage{
 				ID:          "msg_err_14",
@@ -1085,25 +1010,6 @@ func TestOpencode_ErrorEventEmission(t *testing.T) {
 			wantError:   true,
 			wantContent: "error",
 			wantTurnEnd: true,
-		},
-		{
-			name: "unhandled_role_with_completed_time",
-			message: OpencodeMessage{
-				ID:          "msg_err_15",
-				SessionID:   session.ID,
-				TimeCreated: 1700000015000,
-				Data: OpencodeMessageData{
-					Role:   "system_error",
-					Finish: &finishErr,
-					Time: &OpencodeMessageTiming{
-						Created:   1700000015000,
-						Completed: &completedTs15,
-					},
-				},
-			},
-			wantError:   true,
-			wantContent: "error",
-			wantTurnEnd: false,
 		},
 	}
 
@@ -1192,23 +1098,28 @@ func TestParseOpencodeMessageData_WithError(t *testing.T) {
 	}
 }
 
-func TestParseOpencodePartData_ErrorPart(t *testing.T) {
+func TestParseOpencodePartData_RetryPart(t *testing.T) {
 	raw := `{
-		"type": "error",
-		"text": "Internal error in model stream",
+		"type": "retry",
+		"attempt": 2,
 		"error": {
-			"message": "HTTP 500"
+			"name": "APIError",
+			"data": {
+				"message": "Rate limit exceeded: 429",
+				"statusCode": 429,
+				"isRetryable": true
+			}
 		}
 	}`
 	part, err := ParseOpencodePartData(raw)
 	if err != nil {
 		t.Fatalf("ParseOpencodePartData failed: %v", err)
 	}
-	if part.Type != "error" {
-		t.Errorf("part.Type = %q, want 'error'", part.Type)
+	if part.Type != "retry" {
+		t.Errorf("part.Type = %q, want 'retry'", part.Type)
 	}
-	if part.Text != "Internal error in model stream" {
-		t.Errorf("part.Text = %q, want 'Internal error in model stream'", part.Text)
+	if part.Attempt == nil || *part.Attempt != 2 {
+		t.Errorf("part.Attempt = %v, want 2", part.Attempt)
 	}
 	if part.Error == nil {
 		t.Fatalf("part.Error is nil, expected map")

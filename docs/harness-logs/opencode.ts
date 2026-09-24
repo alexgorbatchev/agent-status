@@ -147,6 +147,89 @@ export interface IOpencodeMessageTiming {
   readonly completed?: number | null;
 }
 
+// ============================================================================
+// 1b. Upstream Message Error Structures
+// ============================================================================
+
+/**
+ * Provider authentication error payload.
+ * Grounded in upstream OpenCode SDK `types.gen.ts:75-81`.
+ * @see https://github.com/anomalyco/opencode/blob/dev/packages/sdk/js/src/gen/types.gen.ts#L75-L81
+ */
+export interface IOpencodeProviderAuthError {
+  readonly name: "ProviderAuthError";
+  readonly data: {
+    readonly providerID: string;
+    readonly message: string;
+  };
+}
+
+/**
+ * Unknown error payload.
+ * Grounded in upstream OpenCode SDK `types.gen.ts:83-88`.
+ * @see https://github.com/anomalyco/opencode/blob/dev/packages/sdk/js/src/gen/types.gen.ts#L83-L88
+ */
+export interface IOpencodeUnknownError {
+  readonly name: "UnknownError";
+  readonly data: {
+    readonly message: string;
+  };
+}
+
+/**
+ * Message output length exceeded error payload.
+ * Grounded in upstream OpenCode SDK `types.gen.ts:90-95`.
+ * @see https://github.com/anomalyco/opencode/blob/dev/packages/sdk/js/src/gen/types.gen.ts#L90-L95
+ */
+export interface IOpencodeMessageOutputLengthError {
+  readonly name: "MessageOutputLengthError";
+  readonly data?: {
+    readonly [key: string]: unknown;
+  };
+}
+
+/**
+ * Message aborted error payload.
+ * Grounded in upstream OpenCode SDK `types.gen.ts:97-102`.
+ * @see https://github.com/anomalyco/opencode/blob/dev/packages/sdk/js/src/gen/types.gen.ts#L97-L102
+ */
+export interface IOpencodeMessageAbortedError {
+  readonly name: "MessageAbortedError";
+  readonly data: {
+    readonly message: string;
+  };
+}
+
+/**
+ * API error payload.
+ * Grounded in upstream OpenCode SDK `types.gen.ts:104-115`.
+ * @see https://github.com/anomalyco/opencode/blob/dev/packages/sdk/js/src/gen/types.gen.ts#L104-L115
+ */
+export interface IOpencodeApiError {
+  readonly name: "APIError";
+  readonly data: {
+    readonly message: string;
+    readonly statusCode?: number;
+    readonly isRetryable: boolean;
+    readonly responseHeaders?: {
+      readonly [key: string]: string;
+    };
+    readonly responseBody?: string;
+  };
+}
+
+/**
+ * Union of typed error payloads that can be attached to an assistant message.
+ * Grounded in upstream OpenCode SDK `types.gen.ts:125`.
+ * @see https://github.com/anomalyco/opencode/blob/dev/packages/sdk/js/src/gen/types.gen.ts#L125
+ */
+export type OpencodeMessageError =
+  | IOpencodeProviderAuthError
+  | IOpencodeUnknownError
+  | IOpencodeMessageOutputLengthError
+  | IOpencodeMessageAbortedError
+  | IOpencodeApiError;
+
 /**
  * Structured JSON payload stored in the `message.data` column.
  */
@@ -174,8 +257,12 @@ export interface IOpencodeMessageData {
   readonly time?: IOpencodeMessageTiming;
   /** Finish reason string ("stop", "tool_use", "length") or null if in progress. */
   readonly finish?: string | null;
-  /** Error payload if message generation encountered an error. */
-  readonly error?: unknown;
+  /**
+   * Error payload if message generation encountered an error.
+   * Grounded in upstream `AssistantMessage.error` union (`types.gen.ts:125`).
+   * @see https://github.com/anomalyco/opencode/blob/dev/packages/sdk/js/src/gen/types.gen.ts#L125
+   */
+  readonly error?: OpencodeMessageError;
 }
 
 /**
@@ -278,42 +365,18 @@ export interface IOpencodeFilePartData {
   readonly metadata?: Record<string, unknown>;
 }
 
-/** Error event part. */
-export interface IOpencodeErrorPartData {
-  readonly type: "error";
-  readonly error?: unknown;
-  readonly text?: string;
-  readonly message?: string;
-  readonly time?: {
-    readonly start: number;
-    readonly end?: number;
-  };
-  readonly metadata?: Record<string, unknown>;
-}
-
 /**
- * Generic part data structure deserialized from the `part.data` column,
- * matching Go's OpencodePartData struct representation.
+ * Retry part emitted when OpenCode retries an API call with backoff.
+ * Grounded in upstream `RetryPart` (`types.gen.ts:364-373`).
+ * @see https://github.com/anomalyco/opencode/blob/dev/packages/sdk/js/src/gen/types.gen.ts#L364-L373
  */
-export interface IOpencodePartData {
-  readonly type: string;
-  readonly text?: string;
-  readonly tool?: string;
-  readonly callID?: string;
-  readonly state?: IOpencodeToolPartState;
-  readonly reason?: string;
-  readonly cost?: number;
-  readonly tokens?: IOpencodeMessageTokenUsage;
-  readonly path?: string;
-  readonly content?: string;
-  readonly snapshot?: Record<string, unknown>;
-  readonly metadata?: Record<string, unknown>;
+export interface IOpencodeRetryPartData {
+  readonly type: "retry";
+  readonly attempt: number;
+  readonly error: IOpencodeApiError;
   readonly time?: {
-    readonly start: number;
-    readonly end?: number;
+    readonly created: number;
   };
-  readonly error?: unknown;
-  readonly message?: string;
 }
 
 export type OpencodePartData =
@@ -323,7 +386,7 @@ export type OpencodePartData =
   | IOpencodeStepStartPartData
   | IOpencodeStepFinishPartData
   | IOpencodeFilePartData
-  | IOpencodeErrorPartData;
+  | IOpencodeRetryPartData;
 
 /**
  * Raw row shape from the `part` table in `opencode.db`.
@@ -504,8 +567,10 @@ export function isOpencodeReasoningPart(
 }
 
 /**
- * Checks if a part represents an error.
+ * Checks if a part represents a retry attempt.
  */
-export function isOpencodeErrorPart(part: OpencodePartData): part is IOpencodeErrorPartData {
-  return part.type === "error";
+export function isOpencodeRetryPart(
+  part: OpencodePartData,
+): part is IOpencodeRetryPartData {
+  return part.type === "retry";
 }

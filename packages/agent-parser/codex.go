@@ -198,9 +198,9 @@ type rawCodexEventMsgPayload struct {
 	StartedAt        string                  `json:"started_at"`
 	CompletedAt      string                  `json:"completed_at"`
 	DurationMS       int64                   `json:"duration_ms"`
-	LastAgentMessage string                  `json:"last_agent_message"`
-	Code             interface{}             `json:"code"`
-	Info             *rawCodexTokenCountInfo `json:"info"`
+	LastAgentMessage   string                  `json:"last_agent_message"`
+	CodexErrorInfo     interface{}             `json:"codex_error_info,omitempty"`
+	Info               *rawCodexTokenCountInfo `json:"info"`
 	ModelContextWindow int64                 `json:"model_context_window,omitempty"`
 	Summary          []struct {
 		Type string `json:"type"`
@@ -581,15 +581,46 @@ func parseCodexLineWithState(line []byte, p *CodexParser) ([]ParsedEvent, error)
 		case "error":
 			var isRL *bool
 			var exitCode *int
-			if evt.Code != nil {
-				switch c := evt.Code.(type) {
-				case float64:
-					ic := int(c)
-					exitCode = &ic
-				case int:
-					exitCode = &c
+
+			if evt.CodexErrorInfo != nil {
+				switch info := evt.CodexErrorInfo.(type) {
+				case string:
+					switch info {
+					case "RateLimitExceeded", "rate_limit_exceeded",
+						"UsageLimitExceeded", "usage_limit_exceeded",
+						"ServerOverloaded", "server_overloaded":
+						isRL = boolPtr(true)
+					}
+				case map[string]interface{}:
+					for k, v := range info {
+						switch k {
+						case "RateLimitExceeded", "rate_limit_exceeded",
+							"UsageLimitExceeded", "usage_limit_exceeded",
+							"ServerOverloaded", "server_overloaded":
+							isRL = boolPtr(true)
+						case "HttpConnectionFailed", "http_connection_failed":
+							if subMap, ok := v.(map[string]interface{}); ok {
+								if sc, ok := subMap["http_status_code"]; ok && sc != nil {
+									if code := extractInt(sc); code != nil {
+										exitCode = code
+										if *code == 429 {
+											isRL = boolPtr(true)
+										}
+									}
+								}
+							}
+						case "http_status_code":
+							if code := extractInt(v); code != nil {
+								exitCode = code
+								if *code == 429 {
+									isRL = boolPtr(true)
+								}
+							}
+						}
+					}
 				}
 			}
+
 			lowerMsg := strings.ToLower(evt.Message)
 			if (exitCode != nil && *exitCode == 429) ||
 				strings.Contains(lowerMsg, "rate_limit") ||
@@ -799,4 +830,18 @@ func parseCodexLineWithState(line []byte, p *CodexParser) ([]ParsedEvent, error)
 	}
 
 	return events, nil
+}
+
+func extractInt(v interface{}) *int {
+	switch val := v.(type) {
+	case float64:
+		i := int(val)
+		return &i
+	case int:
+		return &val
+	case int64:
+		i := int(val)
+		return &i
+	}
+	return nil
 }

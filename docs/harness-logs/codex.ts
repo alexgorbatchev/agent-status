@@ -409,10 +409,36 @@ export interface ICodexTaskCompletePayload {
   readonly duration_ms: number;
 }
 
+/**
+ * Structured error information emitted by Codex in error events.
+ * Grounded in upstream `codex-rs/protocol/src/protocol.rs:2068-2071`.
+ * Variants include rate limit exhaustion, account usage limits, server overload,
+ * and HTTP connection failure with response status codes.
+ */
+export type CodexErrorInfo =
+  | "RateLimitExceeded"
+  | "UsageLimitExceeded"
+  | "ServerOverloaded"
+  | "rate_limit_exceeded"
+  | "usage_limit_exceeded"
+  | "server_overloaded"
+  | {
+      readonly HttpConnectionFailed?: {
+        readonly http_status_code?: number;
+      };
+      readonly http_connection_failed?: {
+        readonly http_status_code?: number;
+      };
+    }
+  | {
+      readonly type: "HttpConnectionFailed" | "http_connection_failed";
+      readonly http_status_code?: number;
+    };
+
 export interface ICodexErrorPayload {
   readonly type: "error";
   readonly message: string;
-  readonly code?: string | number;
+  readonly codex_error_info?: CodexErrorInfo | null;
 }
 
 export type CodexEventMsgPayload =

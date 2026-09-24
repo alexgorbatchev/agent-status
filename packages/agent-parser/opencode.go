@@ -82,8 +82,9 @@ type OpencodeToolPartState struct {
 }
 
 // OpencodePartData represents the deserialized JSON payload from the part.data column.
+// Grounded in upstream OpenCode Part types (`types.gen.ts:384-405`).
 type OpencodePartData struct {
-	Type     string                  `json:"type"` // "text" | "tool" | "reasoning" | "step-start" | "step-finish" | "file" | "patch"
+	Type     string                  `json:"type"` // "text" | "tool" | "reasoning" | "step-start" | "step-finish" | "file" | "patch" | "retry"
 	Text     string                  `json:"text,omitempty"`
 	Tool     string                  `json:"tool,omitempty"`
 	CallID   string                  `json:"callID,omitempty"`
@@ -96,8 +97,8 @@ type OpencodePartData struct {
 	Snapshot map[string]interface{}  `json:"snapshot,omitempty"`
 	Metadata map[string]interface{}  `json:"metadata,omitempty"`
 	Time     *OpencodeToolPartTime   `json:"time,omitempty"`
+	Attempt  *int                    `json:"attempt,omitempty"`
 	Error    interface{}             `json:"error,omitempty"`
-	Message  string                  `json:"message,omitempty"`
 }
 
 // OpencodeSession represents a fully parsed OpenCode session.
@@ -589,7 +590,7 @@ func ReconstructSessionEvents(session *OpencodeSession, messages []OpencodeMessa
 				})
 			}
 
-		default:
+		case "assistant":
 			msgModel := msg.Data.ModelID
 			if msgModel == "" {
 				msgModel = session.Model
@@ -684,19 +685,7 @@ func ReconstructSessionEvents(session *OpencodeSession, messages []OpencodeMessa
 						}
 					}
 
-				case "error":
-					txt := p.Data.Text
-					if txt == "" {
-						txt = p.Data.Message
-					}
-					if txt == "" && p.Data.Error != nil {
-						txt = extractOpencodeError(p.Data.Error)
-					}
-					if txt != "" {
-						errorPartTexts = append(errorPartTexts, txt)
-					}
-
-				default:
+				case "retry":
 					if p.Data.Error != nil {
 						txt := extractOpencodeError(p.Data.Error)
 						if txt != "" {
