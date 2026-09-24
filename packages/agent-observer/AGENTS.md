@@ -14,6 +14,7 @@ Local observer daemon (`air-observer`) that scans harness sessions, tails transc
 - Scanner routines live in `internal/scanner/` and git workspace resolution in `internal/git/`.
 - Transcript activity timestamps are derived using `ExtractLastActiveTimestamp` (`internal/scanner/tail_timestamp.go`), which reads the tail of transcript files (up to 256KB) scanning backwards for valid JSON lines carrying recognizable timestamps, falling back to file modification time (`ModTime()`) when no timestamp is found.
 - File tailing commits persistent byte offsets via `internal/tailer/cursor.go` only after frame batches are acknowledged by `air-ingester` (cursor-committed delivery).
+- Cursor store prunes entries for deleted files and entries older than the retention window on daemon startup and periodically via background pruner.
 - Shipper implements bounded dispatch with tailer backpressure (`NewTailerWithOffsetHandler`) and sequence-keyed ACK callbacks; reads pause when disconnected or buffer is full.
 - Shipper resets exponential backoff only upon receiving an ACK from the ingester or after 5s of sustained error-free streaming, rather than immediately on the hello frame.
 - Structured logging uses `packages/agent-common/logging` with snake_case actions and dual-mode (`AGENT=1`) output.

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -100,8 +101,105 @@ func (cs *CursorStore) Set(c *Cursor) {
 	defer cs.mu.Unlock()
 
 	cCopy := *c
-	cCopy.UpdatedAt = time.Now().UnixMilli()
+	if cCopy.UpdatedAt == 0 {
+		cCopy.UpdatedAt = time.Now().UnixMilli()
+	}
 	cs.cursors[c.Key] = &cCopy
+}
+
+// Delete removes the cursor associated with key from the store.
+func (cs *CursorStore) Delete(key string) {
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	delete(cs.cursors, key)
+}
+
+func defaultFileExists(path string) bool {
+	if path == "" {
+		return false
+	}
+	_, err := os.Stat(path)
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return false
+	}
+	return true // keep entry on permission or transient I/O errors until age retention expires
+}
+
+// Prune removes cursor entries whose file on disk no longer exists or whose
+// UpdatedAt is older than olderThan (if olderThan > 0). It returns the number of
+// pruned entries.
+func (cs *CursorStore) Prune(olderThan time.Duration) int {
+	return cs.PruneWithFileExists(olderThan, defaultFileExists)
+}
+
+// PruneWithFileExists removes cursor entries using a custom fileExists predicate.
+// It checks age expiration and missing files without holding the store lock during
+// file system operations.
+func (cs *CursorStore) PruneWithFileExists(olderThan time.Duration, fileExists func(path string) bool) int {
+	var cutoff int64
+	checkAge := olderThan > 0
+	if checkAge {
+		cutoff = time.Now().Add(-olderThan).UnixMilli()
+	}
+
+	type pruneCandidate struct {
+		key       string
+		updatedAt int64
+	}
+	var candidates []pruneCandidate
+
+	cs.mu.RLock()
+	type entry struct {
+		key       string
+		path      string
+		updatedAt int64
+	}
+	entries := make([]entry, 0, len(cs.cursors))
+	for key, c := range cs.cursors {
+		if c == nil {
+			candidates = append(candidates, pruneCandidate{key: key})
+			continue
+		}
+		entries = append(entries, entry{key: key, path: c.Path, updatedAt: c.UpdatedAt})
+	}
+	cs.mu.RUnlock()
+
+	for _, e := range entries {
+		if checkAge && e.updatedAt < cutoff {
+			candidates = append(candidates, pruneCandidate{key: e.key, updatedAt: e.updatedAt})
+			continue
+		}
+		if fileExists != nil && !fileExists(e.path) {
+			candidates = append(candidates, pruneCandidate{key: e.key, updatedAt: e.updatedAt})
+		}
+	}
+
+	if len(candidates) == 0 {
+		return 0
+	}
+
+	cs.mu.Lock()
+	defer cs.mu.Unlock()
+	pruned := 0
+	for _, cand := range candidates {
+		c, ok := cs.cursors[cand.key]
+		if !ok {
+			continue
+		}
+		if c == nil {
+			delete(cs.cursors, cand.key)
+			pruned++
+			continue
+		}
+		if c.UpdatedAt == cand.updatedAt {
+			delete(cs.cursors, cand.key)
+			pruned++
+		}
+	}
+	return pruned
 }
 
 func (cs *CursorStore) Save() error {

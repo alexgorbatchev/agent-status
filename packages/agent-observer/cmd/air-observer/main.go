@@ -25,27 +25,31 @@ import (
 var version = "dev"
 
 type observerOptions struct {
-	ingesterURL       string
-	token             string
-	envFlag           string
-	scanInterval      time.Duration
-	cursorPath        string
-	sessionStatePath  string
-	claudeSessionsDir string
-	claudeProjectsDir string
-	piSessionsDir     string
-	codexSessionsDir  string
-	opencodeDBPath    string
-	logLevel          string
-	logDir            string
-	logFile           string
+	ingesterURL         string
+	token               string
+	envFlag             string
+	scanInterval        time.Duration
+	cursorPath          string
+	cursorRetention     time.Duration
+	cursorPruneInterval time.Duration
+	sessionStatePath    string
+	claudeSessionsDir   string
+	claudeProjectsDir   string
+	piSessionsDir       string
+	codexSessionsDir    string
+	opencodeDBPath      string
+	logLevel            string
+	logDir              string
+	logFile             string
 }
 
 func newRootCmd() (*cobra.Command, *observerOptions) {
 	opts := &observerOptions{
-		ingesterURL:  "ws://127.0.0.1:4501/ws/ingest",
-		scanInterval: 2 * time.Second,
-		logLevel:     "info",
+		ingesterURL:         "ws://127.0.0.1:4501/ws/ingest",
+		scanInterval:        2 * time.Second,
+		cursorRetention:     24 * time.Hour,
+		cursorPruneInterval: 1 * time.Hour,
+		logLevel:            "info",
 	}
 
 	if envURL := os.Getenv("AGENT_INGESTER_URL"); envURL != "" {
@@ -56,6 +60,16 @@ func newRootCmd() (*cobra.Command, *observerOptions) {
 	}
 	if envState := os.Getenv("AIR_SESSION_STATE_PATH"); envState != "" {
 		opts.sessionStatePath = envState
+	}
+	if envRet := os.Getenv("AIR_CURSOR_RETENTION"); envRet != "" {
+		if d, err := time.ParseDuration(envRet); err == nil {
+			opts.cursorRetention = d
+		}
+	}
+	if envPrune := os.Getenv("AIR_CURSOR_PRUNE_INTERVAL"); envPrune != "" {
+		if d, err := time.ParseDuration(envPrune); err == nil {
+			opts.cursorPruneInterval = d
+		}
 	}
 
 	rootCmd := &cobra.Command{
@@ -75,6 +89,8 @@ func newRootCmd() (*cobra.Command, *observerOptions) {
 	flags.StringVar(&opts.envFlag, "env", "", "Environment label override")
 	flags.DurationVar(&opts.scanInterval, "scan-interval", opts.scanInterval, "Interval between session scans (default 2s)")
 	flags.StringVar(&opts.cursorPath, "cursor-path", "", "Custom path for persistent cursor file")
+	flags.DurationVar(&opts.cursorRetention, "cursor-retention", opts.cursorRetention, "Retention duration for inactive cursor entries (default 24h)")
+	flags.DurationVar(&opts.cursorPruneInterval, "cursor-prune-interval", opts.cursorPruneInterval, "Interval between periodic cursor pruning sweeps (default 1h)")
 	flags.StringVar(&opts.sessionStatePath, "session-state-path", "", "Custom path for persistent session state tracking file")
 	flags.StringVar(&opts.claudeSessionsDir, "claude-sessions-dir", "", "Custom directory for Claude Code sessions")
 	flags.StringVar(&opts.claudeProjectsDir, "claude-projects-dir", "", "Custom directory for Claude Code projects/transcripts")
@@ -172,6 +188,20 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 			logging.Warn("cursor_store_save_error", "err", err)
 		}
 	}()
+
+	cursorRetention := opts.cursorRetention
+	if cursorRetention <= 0 {
+		cursorRetention = 24 * time.Hour
+	}
+
+	// Prune stale or deleted cursors on startup
+	runCursorPruneSweep(cursorStore, cursorRetention)
+
+	cursorPruneInterval := opts.cursorPruneInterval
+	if cursorPruneInterval <= 0 {
+		cursorPruneInterval = 1 * time.Hour
+	}
+	go startPeriodicCursorPruner(ctx, cursorStore, cursorRetention, cursorPruneInterval)
 
 	ship := shipper.NewShipper(shipper.Config{
 		IngesterURL: opts.ingesterURL,
@@ -895,3 +925,33 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 		}
 	}
 }
+
+type cursorPruner interface {
+	Prune(olderThan time.Duration) int
+	Save() error
+}
+
+func runCursorPruneSweep(cs cursorPruner, retention time.Duration) int {
+	pruned := cs.Prune(retention)
+	if pruned > 0 {
+		logging.Info("cursor_store_pruned", "pruned", pruned)
+		if err := cs.Save(); err != nil {
+			logging.Warn("cursor_store_save_error", "err", err)
+		}
+	}
+	return pruned
+}
+
+func startPeriodicCursorPruner(ctx context.Context, cs cursorPruner, retention time.Duration, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			runCursorPruneSweep(cs, retention)
+		}
+	}
+}
+

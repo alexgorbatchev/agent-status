@@ -92,19 +92,21 @@ Sample Output:
 
 ### `air-observer`
 
-| Flag                           | Short  | Default                                    | Description                                          |
-| :----------------------------- | :----- | :----------------------------------------- | :--------------------------------------------------- |
-| `--ingester-url <url>`         | (none) | `ws://127.0.0.1:4501/ws/ingest`            | Ingester WebSocket endpoint URL                      |
-| `--token <token>`              | (none) | `""`                                       | Bearer token for ingester authentication             |
-| `--env <label>`                | (none) | `""`                                       | Environment label override                           |
-| `--scan-interval <duration>`   | (none) | `2s`                                       | Interval between harness session scans               |
-| `--cursor-path <path>`         | (none) | `~/.cache/ai-registry/tailer-cursors.json` | Path to persistent tailer cursor file                |
-| `--claude-sessions-dir <path>` | (none) | `~/.claude/sessions`                       | Custom directory for Claude Code session metadata    |
-| `--claude-projects-dir <path>` | (none) | `~/.claude/projects`                       | Custom directory for Claude Code project transcripts |
-| `--pi-sessions-dir <path>`     | (none) | `~/.pi/agent/sessions`                     | Custom directory for Pi session logs                 |
-| `--log-level <level>`          | (none) | `info`                                     | Log level (`debug`, `info`, `warn`, `error`)         |
-| `--version`                    | `-V`   | `false`                                    | Print version information and exit                   |
-| `--help`                       | `-h`   | `false`                                    | Print command line help                              |
+| Flag                                 | Short  | Default                                    | Description                                          |
+| :----------------------------------- | :----- | :----------------------------------------- | :--------------------------------------------------- |
+| `--ingester-url <url>`               | (none) | `ws://127.0.0.1:4501/ws/ingest`            | Ingester WebSocket endpoint URL                      |
+| `--token <token>`                    | (none) | `""`                                       | Bearer token for ingester authentication             |
+| `--env <label>`                      | (none) | `""`                                       | Environment label override                           |
+| `--scan-interval <duration>`         | (none) | `2s`                                       | Interval between harness session scans               |
+| `--cursor-path <path>`               | (none) | `~/.cache/ai-registry/tailer-cursors.json` | Path to persistent tailer cursor file                |
+| `--cursor-retention <duration>`      | (none) | `24h`                                      | Retention duration for inactive cursor entries       |
+| `--cursor-prune-interval <duration>` | (none) | `1h`                                       | Interval between periodic cursor pruning sweeps      |
+| `--claude-sessions-dir <path>`       | (none) | `~/.claude/sessions`                       | Custom directory for Claude Code session metadata    |
+| `--claude-projects-dir <path>`       | (none) | `~/.claude/projects`                       | Custom directory for Claude Code project transcripts |
+| `--pi-sessions-dir <path>`           | (none) | `~/.pi/agent/sessions`                     | Custom directory for Pi session logs                 |
+| `--log-level <level>`                | (none) | `info`                                     | Log level (`debug`, `info`, `warn`, `error`)         |
+| `--version`                          | `-V`   | `false`                                    | Print version information and exit                   |
+| `--help`                             | `-h`   | `false`                                    | Print command line help                              |
 
 ### `air-ingester`
 

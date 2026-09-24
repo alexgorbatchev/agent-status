@@ -75,6 +75,8 @@ func TestObserverCommandHelp(t *testing.T) {
 		"--env",
 		"--scan-interval",
 		"--cursor-path",
+		"--cursor-retention",
+		"--cursor-prune-interval",
 		"--claude-sessions-dir",
 		"--claude-projects-dir",
 		"--pi-sessions-dir",
@@ -119,6 +121,12 @@ func TestObserverCommandFlagDefaults(t *testing.T) {
 	if opts.scanInterval != 2*time.Second {
 		t.Errorf("default scanInterval = %v, want 2s", opts.scanInterval)
 	}
+	if opts.cursorRetention != 24*time.Hour {
+		t.Errorf("default cursorRetention = %v, want 24h", opts.cursorRetention)
+	}
+	if opts.cursorPruneInterval != 1*time.Hour {
+		t.Errorf("default cursorPruneInterval = %v, want 1h", opts.cursorPruneInterval)
+	}
 	if opts.logLevel != "info" {
 		t.Errorf("default logLevel = %q, want info", opts.logLevel)
 	}
@@ -135,6 +143,8 @@ func TestObserverCommandFlagParsing(t *testing.T) {
 		"--env", "staging-box",
 		"--scan-interval", "5s",
 		"--cursor-path", "/tmp/cursors.json",
+		"--cursor-retention", "48h",
+		"--cursor-prune-interval", "30m",
 		"--claude-sessions-dir", "/tmp/claude/sessions",
 		"--claude-projects-dir", "/tmp/claude/projects",
 		"--pi-sessions-dir", "/tmp/pi/sessions",
@@ -163,6 +173,12 @@ func TestObserverCommandFlagParsing(t *testing.T) {
 	}
 	if opts.cursorPath != "/tmp/cursors.json" {
 		t.Errorf("cursorPath = %q, want /tmp/cursors.json", opts.cursorPath)
+	}
+	if opts.cursorRetention != 48*time.Hour {
+		t.Errorf("cursorRetention = %v, want 48h", opts.cursorRetention)
+	}
+	if opts.cursorPruneInterval != 30*time.Minute {
+		t.Errorf("cursorPruneInterval = %v, want 30m", opts.cursorPruneInterval)
 	}
 	if opts.claudeSessionsDir != "/tmp/claude/sessions" {
 		t.Errorf("claudeSessionsDir = %q, want /tmp/claude/sessions", opts.claudeSessionsDir)
@@ -193,6 +209,8 @@ func TestObserverCommandFlagParsing(t *testing.T) {
 func TestObserverCommandEnvFallbacks(t *testing.T) {
 	t.Setenv("AGENT_INGESTER_URL", "ws://env-ingester:8080/ws/ingest")
 	t.Setenv("AGENT_STATUS_TOKEN", "env-token-xyz")
+	t.Setenv("AIR_CURSOR_RETENTION", "72h")
+	t.Setenv("AIR_CURSOR_PRUNE_INTERVAL", "2h")
 
 	_, opts := newRootCmd()
 
@@ -201,6 +219,12 @@ func TestObserverCommandEnvFallbacks(t *testing.T) {
 	}
 	if opts.token != "env-token-xyz" {
 		t.Errorf("token from env = %q, want env-token-xyz", opts.token)
+	}
+	if opts.cursorRetention != 72*time.Hour {
+		t.Errorf("cursorRetention from env = %v, want 72h", opts.cursorRetention)
+	}
+	if opts.cursorPruneInterval != 2*time.Hour {
+		t.Errorf("cursorPruneInterval from env = %v, want 2h", opts.cursorPruneInterval)
 	}
 }
 
@@ -1414,6 +1438,181 @@ func TestAttachTailer(t *testing.T) {
 		}
 	}
 }
+
+func TestObserverStartupPrunesCursors(t *testing.T) {
+	t.Setenv("AGENT_STATUS_TEST_MOCK_PROC", "1")
+
+	tmpDir := t.TempDir()
+	cursorPath := filepath.Join(tmpDir, "cursors.json")
+
+	// Create an existing file
+	validFile := filepath.Join(tmpDir, "active.jsonl")
+	if err := os.WriteFile(validFile, []byte("line1\n"), 0644); err != nil {
+		t.Fatalf("writing validFile: %v", err)
+	}
+
+	// Create pre-existing cursors in cursorPath
+	now := time.Now().UnixMilli()
+	initialCursors := map[string]*tailer.Cursor{
+		"valid": {
+			Key:       "valid",
+			Path:      validFile,
+			Offset:    6,
+			UpdatedAt: now,
+		},
+		"missing": {
+			Key:       "missing",
+			Path:      filepath.Join(tmpDir, "deleted.jsonl"),
+			Offset:    100,
+			UpdatedAt: now,
+		},
+		"stale": {
+			Key:       "stale",
+			Path:      validFile,
+			Offset:    2,
+			UpdatedAt: now - (48 * 3600 * 1000), // 48h ago
+		},
+	}
+	cursorBytes, err := json.Marshal(initialCursors)
+	if err != nil {
+		t.Fatalf("marshaling initial cursors: %v", err)
+	}
+	if err := os.WriteFile(cursorPath, cursorBytes, 0644); err != nil {
+		t.Fatalf("writing cursors.json: %v", err)
+	}
+
+	mockIngester := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		_ = conn.Close(websocket.StatusNormalClosure, "done")
+	}))
+	defer mockIngester.Close()
+
+	opts := observerOptions{
+		ingesterURL:         "ws" + strings.TrimPrefix(mockIngester.URL, "http") + "/ws/ingest",
+		cursorPath:          cursorPath,
+		cursorRetention:     24 * time.Hour,
+		cursorPruneInterval: 1 * time.Hour,
+		scanInterval:        100 * time.Millisecond,
+		envFlag:             "test-env",
+		claudeSessionsDir:   filepath.Join(tmpDir, "claude-sessions"),
+		claudeProjectsDir:   filepath.Join(tmpDir, "claude-projects"),
+		piSessionsDir:       filepath.Join(tmpDir, "pi-sessions"),
+		codexSessionsDir:    filepath.Join(tmpDir, "codex-sessions"),
+		opencodeDBPath:      filepath.Join(tmpDir, "opencode.db"),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runObserverContext(ctx, opts)
+	}()
+
+	// Wait briefly for startup scan and pruning to run
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+
+	if err := <-errCh; err != nil {
+		t.Fatalf("runObserverContext error: %v", err)
+	}
+
+	// Read cursors.json on disk: missing and stale should be pruned, valid kept
+	savedBytes, err := os.ReadFile(cursorPath)
+	if err != nil {
+		t.Fatalf("reading saved cursors: %v", err)
+	}
+	var saved map[string]*tailer.Cursor
+	if err := json.Unmarshal(savedBytes, &saved); err != nil {
+		t.Fatalf("unmarshaling saved cursors: %v", err)
+	}
+
+	if _, ok := saved["valid"]; !ok {
+		t.Errorf("expected valid cursor to be retained")
+	}
+	if _, ok := saved["missing"]; ok {
+		t.Errorf("expected missing cursor to be pruned on startup")
+	}
+	if _, ok := saved["stale"]; ok {
+		t.Errorf("expected stale cursor to be pruned on startup")
+	}
+}
+
+type mockCursorPruner struct {
+	mu     sync.Mutex
+	calls  int
+	pruned int
+	saved  int
+}
+
+func (m *mockCursorPruner) Prune(olderThan time.Duration) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls++
+	return m.pruned
+}
+
+func (m *mockCursorPruner) Save() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.saved++
+	return nil
+}
+
+func TestObserverPeriodicCursorPruning(t *testing.T) {
+	mp := &mockCursorPruner{pruned: 2}
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+	go func() {
+		startPeriodicCursorPruner(ctx, mp, 24*time.Hour, 10*time.Millisecond)
+		close(done)
+	}()
+
+	time.Sleep(45 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(1 * time.Second):
+		t.Fatal("startPeriodicCursorPruner did not exit after context cancellation")
+	}
+
+	mp.mu.Lock()
+	defer mp.mu.Unlock()
+	if mp.calls == 0 {
+		t.Errorf("expected periodic pruner to call Prune, got 0 calls")
+	}
+	if mp.saved == 0 {
+		t.Errorf("expected periodic pruner to call Save when pruned > 0, got 0 calls")
+	}
+}
+
+func TestRunCursorPruneSweep(t *testing.T) {
+	t.Run("prunes and saves when entries removed", func(t *testing.T) {
+		mp := &mockCursorPruner{pruned: 3}
+		count := runCursorPruneSweep(mp, 24*time.Hour)
+		if count != 3 {
+			t.Errorf("runCursorPruneSweep = %d, want 3", count)
+		}
+		if mp.saved != 1 {
+			t.Errorf("expected Save to be called once, got %d", mp.saved)
+		}
+	})
+
+	t.Run("does not save when zero entries removed", func(t *testing.T) {
+		mp := &mockCursorPruner{pruned: 0}
+		count := runCursorPruneSweep(mp, 24*time.Hour)
+		if count != 0 {
+			t.Errorf("runCursorPruneSweep = %d, want 0", count)
+		}
+		if mp.saved != 0 {
+			t.Errorf("expected Save not to be called, got %d", mp.saved)
+		}
+	})
+}
+
 
 
 

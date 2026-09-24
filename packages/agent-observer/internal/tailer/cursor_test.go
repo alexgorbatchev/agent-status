@@ -2,6 +2,7 @@ package tailer
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -344,4 +345,540 @@ func TestCursorStoreConcurrentSave(t *testing.T) {
 		}
 	}
 }
+
+func TestCursorStoreDelete(t *testing.T) {
+	tmpDir := t.TempDir()
+	cursorPath := filepath.Join(tmpDir, "observer-cursors.json")
+	store, err := NewCursorStore(cursorPath)
+	if err != nil {
+		t.Fatalf("NewCursorStore error: %v", err)
+	}
+
+	c := &Cursor{
+		Key:       "dev:123",
+		Path:      filepath.Join(tmpDir, "session.jsonl"),
+		Offset:    100,
+		UpdatedAt: time.Now().UnixMilli(),
+	}
+	store.Set(c)
+
+	if _, ok := store.Get("dev:123"); !ok {
+		t.Fatalf("expected cursor to exist before delete")
+	}
+
+	store.Delete("dev:123")
+
+	if _, ok := store.Get("dev:123"); ok {
+		t.Errorf("expected cursor to be deleted")
+	}
+
+	// Deleting a nonexistent key should not panic
+	store.Delete("nonexistent-key")
+}
+
+func TestCursorStorePruneMissingPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	cursorPath := filepath.Join(tmpDir, "observer-cursors.json")
+	store, err := NewCursorStore(cursorPath)
+	if err != nil {
+		t.Fatalf("NewCursorStore error: %v", err)
+	}
+
+	realFile := filepath.Join(tmpDir, "exists.jsonl")
+	if err := os.WriteFile(realFile, []byte("content\n"), 0600); err != nil {
+		t.Fatalf("writing realFile: %v", err)
+	}
+
+	missingFile := filepath.Join(tmpDir, "does-not-exist.jsonl")
+
+	now := time.Now().UnixMilli()
+	store.Set(&Cursor{
+		Key:       "key-real",
+		Path:      realFile,
+		Offset:    8,
+		UpdatedAt: now,
+	})
+	store.Set(&Cursor{
+		Key:       "key-missing",
+		Path:      missingFile,
+		Offset:    100,
+		UpdatedAt: now,
+	})
+	store.Set(&Cursor{
+		Key:       "key-empty-path",
+		Path:      "",
+		Offset:    50,
+		UpdatedAt: now,
+	})
+
+	pruned := store.Prune(24 * time.Hour)
+	if pruned != 2 {
+		t.Errorf("Prune() = %d, want 2", pruned)
+	}
+
+	if _, ok := store.Get("key-real"); !ok {
+		t.Errorf("expected key-real to be kept")
+	}
+	if _, ok := store.Get("key-missing"); ok {
+		t.Errorf("expected key-missing to be pruned")
+	}
+	if _, ok := store.Get("key-empty-path"); ok {
+		t.Errorf("expected key-empty-path to be pruned")
+	}
+}
+
+func TestCursorStorePruneByAge(t *testing.T) {
+	tmpDir := t.TempDir()
+	cursorPath := filepath.Join(tmpDir, "observer-cursors.json")
+	store, err := NewCursorStore(cursorPath)
+	if err != nil {
+		t.Fatalf("NewCursorStore error: %v", err)
+	}
+
+	fileOld := filepath.Join(tmpDir, "old.jsonl")
+	if err := os.WriteFile(fileOld, []byte("old content\n"), 0600); err != nil {
+		t.Fatalf("writing fileOld: %v", err)
+	}
+	fileNew := filepath.Join(tmpDir, "new.jsonl")
+	if err := os.WriteFile(fileNew, []byte("new content\n"), 0600); err != nil {
+		t.Fatalf("writing fileNew: %v", err)
+	}
+
+	store.Set(&Cursor{
+		Key:       "key-old",
+		Path:      fileOld,
+		Offset:    10,
+		UpdatedAt: time.Now().Add(-48 * time.Hour).UnixMilli(),
+	})
+	store.Set(&Cursor{
+		Key:       "key-new",
+		Path:      fileNew,
+		Offset:    20,
+		UpdatedAt: time.Now().UnixMilli(),
+	})
+
+	pruned := store.Prune(24 * time.Hour)
+	if pruned != 1 {
+		t.Errorf("Prune() = %d, want 1", pruned)
+	}
+
+	if _, ok := store.Get("key-old"); ok {
+		t.Errorf("expected key-old to be pruned by age")
+	}
+	if _, ok := store.Get("key-new"); !ok {
+		t.Errorf("expected key-new to be kept")
+	}
+}
+
+func TestCursorStorePruneReappearingFileStartsAtOffsetZero(t *testing.T) {
+	tmpDir := t.TempDir()
+	cursorPath := filepath.Join(tmpDir, "observer-cursors.json")
+	store, err := NewCursorStore(cursorPath)
+	if err != nil {
+		t.Fatalf("NewCursorStore error: %v", err)
+	}
+
+	filePath := filepath.Join(tmpDir, "session.jsonl")
+	if err := os.WriteFile(filePath, []byte("line1\nline2\n"), 0600); err != nil {
+		t.Fatalf("writing file: %v", err)
+	}
+
+	var mu sync.Mutex
+	var received []string
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	tail, err := NewTailer(filePath, store, func(line []byte) error {
+		mu.Lock()
+		defer mu.Unlock()
+		received = append(received, string(line))
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("NewTailer error: %v", err)
+	}
+
+	go func() {
+		_ = tail.Start(ctx)
+	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		count := len(received)
+		mu.Unlock()
+		if count >= 2 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	tail.Stop()
+
+	// Verify offset is committed
+	fi, err := os.Stat(filePath)
+	if err != nil {
+		t.Fatalf("stat filePath: %v", err)
+	}
+	dev, ino, err := getFileInfoStat(fi)
+	if err != nil {
+		t.Fatalf("getFileInfoStat error: %v", err)
+	}
+	key := fmt.Sprintf("%d:%d", dev, ino)
+
+	c, ok := store.Get(key)
+	if !ok {
+		t.Fatalf("cursor not found in store for %q", key)
+	}
+	if c.Offset != fi.Size() {
+		t.Fatalf("expected cursor offset %d, got %d", fi.Size(), c.Offset)
+	}
+
+	// Delete file
+	if err := os.Remove(filePath); err != nil {
+		t.Fatalf("failed to remove filePath: %v", err)
+	}
+
+	// Prune missing file
+	pruned := store.Prune(24 * time.Hour)
+	if pruned != 1 {
+		t.Fatalf("expected 1 pruned cursor, got %d", pruned)
+	}
+	if _, ok := store.Get(key); ok {
+		t.Fatalf("expected cursor to be pruned from store")
+	}
+
+	// Recreate file with new content
+	newContent := []byte("new-start-line1\nnew-start-line2\nnew-start-line3\n")
+	if err := os.WriteFile(filePath, newContent, 0600); err != nil {
+		t.Fatalf("failed to recreate file: %v", err)
+	}
+
+	// Reappearing file tailed with same store: must start at offset 0
+	var receivedReappearing []string
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+
+	tail2, err := NewTailer(filePath, store, func(line []byte) error {
+		mu.Lock()
+		defer mu.Unlock()
+		receivedReappearing = append(receivedReappearing, string(line))
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("NewTailer2 error: %v", err)
+	}
+
+	go func() {
+		_ = tail2.Start(ctx2)
+	}()
+
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		count := len(receivedReappearing)
+		mu.Unlock()
+		if count >= 3 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	tail2.Stop()
+
+	mu.Lock()
+	linesRead := len(receivedReappearing)
+	mu.Unlock()
+
+	if linesRead != 3 {
+		t.Fatalf("expected 3 lines read from offset 0, got %d (%v)", linesRead, receivedReappearing)
+	}
+	if receivedReappearing[0] != "new-start-line1" {
+		t.Errorf("first line = %q, want %q", receivedReappearing[0], "new-start-line1")
+	}
+}
+
+func TestCursorStorePruneNoOp(t *testing.T) {
+	tmpDir := t.TempDir()
+	cursorPath := filepath.Join(tmpDir, "observer-cursors.json")
+	store, err := NewCursorStore(cursorPath)
+	if err != nil {
+		t.Fatalf("NewCursorStore error: %v", err)
+	}
+
+	// Empty store prune
+	if pruned := store.Prune(24 * time.Hour); pruned != 0 {
+		t.Errorf("Prune() on empty store = %d, want 0", pruned)
+	}
+
+	// Store with valid recent file
+	f := filepath.Join(tmpDir, "valid.jsonl")
+	if err := os.WriteFile(f, []byte("test\n"), 0600); err != nil {
+		t.Fatalf("writing valid: %v", err)
+	}
+	store.Set(&Cursor{
+		Key:       "valid",
+		Path:      f,
+		Offset:    5,
+		UpdatedAt: time.Now().UnixMilli(),
+	})
+	if pruned := store.Prune(24 * time.Hour); pruned != 0 {
+		t.Errorf("Prune() with all valid entries = %d, want 0", pruned)
+	}
+}
+
+func TestCursorStorePruneConcurrentUpdateSafety(t *testing.T) {
+	tmpDir := t.TempDir()
+	cursorPath := filepath.Join(tmpDir, "observer-cursors.json")
+	store, err := NewCursorStore(cursorPath)
+	if err != nil {
+		t.Fatalf("NewCursorStore error: %v", err)
+	}
+
+	initialTime := time.Now().UnixMilli() - 100000
+	// Entry 1: missing file candidate
+	store.Set(&Cursor{
+		Key:       "key-missing-file",
+		Path:      filepath.Join(tmpDir, "missing.jsonl"),
+		Offset:    10,
+		UpdatedAt: initialTime,
+	})
+	// Entry 2: stale age candidate
+	store.Set(&Cursor{
+		Key:       "key-stale-age",
+		Path:      filepath.Join(tmpDir, "exists.jsonl"),
+		Offset:    50,
+		UpdatedAt: time.Now().Add(-48 * time.Hour).UnixMilli(),
+	})
+
+	fileExistsCalled := 0
+	pruned := store.PruneWithFileExists(24*time.Hour, func(path string) bool {
+		fileExistsCalled++
+		// Verify lock is not held: TryRLock should succeed
+		if !store.mu.TryRLock() {
+			t.Errorf("expected store.mu not to be locked during fileExists")
+		} else {
+			store.mu.RUnlock()
+		}
+
+		// Concurrently update both candidates during fileExists
+		store.Set(&Cursor{
+			Key:       "key-missing-file",
+			Path:      path,
+			Offset:    20,
+			UpdatedAt: time.Now().UnixMilli(),
+		})
+		store.Set(&Cursor{
+			Key:       "key-stale-age",
+			Path:      filepath.Join(tmpDir, "exists.jsonl"),
+			Offset:    60,
+			UpdatedAt: time.Now().UnixMilli(),
+		})
+		// Return false indicating file doesn't exist
+		return false
+	})
+
+	if fileExistsCalled != 1 {
+		t.Errorf("fileExists was called %d times, want 1", fileExistsCalled)
+	}
+	if pruned != 0 {
+		t.Errorf("PruneWithFileExists() = %d, want 0 because both cursors were concurrently updated", pruned)
+	}
+
+	c1, ok := store.Get("key-missing-file")
+	if !ok {
+		t.Fatalf("expected key-missing-file to be retained after concurrent update")
+	}
+	if c1.Offset != 20 {
+		t.Errorf("c1 offset = %d, want 20", c1.Offset)
+	}
+
+	c2, ok := store.Get("key-stale-age")
+	if !ok {
+		t.Fatalf("expected key-stale-age to be retained after concurrent update")
+	}
+	if c2.Offset != 60 {
+		t.Errorf("c2 offset = %d, want 60", c2.Offset)
+	}
+}
+
+func TestDefaultFileExists(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Empty path
+	if defaultFileExists("") {
+		t.Errorf("defaultFileExists(\"\") = true, want false")
+	}
+
+	// Non-existent path
+	missingPath := filepath.Join(tmpDir, "missing.jsonl")
+	if defaultFileExists(missingPath) {
+		t.Errorf("defaultFileExists(missingPath) = true, want false")
+	}
+
+	// Existing file
+	realFile := filepath.Join(tmpDir, "real.jsonl")
+	if err := os.WriteFile(realFile, []byte("data"), 0600); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	if !defaultFileExists(realFile) {
+		t.Errorf("defaultFileExists(realFile) = false, want true")
+	}
+
+	// Permission error / inaccessible path: should return true to keep cursor until age retention expires
+	subDir := filepath.Join(tmpDir, "restricted")
+	if err := os.Mkdir(subDir, 0700); err != nil {
+		t.Fatalf("Mkdir failed: %v", err)
+	}
+	inaccessibleFile := filepath.Join(subDir, "restricted.jsonl")
+	if err := os.WriteFile(inaccessibleFile, []byte("secret"), 0600); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	// Remove search/read permissions on parent directory so os.Stat returns permission denied
+	if err := os.Chmod(subDir, 0000); err != nil {
+		t.Fatalf("Chmod failed: %v", err)
+	}
+	defer func() {
+		_ = os.Chmod(subDir, 0700)
+	}()
+
+	// Verify stat actually produces permission denied when run as non-root
+	if _, err := os.Stat(inaccessibleFile); err != nil && !os.IsNotExist(err) {
+		if !defaultFileExists(inaccessibleFile) {
+			t.Errorf("defaultFileExists(inaccessibleFile) = false, want true (transient/permission error)")
+		}
+	}
+}
+
+func TestCursorStorePruneKeepsEntryOnPermissionError(t *testing.T) {
+	tmpDir := t.TempDir()
+	cursorPath := filepath.Join(tmpDir, "observer-cursors.json")
+	store, err := NewCursorStore(cursorPath)
+	if err != nil {
+		t.Fatalf("NewCursorStore error: %v", err)
+	}
+
+	subDir := filepath.Join(tmpDir, "noperm")
+	if err := os.Mkdir(subDir, 0700); err != nil {
+		t.Fatalf("Mkdir failed: %v", err)
+	}
+	targetFile := filepath.Join(subDir, "target.jsonl")
+	if err := os.WriteFile(targetFile, []byte("content"), 0600); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	store.Set(&Cursor{
+		Key:       "key-inaccessible",
+		Path:      targetFile,
+		Offset:    7,
+		UpdatedAt: time.Now().UnixMilli(),
+	})
+
+	if err := os.Chmod(subDir, 0000); err != nil {
+		t.Fatalf("Chmod failed: %v", err)
+	}
+	defer func() {
+		_ = os.Chmod(subDir, 0700)
+	}()
+
+	if _, statErr := os.Stat(targetFile); statErr != nil && !os.IsNotExist(statErr) {
+		pruned := store.Prune(24 * time.Hour)
+		if pruned != 0 {
+			t.Errorf("Prune() = %d, want 0 (file with permission error must be kept)", pruned)
+		}
+		if _, ok := store.Get("key-inaccessible"); !ok {
+			t.Errorf("expected key-inaccessible to be retained on permission error")
+		}
+	}
+}
+
+func TestCursorStorePruneWithCorruptedNilCursor(t *testing.T) {
+	tmpDir := t.TempDir()
+	cursorPath := filepath.Join(tmpDir, "observer-cursors.json")
+	store, err := NewCursorStore(cursorPath)
+	if err != nil {
+		t.Fatalf("NewCursorStore error: %v", err)
+	}
+
+	validFile := filepath.Join(tmpDir, "valid.jsonl")
+	if err := os.WriteFile(validFile, []byte("line1\n"), 0600); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	store.Set(&Cursor{
+		Key:       "valid-key",
+		Path:      validFile,
+		Offset:    6,
+		UpdatedAt: time.Now().UnixMilli(),
+	})
+
+	// Inject corrupted nil cursor directly into map
+	store.mu.Lock()
+	store.cursors["corrupted-nil-key"] = nil
+	store.mu.Unlock()
+
+	// Prune must not panic and must prune the corrupted nil cursor
+	pruned := store.Prune(24 * time.Hour)
+	if pruned != 1 {
+		t.Errorf("Prune() = %d, want 1", pruned)
+	}
+
+	store.mu.RLock()
+	_, corruptedExists := store.cursors["corrupted-nil-key"]
+	store.mu.RUnlock()
+	if corruptedExists {
+		t.Errorf("expected corrupted-nil-key to be deleted from store.cursors")
+	}
+
+	if _, ok := store.Get("valid-key"); !ok {
+		t.Errorf("expected valid-key to be retained")
+	}
+}
+
+func TestCursorStorePruneCorruptedNilCursorFromJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	cursorPath := filepath.Join(tmpDir, "observer-cursors.json")
+	validFile := filepath.Join(tmpDir, "session.jsonl")
+	if err := os.WriteFile(validFile, []byte("data\n"), 0600); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	now := time.Now().UnixMilli()
+	jsonContent := fmt.Sprintf(`{
+  "corrupted-key": null,
+  "valid-key": {
+    "key": "valid-key",
+    "path": %q,
+    "offset": 5,
+    "updatedAt": %d
+  }
+}`, validFile, now)
+
+	if err := os.WriteFile(cursorPath, []byte(jsonContent), 0600); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	store, err := NewCursorStore(cursorPath)
+	if err != nil {
+		t.Fatalf("NewCursorStore error: %v", err)
+	}
+
+	pruned := store.Prune(24 * time.Hour)
+	if pruned != 1 {
+		t.Errorf("Prune() = %d, want 1", pruned)
+	}
+
+	store.mu.RLock()
+	_, exists := store.cursors["corrupted-key"]
+	store.mu.RUnlock()
+	if exists {
+		t.Errorf("expected corrupted-key to be pruned")
+	}
+
+	if _, ok := store.Get("valid-key"); !ok {
+		t.Errorf("expected valid-key to be retained")
+	}
+}
+
+
 
