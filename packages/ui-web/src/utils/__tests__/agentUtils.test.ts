@@ -12,6 +12,7 @@ import {
   getToolStallTier,
   formatDuration,
   isSessionStalled,
+  trimProjectTitlePrefix,
 } from "../agentUtils";
 import { factory_createAgent, fixture_testEnvironment, fixture_testStaleEnvironment } from "./fixtures";
 import type { IAgentState } from "../../types";
@@ -525,6 +526,93 @@ describe("agentUtils", () => {
       expect(isSessionStalled(0, now)).toBe(false);
       expect(isSessionStalled(-100, now)).toBe(false);
       expect(isSessionStalled(Number.NaN, now)).toBe(false);
+    });
+  });
+
+  describe("trimProjectTitlePrefix", () => {
+    it("strips colon separator prefix", () => {
+      expect(trimProjectTitlePrefix("agent-status: add test coverage", "agent-status")).toBe("add test coverage");
+      expect(trimProjectTitlePrefix("agent-status:add test coverage", "agent-status")).toBe("add test coverage");
+      expect(trimProjectTitlePrefix("agent-status : add test coverage", "agent-status")).toBe("add test coverage");
+    });
+
+    it("strips middle dot separator prefix", () => {
+      expect(trimProjectTitlePrefix("agent-status · fix issue 101", "agent-status")).toBe("fix issue 101");
+      expect(trimProjectTitlePrefix("agent-status·fix issue 101", "agent-status")).toBe("fix issue 101");
+    });
+
+    it("strips dash, en-dash, em-dash, and double-dash separators", () => {
+      expect(trimProjectTitlePrefix("agent-status - fix issue 101", "agent-status")).toBe("fix issue 101");
+      expect(trimProjectTitlePrefix("agent-status -- fix issue 101", "agent-status")).toBe("fix issue 101");
+      expect(trimProjectTitlePrefix("agent-status – fix issue 101", "agent-status")).toBe("fix issue 101");
+      expect(trimProjectTitlePrefix("agent-status — fix issue 101", "agent-status")).toBe("fix issue 101");
+    });
+
+    it("strips pipe separator prefix", () => {
+      expect(trimProjectTitlePrefix("agent-status | fix issue 101", "agent-status")).toBe("fix issue 101");
+      expect(trimProjectTitlePrefix("agent-status|fix issue 101", "agent-status")).toBe("fix issue 101");
+    });
+
+    it("strips bracketed project name prefix", () => {
+      expect(trimProjectTitlePrefix("[agent-status] implement oauth flow", "agent-status")).toBe(
+        "implement oauth flow",
+      );
+      expect(trimProjectTitlePrefix("[agent-status]: implement oauth flow", "agent-status")).toBe(
+        "implement oauth flow",
+      );
+      expect(trimProjectTitlePrefix("[agent-status] - implement oauth flow", "agent-status")).toBe(
+        "implement oauth flow",
+      );
+    });
+
+    it("is case-insensitive when matching project name", () => {
+      expect(trimProjectTitlePrefix("Agent-Status: Fix bug", "agent-status")).toBe("Fix bug");
+      expect(trimProjectTitlePrefix("[AGENT-STATUS] Fix bug", "agent-status")).toBe("Fix bug");
+      expect(trimProjectTitlePrefix("agent-status · Fix bug", "AGENT-STATUS")).toBe("Fix bug");
+    });
+
+    it("resolves repository basename from full project origin or path", () => {
+      expect(trimProjectTitlePrefix("agent-status: add test coverage", "github.com/alexgorbatchev/agent-status")).toBe(
+        "add test coverage",
+      );
+      expect(
+        trimProjectTitlePrefix("agent-status: add test coverage", "https://github.com/alexgorbatchev/agent-status.git"),
+      ).toBe("add test coverage");
+      expect(trimProjectTitlePrefix("agent-status · fix bug", "/home/alex/repos/agent-status")).toBe("fix bug");
+    });
+
+    it("preserves tail content when tail repeats project name", () => {
+      expect(trimProjectTitlePrefix("agent-status: agent-status", "agent-status")).toBe("agent-status");
+      expect(trimProjectTitlePrefix("[agent-status] [agent-status]", "agent-status")).toBe("[agent-status]");
+    });
+
+    it("preserves title when no substantive content remains", () => {
+      expect(trimProjectTitlePrefix("agent-status", "agent-status")).toBe("agent-status");
+      expect(trimProjectTitlePrefix("agent-status: ", "agent-status")).toBe("agent-status: ");
+      expect(trimProjectTitlePrefix("[agent-status]", "agent-status")).toBe("[agent-status]");
+      expect(trimProjectTitlePrefix("agent-status: - ", "agent-status")).toBe("agent-status: - ");
+    });
+
+    it("leaves unmatched project names untouched", () => {
+      expect(trimProjectTitlePrefix("billing · trace duplicate charges", "agent-status")).toBe(
+        "billing · trace duplicate charges",
+      );
+      expect(trimProjectTitlePrefix("[billing] trace duplicate charges", "agent-status")).toBe(
+        "[billing] trace duplicate charges",
+      );
+    });
+
+    it("does not strip when project name is merely a word prefix", () => {
+      expect(trimProjectTitlePrefix("agent-status-service: add tests", "agent-status")).toBe(
+        "agent-status-service: add tests",
+      );
+      expect(trimProjectTitlePrefix("agent: add tests", "agent-status")).toBe("agent: add tests");
+    });
+
+    it("handles empty or missing inputs gracefully", () => {
+      expect(trimProjectTitlePrefix("", "agent-status")).toBe("");
+      expect(trimProjectTitlePrefix("my title", "")).toBe("my title");
+      expect(trimProjectTitlePrefix("my title", undefined)).toBe("my title");
     });
   });
 });

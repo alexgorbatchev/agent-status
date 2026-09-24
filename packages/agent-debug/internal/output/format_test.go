@@ -566,4 +566,222 @@ func TestTruncateLeftVisual_EdgeCases(t *testing.T) {
 	}
 }
 
+func TestTrimProjectPrefix(t *testing.T) {
+	tests := []struct {
+		name        string
+		title       string
+		projectName string
+		want        string
+	}{
+		{
+			name:        "colon separator",
+			title:       "agent-status: add test coverage",
+			projectName: "agent-status",
+			want:        "add test coverage",
+		},
+		{
+			name:        "colon separator without space",
+			title:       "agent-status:add test coverage",
+			projectName: "agent-status",
+			want:        "add test coverage",
+		},
+		{
+			name:        "colon separator with leading space",
+			title:       "agent-status : add test coverage",
+			projectName: "agent-status",
+			want:        "add test coverage",
+		},
+		{
+			name:        "middle dot separator",
+			title:       "agent-status · fix issue 101",
+			projectName: "agent-status",
+			want:        "fix issue 101",
+		},
+		{
+			name:        "middle dot separator without spaces",
+			title:       "agent-status·fix issue 101",
+			projectName: "agent-status",
+			want:        "fix issue 101",
+		},
+		{
+			name:        "dash separator",
+			title:       "agent-status - fix issue 101",
+			projectName: "agent-status",
+			want:        "fix issue 101",
+		},
+		{
+			name:        "double-dash separator",
+			title:       "agent-status -- fix issue 101",
+			projectName: "agent-status",
+			want:        "fix issue 101",
+		},
+		{
+			name:        "en-dash separator",
+			title:       "agent-status – fix issue 101",
+			projectName: "agent-status",
+			want:        "fix issue 101",
+		},
+		{
+			name:        "em-dash separator",
+			title:       "agent-status — fix issue 101",
+			projectName: "agent-status",
+			want:        "fix issue 101",
+		},
+		{
+			name:        "pipe separator",
+			title:       "agent-status | fix issue 101",
+			projectName: "agent-status",
+			want:        "fix issue 101",
+		},
+		{
+			name:        "pipe separator without space",
+			title:       "agent-status|fix issue 101",
+			projectName: "agent-status",
+			want:        "fix issue 101",
+		},
+		{
+			name:        "bracketed prefix",
+			title:       "[agent-status] implement oauth flow",
+			projectName: "agent-status",
+			want:        "implement oauth flow",
+		},
+		{
+			name:        "bracketed prefix with colon",
+			title:       "[agent-status]: implement oauth flow",
+			projectName: "agent-status",
+			want:        "implement oauth flow",
+		},
+		{
+			name:        "bracketed prefix with dash",
+			title:       "[agent-status] - implement oauth flow",
+			projectName: "agent-status",
+			want:        "implement oauth flow",
+		},
+		{
+			name:        "case-insensitive match title upper",
+			title:       "AGENT-STATUS: Fix bug",
+			projectName: "agent-status",
+			want:        "Fix bug",
+		},
+		{
+			name:        "case-insensitive match title mixed",
+			title:       "Agent-Status: Fix bug",
+			projectName: "agent-status",
+			want:        "Fix bug",
+		},
+		{
+			name:        "case-insensitive match project upper",
+			title:       "agent-status · Fix bug",
+			projectName: "AGENT-STATUS",
+			want:        "Fix bug",
+		},
+		{
+			name:        "case-insensitive bracketed",
+			title:       "[AGENT-STATUS] Fix bug",
+			projectName: "agent-status",
+			want:        "Fix bug",
+		},
+		{
+			name:        "repo basename from github url",
+			title:       "agent-status: add test coverage",
+			projectName: "github.com/alexgorbatchev/agent-status",
+			want:        "add test coverage",
+		},
+		{
+			name:        "repo basename from git clone url",
+			title:       "agent-status: add test coverage",
+			projectName: "https://github.com/alexgorbatchev/agent-status.git",
+			want:        "add test coverage",
+		},
+		{
+			name:        "repo basename from local directory path",
+			title:       "agent-status · fix bug",
+			projectName: "/home/alex/repos/agent-status",
+			want:        "fix bug",
+		},
+		{
+			name:        "preserves tail when tail equals project name",
+			title:       "agent-status: agent-status",
+			projectName: "agent-status",
+			want:        "agent-status",
+		},
+		{
+			name:        "preserves bracketed tail when tail equals project name",
+			title:       "[agent-status] [agent-status]",
+			projectName: "agent-status",
+			want:        "[agent-status]",
+		},
+		{
+			name:        "preserves title when title equals project name without separator",
+			title:       "agent-status",
+			projectName: "agent-status",
+			want:        "agent-status",
+		},
+		{
+			name:        "preserves title when only separator remains",
+			title:       "agent-status: ",
+			projectName: "agent-status",
+			want:        "agent-status: ",
+		},
+		{
+			name:        "preserves title when only bracketed name",
+			title:       "[agent-status]",
+			projectName: "agent-status",
+			want:        "[agent-status]",
+		},
+		{
+			name:        "preserves title when only punctuation follows separator",
+			title:       "agent-status: - ",
+			projectName: "agent-status",
+			want:        "agent-status: - ",
+		},
+		{
+			name:        "unmatched project untouched",
+			title:       "billing · trace duplicate charges",
+			projectName: "agent-status",
+			want:        "billing · trace duplicate charges",
+		},
+		{
+			name:        "unmatched bracketed project untouched",
+			title:       "[billing] trace duplicate charges",
+			projectName: "agent-status",
+			want:        "[billing] trace duplicate charges",
+		},
+		{
+			name:        "word prefix not stripped",
+			title:       "agent-status-service: add tests",
+			projectName: "agent-status",
+			want:        "agent-status-service: add tests",
+		},
+		{
+			name:        "partial word not stripped",
+			title:       "agent: add tests",
+			projectName: "agent-status",
+			want:        "agent: add tests",
+		},
+		{
+			name:        "empty title",
+			title:       "",
+			projectName: "agent-status",
+			want:        "",
+		},
+		{
+			name:        "empty project name",
+			title:       "agent-status: add tests",
+			projectName: "",
+			want:        "agent-status: add tests",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := TrimProjectPrefix(tt.title, tt.projectName)
+			if got != tt.want {
+				t.Fatalf("TrimProjectPrefix(%q, %q) = %q, want %q", tt.title, tt.projectName, got, tt.want)
+			}
+		})
+	}
+}
+
+
 

@@ -5,8 +5,10 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/mattn/go-runewidth"
@@ -38,6 +40,87 @@ func stripANSI(s string) string {
 func StripANSI(s string) string {
 	return stripANSI(s)
 }
+
+func extractProjectCandidates(projectName string) []string {
+	trimmed := strings.TrimSpace(projectName)
+	if trimmed == "" {
+		return nil
+	}
+	candidates := []string{trimmed}
+
+	normalized := strings.TrimRight(trimmed, "/\\")
+	lastSlash := strings.LastIndexAny(normalized, "/\\")
+	var basename string
+	if lastSlash != -1 {
+		basename = normalized[lastSlash+1:]
+	} else {
+		basename = normalized
+	}
+	if strings.HasSuffix(strings.ToLower(basename), ".git") {
+		basename = basename[:len(basename)-4]
+	}
+	if basename != "" && basename != trimmed {
+		candidates = append(candidates, basename)
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		return len(candidates[i]) > len(candidates[j])
+	})
+	return candidates
+}
+
+// TrimProjectPrefix removes redundant project name prefixes from session titles
+// when displayed under a project header or within a project context.
+func TrimProjectPrefix(title, projectName string) string {
+	trimmedTitle := strings.TrimSpace(title)
+	if trimmedTitle == "" {
+		return title
+	}
+	candidates := extractProjectCandidates(projectName)
+	if len(candidates) == 0 {
+		return title
+	}
+
+	for _, candidate := range candidates {
+		escaped := regexp.QuoteMeta(candidate)
+
+		// Pattern 1: Bracketed project prefix e.g. "[agent-status]" or "[agent-status]:"
+		bracketedPattern := `(?i)^\s*\[\s*` + escaped + `\s*\]\s*(?:[:·|–—]|-+)?\s*`
+		if re, err := regexp.Compile(bracketedPattern); err == nil {
+			loc := re.FindStringIndex(title)
+			if loc != nil && loc[0] == 0 {
+				remainder := strings.TrimSpace(title[loc[1]:])
+				substantive := strings.TrimFunc(remainder, func(r rune) bool {
+					return r == ':' || r == '·' || r == '|' || r == '-' || r == '–' || r == '—' || r == ']' || unicode.IsSpace(r)
+				})
+				if len(substantive) > 0 {
+					return remainder
+				}
+				return title
+			}
+		}
+
+		// Pattern 2: Non-bracketed project prefix followed by separator
+		// Separators: ':', '·', '|', ']', or '-' (with whitespace boundary to avoid matching kebab-case words)
+		nonBracketedPattern := `(?i)^\s*` + escaped + `(?:\s*[:·|–—\]]\s*|\s+[-–—]+\s*|\s*[-–—]+\s+)`
+		if re, err := regexp.Compile(nonBracketedPattern); err == nil {
+			loc := re.FindStringIndex(title)
+			if loc != nil && loc[0] == 0 {
+				remainder := strings.TrimSpace(title[loc[1]:])
+				substantive := strings.TrimFunc(remainder, func(r rune) bool {
+					return r == ':' || r == '·' || r == '|' || r == '-' || r == '–' || r == '—' || r == ']' || unicode.IsSpace(r)
+				})
+				if len(substantive) > 0 {
+					return remainder
+				}
+				return title
+			}
+		}
+	}
+
+	return title
+}
+
 
 // VisualWidth returns the visual terminal cell width of s, excluding ANSI escape sequences.
 func VisualWidth(s string) int {

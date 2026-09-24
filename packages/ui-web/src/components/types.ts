@@ -73,6 +73,7 @@ export interface IAttentionBannerProps {
 
 export interface IAgentCardProps {
   agent: IAgentState;
+  projectName?: string;
   onOpenDrawer?: (agent: IAgentState) => void;
   onToggleHide?: (agent: IAgentState) => void;
   defaultShowSubagents?: boolean;

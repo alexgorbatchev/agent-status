@@ -108,6 +108,11 @@ func renderAgentViewAgentMode(w io.Writer, agent types.IAgentState) {
 	if title == "" {
 		title = "Untitled Agent Session"
 	}
+	projectName := agent.Project.Name
+	if projectName == "" {
+		projectName = agent.Project.ID
+	}
+	title = TrimProjectPrefix(title, projectName)
 	action := agent.Activity.Action
 	if action == "" {
 		if agent.Activity.ActiveTool != nil && *agent.Activity.ActiveTool != "" {
@@ -201,6 +206,11 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 	if title == "" {
 		title = "Untitled Agent Session"
 	}
+	projectName := agent.Project.Name
+	if projectName == "" {
+		projectName = agent.Project.ID
+	}
+	title = TrimProjectPrefix(title, projectName)
 	action := agent.Activity.Action
 	if action == "" {
 		if agent.Activity.ActiveTool != nil && *agent.Activity.ActiveTool != "" {

@@ -115,3 +115,73 @@ export function formatExactTime(timestamp: number): string {
 export function getAgentDebugCommand(agent: IAgentState): string {
   return `just debug session replay --harness ${agent.harness} ${agent.sessionId}`;
 }
+
+function extractProjectCandidates(projectName?: string): string[] {
+  if (!projectName) {
+    return [];
+  }
+  const trimmed = projectName.trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  const candidates: string[] = [trimmed];
+
+  // Extract repo basename: strip trailing slashes, then take last segment after / or \
+  const normalized = trimmed.replace(/[/\\]+$/, "");
+  const lastSlashIndex = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
+  let basename = lastSlashIndex !== -1 ? normalized.slice(lastSlashIndex + 1) : normalized;
+  if (basename.toLowerCase().endsWith(".git")) {
+    basename = basename.slice(0, -4);
+  }
+  if (basename && !candidates.includes(basename)) {
+    candidates.push(basename);
+  }
+
+  return candidates.sort((a, b) => b.length - a.length);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function trimProjectTitlePrefix(title: string, projectName?: string): string {
+  if (!title) {
+    return "";
+  }
+  const candidates = extractProjectCandidates(projectName);
+  if (candidates.length === 0) {
+    return title;
+  }
+
+  for (const candidate of candidates) {
+    const escaped = escapeRegExp(candidate);
+
+    // Pattern 1: Bracketed project prefix e.g. "[agent-status]" or "[agent-status]:"
+    const bracketedRegex = new RegExp(`^\\s*\\[\\s*${escaped}\\s*\\]\\s*(?:[:·|–—]|-+)?\\s*`, "i");
+    const bracketedMatch = title.match(bracketedRegex);
+    if (bracketedMatch) {
+      const remainder = title.slice(bracketedMatch[0].length).trim();
+      const substantive = remainder.replace(/^[:·|–—\-\s]+/, "").trim();
+      if (substantive.length > 0) {
+        return remainder;
+      }
+      return title;
+    }
+
+    // Pattern 2: Non-bracketed project prefix followed by separator
+    // Separators: ':', '·', '|', ']', or '-' (with whitespace boundary to avoid matching kebab-case words)
+    const nonBracketedRegex = new RegExp(`^\\s*${escaped}(?:\\s*[:·|–—\\]]\\s*|\\s+[-–—]+\\s*|\\s*[-–—]+\\s+)`, "i");
+    const nonBracketedMatch = title.match(nonBracketedRegex);
+    if (nonBracketedMatch) {
+      const remainder = title.slice(nonBracketedMatch[0].length).trim();
+      const substantive = remainder.replace(/^[:·|–—\-\s]+/, "").trim();
+      if (substantive.length > 0) {
+        return remainder;
+      }
+      return title;
+    }
+  }
+
+  return title;
+}

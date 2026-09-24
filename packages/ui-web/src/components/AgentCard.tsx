@@ -25,6 +25,7 @@ import {
   getToolStallTier,
   formatDuration,
   isSessionStalled,
+  trimProjectTitlePrefix,
 } from "../utils/agentUtils";
 import { focusAgent } from "../services/api";
 
@@ -41,6 +42,7 @@ function resolveCurrentTime(): number {
 
 export function AgentCard({
   agent,
+  projectName,
   onOpenDrawer,
   onToggleHide,
   defaultShowSubagents = false,
@@ -51,7 +53,9 @@ export function AgentCard({
   const { activity, environment, workspace, harness } = agent;
 
   const formattedCost = activity.cost ? `$${activity.cost.total.toFixed(4)}` : "—";
-  const title = activity.title || "Untitled Agent Session";
+  const rawTitle = activity.title || "Untitled Agent Session";
+  const resolvedProjectName = projectName || agent.project?.name || agent.project?.id;
+  const title = trimProjectTitlePrefix(rawTitle, resolvedProjectName);
   const isIdleAction = !activity.action || activity.action.trim().toLowerCase() === "idle";
   const action = !isIdleAction
     ? activity.action

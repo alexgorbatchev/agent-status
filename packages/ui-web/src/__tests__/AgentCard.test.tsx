@@ -631,5 +631,77 @@ describe("AgentCard Component", () => {
         cleanup();
       }
     });
+
+    it("strips redundant project prefix from session title in card display", () => {
+      const agent = factory_agentState({
+        project: {
+          id: "github.com/alexgorbatchev/agent-status",
+          name: "agent-status",
+          canonicalRoot: "/repo",
+        },
+        activity: {
+          ...fixture_agentStateRunning.activity,
+          title: "agent-status: Add test coverage for title trimming",
+        },
+      });
+
+      const html = renderToStaticMarkup(<AgentCard agent={agent} />);
+      expect(html).toContain('data-testid="AgentCard--title"');
+      expect(html).toContain("Add test coverage for title trimming");
+      expect(html).not.toContain("agent-status: Add test coverage for title trimming");
+    });
+
+    it("strips bracketed project prefix from session title in card display", () => {
+      const agent = factory_agentState({
+        project: {
+          id: "github.com/alexgorbatchev/agent-status",
+          name: "agent-status",
+          canonicalRoot: "/repo",
+        },
+        activity: {
+          ...fixture_agentStateRunning.activity,
+          title: "[agent-status] Implement OAuth tokens",
+        },
+      });
+
+      const html = renderToStaticMarkup(<AgentCard agent={agent} />);
+      expect(html).toContain("Implement OAuth tokens");
+      expect(html).not.toContain("[agent-status] Implement OAuth tokens");
+    });
+
+    it("uses explicit projectName prop to strip project prefix when provided", () => {
+      const agent = factory_agentState({
+        project: {
+          id: "custom-id",
+          name: "custom-name",
+          canonicalRoot: "/repo",
+        },
+        activity: {
+          ...fixture_agentStateRunning.activity,
+          title: "override-project · Fix database connection pooling",
+        },
+      });
+
+      const html = renderToStaticMarkup(<AgentCard agent={agent} projectName="override-project" />);
+      expect(html).toContain("Fix database connection pooling");
+      expect(html).not.toContain("override-project · Fix database connection pooling");
+    });
+
+    it("preserves title when title equals project name without substantive tail", () => {
+      const agent = factory_agentState({
+        project: {
+          id: "github.com/alexgorbatchev/agent-status",
+          name: "agent-status",
+          canonicalRoot: "/repo",
+        },
+        activity: {
+          ...fixture_agentStateRunning.activity,
+          title: "agent-status",
+        },
+      });
+
+      const html = renderToStaticMarkup(<AgentCard agent={agent} />);
+      expect(html).toContain("agent-status");
+    });
   });
 });

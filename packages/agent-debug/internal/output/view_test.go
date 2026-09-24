@@ -460,5 +460,92 @@ func TestRenderAgentView_HumanMode_AnsiColorWidthAlignment(t *testing.T) {
 	}
 }
 
+func TestRenderAgentView_HumanMode_TrimsProjectPrefix(t *testing.T) {
+	agent := types.IAgentState{
+		ID:        "env-1:claude-code:ses-prefix-1",
+		SessionID: "ses-prefix-1",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:    "env-1",
+			Label: "local-dev",
+		},
+		Project: types.IProjectInfo{
+			ID:   "github.com/alexgorbatchev/agent-status",
+			Name: "agent-status",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "main",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityBusy,
+			Title:     "agent-status: Refactor database layer",
+			Action:    "Editing store.go",
+			Cost: &types.ICostInfo{
+				Currency: "USD",
+				Total:    0.01,
+			},
+			Usage: types.ITokenUsage{
+				Total: 100,
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderAgentViewAt(&buf, agent, false, 1000)
+	out := buf.String()
+
+	if !strings.Contains(out, "Refactor database layer") {
+		t.Errorf("expected trimmed title %q in output, got:\n%s", "Refactor database layer", out)
+	}
+	if strings.Contains(out, "agent-status: Refactor database layer") {
+		t.Errorf("expected redundant project prefix to be stripped from output, got:\n%s", out)
+	}
+}
+
+func TestRenderAgentView_AgentMode_TrimsProjectPrefix(t *testing.T) {
+	agent := types.IAgentState{
+		ID:        "env-1:claude-code:ses-prefix-2",
+		SessionID: "ses-prefix-2",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:    "env-1",
+			Label: "local-dev",
+		},
+		Project: types.IProjectInfo{
+			ID:   "github.com/alexgorbatchev/agent-status",
+			Name: "agent-status",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "main",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityBusy,
+			Title:     "[agent-status] Run scanner audit",
+			Action:    "Running audit",
+			Cost: &types.ICostInfo{
+				Currency: "USD",
+				Total:    0.01,
+			},
+			Usage: types.ITokenUsage{
+				Total: 100,
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderAgentView(&buf, agent, true)
+	out := buf.String()
+
+	if !strings.Contains(out, `title:"Run scanner audit"`) {
+		t.Errorf("expected trimmed title %q in agent mode output, got:\n%s", `title:"Run scanner audit"`, out)
+	}
+	if strings.Contains(out, `title:"[agent-status] Run scanner audit"`) {
+		t.Errorf("expected redundant project prefix to be stripped from agent mode output, got:\n%s", out)
+	}
+}
+
+
 
 
