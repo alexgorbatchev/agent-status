@@ -13,6 +13,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - Tail dev stack logs: `just logs` (or `tail -f .tmp/dev-stack/logs/*.log`)
 - Run debug CLI: `just debug <args>`
 - Replay session offline: `just session-replay-[claude|pi|codex|opencode] <session-id>`
+- Print Claude session log: `just print-session claude print <session-id>`
 - Build all: `just build-all`
 - Test all: `just test-all`
 - Lint all: `just lint-all`
@@ -27,6 +28,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - `packages/agent-ingester/` -> `packages/agent-ingester/AGENTS.md`
 - `packages/agent-server/` -> `packages/agent-server/AGENTS.md`
 - `packages/agent-debug/` -> `packages/agent-debug/AGENTS.md`
+- `packages/print-session-cli/` -> `packages/print-session-cli/AGENTS.md`
 - `packages/ui-web/` -> `packages/ui-web/AGENTS.md`
 - `docs/harness-logs/` -> `docs/harness-logs/AGENTS.md`
 

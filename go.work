@@ -7,4 +7,5 @@ use (
 	./packages/agent-ingester
 	./packages/agent-server
 	./packages/agent-debug
+	./packages/print-session-cli
 )
