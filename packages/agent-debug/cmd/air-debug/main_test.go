@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
 
@@ -925,3 +926,166 @@ func TestCLI_ProcessList(t *testing.T) {
 		t.Fatalf("process list failed: %v", err)
 	}
 }
+
+func TestCLI_SessionFleet(t *testing.T) {
+	tmpDir := t.TempDir()
+	transcriptPath := createTestClaudeTranscript(t, tmpDir)
+
+	t.Run("human output for transcript", func(t *testing.T) {
+		cmd := newRootCmd()
+		cmd.SetContext(context.Background())
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetArgs([]string{"session", "fleet", transcriptPath})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("session fleet failed: %v", err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, "v repo") && !strings.Contains(out, "CLI Test Title") {
+			t.Errorf("expected fleet output with project and title, got: %s", out)
+		}
+	})
+
+	t.Run("json output", func(t *testing.T) {
+		cmd := newRootCmd()
+		cmd.SetContext(context.Background())
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetArgs([]string{"session", "fleet", "--json", transcriptPath})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("session fleet --json failed: %v", err)
+		}
+		var agents []types.IAgentState
+		if err := json.Unmarshal(buf.Bytes(), &agents); err != nil {
+			t.Fatalf("unmarshaling json output failed: %v\nOutput: %s", err, buf.String())
+		}
+		if len(agents) != 1 {
+			t.Errorf("expected 1 agent, got %d", len(agents))
+		}
+	})
+
+	t.Run("json output on empty session list returns empty array", func(t *testing.T) {
+		emptyDBPath := filepath.Join(tmpDir, "empty-fleet.db")
+		createTestOpencodeDB(t, tmpDir)
+		db, err := sql.Open("sqlite3", emptyDBPath)
+		if err != nil {
+			t.Fatalf("opening sqlite: %v", err)
+		}
+		defer func() { _ = db.Close() }()
+		_, err = db.Exec(`
+			CREATE TABLE agents (
+				id TEXT PRIMARY KEY, session_id TEXT, environment_id TEXT, harness TEXT,
+				project_id TEXT, project_name TEXT, canonical_root TEXT,
+				branch TEXT, is_detached INTEGER, is_worktree INTEGER, worktree_rel_path TEXT, cwd TEXT,
+				current_run_id TEXT, activity TEXT, title TEXT, action TEXT, action_stale INTEGER,
+				phase TEXT, active_tool TEXT, active_target TEXT, question TEXT,
+				last_thinking_excerpt TEXT, last_error TEXT,
+				tokens_input INTEGER, tokens_output INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER,
+				tokens_reasoning INTEGER, tokens_total INTEGER,
+				cost_usd REAL, subagent_count INTEGER, first_started_at INTEGER, updated_at INTEGER
+			);
+			CREATE TABLE environments (id TEXT PRIMARY KEY, label TEXT, hostname TEXT, platform TEXT, user TEXT, last_heartbeat_at INTEGER);
+			CREATE TABLE runs (id TEXT PRIMARY KEY, pid INTEGER, harness_version TEXT, started_at INTEGER, ended_at INTEGER);
+		`)
+		if err != nil {
+			t.Fatalf("setting up empty test db: %v", err)
+		}
+
+		cmd := newRootCmd()
+		cmd.SetContext(context.Background())
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetArgs([]string{"session", "fleet", "--json", emptyDBPath})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("session fleet --json failed: %v", err)
+		}
+		out := strings.TrimSpace(buf.String())
+		if out != "[]" {
+			t.Errorf("expected [], got %q", out)
+		}
+	})
+
+	t.Run("fleet root alias", func(t *testing.T) {
+		cmd := newRootCmd()
+		cmd.SetContext(context.Background())
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetArgs([]string{"fleet", transcriptPath})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("fleet alias failed: %v", err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, "CLI Test Title") {
+			t.Errorf("expected fleet output from root command alias, got: %s", out)
+		}
+	})
+
+	t.Run("fleet with db argument", func(t *testing.T) {
+		dbPath := filepath.Join(tmpDir, "test-fleet.db")
+		createTestOpencodeDB(t, tmpDir) // ensures sqlite driver is initialized
+		// Initialize minimal sqlite table for agents
+		db, err := sql.Open("sqlite3", dbPath)
+		if err != nil {
+			t.Fatalf("opening sqlite: %v", err)
+		}
+		defer func() { _ = db.Close() }()
+		_, err = db.Exec(`
+			CREATE TABLE agents (
+				id TEXT PRIMARY KEY, session_id TEXT, environment_id TEXT, harness TEXT,
+				project_id TEXT, project_name TEXT, canonical_root TEXT,
+				branch TEXT, is_detached INTEGER, is_worktree INTEGER, worktree_rel_path TEXT, cwd TEXT,
+				current_run_id TEXT, activity TEXT, title TEXT, action TEXT, action_stale INTEGER,
+				phase TEXT, active_tool TEXT, active_target TEXT, question TEXT,
+				last_thinking_excerpt TEXT, last_error TEXT,
+				tokens_input INTEGER, tokens_output INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER,
+				tokens_reasoning INTEGER, tokens_total INTEGER,
+				cost_usd REAL, subagent_count INTEGER, first_started_at INTEGER, updated_at INTEGER
+			);
+			CREATE TABLE environments (id TEXT PRIMARY KEY, label TEXT, hostname TEXT, platform TEXT, user TEXT, last_heartbeat_at INTEGER);
+			CREATE TABLE runs (id TEXT PRIMARY KEY, pid INTEGER, harness_version TEXT, started_at INTEGER, ended_at INTEGER);
+			INSERT INTO agents (id, session_id, environment_id, harness, project_id, project_name, canonical_root, branch, is_detached, is_worktree, cwd, activity, title, action, action_stale, tokens_input, tokens_output, tokens_cache_read, tokens_cache_write, tokens_reasoning, tokens_total, subagent_count, first_started_at, updated_at)
+			VALUES ('env-1:claude-code:s1', 's1', 'env-1', 'claude-code', 'p1', 'db-proj', '/repo', 'main', 0, 0, '/repo', 'BUSY', 'DB Task', 'Action', 0, 10, 10, 0, 0, 0, 20, 0, 100, 200);
+		`)
+		if err != nil {
+			t.Fatalf("setting up test db: %v", err)
+		}
+
+		cmd := newRootCmd()
+		cmd.SetContext(context.Background())
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetArgs([]string{"session", "fleet", dbPath})
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("session fleet with db path failed: %v", err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, "DB Task") {
+			t.Errorf("expected DB Task in output, got: %s", out)
+		}
+
+		// Also test --db flag with no positional args
+		cmd2 := newRootCmd()
+		cmd2.SetContext(context.Background())
+		var buf2 bytes.Buffer
+		cmd2.SetOut(&buf2)
+		cmd2.SetArgs([]string{"session", "fleet", "--db", dbPath})
+		if err := cmd2.Execute(); err != nil {
+			t.Fatalf("session fleet with --db flag failed: %v", err)
+		}
+		if !strings.Contains(buf2.String(), "DB Task") {
+			t.Errorf("expected DB Task from --db flag, got: %s", buf2.String())
+		}
+	})
+
+	t.Run("fleet error path missing file", func(t *testing.T) {
+		cmd := newRootCmd()
+		cmd.SetContext(context.Background())
+		var buf bytes.Buffer
+		cmd.SetOut(&buf)
+		cmd.SetArgs([]string{"session", "fleet", filepath.Join(tmpDir, "nonexistent.jsonl")})
+		if err := cmd.Execute(); err == nil {
+			t.Error("expected error for nonexistent file, got nil")
+		}
+	})
+}
+

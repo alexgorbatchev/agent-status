@@ -32,7 +32,9 @@ export function groupAgentsByCategory(agents: IAgentState[]): Record<AgentCatego
     groups[category].push(agent);
   }
 
+  groups.busy.sort((a, b) => b.activity.updatedAt - a.activity.updatedAt);
   groups.idle.sort((a, b) => b.activity.updatedAt - a.activity.updatedAt);
+  groups.finished.sort((a, b) => b.activity.updatedAt - a.activity.updatedAt);
 
   return groups;
 }
@@ -66,7 +68,6 @@ export function groupAgentsByProjectHierarchy(agents: IAgentState[]): IProjectTr
           worktreeKey,
           branch: agent.workspace.branch || undefined,
           relPath: agent.workspace.relPath || undefined,
-          isWorktree: true,
           agents: [],
         };
         projectGroup.worktrees.push(wtGroup);
@@ -81,11 +82,7 @@ export function groupAgentsByProjectHierarchy(agents: IAgentState[]): IProjectTr
 }
 
 export function groupAgentsByProject(agents: IAgentState[]): IProjectGroupItem[] {
-  const treeGroups = groupAgentsByProjectHierarchy(agents);
-  return treeGroups.map((tg) => ({
-    ...tg,
-    agents: tg.allAgents,
-  }));
+  return groupAgentsByProjectHierarchy(agents);
 }
 
 export function groupAgentsByEnvironment(

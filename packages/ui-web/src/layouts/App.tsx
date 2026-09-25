@@ -83,7 +83,7 @@ export function App({ apiBaseUrl, token = DEFAULT_DEV_TOKEN }: IAppProps = {}): 
   );
 
   const projectGroups = useMemo(
-    () => groupAgentsByProject(displayedAgents).filter((g) => g.agents.length > 0),
+    () => groupAgentsByProject(displayedAgents).filter((g) => g.allAgents.length > 0),
     [displayedAgents],
   );
   const environmentGroups = useMemo(
@@ -214,7 +214,7 @@ export function App({ apiBaseUrl, token = DEFAULT_DEV_TOKEN }: IAppProps = {}): 
               key={group.id}
               projectName={group.name}
               projectId={group.id}
-              agents={group.agents}
+              agents={group.allAgents}
               treeGroup={group}
               onSelectAgent={setSelectedAgent}
               onToggleHide={handleToggleHide}

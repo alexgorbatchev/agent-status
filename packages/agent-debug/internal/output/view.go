@@ -3,6 +3,7 @@ package output
 import (
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
@@ -148,10 +149,32 @@ type fleetWorktreeGroup struct {
 }
 
 type fleetProjectGroup struct {
-	id         string
-	name       string
-	rootAgents []types.IAgentState
-	worktrees  []*fleetWorktreeGroup
+	id           string
+	name         string
+	maxUpdatedAt int64
+	rootAgents   []types.IAgentState
+	worktrees    []*fleetWorktreeGroup
+}
+
+func agentSortRank(agent types.IAgentState) int {
+	if agent.Activity.Lifecycle == types.LifecycleExited {
+		return 2
+	}
+	if agent.Activity.Activity == types.ActivityIdle {
+		return 1
+	}
+	return 0
+}
+
+func sortFleetAgents(agents []types.IAgentState) {
+	sort.SliceStable(agents, func(i, j int) bool {
+		rankI := agentSortRank(agents[i])
+		rankJ := agentSortRank(agents[j])
+		if rankI != rankJ {
+			return rankI < rankJ
+		}
+		return agents[i].Activity.UpdatedAt > agents[j].Activity.UpdatedAt
+	})
 }
 
 func groupAgentsForFleet(agents []types.IAgentState) []*fleetProjectGroup {
@@ -171,11 +194,14 @@ func groupAgentsForFleet(agents []types.IAgentState) []*fleetProjectGroup {
 		grp, exists := projectMap[projID]
 		if !exists {
 			grp = &fleetProjectGroup{
-				id:   projID,
-				name: projName,
+				id:           projID,
+				name:         projName,
+				maxUpdatedAt: agent.Activity.UpdatedAt,
 			}
 			projectMap[projID] = grp
 			projectGroups = append(projectGroups, grp)
+		} else if agent.Activity.UpdatedAt > grp.maxUpdatedAt {
+			grp.maxUpdatedAt = agent.Activity.UpdatedAt
 		}
 
 		if !agent.Workspace.IsWorktree {
@@ -186,6 +212,8 @@ func groupAgentsForFleet(agents []types.IAgentState) []*fleetProjectGroup {
 				wtKey = *agent.Workspace.RelPath
 			} else if agent.Workspace.Branch != "" {
 				wtKey = agent.Workspace.Branch
+			} else if agent.Workspace.CWD != "" {
+				wtKey = agent.Workspace.CWD
 			} else {
 				wtKey = "unknown"
 			}
@@ -213,6 +241,17 @@ func groupAgentsForFleet(agents []types.IAgentState) []*fleetProjectGroup {
 		}
 	}
 
+	for _, grp := range projectGroups {
+		sortFleetAgents(grp.rootAgents)
+		for _, wt := range grp.worktrees {
+			sortFleetAgents(wt.agents)
+		}
+	}
+
+	sort.SliceStable(projectGroups, func(i, j int) bool {
+		return projectGroups[i].maxUpdatedAt > projectGroups[j].maxUpdatedAt
+	})
+
 	return projectGroups
 }
 
@@ -238,16 +277,9 @@ func RenderFleetViewAt(w io.Writer, agents []types.IAgentState, agentMode bool, 
 				projID = "unknown"
 			}
 			isWt := agent.Workspace.IsWorktree
-			wtPath := ""
-			if agent.Workspace.RelPath != nil {
-				wtPath = *agent.Workspace.RelPath
-			}
 			var prefixParts []string
 			prefixParts = append(prefixParts, fmt.Sprintf("project:%s", SanitizeTranscriptText(projID)))
 			prefixParts = append(prefixParts, fmt.Sprintf("is_worktree:%t", isWt))
-			if isWt && wtPath != "" {
-				prefixParts = append(prefixParts, fmt.Sprintf("worktree:%s", SanitizeTranscriptText(wtPath)))
-			}
 
 			var buf strings.Builder
 			renderAgentViewAgentMode(&buf, agent)
@@ -273,11 +305,18 @@ func RenderFleetViewAt(w io.Writer, agents []types.IAgentState, agentMode bool, 
 		projLine := TruncateVisual(fmt.Sprintf("v %s (%s)", grpName, grpID), width, "...")
 		_, _ = fmt.Fprintln(w, projLine)
 
+		if len(grp.worktrees) == 0 {
+			for _, agent := range grp.rootAgents {
+				renderFleetAgentLine(w, agent, grpName, "  ", width, nowMs)
+			}
+			continue
+		}
+
 		var branches []fleetBranchItem
 		if len(grp.rootAgents) > 0 {
 			rootBranch := SanitizeTranscriptText(grp.rootAgents[0].Workspace.Branch)
 			if rootBranch == "" {
-				rootBranch = "main"
+				rootBranch = "HEAD"
 			}
 			sessionWord := "sessions"
 			if len(grp.rootAgents) == 1 {
@@ -325,31 +364,29 @@ func RenderFleetViewAt(w io.Writer, agents []types.IAgentState, agentMode bool, 
 			_, _ = fmt.Fprintln(w, branchLine)
 
 			for _, agent := range branch.agents {
-				title := SanitizeTranscriptText(agent.Activity.Title)
-				if title == "" {
-					title = "Untitled Agent Session"
-				}
-				title = TrimProjectPrefix(title, grpName)
-				title = strings.ReplaceAll(title, "\n", " ")
-				harnessBadge := FormatHarnessBadge(agent.Harness, agent.Activity.Activity)
-				activityStr := strings.ToLower(string(agent.Activity.Activity))
-				if activityStr == "" {
-					activityStr = "idle"
-				}
-				if agent.Activity.Lifecycle == types.LifecycleRunning && agent.Activity.Activity == types.ActivityIdle && agent.Activity.HasUnseenCompletion != nil && *agent.Activity.HasUnseenCompletion {
-					activityStr = "completed"
-				}
-				line := fmt.Sprintf("%s%s %s (%s)", childIndent, harnessBadge, title, activityStr)
-				line = TruncateVisual(line, width, "...")
-				isStaleIdle := agent.Activity.Activity == types.ActivityIdle && GetIdleFreshness(agent.Activity.UpdatedAt, nowMs) == FreshnessStale && (agent.Activity.HasUnseenCompletion == nil || !*agent.Activity.HasUnseenCompletion)
-				if isStaleIdle {
-					formatted := strings.ReplaceAll(line, AnsiReset, AnsiReset+AnsiDim)
-					_, _ = fmt.Fprintf(w, "%s%s%s\n", AnsiDim, formatted, AnsiReset)
-				} else {
-					_, _ = fmt.Fprintln(w, line)
-				}
+				renderFleetAgentLine(w, agent, grpName, childIndent, width, nowMs)
 			}
 		}
+	}
+}
+
+func renderFleetAgentLine(w io.Writer, agent types.IAgentState, grpName string, childIndent string, width int, nowMs int64) {
+	title := SanitizeTranscriptText(agent.Activity.Title)
+	if title == "" {
+		title = "Untitled Agent Session"
+	}
+	title = TrimProjectPrefix(title, grpName)
+	title = strings.ReplaceAll(title, "\n", " ")
+	harnessBadge := FormatHarnessBadge(agent.Harness, agent.Activity.Activity)
+	statusStr := FormatActivityStatus(agent.Activity.Lifecycle, agent.Activity.Activity, agent.Activity.HasUnseenCompletion)
+	line := fmt.Sprintf("%s%s %s (%s)", childIndent, harnessBadge, title, statusStr)
+	line = TruncateVisual(line, width, "...")
+	isStaleIdle := agent.Activity.Lifecycle == types.LifecycleRunning && agent.Activity.Activity == types.ActivityIdle && GetIdleFreshness(agent.Activity.UpdatedAt, nowMs) == FreshnessStale && (agent.Activity.HasUnseenCompletion == nil || !*agent.Activity.HasUnseenCompletion)
+	if isStaleIdle {
+		formatted := strings.ReplaceAll(line, AnsiReset, AnsiReset+AnsiDim)
+		_, _ = fmt.Fprintf(w, "%s%s%s\n", AnsiDim, formatted, AnsiReset)
+	} else {
+		_, _ = fmt.Fprintln(w, line)
 	}
 }
 

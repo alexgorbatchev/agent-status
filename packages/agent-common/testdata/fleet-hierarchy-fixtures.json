@@ -1,0 +1,240 @@
+[
+  {
+    "id": "env-local:claude_code:ses-root-busy",
+    "sessionId": "ses-root-busy",
+    "harness": "claude_code",
+    "environment": {
+      "id": "env-local",
+      "label": "local-dev",
+      "hostname": "devbox",
+      "platform": "darwin",
+      "user": "testuser",
+      "isStale": false
+    },
+    "project": {
+      "id": "github.com/alexgorbatchev/agent-status",
+      "name": "agent-status",
+      "canonicalRoot": "/repos/agent-status"
+    },
+    "workspace": {
+      "branch": "main",
+      "isWorktree": false,
+      "isDetached": false,
+      "relPath": null,
+      "cwd": "/repos/agent-status"
+    },
+    "activity": {
+      "lifecycle": "RUNNING",
+      "activity": "BUSY",
+      "title": "agent-status: Fix race condition",
+      "action": "Investigating goroutine leak",
+      "updatedAt": 10000000,
+      "totalCost": 1.50
+    },
+    "isHidden": false
+  },
+  {
+    "id": "env-local:claude_code:ses-root-idle",
+    "sessionId": "ses-root-idle",
+    "harness": "claude_code",
+    "environment": {
+      "id": "env-local",
+      "label": "local-dev",
+      "hostname": "devbox",
+      "platform": "darwin",
+      "user": "testuser",
+      "isStale": false
+    },
+    "project": {
+      "id": "github.com/alexgorbatchev/agent-status",
+      "name": "agent-status",
+      "canonicalRoot": "/repos/agent-status"
+    },
+    "workspace": {
+      "branch": "main",
+      "isWorktree": false,
+      "isDetached": false,
+      "relPath": null,
+      "cwd": "/repos/agent-status"
+    },
+    "activity": {
+      "lifecycle": "RUNNING",
+      "activity": "IDLE",
+      "title": "Refactor parser",
+      "action": "Waiting for user input",
+      "updatedAt": 9000000,
+      "totalCost": 0.50
+    },
+    "isHidden": false
+  },
+  {
+    "id": "env-local:claude_code:ses-wt-busy",
+    "sessionId": "ses-wt-busy",
+    "harness": "claude_code",
+    "environment": {
+      "id": "env-local",
+      "label": "local-dev",
+      "hostname": "devbox",
+      "platform": "darwin",
+      "user": "testuser",
+      "isStale": false
+    },
+    "project": {
+      "id": "github.com/alexgorbatchev/agent-status",
+      "name": "agent-status",
+      "canonicalRoot": "/repos/agent-status"
+    },
+    "workspace": {
+      "branch": "feat-ui",
+      "isWorktree": true,
+      "isDetached": false,
+      "relPath": ".workspaces/feat-ui",
+      "cwd": "/repos/agent-status/.workspaces/feat-ui"
+    },
+    "activity": {
+      "lifecycle": "RUNNING",
+      "activity": "BUSY",
+      "title": "Implement UI components",
+      "action": "Editing ProjectGroup.tsx",
+      "updatedAt": 12000000,
+      "totalCost": 2.10
+    },
+    "isHidden": false
+  },
+  {
+    "id": "env-local:claude_code:ses-wt-exited",
+    "sessionId": "ses-wt-exited",
+    "harness": "claude_code",
+    "environment": {
+      "id": "env-local",
+      "label": "local-dev",
+      "hostname": "devbox",
+      "platform": "darwin",
+      "user": "testuser",
+      "isStale": false
+    },
+    "project": {
+      "id": "github.com/alexgorbatchev/agent-status",
+      "name": "agent-status",
+      "canonicalRoot": "/repos/agent-status"
+    },
+    "workspace": {
+      "branch": "feat-ui",
+      "isWorktree": true,
+      "isDetached": false,
+      "relPath": ".workspaces/feat-ui",
+      "cwd": "/repos/agent-status/.workspaces/feat-ui"
+    },
+    "activity": {
+      "lifecycle": "EXITED",
+      "activity": "IDLE",
+      "title": "Setup storybook",
+      "action": "Session finished",
+      "updatedAt": 8000000,
+      "totalCost": 0.80
+    },
+    "isHidden": false
+  },
+  {
+    "id": "env-local:claude_code:ses-wt-idle",
+    "sessionId": "ses-wt-idle",
+    "harness": "claude_code",
+    "environment": {
+      "id": "env-local",
+      "label": "local-dev",
+      "hostname": "devbox",
+      "platform": "darwin",
+      "user": "testuser",
+      "isStale": false
+    },
+    "project": {
+      "id": "github.com/alexgorbatchev/agent-status",
+      "name": "agent-status",
+      "canonicalRoot": "/repos/agent-status"
+    },
+    "workspace": {
+      "branch": "fix-db",
+      "isWorktree": true,
+      "isDetached": false,
+      "relPath": ".workspaces/fix-db",
+      "cwd": "/repos/agent-status/.workspaces/fix-db"
+    },
+    "activity": {
+      "lifecycle": "RUNNING",
+      "activity": "IDLE",
+      "title": "Fix database locking",
+      "action": "Waiting for user input",
+      "updatedAt": 7000000,
+      "totalCost": 0.30
+    },
+    "isHidden": false
+  },
+  {
+    "id": "env-local:claude_code:ses-other-root",
+    "sessionId": "ses-other-root",
+    "harness": "claude_code",
+    "environment": {
+      "id": "env-local",
+      "label": "local-dev",
+      "hostname": "devbox",
+      "platform": "darwin",
+      "user": "testuser",
+      "isStale": false
+    },
+    "project": {
+      "id": "github.com/alexgorbatchev/other-project",
+      "name": "other-project",
+      "canonicalRoot": "/repos/other-project"
+    },
+    "workspace": {
+      "branch": "main",
+      "isWorktree": false,
+      "isDetached": false,
+      "relPath": null,
+      "cwd": "/repos/other-project"
+    },
+    "activity": {
+      "lifecycle": "RUNNING",
+      "activity": "IDLE",
+      "title": "other-project: Core server setup",
+      "action": "Listening on port 8080",
+      "updatedAt": 15000000,
+      "totalCost": 3.00
+    },
+    "isHidden": false
+  },
+  {
+    "id": "env-local:claude_code:ses-other-wt",
+    "sessionId": "ses-other-wt",
+    "harness": "claude_code",
+    "environment": {
+      "id": "env-local",
+      "label": "local-dev",
+      "hostname": "devbox",
+      "platform": "darwin",
+      "user": "testuser",
+      "isStale": false
+    },
+    "project": {
+      "id": "github.com/alexgorbatchev/other-project",
+      "name": "other-project",
+      "canonicalRoot": "/repos/other-project"
+    },
+    "workspace": {
+      "branch": "feat-v2",
+      "isWorktree": true,
+      "isDetached": false,
+      "relPath": ".workspaces/feat-v2",
+      "cwd": "/repos/other-project/.workspaces/feat-v2"
+    },
+    "activity": {
+      "lifecycle": "EXITED",
+      "activity": "IDLE",
+      "title": "Migration v2",
+      "action": "Completed migration",
+      "updatedAt": 6000000,
+      "totalCost": 1.20
+    },
+    "isHidden": false
+  }
+]

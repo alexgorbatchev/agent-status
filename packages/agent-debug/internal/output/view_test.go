@@ -2,6 +2,7 @@ package output
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -1338,8 +1339,8 @@ func TestRenderFleetView_HumanMode_Completed(t *testing.T) {
 	RenderFleetView(&buf, []types.IAgentState{agent}, false)
 	out := buf.String()
 
-	if !strings.Contains(out, "(completed)") {
-		t.Errorf("expected fleet view tree to display (completed) for unacknowledged completion, got:\n%s", out)
+	if !strings.Contains(out, "(Completed)") {
+		t.Errorf("expected fleet view tree to display (Completed) for unacknowledged completion, got:\n%s", out)
 	}
 }
 
@@ -1446,6 +1447,290 @@ func TestRenderFleetView_HumanMode_IdleStaleWithUnseenCompletionNotDimmed(t *tes
 		t.Errorf("expected no AnsiDim in fleet view for completed session even if >2h old, got:\n%s", out)
 	}
 }
+
+func TestRenderFleetView_HumanMode_NoWorktrees_RendersFlat(t *testing.T) {
+	agent := types.IAgentState{
+		ID:        "env-1:claude-code:ses-root",
+		SessionID: "ses-root",
+		Harness:   types.HarnessClaudeCode,
+		Project: types.IProjectInfo{
+			ID:   "proj-flat",
+			Name: "flat-project",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch:     "main",
+			IsWorktree: false,
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityBusy,
+			Title:     "Flat session without worktrees",
+			UpdatedAt: 1000,
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderFleetViewAt(&buf, []types.IAgentState{agent}, false, 1000)
+	clean := StripANSI(buf.String())
+
+	if strings.Contains(clean, "[main]") {
+		t.Errorf("expected flat rendering without [main] header when project has no worktrees, got:\n%s", clean)
+	}
+	if strings.Contains(clean, "+- ") || strings.Contains(clean, "|- ") {
+		t.Errorf("expected flat rendering without branch tree connectors (+- / |-), got:\n%s", clean)
+	}
+	if !strings.Contains(clean, "Flat session without worktrees") {
+		t.Errorf("expected agent session title in output, got:\n%s", clean)
+	}
+}
+
+func TestRenderFleetView_HumanMode_ActivityStatusFormatting(t *testing.T) {
+	exitedAgent := types.IAgentState{
+		ID:        "env-1:claude-code:ses-exited",
+		SessionID: "ses-exited",
+		Harness:   types.HarnessClaudeCode,
+		Project:   types.IProjectInfo{ID: "proj-1", Name: "my-project"},
+		Workspace: types.IWorkspaceInfo{Branch: "main", IsWorktree: false},
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleExited,
+			Activity:  types.ActivityIdle,
+			Title:     "Exited agent",
+		},
+	}
+	waitingAgent := types.IAgentState{
+		ID:        "env-1:claude-code:ses-wait",
+		SessionID: "ses-wait",
+		Harness:   types.HarnessClaudeCode,
+		Project:   types.IProjectInfo{ID: "proj-1", Name: "my-project"},
+		Workspace: types.IWorkspaceInfo{Branch: "main", IsWorktree: false},
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityWaitingQuestion,
+			Title:     "Waiting agent",
+		},
+	}
+	busyAgent := types.IAgentState{
+		ID:        "env-1:claude-code:ses-busy",
+		SessionID: "ses-busy",
+		Harness:   types.HarnessClaudeCode,
+		Project:   types.IProjectInfo{ID: "proj-1", Name: "my-project"},
+		Workspace: types.IWorkspaceInfo{Branch: "main", IsWorktree: false},
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityBusy,
+			Title:     "Busy agent",
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderFleetViewAt(&buf, []types.IAgentState{exitedAgent, waitingAgent, busyAgent}, false, 1000)
+	clean := StripANSI(buf.String())
+
+	if !strings.Contains(clean, "(Finished)") {
+		t.Errorf("expected EXITED agent to format as (Finished), got:\n%s", clean)
+	}
+	if !strings.Contains(clean, "(Waiting on Question)") {
+		t.Errorf("expected WAITING_QUESTION agent to format as (Waiting on Question), got:\n%s", clean)
+	}
+	if !strings.Contains(clean, "(Working)") {
+		t.Errorf("expected BUSY agent to format as (Working), got:\n%s", clean)
+	}
+}
+
+func TestRenderFleetView_HumanMode_SortingWithinBranch(t *testing.T) {
+	relPath := "wt"
+	agents := []types.IAgentState{
+		{
+			ID:        "a-exited",
+			SessionID: "s-exited",
+			Harness:   types.HarnessClaudeCode,
+			Project:   types.IProjectInfo{ID: "p1", Name: "proj"},
+			Workspace: types.IWorkspaceInfo{IsWorktree: true, RelPath: &relPath},
+			Activity: types.IAgentActivity{
+				Lifecycle: types.LifecycleExited,
+				Activity:  types.ActivityIdle,
+				Title:     "Exited task",
+				UpdatedAt: 5000,
+			},
+		},
+		{
+			ID:        "a-idle-older",
+			SessionID: "s-idle-older",
+			Harness:   types.HarnessClaudeCode,
+			Project:   types.IProjectInfo{ID: "p1", Name: "proj"},
+			Workspace: types.IWorkspaceInfo{IsWorktree: true, RelPath: &relPath},
+			Activity: types.IAgentActivity{
+				Lifecycle: types.LifecycleRunning,
+				Activity:  types.ActivityIdle,
+				Title:     "Idle older task",
+				UpdatedAt: 1000,
+			},
+		},
+		{
+			ID:        "a-idle-newer",
+			SessionID: "s-idle-newer",
+			Harness:   types.HarnessClaudeCode,
+			Project:   types.IProjectInfo{ID: "p1", Name: "proj"},
+			Workspace: types.IWorkspaceInfo{IsWorktree: true, RelPath: &relPath},
+			Activity: types.IAgentActivity{
+				Lifecycle: types.LifecycleRunning,
+				Activity:  types.ActivityIdle,
+				Title:     "Idle newer task",
+				UpdatedAt: 3000,
+			},
+		},
+		{
+			ID:        "a-busy",
+			SessionID: "s-busy",
+			Harness:   types.HarnessClaudeCode,
+			Project:   types.IProjectInfo{ID: "p1", Name: "proj"},
+			Workspace: types.IWorkspaceInfo{IsWorktree: true, RelPath: &relPath},
+			Activity: types.IAgentActivity{
+				Lifecycle: types.LifecycleRunning,
+				Activity:  types.ActivityBusy,
+				Title:     "Busy task",
+				UpdatedAt: 2000,
+			},
+		},
+		{
+			ID:        "a-waiting",
+			SessionID: "s-waiting",
+			Harness:   types.HarnessClaudeCode,
+			Project:   types.IProjectInfo{ID: "p1", Name: "proj"},
+			Workspace: types.IWorkspaceInfo{IsWorktree: true, RelPath: &relPath},
+			Activity: types.IAgentActivity{
+				Lifecycle: types.LifecycleRunning,
+				Activity:  types.ActivityWaitingQuestion,
+				Title:     "Waiting task",
+				UpdatedAt: 4000,
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderFleetViewAt(&buf, agents, false, 10000)
+	clean := StripANSI(buf.String())
+
+	idxBusy := strings.Index(clean, "Busy task")
+	idxWaiting := strings.Index(clean, "Waiting task")
+	idxIdleNewer := strings.Index(clean, "Idle newer task")
+	idxIdleOlder := strings.Index(clean, "Idle older task")
+	idxExited := strings.Index(clean, "Exited task")
+
+	// In the 3 canonical categories (busy: 0, idle: 1, finished: 2) sorted by UpdatedAt DESC:
+	// - Category "busy": Waiting task (updatedAt 4000) < Busy task (updatedAt 2000)
+	// - Category "idle": Idle newer task (updatedAt 3000) < Idle older task (updatedAt 1000)
+	// - Category "finished": Exited task (updatedAt 5000)
+	if idxWaiting >= idxBusy || idxBusy >= idxIdleNewer || idxIdleNewer >= idxIdleOlder || idxIdleOlder >= idxExited {
+		t.Errorf("expected sorting: waiting (busy category, newer) < busy (busy category, older) < idle-newer < idle-older < exited; got indices waiting=%d busy=%d idleNewer=%d idleOlder=%d exited=%d\nOutput:\n%s",
+			idxWaiting, idxBusy, idxIdleNewer, idxIdleOlder, idxExited, clean)
+	}
+}
+
+func TestRenderFleetView_WorktreeKeyFallback_CWD(t *testing.T) {
+	agent := types.IAgentState{
+		ID:        "a-wt",
+		SessionID: "s-wt",
+		Harness:   types.HarnessClaudeCode,
+		Project:   types.IProjectInfo{ID: "p1", Name: "proj"},
+		Workspace: types.IWorkspaceInfo{
+			IsWorktree: true,
+			Branch:     "",
+			RelPath:    nil,
+			CWD:        "/path/to/worktree-dir",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityBusy,
+			Title:     "CWD fallback task",
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderFleetViewAt(&buf, []types.IAgentState{agent}, false, 1000)
+	clean := StripANSI(buf.String())
+
+	if !strings.Contains(clean, "[worktree: HEAD]") {
+		t.Errorf("expected worktree branch label to fall back to HEAD, got:\n%s", clean)
+	}
+}
+
+func TestRenderFleetView_RootBranchLabelFallback_HEAD(t *testing.T) {
+	relPath := "wt"
+	root := types.IAgentState{
+		ID:        "root",
+		SessionID: "s-root",
+		Harness:   types.HarnessClaudeCode,
+		Project:   types.IProjectInfo{ID: "p1", Name: "proj"},
+		Workspace: types.IWorkspaceInfo{
+			IsWorktree: false,
+			Branch:     "", // empty branch
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityBusy,
+			Title:     "Root task",
+		},
+	}
+	wt := types.IAgentState{
+		ID:        "wt",
+		SessionID: "s-wt",
+		Harness:   types.HarnessClaudeCode,
+		Project:   types.IProjectInfo{ID: "p1", Name: "proj"},
+		Workspace: types.IWorkspaceInfo{
+			IsWorktree: true,
+			Branch:     "feat",
+			RelPath:    &relPath,
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityBusy,
+			Title:     "WT task",
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderFleetViewAt(&buf, []types.IAgentState{root, wt}, false, 1000)
+	clean := StripANSI(buf.String())
+
+	if !strings.Contains(clean, "[HEAD]") {
+		t.Errorf("expected root branch label to fall back to [HEAD], got:\n%s", clean)
+	}
+	if strings.Contains(clean, "[main]") {
+		t.Errorf("did not expect [main] fallback when branch is empty, got:\n%s", clean)
+	}
+}
+
+func TestRenderFleetView_AgentMode_NoDuplicateWorktree(t *testing.T) {
+	relPath := ".workspaces/feat-auth"
+	wt := types.IAgentState{
+		Harness: types.HarnessPi,
+		Project: types.IProjectInfo{
+			ID:   "proj-1",
+			Name: "agent-status",
+		},
+		Workspace: types.IWorkspaceInfo{
+			IsWorktree: true,
+			Branch:     "feat-auth",
+			RelPath:    &relPath,
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityBusy,
+			Title:     "WT session",
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderFleetView(&buf, []types.IAgentState{wt}, true)
+	line := strings.TrimSpace(buf.String())
+
+	count := strings.Count(line, " worktree:")
+	if count != 1 {
+		t.Errorf("expected ' worktree:' to appear exactly once per line, appeared %d times in: %s", count, line)
+	}
+}
+
 
 func TestRenderAgentView_HumanMode_CardLinesBoundedToTerminalWidth(t *testing.T) {
 	longTitle := strings.Repeat("Very long title with lots of words explaining the task in full detail ", 6)
@@ -1710,5 +1995,87 @@ func TestCardRendering_EastAsianWidthConditions(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRenderFleetView_HumanMode_ExitedStaleNotDimmed(t *testing.T) {
+	nowMs := int64(10_000_000)
+	agent := types.IAgentState{
+		ID:        "env-1:claude-code:ses-exited-stale",
+		SessionID: "ses-exited-stale",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:    "env-1",
+			Label: "local-dev",
+		},
+		Project: types.IProjectInfo{
+			ID:   "proj-1",
+			Name: "agent-status",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "main",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleExited,
+			Activity:  types.ActivityIdle,
+			Title:     "Old completed work",
+			UpdatedAt: nowMs - 3*60*60*1000, // 3 hours ago (>2h)
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderFleetViewAt(&buf, []types.IAgentState{agent}, false, nowMs)
+	out := buf.String()
+
+	if strings.Contains(out, AnsiDim) {
+		t.Errorf("expected no AnsiDim in fleet view for exited session, got:\n%s", out)
+	}
+}
+
+func TestRenderFleetView_SharedHierarchyFixture(t *testing.T) {
+	fixtureData, err := os.ReadFile("../../../../packages/agent-common/testdata/fleet-hierarchy-fixtures.json")
+	if err != nil {
+		t.Fatalf("failed to read shared fixture: %v", err)
+	}
+
+	var agents []types.IAgentState
+	if err := json.Unmarshal(fixtureData, &agents); err != nil {
+		t.Fatalf("failed to unmarshal fixture: %v", err)
+	}
+
+	if len(agents) == 0 {
+		t.Fatalf("expected non-empty agents from shared fixture")
+	}
+
+	var buf bytes.Buffer
+	RenderFleetViewAt(&buf, agents, false, 20_000_000)
+	out := StripANSI(buf.String())
+
+	// other-project has max UpdatedAt 15000000, while agent-status has max UpdatedAt 12000000.
+	// other-project should sort before agent-status.
+	idxOther := strings.Index(out, "v other-project")
+	idxAgentStatus := strings.Index(out, "v agent-status")
+
+	if idxOther == -1 || idxAgentStatus == -1 {
+		t.Fatalf("expected both projects in output, got:\n%s", out)
+	}
+
+	if idxOther > idxAgentStatus {
+		t.Errorf("expected other-project (more recent max UpdatedAt) to appear before agent-status, got other=%d agentStatus=%d\nOutput:\n%s", idxOther, idxAgentStatus, out)
+	}
+
+	// Verify agent-status ordering:
+	// In root checkout: Fix race condition (busy, 10000000) before Refactor parser (idle, 9000000)
+	idxFixRace := strings.Index(out, "Fix race condition")
+	idxRefactor := strings.Index(out, "Refactor parser")
+	if idxFixRace == -1 || idxRefactor == -1 || idxFixRace > idxRefactor {
+		t.Errorf("expected Fix race condition before Refactor parser, got fixRace=%d refactor=%d", idxFixRace, idxRefactor)
+	}
+
+	// In feat-ui worktree: Implement UI components (busy, 12000000) before Setup storybook (finished, 8000000)
+	idxImplementUI := strings.Index(out, "Implement UI components")
+	idxSetupStorybook := strings.Index(out, "Setup storybook")
+	if idxImplementUI == -1 || idxSetupStorybook == -1 || idxImplementUI > idxSetupStorybook {
+		t.Errorf("expected Implement UI components before Setup storybook, got implementUI=%d setupStorybook=%d", idxImplementUI, idxSetupStorybook)
 	}
 }

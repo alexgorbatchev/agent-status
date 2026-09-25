@@ -1,3 +1,5 @@
+import { readFileSync } from "fs";
+import { resolve } from "path";
 import { describe, it, expect } from "bun:test";
 import {
   groupAgentsByProject,
@@ -7,7 +9,7 @@ import {
   groupAgentsByCategory,
 } from "../groupingUtils";
 import { factory_createAgent, fixture_testEnvironment, fixture_testStaleEnvironment } from "./fixtures";
-import type { IEnvironmentInfo } from "../../types";
+import type { IAgentState, IEnvironmentInfo } from "../../types";
 
 describe("groupingUtils", () => {
   describe("getAgentCategory", () => {
@@ -65,32 +67,36 @@ describe("groupingUtils", () => {
       expect(result).toEqual({ busy: [], idle: [], finished: [] });
     });
 
-    it("groups agents by busy, idle, and finished while preserving arrival order without reordering on updatedAt", () => {
+    it("sorts all 3 categories (busy, idle, finished) descending by updatedAt", () => {
       const busy1 = factory_createAgent({
         id: "busy-1",
         activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "BUSY", updatedAt: 1000 },
       });
+      const busy2 = factory_createAgent({
+        id: "busy-2",
+        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "BUSY", updatedAt: 5000 },
+      });
       const idle1 = factory_createAgent({
         id: "idle-1",
+        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "IDLE", updatedAt: 3000 },
+      });
+      const idle2 = factory_createAgent({
+        id: "idle-2",
         activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "IDLE", updatedAt: 9000 },
       });
       const finished1 = factory_createAgent({
         id: "finished-1",
         activity: { ...factory_createAgent().activity, lifecycle: "EXITED", activity: "IDLE", updatedAt: 2000 },
       });
-      const busy2 = factory_createAgent({
-        id: "busy-2",
-        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "BUSY", updatedAt: 5000 },
-      });
-      const idle2 = factory_createAgent({
-        id: "idle-2",
-        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "IDLE", updatedAt: 3000 },
+      const finished2 = factory_createAgent({
+        id: "finished-2",
+        activity: { ...factory_createAgent().activity, lifecycle: "EXITED", activity: "IDLE", updatedAt: 6000 },
       });
 
-      const result = groupAgentsByCategory([busy1, idle1, finished1, busy2, idle2]);
-      expect(result.busy.map((a) => a.id)).toEqual(["busy-1", "busy-2"]);
-      expect(result.idle.map((a) => a.id)).toEqual(["idle-1", "idle-2"]);
-      expect(result.finished.map((a) => a.id)).toEqual(["finished-1"]);
+      const result = groupAgentsByCategory([busy1, idle1, finished1, busy2, idle2, finished2]);
+      expect(result.busy.map((a) => a.id)).toEqual(["busy-2", "busy-1"]);
+      expect(result.idle.map((a) => a.id)).toEqual(["idle-2", "idle-1"]);
+      expect(result.finished.map((a) => a.id)).toEqual(["finished-2", "finished-1"]);
     });
 
     it("sorts idle agents descending by updatedAt so fresher idle agents appear above stale idle agents", () => {
@@ -137,11 +143,11 @@ describe("groupingUtils", () => {
 
       const group1 = groups.find((g) => g.id === "proj-1");
       expect(group1?.name).toBe("Project One");
-      expect(group1?.agents.length).toBe(2);
+      expect(group1?.allAgents.length).toBe(2);
 
       const group2 = groups.find((g) => g.id === "proj-2");
       expect(group2?.name).toBe("Project Two");
-      expect(group2?.agents.length).toBe(1);
+      expect(group2?.allAgents.length).toBe(1);
     });
 
     it("handles fallback project id and name when missing", () => {
@@ -189,7 +195,7 @@ describe("groupingUtils", () => {
       const groups = groupAgentsByProject([agentFirst, agentSecond, agentThird]);
       expect(groups.length).toBe(1);
 
-      const agentIds = groups[0]?.agents.map((a) => a.id);
+      const agentIds = groups[0]?.allAgents.map((a) => a.id);
       expect(agentIds).toEqual(["agent-first", "agent-second", "agent-third"]);
     });
   });
@@ -332,13 +338,11 @@ describe("groupingUtils", () => {
       expect(projectGroup?.worktrees[0]?.worktreeKey).toBe(".workspaces/feat-auth");
       expect(projectGroup?.worktrees[0]?.branch).toBe("feat-auth");
       expect(projectGroup?.worktrees[0]?.relPath).toBe(".workspaces/feat-auth");
-      expect(projectGroup?.worktrees[0]?.isWorktree).toBe(true);
       expect(projectGroup?.worktrees[0]?.agents.map((a) => a.id)).toEqual(["wt-1"]);
 
       expect(projectGroup?.worktrees[1]?.worktreeKey).toBe(".workspaces/feat-ui");
       expect(projectGroup?.worktrees[1]?.branch).toBe("feat-ui");
       expect(projectGroup?.worktrees[1]?.relPath).toBe(".workspaces/feat-ui");
-      expect(projectGroup?.worktrees[1]?.isWorktree).toBe(true);
       expect(projectGroup?.worktrees[1]?.agents.map((a) => a.id)).toEqual(["wt-2"]);
     });
 
@@ -384,6 +388,45 @@ describe("groupingUtils", () => {
       expect(groups.length).toBe(1);
       expect(groups[0]?.id).toBe("unknown");
       expect(groups[0]?.name).toBe("unknown");
+    });
+  });
+
+  describe("shared fleet hierarchy fixture", () => {
+    it("reads and verifies grouping and hierarchy from shared JSON fixture", () => {
+      const fixturePath = resolve(__dirname, "../../../../agent-common/testdata/fleet-hierarchy-fixtures.json");
+      const fixtures: IAgentState[] = JSON.parse(readFileSync(fixturePath, "utf-8"));
+
+      expect(fixtures.length).toBe(7);
+
+      const hierarchy = groupAgentsByProjectHierarchy(fixtures);
+      expect(hierarchy.length).toBe(2);
+
+      const agentStatus = hierarchy.find((p) => p.id === "github.com/alexgorbatchev/agent-status");
+      expect(agentStatus).toBeDefined();
+      expect(agentStatus?.name).toBe("agent-status");
+      expect(agentStatus?.rootAgents.map((a) => a.sessionId)).toEqual(["ses-root-busy", "ses-root-idle"]);
+      expect(agentStatus?.worktrees.length).toBe(2);
+
+      const featUi = agentStatus?.worktrees.find((w) => w.branch === "feat-ui");
+      expect(featUi).toBeDefined();
+      expect(featUi?.relPath).toBe(".workspaces/feat-ui");
+      expect(featUi?.agents.map((a) => a.sessionId)).toEqual(["ses-wt-busy", "ses-wt-exited"]);
+
+      const fixDb = agentStatus?.worktrees.find((w) => w.branch === "fix-db");
+      expect(fixDb).toBeDefined();
+      expect(fixDb?.relPath).toBe(".workspaces/fix-db");
+      expect(fixDb?.agents.map((a) => a.sessionId)).toEqual(["ses-wt-idle"]);
+
+      const otherProject = hierarchy.find((p) => p.id === "github.com/alexgorbatchev/other-project");
+      expect(otherProject).toBeDefined();
+      expect(otherProject?.name).toBe("other-project");
+      expect(otherProject?.rootAgents.map((a) => a.sessionId)).toEqual(["ses-other-root"]);
+      expect(otherProject?.worktrees.length).toBe(1);
+
+      const featV2 = otherProject?.worktrees.find((w) => w.branch === "feat-v2");
+      expect(featV2).toBeDefined();
+      expect(featV2?.relPath).toBe(".workspaces/feat-v2");
+      expect(featV2?.agents.map((a) => a.sessionId)).toEqual(["ses-other-wt"]);
     });
   });
 });

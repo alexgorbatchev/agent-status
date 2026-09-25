@@ -18,10 +18,17 @@ export interface IA11yNode {
   children?: IA11yNode[];
 }
 
-export interface IDomElement {
+export interface IDomNode {
+  nodeType: number;
+  nodeValue?: string | null;
+  textContent?: string | null;
+}
+
+export interface IDomElement extends IDomNode {
   nodeType: number;
   tagName: string;
   children: ArrayLike<IDomElement> | IDomElement[];
+  childNodes?: ArrayLike<IDomNode> | IDomNode[];
   getAttribute(name: string): string | null;
   textContent: string;
 }
@@ -50,13 +57,55 @@ function cleanText(text: string | null | undefined): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
+function getAccessibleText(element: IDomElement): string {
+  if (element.getAttribute("aria-hidden") === "true") {
+    return "";
+  }
+  if (element.childNodes && element.childNodes.length > 0) {
+    const parts: string[] = [];
+    for (const childNode of Array.from(element.childNodes)) {
+      if (childNode.nodeType === 3) {
+        const text = cleanText(childNode.nodeValue ?? childNode.textContent);
+        if (text) {
+          parts.push(text);
+        }
+      } else if (isDomElement(childNode)) {
+        if (childNode.getAttribute("aria-hidden") !== "true") {
+          const childText = getAccessibleText(childNode);
+          if (childText) {
+            parts.push(childText);
+          }
+        }
+      }
+    }
+    return cleanText(parts.join(" "));
+  }
+  const children = Array.from(element.children);
+  if (children.length === 0) {
+    return cleanText(element.textContent);
+  }
+  const parts: string[] = [];
+  for (const child of children) {
+    if (child.getAttribute("aria-hidden") !== "true") {
+      const childText = getAccessibleText(child);
+      if (childText) {
+        parts.push(childText);
+      }
+    }
+  }
+  return cleanText(parts.join(" "));
+}
+
 function findHeadingText(element: IDomElement): string | null {
   const children = Array.from(element.children);
   for (const child of children) {
+    if (child.getAttribute("aria-hidden") === "true") {
+      continue;
+    }
     const tag = child.tagName.toUpperCase();
     const role = child.getAttribute("role");
     if (/^H[1-6]$/.test(tag) || role === "heading") {
-      const text = cleanText(child.textContent);
+      const text = getAccessibleText(child);
       if (text) {
         return text;
       }
@@ -78,7 +127,7 @@ function getAccessibleName(element: IDomElement): string {
   if (title && cleanText(title)) {
     return cleanText(title);
   }
-  return cleanText(element.textContent);
+  return getAccessibleText(element);
 }
 
 interface IClassificationResult {
@@ -89,6 +138,9 @@ interface IClassificationResult {
 }
 
 function classifyElement(element: IDomElement): IClassificationResult | null {
+  if (element.getAttribute("aria-hidden") === "true") {
+    return null;
+  }
   const role = element.getAttribute("role");
   const tagName = element.tagName.toUpperCase();
 
@@ -138,7 +190,7 @@ function classifyElement(element: IDomElement): IClassificationResult | null {
 
   // 3. Headings: h1-h6 or role="heading"
   if (/^H[1-6]$/.test(tagName) || role === "heading") {
-    const text = cleanText(element.textContent);
+    const text = getAccessibleText(element);
     if (text) {
       return {
         type: "Heading",
@@ -249,6 +301,9 @@ function collectSemanticNodes(element: IDomElement): IA11yNode[] {
   const children = Array.from(element.children);
 
   for (const child of children) {
+    if (child.getAttribute("aria-hidden") === "true") {
+      continue;
+    }
     const classified = classifyElement(child);
 
     if (classified) {

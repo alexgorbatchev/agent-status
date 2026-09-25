@@ -103,6 +103,26 @@ export interface IEnvironmentGroupProps {
   onToggleHide?: (agent: IAgentState) => void;
 }
 
+export interface IAgentGroupHeaderProps {
+  testId?: string;
+  icon: React.ReactNode;
+  iconColorClass?: string;
+  title: string;
+  subtitle?: string;
+  badges?: React.ReactNode;
+  activeCount: number;
+  spend: number;
+}
+
+export interface IAgentCategoryGridsProps {
+  agents: IAgentState[];
+  gridTestId?: string;
+  projectName?: string;
+  hideWorktreeBadge?: boolean;
+  onSelectAgent: AgentSelectCallback;
+  onToggleHide?: AgentToggleHideCallback;
+}
+
 export interface IAgentGroupSectionProps {
   testId?: string;
   icon: React.ReactNode;

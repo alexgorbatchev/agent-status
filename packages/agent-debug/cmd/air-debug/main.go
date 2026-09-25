@@ -473,7 +473,93 @@ func newRootCmd() *cobra.Command {
 	viewCmdFlags.StringVar(&viewFlags.untilEvent, "until-event", "", "Halt replay after encountering event type")
 	viewCmdFlags.BoolVar(&viewFlags.jsonOut, "json", false, "Output final agent state as JSON")
 
-	// 5. events command
+	// 5. session fleet
+	type fleetFlags struct {
+		dbPath      string
+		cwd         string
+		envFlag     string
+		harnessFlag string
+		jsonOut     bool
+	}
+
+	createFleetCmd := func() *cobra.Command {
+		var fFlags fleetFlags
+		cmd := &cobra.Command{
+			Use:   "fleet [file-or-database-or-session-id...]",
+			Short: "Render hierarchical tree view of agent sessions grouped by project and worktree",
+			RunE: func(cmd *cobra.Command, args []string) error {
+				ctx := cmd.Context()
+				if ctx == nil {
+					ctx = context.Background()
+				}
+
+				agents := []types.IAgentState{}
+				if len(args) == 0 {
+					resolvedDB, err := db.ResolveDBPath(fFlags.dbPath)
+					if err != nil {
+						return err
+					}
+					loaded, err := db.ListAgents(ctx, resolvedDB)
+					if err != nil {
+						return err
+					}
+					agents = append(agents, loaded...)
+				} else {
+					for _, arg := range args {
+						if strings.HasSuffix(arg, ".db") {
+							resolvedDB, err := db.ResolveDBPath(arg)
+							if err != nil {
+								return err
+							}
+							loaded, err := db.ListAgents(ctx, resolvedDB)
+							if err != nil {
+								return err
+							}
+							agents = append(agents, loaded...)
+						} else {
+							resolved, err := replay.ResolveSessionTarget(ctx, arg, types.HarnessType(fFlags.harnessFlag))
+							if err != nil {
+								return err
+							}
+							opts := replay.ReplayOptions{
+								FilePath:    resolved.FilePath,
+								Harness:     resolved.Harness,
+								SessionID:   resolved.SessionID,
+								CWD:         fFlags.cwd,
+								EnvLabel:    fFlags.envFlag,
+								StopOnError: false,
+								AgentMode:   output.IsAgentMode(),
+							}
+							res, err := replay.RunReplay(ctx, opts)
+							if err != nil {
+								return err
+							}
+							if res.Agent != nil {
+								agents = append(agents, *res.Agent)
+							}
+						}
+					}
+				}
+
+				if fFlags.jsonOut {
+					enc := json.NewEncoder(cmd.OutOrStdout())
+					enc.SetIndent("", "  ")
+					return enc.Encode(agents)
+				}
+
+				output.RenderFleetView(cmd.OutOrStdout(), agents, output.IsAgentMode())
+				return nil
+			},
+		}
+		cmd.Flags().StringVar(&fFlags.dbPath, "db", "auto", "Path to agent-status.db (default: auto)")
+		cmd.Flags().StringVar(&fFlags.cwd, "cwd", "", "Override transcript working directory for local Git resolution")
+		cmd.Flags().StringVar(&fFlags.envFlag, "env", "debug", "Environment label override")
+		cmd.Flags().StringVar(&fFlags.harnessFlag, "harness", "", "Explicit harness override (claude-code, pi, codex, opencode)")
+		cmd.Flags().BoolVar(&fFlags.jsonOut, "json", false, "Output fleet agents as JSON")
+		return cmd
+	}
+
+	// 6. events command
 	type eventsFlags struct {
 		dbPath           string
 		limit            int
@@ -566,7 +652,9 @@ func newRootCmd() *cobra.Command {
 	sessionCmd.AddCommand(replayCmd)
 	sessionCmd.AddCommand(validateCmd)
 	sessionCmd.AddCommand(viewCmd)
+	sessionCmd.AddCommand(createFleetCmd())
 	rootCmd.AddCommand(sessionCmd)
+	rootCmd.AddCommand(createFleetCmd())
 	rootCmd.AddCommand(eventsCmd)
 
 	// 4. db

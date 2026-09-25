@@ -346,5 +346,66 @@ describe("a11ySnapshot utility", () => {
       expect(tree).toContain('Heading: "Title 1"');
       expect(tree).toContain("Button: [Click Me]");
     });
+
+    it("preserves text nodes when mixed with child elements in accessible text", () => {
+      const doc = new MockDocument();
+      const host = doc.createElement("div");
+
+      const heading = doc.createElement("h2");
+      heading.appendChild(doc.createTextNode("Prefix "));
+      const span = doc.createElement("span");
+      span.textContent = "Highlighted";
+      heading.appendChild(span);
+      heading.appendChild(doc.createTextNode(" Suffix"));
+      host.appendChild(heading);
+
+      const tree = formatA11yTree(host);
+      expect(tree).toContain('Heading: "Prefix Highlighted Suffix"');
+    });
+
+    it("ignores child elements with aria-hidden=true while preserving text nodes", () => {
+      const doc = new MockDocument();
+      const host = doc.createElement("div");
+
+      const heading = doc.createElement("h2");
+      heading.appendChild(doc.createTextNode("Prefix "));
+      const span = doc.createElement("span");
+      span.setAttribute("aria-hidden", "true");
+      span.textContent = "Ignored";
+      heading.appendChild(span);
+      heading.appendChild(doc.createTextNode(" Suffix"));
+      host.appendChild(heading);
+
+      const tree = formatA11yTree(host);
+      expect(tree).toContain('Heading: "Prefix Suffix"');
+      expect(tree).not.toContain("Ignored");
+    });
+
+    it("falls back to children when childNodes is not present", () => {
+      const childMock = {
+        nodeType: 1,
+        tagName: "SPAN",
+        children: [],
+        getAttribute: () => null,
+        textContent: "Child Content",
+      };
+      const parentMock = {
+        nodeType: 1,
+        tagName: "H1",
+        children: [childMock],
+        getAttribute: () => null,
+        textContent: "Parent Content",
+      };
+      const container = {
+        nodeType: 1,
+        tagName: "DIV",
+        children: [parentMock],
+        getAttribute: () => null,
+        textContent: "",
+      };
+
+      const tree = formatA11yTree(container);
+      expect(tree).toContain('Heading: "Child Content"');
+    });
   });
 });

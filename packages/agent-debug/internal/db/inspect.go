@@ -114,15 +114,11 @@ const selectAgentQuery = `
 	LIMIT 1
 `
 
-// InspectSession opens agent-status.db read-only and loads agent, runs, and event metrics.
-func InspectSession(ctx context.Context, dbPath string, sessionIDOrAgentID string) (*SessionRecord, error) {
-	dsn := "file:" + dbPath + "?mode=ro&_pragma=busy_timeout(5000)"
-	db, err := sql.Open("sqlite3", dsn)
-	if err != nil {
-		return nil, fmt.Errorf("opening read-only sqlite database %q: %w", dbPath, err)
-	}
-	defer func() { _ = db.Close() }()
+type rowScanner interface {
+	Scan(dest ...any) error
+}
 
+func scanAgentRow(s rowScanner) (*types.IAgentState, error) {
 	var (
 		id, sessionID, envID, harness                                string
 		projectID, projectName, canonicalRoot                        string
@@ -148,8 +144,7 @@ func InspectSession(ctx context.Context, dbPath string, sessionIDOrAgentID strin
 		runStartedAt, runEndedAt                                     sql.NullInt64
 	)
 
-	row := db.QueryRowContext(ctx, selectAgentQuery, sessionIDOrAgentID, sessionIDOrAgentID)
-	err = row.Scan(
+	err := s.Scan(
 		&id, &sessionID, &envID, &harness,
 		&projectID, &projectName, &canonicalRoot,
 		&branch, &isDetached, &isWorktree, &worktreeRelPath, &cwd,
@@ -163,10 +158,7 @@ func InspectSession(ctx context.Context, dbPath string, sessionIDOrAgentID strin
 		&runPID, &runHarnessVersion, &runStartedAt, &runEndedAt,
 	)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, sessionIDOrAgentID)
-		}
-		return nil, fmt.Errorf("querying agent record: %w", err)
+		return nil, err
 	}
 
 	lifecycle := types.LifecycleExited
@@ -255,6 +247,75 @@ func InspectSession(ctx context.Context, dbPath string, sessionIDOrAgentID strin
 	}
 	if lastThinkingExcerpt.Valid {
 		agent.Activity.LastThinkingExcerpt = &lastThinkingExcerpt.String
+	}
+
+	return agent, nil
+}
+
+const selectAllAgentsQuery = `
+	SELECT
+		a.id, a.session_id, a.environment_id, a.harness,
+		a.project_id, a.project_name, a.canonical_root,
+		a.branch, a.is_detached, a.is_worktree, a.worktree_rel_path, a.cwd,
+		a.current_run_id, a.activity, a.title, a.action, a.action_stale,
+		a.phase, a.active_tool, a.active_target, a.question,
+		a.last_thinking_excerpt, a.last_error,
+		a.tokens_input, a.tokens_output, a.tokens_cache_read, a.tokens_cache_write,
+		a.tokens_reasoning, a.tokens_total,
+		a.cost_usd, a.subagent_count, a.first_started_at, a.updated_at,
+		COALESCE(e.label, ''), COALESCE(e.hostname, ''), COALESCE(e.platform, ''), COALESCE(e.user, ''), COALESCE(e.last_heartbeat_at, 0),
+		r.pid, r.harness_version, r.started_at, r.ended_at
+	FROM agents a
+	LEFT JOIN environments e ON a.environment_id = e.id
+	LEFT JOIN runs r ON a.current_run_id = r.id
+	ORDER BY a.updated_at DESC
+`
+
+// ListAgents queries all agent records from the database ordered by updated_at descending.
+func ListAgents(ctx context.Context, dbPath string) ([]types.IAgentState, error) {
+	dsn := "file:" + dbPath + "?mode=ro&_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("opening read-only sqlite database %q: %w", dbPath, err)
+	}
+	defer func() { _ = db.Close() }()
+
+	rows, err := db.QueryContext(ctx, selectAllAgentsQuery)
+	if err != nil {
+		return nil, fmt.Errorf("querying agents: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var agents []types.IAgentState
+	for rows.Next() {
+		agent, err := scanAgentRow(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scanning agent row: %w", err)
+		}
+		agents = append(agents, *agent)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating agent rows: %w", err)
+	}
+	return agents, nil
+}
+
+// InspectSession opens agent-status.db read-only and loads agent, runs, and event metrics.
+func InspectSession(ctx context.Context, dbPath string, sessionIDOrAgentID string) (*SessionRecord, error) {
+	dsn := "file:" + dbPath + "?mode=ro&_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("opening read-only sqlite database %q: %w", dbPath, err)
+	}
+	defer func() { _ = db.Close() }()
+
+	row := db.QueryRowContext(ctx, selectAgentQuery, sessionIDOrAgentID, sessionIDOrAgentID)
+	agent, err := scanAgentRow(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, sessionIDOrAgentID)
+		}
+		return nil, fmt.Errorf("querying agent record: %w", err)
 	}
 
 	// Fetch all runs for this agent

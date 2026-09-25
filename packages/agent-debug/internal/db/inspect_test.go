@@ -376,3 +376,31 @@ func TestInspectSession(t *testing.T) {
 		t.Fatal("expected error for invalid db path, got nil")
 	}
 }
+
+func TestListAgents(t *testing.T) {
+	ctx := context.Background()
+	dbPath, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	agents, err := ListAgents(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("ListAgents failed: %v", err)
+	}
+	if len(agents) != 2 {
+		t.Fatalf("expected 2 agents from test db, got %d", len(agents))
+	}
+	// Ordered by updated_at DESC (ses-abc-123 has 1000, ses-exited-456 has 500)
+	if agents[0].SessionID != "ses-abc-123" {
+		t.Errorf("expected first agent ses-abc-123, got %s", agents[0].SessionID)
+	}
+	if agents[1].SessionID != "ses-exited" {
+		t.Errorf("expected second agent ses-exited, got %s", agents[1].SessionID)
+	}
+
+	// Invalid DB path returns error
+	_, err = ListAgents(ctx, filepath.Join(t.TempDir(), "nonexistent.db"))
+	if err == nil {
+		t.Fatal("expected error for invalid db path, got nil")
+	}
+}
+

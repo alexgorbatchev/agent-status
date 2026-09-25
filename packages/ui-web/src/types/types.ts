@@ -197,7 +197,6 @@ export interface IWorktreeBranchGroup {
   worktreeKey: string;
   branch?: string;
   relPath?: string;
-  isWorktree: boolean;
   agents: IAgentState[];
 }
 
@@ -209,9 +208,7 @@ export interface IProjectTreeGroup {
   allAgents: IAgentState[]; // convenience flat list for counts / total spend
 }
 
-export interface IProjectGroupItem extends IProjectTreeGroup {
-  agents: IAgentState[];
-}
+export interface IProjectGroupItem extends IProjectTreeGroup {}
 
 export interface IEnvironmentGroupItem {
   environment: IEnvironmentInfo;

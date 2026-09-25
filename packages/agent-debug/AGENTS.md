@@ -18,6 +18,8 @@ Offline replay and validation CLI tool for agent session transcripts through the
 - List sessions in OpenCode database: `air-debug session list opencode.db`
 - Validate session offline: `air-debug session validate session-abc.jsonl`
 - View terminal UI card representation: `air-debug session view session-abc.jsonl`
+- View hierarchical fleet tree: `air-debug session fleet` (or `air-debug fleet`)
+- View fleet for transcripts or DB: `air-debug session fleet session1.jsonl session2.jsonl`
 - Foreign path remapping: `air-debug session replay --cwd /local/repo session-abc.jsonl`
 - Export populated SQLite DB: `air-debug session replay --export-db .tmp/debug.db session-abc.jsonl`
 - Inspect persisted SQLite state: `air-debug db inspect <session-id>`
