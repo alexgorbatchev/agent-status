@@ -9,7 +9,6 @@ import type {
   LifecycleState,
   ActivityState,
   IFileModification,
-  HarnessType,
   IProjectTreeGroup,
 } from "../types";
 
@@ -54,7 +53,6 @@ export interface IStatusBadgeProps {
   toolDuration?: string;
   isSessionStalled?: boolean;
   silenceDuration?: string;
-  harness?: HarnessType;
   hasUnseenCompletion?: boolean | null;
 }
 

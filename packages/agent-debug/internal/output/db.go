@@ -31,6 +31,7 @@ func RenderComparison(w io.Writer, comp *ComparisonResult, agentMode bool) {
 	if comp == nil {
 		return
 	}
+	w = wrapWriter(w)
 
 	if agentMode {
 		driftStr := "MATCH"
@@ -78,6 +79,7 @@ func RenderSessionInspect(w io.Writer, rec *db.SessionRecord, agentMode bool) {
 	if rec == nil || rec.Agent == nil {
 		return
 	}
+	w = wrapWriter(w)
 
 	agent := rec.Agent
 	agentID := SanitizeTranscriptText(agent.ID)

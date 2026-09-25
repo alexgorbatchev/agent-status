@@ -39,14 +39,14 @@ const HARNESS_LABELS: Record<HarnessType, string> = {
 };
 
 const HARNESS_BRAND_TEXT_CLASSES: Record<HarnessType, string> = {
-  "claude-code": "text-[var(--brand-claude)]",
-  pi: "text-[var(--brand-pi)]",
-  codex: "text-[var(--brand-codex)]",
-  opencode: "text-[var(--brand-opencode)]",
+  "claude-code": "text-brand-claude",
+  pi: "text-brand-pi",
+  codex: "text-brand-codex",
+  opencode: "text-brand-opencode",
 };
 
 function getHarnessBrandTextColor(harness: HarnessType): string {
-  return HARNESS_BRAND_TEXT_CLASSES[harness] || "text-[var(--brand-default)]";
+  return HARNESS_BRAND_TEXT_CLASSES[harness] || "text-brand-default";
 }
 
 function resolveCurrentTime(): number {
@@ -144,12 +144,13 @@ export function AgentCard({
 
   const isError = activity.activity === "ERROR";
   const isWaitingQuestion = activity.activity === "WAITING_QUESTION";
-  const isAttentionState = isError || isWaitingQuestion;
+  const isRateLimited = activity.activity === "RATE_LIMITED";
+  const isAttentionState = isError || isWaitingQuestion || isRateLimited;
   const brandState = isAttentionState ? "muted" : isFinished ? "quiescent" : "active";
   const isCompleted = effectiveHasUnseenCompletion && activity.lifecycle === "RUNNING" && activity.activity === "IDLE";
   const semanticStatus = isError
     ? "error"
-    : isWaitingQuestion || isStalled || sessionStalled
+    : isWaitingQuestion || isRateLimited || isStalled || sessionStalled
       ? "warning"
       : isCompleted
         ? "success"
@@ -172,11 +173,13 @@ export function AgentCard({
           ? "border-red-600/80 shadow-red-950/40"
           : isWaitingQuestion
             ? "border-amber-600/80 shadow-amber-950/40"
-            : isStalled || sessionStalled
-              ? "border-amber-500/80 shadow-amber-950/40"
-              : isCompleted
-                ? "border-emerald-600/80 shadow-emerald-950/40"
-                : "border-slate-800 hover:border-slate-700",
+            : isRateLimited
+              ? "border-amber-600/80 shadow-amber-950/40"
+              : isStalled || sessionStalled
+                ? "border-amber-500/80 shadow-amber-950/40"
+                : isCompleted
+                  ? "border-emerald-600/80 shadow-emerald-950/40"
+                  : "border-slate-800 hover:border-slate-700",
         agent.isHidden && "border-dashed border-slate-700/60 opacity-60 hover:opacity-100",
         !agent.isHidden && isFinished && "opacity-60 hover:opacity-100",
         freshness === "stale" && "opacity-60 bg-slate-950/40 border-slate-800/50 hover:opacity-100",
@@ -194,7 +197,11 @@ export function AgentCard({
               aria-label={HARNESS_LABELS[harness] || harness}
               className={clsx(
                 "flex items-center gap-1 font-medium transition-colors",
-                isAttentionState ? "text-slate-500" : isFinished ? "text-slate-400" : getHarnessBrandTextColor(harness),
+                isAttentionState
+                  ? "text-brand-muted"
+                  : isFinished
+                    ? "text-slate-400"
+                    : getHarnessBrandTextColor(harness),
               )}
             >
               <IconWrapper size="sm">
@@ -292,7 +299,6 @@ export function AgentCard({
               toolDuration={formattedDuration ?? undefined}
               isSessionStalled={sessionStalled}
               silenceDuration={sessionStalled ? silenceDuration : undefined}
-              harness={harness}
               hasUnseenCompletion={effectiveHasUnseenCompletion}
             />
           </div>

@@ -236,6 +236,7 @@ func FormatEventLabel(rec db.EventRecord) string {
 
 // RenderEventsTable writes events in tabular format (human) or key-value format (agent).
 func RenderEventsTable(w io.Writer, events []db.EventRecord, agentMode bool) error {
+	w = wrapWriter(w)
 	if agentMode {
 		for _, rec := range events {
 			subagentStr := "-"
@@ -281,6 +282,7 @@ func RenderEventsTable(w io.Writer, events []db.EventRecord, agentMode bool) err
 
 // RenderEventDetail writes a detailed view of a single telemetry event.
 func RenderEventDetail(w io.Writer, rec db.EventRecord, agentMode bool) error {
+	w = wrapWriter(w)
 	sessionID := SanitizeTranscriptText(rec.SessionID)
 	agentID := SanitizeTranscriptText(rec.AgentID)
 	eventType := SanitizeTranscriptText(rec.EventType)

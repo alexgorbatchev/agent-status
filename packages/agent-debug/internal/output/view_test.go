@@ -2,6 +2,7 @@ package output
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -651,6 +652,96 @@ func TestRenderAgentView_HumanMode_VendorBadge_WorkingState(t *testing.T) {
 	}
 }
 
+func TestRenderAgentView_HumanMode_VendorBadge_Pi_WorkingState(t *testing.T) {
+	agent := types.IAgentState{
+		ID:        "env-1:pi:ses-pi-work",
+		SessionID: "ses-pi-work",
+		Harness:   types.HarnessPi,
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityBusy,
+			Title:     "Pi working session",
+			Action:    "Executing tool",
+			UpdatedAt: 1000,
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderAgentViewAt(&buf, agent, false, 1000)
+	out := buf.String()
+
+	// In working state, Pi badge uses distinct vendor brand styling (AnsiBold + AnsiMagenta) (#106)
+	expectedBadge := AnsiBold + AnsiMagenta + "(Pi)" + AnsiReset
+	if !strings.Contains(out, expectedBadge) {
+		t.Errorf("expected harness badge to have Pi vendor brand styling %q in working state, got:\n%s", expectedBadge, out)
+	}
+
+	// Must strictly NOT contain Red, Green, or Blue
+	if strings.Contains(out, AnsiRed+"(Pi)") || strings.Contains(out, AnsiGreen+"(Pi)") || strings.Contains(out, AnsiBlue+"(Pi)") {
+		t.Errorf("vendor badge must never use Red, Green, or Blue hues in working state")
+	}
+}
+
+func TestRenderAgentView_HumanMode_VendorBadge_Codex_WorkingState(t *testing.T) {
+	agent := types.IAgentState{
+		ID:        "env-1:codex:ses-codex-work",
+		SessionID: "ses-codex-work",
+		Harness:   types.HarnessCodex,
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityBusy,
+			Title:     "Codex working session",
+			Action:    "Executing tool",
+			UpdatedAt: 1000,
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderAgentViewAt(&buf, agent, false, 1000)
+	out := buf.String()
+
+	// In working state, Codex badge uses AnsiCyan (#106)
+	expectedBadge := AnsiCyan + "(Codex)" + AnsiReset
+	if !strings.Contains(out, expectedBadge) {
+		t.Errorf("expected harness badge to have Codex vendor brand styling %q in working state, got:\n%s", expectedBadge, out)
+	}
+
+	// Must strictly NOT contain Red, Green, Yellow, or Blue
+	if strings.Contains(out, AnsiRed+"(Codex)") || strings.Contains(out, AnsiGreen+"(Codex)") || strings.Contains(out, AnsiYellow+"(Codex)") || strings.Contains(out, AnsiBlue+"(Codex)") {
+		t.Errorf("vendor badge must never use semantic Red, Green, Yellow, or Blue hues in working state")
+	}
+}
+
+func TestRenderAgentView_HumanMode_VendorBadge_OpenCode_WorkingState(t *testing.T) {
+	agent := types.IAgentState{
+		ID:        "env-1:opencode:ses-opencode-work",
+		SessionID: "ses-opencode-work",
+		Harness:   types.HarnessOpencode,
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityBusy,
+			Title:     "OpenCode working session",
+			Action:    "Executing tool",
+			UpdatedAt: 1000,
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderAgentViewAt(&buf, agent, false, 1000)
+	out := buf.String()
+
+	// In working state, OpenCode badge uses distinct vendor brand styling (AnsiBold + AnsiCyan) (#106)
+	expectedBadge := AnsiBold + AnsiCyan + "(OpenCode)" + AnsiReset
+	if !strings.Contains(out, expectedBadge) {
+		t.Errorf("expected harness badge to have OpenCode vendor brand styling %q in working state, got:\n%s", expectedBadge, out)
+	}
+
+	// Must strictly NOT contain Red, Green, Yellow, or Blue
+	if strings.Contains(out, AnsiRed+"(OpenCode)") || strings.Contains(out, AnsiGreen+"(OpenCode)") || strings.Contains(out, AnsiYellow+"(OpenCode)") || strings.Contains(out, AnsiBlue+"(OpenCode)") {
+		t.Errorf("vendor badge must never use semantic Red, Green, Yellow, or Blue hues in working state")
+	}
+}
+
 func TestFormatHarnessBadge_RateLimited(t *testing.T) {
 	badge := FormatHarnessBadge(types.HarnessClaudeCode, types.ActivityRateLimited)
 	expected := AnsiYellow + "(Claude Code)" + AnsiReset
@@ -702,18 +793,140 @@ func TestRenderAgentView_RateLimited(t *testing.T) {
 	}
 }
 
-func TestFormatHarnessBadge_ProhibitsRedAndGreen(t *testing.T) {
-	// Custom or unknown harness should never be assigned Red or Green
-	badge := FormatHarnessBadge(types.HarnessType("custom-harness"), types.ActivityBusy)
-	if strings.Contains(badge, AnsiRed) || strings.Contains(badge, AnsiGreen) {
-		t.Errorf("FormatHarnessBadge must never assign Red or Green as vendor brand color, got: %q", badge)
+func TestRenderAgentView_HumanMode_SemanticPrecedence_RateLimited(t *testing.T) {
+	rlMsg := "Too Many Requests: Retry in 30s"
+	agent := types.IAgentState{
+		ID:        "env-1:pi:ses-rl-pi",
+		SessionID: "ses-rl-pi",
+		Harness:   types.HarnessPi,
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityRateLimited,
+			Title:     "Pi Rate Limited Session",
+			Action:    "Waiting for backoff",
+			LastError: &rlMsg,
+			UpdatedAt: 1000,
+		},
 	}
 
-	// Prohibited red input must be sanitized/prohibited
-	prohibitedHarness := types.HarnessType(AnsiRed + "EvilHarness" + AnsiReset)
-	sanitized := FormatHarnessBadge(prohibitedHarness, types.ActivityBusy)
-	if strings.Contains(sanitized, AnsiRed) {
-		t.Errorf("FormatHarnessBadge must sanitize prohibited red hue from vendor input in working state, got: %q", sanitized)
+	var buf bytes.Buffer
+	RenderAgentViewAt(&buf, agent, false, 1000)
+	out := buf.String()
+
+	// 1. In RATE_LIMITED, semantic warning style (ANSI Yellow) must override Pi's vendor badge coloring
+	expectedBadge := AnsiYellow + "(Pi)" + AnsiReset
+	if !strings.Contains(out, expectedBadge) {
+		t.Errorf("expected harness badge to have yellow warning style %q in RATE_LIMITED state, got:\n%s", expectedBadge, out)
+	}
+	// Vendor brand color (AnsiBold+AnsiMagenta, AnsiMagenta, or AnsiBlue) must be suppressed
+	if strings.Contains(out, AnsiBold+AnsiMagenta+"(Pi)") || strings.Contains(out, AnsiMagenta+"(Pi)") || strings.Contains(out, AnsiBlue+"(Pi)") {
+		t.Errorf("harness badge must not use vendor brand color during RATE_LIMITED state")
+	}
+
+	// 2. Callout must use prompt/warning style (ANSI Yellow)
+	expectedCallout := AnsiYellow + GlyphWarn + " " + rlMsg + AnsiReset
+	if !strings.Contains(out, expectedCallout) {
+		t.Errorf("expected callout to have yellow warning style %q, got:\n%s", expectedCallout, out)
+	}
+
+	// 3. Status label must use ANSI Yellow
+	expectedStatus := AnsiYellow + "Rate Limited" + AnsiReset
+	if !strings.Contains(out, expectedStatus) {
+		t.Errorf("expected status label %q in RATE_LIMITED state, got:\n%s", expectedStatus, out)
+	}
+}
+
+func TestRenderAgentView_ColorGating_NoColor(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+
+	errMsg := "something failed"
+	agent := types.IAgentState{
+		ID:        "env-1:claude-code:ses-nc",
+		SessionID: "ses-nc",
+		Harness:   types.HarnessClaudeCode,
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityError,
+			Title:     "Failing Agent",
+			Action:    "Retrying",
+			LastError: &errMsg,
+			UpdatedAt: 1000,
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderAgentViewAt(&buf, agent, false, 1000)
+	out := buf.String()
+
+	// When NO_COLOR is set, output must not contain any ANSI escape sequences
+	if StripANSI(out) != out {
+		t.Errorf("expected no ANSI escape sequences when NO_COLOR=1, but output has ANSI:\n%s", out)
+	}
+	if strings.Contains(out, "\x1b[") {
+		t.Errorf("output must not contain escape code \\x1b[ when NO_COLOR=1")
+	}
+}
+
+func TestRenderAgentView_ColorGating_NonTTY(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	errMsg := "something failed"
+	agent := types.IAgentState{
+		ID:        "env-1:claude-code:ses-nontty",
+		SessionID: "ses-nontty",
+		Harness:   types.HarnessClaudeCode,
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityError,
+			Title:     "Failing Agent",
+			Action:    "Retrying",
+			LastError: &errMsg,
+			UpdatedAt: 1000,
+		},
+	}
+
+	// Render into non-TTY pipe writer
+	done := make(chan string)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = buf.ReadFrom(r)
+		done <- buf.String()
+	}()
+
+	RenderAgentViewAt(w, agent, false, 1000)
+	_ = w.Close()
+
+	out := <-done
+
+	// When writing to a non-TTY pipe, output must not contain any ANSI escape sequences
+	if StripANSI(out) != out {
+		t.Errorf("expected no ANSI escape sequences when writing to non-TTY pipe, but output has ANSI:\n%s", out)
+	}
+	if strings.Contains(out, "\x1b[") {
+		t.Errorf("output must not contain escape code \\x1b[ when writing to non-TTY pipe")
+	}
+}
+
+func TestFormatHarnessBadge_ProhibitsReservedSemanticColors(t *testing.T) {
+	// Custom or unknown harness should never be assigned Red, Green, Yellow, or Blue
+	badge := FormatHarnessBadge(types.HarnessType("custom-harness"), types.ActivityBusy)
+	if strings.Contains(badge, AnsiRed) || strings.Contains(badge, AnsiGreen) || strings.Contains(badge, AnsiYellow) || strings.Contains(badge, AnsiBlue) {
+		t.Errorf("FormatHarnessBadge must never assign reserved semantic color, got: %q", badge)
+	}
+
+	// Prohibited semantic inputs must be sanitized in working state
+	for _, semanticColor := range []string{AnsiRed, AnsiGreen, AnsiYellow, AnsiBlue, AnsiBold + AnsiRed, AnsiBold + AnsiYellow} {
+		prohibitedHarness := types.HarnessType(semanticColor + "EvilHarness" + AnsiReset)
+		sanitized := FormatHarnessBadge(prohibitedHarness, types.ActivityBusy)
+		if strings.Contains(sanitized, semanticColor) {
+			t.Errorf("FormatHarnessBadge must sanitize prohibited color %q from vendor input in working state, got: %q", semanticColor, sanitized)
+		}
 	}
 }
 

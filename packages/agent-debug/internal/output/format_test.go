@@ -961,14 +961,113 @@ func TestRenderReplaySummary_Completed(t *testing.T) {
 }
 
 func TestSanitizeBrandColor(t *testing.T) {
-	if got := SanitizeBrandColor(AnsiRed); got != AnsiWhite {
-		t.Errorf("SanitizeBrandColor(AnsiRed) = %q, want %q", got, AnsiWhite)
+	// Prohibited semantic colors (Red, Green, Yellow, Blue) and bold variants must be sanitized to AnsiWhite
+	prohibited := []string{
+		AnsiRed,
+		AnsiGreen,
+		AnsiYellow,
+		AnsiBlue,
+		AnsiBold + AnsiRed,
+		AnsiBold + AnsiGreen,
+		AnsiBold + AnsiYellow,
+		AnsiBold + AnsiBlue,
+		"\x1b[1;31m",
+		"\x1b[1;32m",
+		"\x1b[1;33m",
+		"\x1b[1;34m",
+		"\x1b[31;1m",
+		"\x1b[32;1m",
+		"\x1b[33;1m",
+		"\x1b[34;1m",
 	}
-	if got := SanitizeBrandColor(AnsiGreen); got != AnsiWhite {
-		t.Errorf("SanitizeBrandColor(AnsiGreen) = %q, want AnsiWhite", got)
+	for _, c := range prohibited {
+		if got := SanitizeBrandColor(c); got != AnsiWhite {
+			t.Errorf("SanitizeBrandColor(%q) = %q, want %q", c, got, AnsiWhite)
+		}
 	}
-	if got := SanitizeBrandColor(AnsiMagenta); got != AnsiMagenta {
-		t.Errorf("SanitizeBrandColor(AnsiMagenta) = %q, want %q", got, AnsiMagenta)
+
+	// Safe non-semantic brand colors must be preserved
+	safe := []string{
+		AnsiMagenta,
+		AnsiBold + AnsiMagenta,
+		AnsiCyan,
+		AnsiBold + AnsiCyan,
+		AnsiWhite,
+	}
+	for _, c := range safe {
+		if got := SanitizeBrandColor(c); got != c {
+			t.Errorf("SanitizeBrandColor(%q) = %q, want %q", c, got, c)
+		}
+	}
+}
+
+func TestGetHarnessBrandColor_DistinctPiAndClaude(t *testing.T) {
+	claude := GetHarnessBrandColor(types.HarnessClaudeCode)
+	pi := GetHarnessBrandColor(types.HarnessPi)
+	if claude == pi {
+		t.Errorf("Claude Code and Pi must have distinct brand styling, both got %q", claude)
+	}
+	if claude != AnsiMagenta {
+		t.Errorf("GetHarnessBrandColor(HarnessClaudeCode) = %q, want AnsiMagenta %q", claude, AnsiMagenta)
+	}
+	if pi != AnsiBold+AnsiMagenta {
+		t.Errorf("GetHarnessBrandColor(HarnessPi) = %q, want AnsiBold+AnsiMagenta %q", pi, AnsiBold+AnsiMagenta)
+	}
+	if pi == AnsiBlue || claude == AnsiBlue {
+		t.Errorf("Harness brand color must not be AnsiBlue (collides with BUSY state)")
+	}
+	if strings.Contains(pi, AnsiRed) || strings.Contains(claude, AnsiRed) {
+		t.Errorf("Harness brand color must not contain AnsiRed")
+	}
+	if strings.Contains(pi, AnsiGreen) || strings.Contains(claude, AnsiGreen) {
+		t.Errorf("Harness brand color must not contain AnsiGreen")
+	}
+}
+
+func TestGetHarnessBrandColor_DistinctCodexAndOpenCode(t *testing.T) {
+	codex := GetHarnessBrandColor(types.HarnessCodex)
+	opencode := GetHarnessBrandColor(types.HarnessOpencode)
+	if codex == opencode {
+		t.Errorf("Codex and OpenCode must have distinct brand styling, both got %q", codex)
+	}
+	if codex != AnsiCyan {
+		t.Errorf("GetHarnessBrandColor(HarnessCodex) = %q, want AnsiCyan %q", codex, AnsiCyan)
+	}
+	if opencode != AnsiBold+AnsiCyan {
+		t.Errorf("GetHarnessBrandColor(HarnessOpencode) = %q, want AnsiBold+AnsiCyan %q", opencode, AnsiBold+AnsiCyan)
+	}
+	// Neither should use reserved semantic colors
+	for name, color := range map[string]string{"Codex": codex, "OpenCode": opencode} {
+		if strings.Contains(color, AnsiRed) || strings.Contains(color, AnsiGreen) || strings.Contains(color, AnsiYellow) || strings.Contains(color, AnsiBlue) {
+			t.Errorf("%s brand color %q contains reserved semantic color", name, color)
+		}
+	}
+}
+
+func TestIsColorEnabled(t *testing.T) {
+	// When NO_COLOR is set, color must be disabled
+	t.Setenv("NO_COLOR", "1")
+	var buf bytes.Buffer
+	if isColorEnabled(&buf) {
+		t.Errorf("isColorEnabled should return false when NO_COLOR=1")
+	}
+
+	// When NO_COLOR is unset and writer is a pipe (non-terminal file), color must be disabled
+	t.Setenv("NO_COLOR", "")
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+	defer func() { _ = w.Close() }()
+
+	if isColorEnabled(w) {
+		t.Errorf("isColorEnabled should return false for non-terminal pipe writer")
+	}
+
+	// Buffer writer with NO_COLOR unset should allow color
+	if !isColorEnabled(&buf) {
+		t.Errorf("isColorEnabled should return true for bytes.Buffer when NO_COLOR is unset")
 	}
 }
 

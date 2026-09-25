@@ -5,33 +5,25 @@
   --background: #020617;
   --foreground: #f8fafc;
 
-  /* Semantic status tokens (strictly reserved for agent lifecycle and activity states) */
+  /* Semantic status tokens (strictly reserved for agent lifecycle and activity states)
+     All status tokens satisfy WCAG AA contrast (>= 4.5:1 text, >= 3:1 graphical)
+     against dark card surfaces (#020617, #0f172a, #1e293b).
+  */
   --status-success: #10b981;
   --status-warning: #f59e0b;
-  --status-error: #ef4444;
-  --status-info: #3b82f6;
+  --status-error: #f87171;
+  --status-info: #60a5fa;
 
   /* Harness brand tokens (strictly prohibited from using red or green hues)
      All brand tokens satisfy WCAG AA contrast (>= 4.5:1 text, >= 3:1 graphical)
-     against dark (#020617, #0f172a, #1e293b) and light (#ffffff, #f8fafc) backgrounds.
+     against dark card surfaces (#020617, #0f172a, #1e293b).
   */
-  --brand-claude: #d97757; /* Claude terracotta / warm bronze */
+  --brand-claude: #db8659; /* Claude terracotta / warm bronze (21° hue, >5.2:1 contrast) */
   --brand-pi: #818cf8; /* Inflection Pi violet / indigo */
   --brand-codex: #a78bfa; /* OpenAI Codex purple / violet */
   --brand-opencode: #38bdf8; /* OpenCode sky blue */
   --brand-default: #94a3b8; /* Neutral slate-400 */
-  --brand-muted: #64748b; /* Muted brand for attention states (slate-500) */
-}
-
-@media (prefers-color-scheme: light) {
-  :root {
-    --brand-claude: #c15f3c; /* Darker terracotta for WCAG AA on light */
-    --brand-pi: #4338ca; /* Darker indigo for WCAG AA on light */
-    --brand-codex: #6d28d9; /* Darker purple for WCAG AA on light */
-    --brand-opencode: #0369a1; /* Darker sky blue for WCAG AA on light */
-    --brand-default: #475569; /* Darker slate for WCAG AA on light */
-    --brand-muted: #64748b;
-  }
+  --brand-muted: #94a3b8; /* Muted brand for attention states (slate-400, >= 4.5:1 on dark surfaces) */
 }
 
 @theme {
@@ -46,25 +38,6 @@
   --color-brand-opencode: var(--brand-opencode);
   --color-brand-default: var(--brand-default);
   --color-brand-muted: var(--brand-muted);
-}
-
-/* Semantic utility classes retain highest CSS specificity over any brand styling */
-.status-error,
-[data-semantic-status="error"] {
-  border-color: #dc2626 !important;
-  color: #fca5a5 !important;
-}
-
-.status-warning,
-[data-semantic-status="warning"] {
-  border-color: #d97706 !important;
-  color: #fcd34d !important;
-}
-
-.status-success,
-[data-semantic-status="success"] {
-  border-color: #059669 !important;
-  color: #6ee7b7 !important;
 }
 
 body {

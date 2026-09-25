@@ -40,7 +40,7 @@ func FormatHarnessBadge(h types.HarnessType, activity types.ActivityState) strin
 	case types.ActivityWaitingQuestion, types.ActivityRateLimited:
 		return fmt.Sprintf("%s(%s)%s", AnsiYellow, cleanLabel, AnsiReset)
 	default:
-		brandColor := GetHarnessBrandColor(h)
+		brandColor := SanitizeBrandColor(GetHarnessBrandColor(h))
 		return fmt.Sprintf("%s(%s)%s", brandColor, cleanLabel, AnsiReset)
 	}
 }
@@ -132,6 +132,7 @@ func RenderAgentView(w io.Writer, agent types.IAgentState, agentMode bool) {
 
 // RenderAgentViewAt renders a terminal representation of an agent state card with a specified reference timestamp.
 func RenderAgentViewAt(w io.Writer, agent types.IAgentState, agentMode bool, nowMs int64) {
+	w = wrapWriter(w)
 	if agentMode {
 		renderAgentViewAgentMode(w, agent)
 		return
@@ -222,6 +223,7 @@ func RenderFleetView(w io.Writer, agents []types.IAgentState, agentMode bool) {
 
 // RenderFleetViewAt renders a terminal representation of multiple agent sessions with a specified reference timestamp.
 func RenderFleetViewAt(w io.Writer, agents []types.IAgentState, agentMode bool, nowMs int64) {
+	w = wrapWriter(w)
 	if len(agents) == 0 {
 		if !agentMode {
 			_, _ = fmt.Fprintln(w, "No active or recent agent runs detected.")
@@ -464,7 +466,7 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 	statusLabel := lifecycle
 	if agent.Activity.Lifecycle == types.LifecycleRunning && agent.Activity.Activity == types.ActivityIdle && agent.Activity.HasUnseenCompletion != nil && *agent.Activity.HasUnseenCompletion {
 		statusLabel = AnsiGreen + "Completed" + AnsiReset
-	} else if agent.Activity.Lifecycle == types.LifecycleRunning && agent.Activity.Activity == types.ActivityRateLimited {
+	} else if agent.Activity.Activity == types.ActivityRateLimited {
 		statusLabel = AnsiYellow + "Rate Limited" + AnsiReset
 	}
 	headerRight := fmt.Sprintf("(%s)", statusLabel)

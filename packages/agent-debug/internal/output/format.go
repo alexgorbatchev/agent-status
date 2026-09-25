@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
+	"github.com/mattn/go-isatty"
 	"github.com/mattn/go-runewidth"
 	"github.com/olekukonko/tablewriter"
 	"github.com/olekukonko/tablewriter/tw"
@@ -50,29 +51,74 @@ const (
 )
 
 // GetHarnessBrandColor returns the non-semantic ANSI vendor brand color for a harness.
-// Strictly enforces that neither Red (ANSI Red) nor Green (ANSI Green) can ever be returned (#106).
+// Strictly enforces that reserved semantic colors (Red, Green, Yellow, Blue) cannot be returned (#106).
+// Claude Code and Pi are assigned distinct magenta styling (Claude uses AnsiMagenta, Pi uses AnsiBold+AnsiMagenta).
+// Codex and OpenCode are assigned distinct cyan styling (Codex uses AnsiCyan, OpenCode uses AnsiBold+AnsiCyan).
 func GetHarnessBrandColor(h types.HarnessType) string {
 	switch h {
 	case types.HarnessClaudeCode:
 		return AnsiMagenta
 	case types.HarnessPi:
-		return AnsiBlue
+		return AnsiBold + AnsiMagenta
 	case types.HarnessCodex:
 		return AnsiCyan
 	case types.HarnessOpencode:
-		return AnsiCyan
+		return AnsiBold + AnsiCyan
 	default:
 		return AnsiWhite
 	}
 }
 
-// SanitizeBrandColor ensures a brand color string does not contain prohibited Red or Green hues.
-// Red and Green are strictly reserved for agent lifecycle and activity states (#106).
+// SanitizeBrandColor ensures a brand color string does not contain reserved semantic colors.
+// Red (error), Green (success), Yellow (warning), and Blue (busy/info), including their bold variants,
+// are strictly reserved for agent lifecycle and activity states (#106).
 func SanitizeBrandColor(color string) string {
-	if strings.Contains(color, AnsiRed) || strings.Contains(color, AnsiGreen) {
-		return AnsiWhite
+	reserved := []string{
+		AnsiRed, AnsiGreen, AnsiYellow, AnsiBlue,
+		"\x1b[1;31m", "\x1b[1;32m", "\x1b[1;33m", "\x1b[1;34m",
+		"\x1b[31;1m", "\x1b[32;1m", "\x1b[33;1m", "\x1b[34;1m",
+		"\x1b[91m", "\x1b[92m", "\x1b[93m", "\x1b[94m",
+		"\x1b[1;91m", "\x1b[1;92m", "\x1b[1;93m", "\x1b[1;94m",
+	}
+	for _, res := range reserved {
+		if strings.Contains(color, res) {
+			return AnsiWhite
+		}
 	}
 	return color
+}
+
+// isColorEnabled checks whether ANSI color output should be enabled for writer w.
+// Returns false if NO_COLOR environment variable is set (non-empty) or if w is a file descriptor that is not a TTY (#106).
+func isColorEnabled(w io.Writer) bool {
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	if f, ok := w.(*os.File); ok {
+		return isatty.IsTerminal(f.Fd()) || isatty.IsCygwinTerminal(f.Fd())
+	}
+	return true
+}
+
+type noColorWriter struct {
+	w io.Writer
+}
+
+func (nw *noColorWriter) Write(p []byte) (int, error) {
+	clean := StripANSI(string(p))
+	_, err := nw.w.Write([]byte(clean))
+	if err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+// wrapWriter wraps w with an ANSI-stripping writer if color is not enabled (#106).
+func wrapWriter(w io.Writer) io.Writer {
+	if !isColorEnabled(w) {
+		return &noColorWriter{w: w}
+	}
+	return w
 }
 
 var escapeSequenceRegex = regexp.MustCompile(
@@ -436,6 +482,7 @@ func newTable(w io.Writer, header []string) *tablewriter.Table {
 
 // RenderSessionList writes the session list in either human table or agent flat mode.
 func RenderSessionList(w io.Writer, sessions []SessionSummary, agentMode bool) {
+	w = wrapWriter(w)
 	if agentMode {
 		for _, s := range sessions {
 			id := SanitizeTranscriptText(s.ID)
@@ -505,6 +552,7 @@ type StateDiff struct {
 
 // RenderDiff formats and prints a step-by-step state transition diff.
 func RenderDiff(w io.Writer, diff StateDiff, agentMode bool) {
+	w = wrapWriter(w)
 	eventType := SanitizeTranscriptText(diff.EventType)
 	if agentMode {
 		muts := make([]string, 0, len(diff.Mutations))
@@ -610,6 +658,7 @@ func FormatActivityStatus(lifecycle types.LifecycleState, activity types.Activit
 
 // RenderReplaySummary writes the summary of the replayed session.
 func RenderReplaySummary(w io.Writer, s ReplaySummary, agentMode bool) {
+	w = wrapWriter(w)
 	sessionID := SanitizeTranscriptText(s.SessionID)
 	agentID := SanitizeTranscriptText(s.AgentID)
 	harness := SanitizeTranscriptText(string(s.Harness))
@@ -704,6 +753,7 @@ type ValidationReport struct {
 
 // RenderValidationReport writes the validation checklist.
 func RenderValidationReport(w io.Writer, r ValidationReport, agentMode bool) {
+	w = wrapWriter(w)
 	harness := SanitizeTranscriptText(string(r.Harness))
 	if agentMode {
 		status := "PASS"

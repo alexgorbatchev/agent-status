@@ -3,7 +3,7 @@ import assert from "node:assert";
 import { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AgentCard } from "../components/AgentCard";
-import type { IAgentState } from "../types";
+import type { IAgentState, HarnessType } from "../types";
 import { setupMockDomEnvironment, mountComponent } from "./helpers";
 import {
   fixture_agentStateRunning,
@@ -739,8 +739,8 @@ describe("AgentCard Component", () => {
       const badgeMatch = html.match(/data-testid="AgentCard--harness-badge"[^>]*class="([^"]*)"/);
       assert(badgeMatch);
       const badgeClass = badgeMatch[1];
-      expect(badgeClass).toContain("text-slate-500");
-      expect(badgeClass).not.toContain("text-[var(--brand-claude)]");
+      expect(badgeClass).toContain("text-brand-muted");
+      expect(badgeClass).not.toContain("text-brand-claude");
 
       // Attention callout strictly uses semantic red
       expect(html).toContain('data-testid="AgentCard--error"');
@@ -764,11 +764,53 @@ describe("AgentCard Component", () => {
       const badgeMatch = html.match(/data-testid="AgentCard--harness-badge"[^>]*class="([^"]*)"/);
       assert(badgeMatch);
       const badgeClass = badgeMatch[1];
-      expect(badgeClass).toContain("text-slate-500");
-      expect(badgeClass).not.toContain("text-[var(--brand-claude)]");
+      expect(badgeClass).toContain("text-brand-muted");
+      expect(badgeClass).not.toContain("text-brand-claude");
 
       // Attention callout strictly uses semantic amber
       expect(html).toContain('data-testid="AgentCard--question"');
+      expect(html).toContain('data-callout-type="warning"');
+      expect(html).toContain("border-amber-800/60");
+    });
+
+    it("enforces amber card border and suppresses brand color on harness mark during RATE_LIMITED state (#106)", () => {
+      const rateLimitedAgent = factory_agentState({
+        harness: "claude-code",
+        activity: {
+          ...fixture_agentStateRunning.activity,
+          lifecycle: "RUNNING",
+          activity: "RATE_LIMITED",
+          lastError: "Rate limit reached — backoff/retry in progress",
+          updatedAt: Date.now(),
+        },
+      });
+
+      const html = renderToStaticMarkup(<AgentCard agent={rateLimitedAgent} />);
+
+      // Outer card border highlight must switch to semantic warning amber
+      const cardMatch = html.match(/data-testid="AgentCard"[^>]*class="([^"]*)"/);
+      assert(cardMatch);
+      const cardClass = cardMatch[1];
+      expect(cardClass).toContain("border-amber-600/80");
+      expect(cardClass).not.toContain("border-slate-800");
+      const cardSemanticStatusMatch = html.match(/data-testid="AgentCard"[^>]*data-semantic-status="([^"]*)"/);
+      assert(cardSemanticStatusMatch);
+      expect(cardSemanticStatusMatch[1]).toBe("warning");
+
+      // Harness mark badge must be suppressed to muted brand state and must not carry active brand color
+      expect(html).toContain('data-brand-state="muted"');
+      const badgeMatch = html.match(/data-testid="AgentCard--harness-badge"[^>]*class="([^"]*)"/);
+      assert(badgeMatch);
+      const badgeClass = badgeMatch[1];
+      expect(badgeClass).toContain("text-brand-muted");
+      expect(badgeClass).not.toContain("text-brand-claude");
+
+      // StatusBadge must render warning/amber styling for Rate Limited
+      expect(html).toContain("Rate Limited");
+      expect(html).toContain("bg-amber-400");
+
+      // Attention callout strictly uses semantic amber
+      expect(html).toContain('data-testid="AgentCard--rate-limited"');
       expect(html).toContain('data-callout-type="warning"');
       expect(html).toContain("border-amber-800/60");
     });
@@ -799,8 +841,8 @@ describe("AgentCard Component", () => {
       const badgeMatch = html.match(/data-testid="AgentCard--harness-badge"[^>]*class="([^"]*)"/);
       assert(badgeMatch);
       const badgeClass = badgeMatch[1];
-      expect(badgeClass).toContain("text-[var(--brand-claude)]");
-      expect(badgeClass).not.toContain("text-slate-500");
+      expect(badgeClass).toContain("text-brand-claude");
+      expect(badgeClass).not.toContain("text-brand-muted");
     });
 
     it("renders quiescent muted ink for finished agents without brand dominance", () => {
@@ -820,7 +862,47 @@ describe("AgentCard Component", () => {
       assert(badgeMatch);
       const badgeClass = badgeMatch[1];
       expect(badgeClass).toContain("text-slate-400");
-      expect(badgeClass).not.toContain("text-[var(--brand-pi)]");
+      expect(badgeClass).not.toContain("text-brand-pi");
+    });
+
+    it("renders active brand color on harness mark for each harness during neutral working state (#106)", () => {
+      const harnesses = [
+        ["claude-code", "text-brand-claude"],
+        ["pi", "text-brand-pi"],
+        ["codex", "text-brand-codex"],
+        ["opencode", "text-brand-opencode"],
+      ] as const;
+
+      for (const [harness, expectedClass] of harnesses) {
+        const agent = factory_agentState({
+          harness,
+          activity: {
+            ...fixture_agentStateRunning.activity,
+            lifecycle: "RUNNING",
+            activity: "BUSY",
+            updatedAt: Date.now(),
+          },
+        });
+        const html = renderToStaticMarkup(<AgentCard agent={agent} />);
+        const badgeMatch = html.match(/data-testid="AgentCard--harness-badge"[^>]*class="([^"]*)"/);
+        assert(badgeMatch);
+        expect(badgeMatch[1]).toContain(expectedClass);
+      }
+
+      // Fallback for unknown harness
+      const fallbackAgent = factory_agentState({
+        harness: "unknown-vendor" as HarnessType,
+        activity: {
+          ...fixture_agentStateRunning.activity,
+          lifecycle: "RUNNING",
+          activity: "BUSY",
+          updatedAt: Date.now(),
+        },
+      });
+      const fallbackHtml = renderToStaticMarkup(<AgentCard agent={fallbackAgent} />);
+      const fallbackBadge = fallbackHtml.match(/data-testid="AgentCard--harness-badge"[^>]*class="([^"]*)"/);
+      assert(fallbackBadge);
+      expect(fallbackBadge[1]).toContain("text-brand-default");
     });
   });
 

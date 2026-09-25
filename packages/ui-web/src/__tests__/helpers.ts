@@ -302,3 +302,40 @@ export async function mountComponent(element: JSX.Element, mockDoc: MockDocument
     },
   };
 }
+
+export interface IRgbColor {
+  r: number;
+  g: number;
+  b: number;
+}
+
+export function hexToRgb(hex: string): IRgbColor {
+  const clean = hex.replace("#", "").trim();
+  const num = parseInt(clean, 16);
+  return {
+    r: (num >> 16) & 255,
+    g: (num >> 8) & 255,
+    b: num & 255,
+  };
+}
+
+function srgbToLinear(c: number): number {
+  const s = c / 255;
+  if (s <= 0.03928) {
+    return s / 12.92;
+  }
+  return Math.pow((s + 0.055) / 1.055, 2.4);
+}
+
+export function relativeLuminance(hex: string): number {
+  const rgb = hexToRgb(hex);
+  return 0.2126 * srgbToLinear(rgb.r) + 0.7152 * srgbToLinear(rgb.g) + 0.0722 * srgbToLinear(rgb.b);
+}
+
+export function contrastRatio(hex1: string, hex2: string): number {
+  const l1 = relativeLuminance(hex1);
+  const l2 = relativeLuminance(hex2);
+  const lighter = Math.max(l1, l2);
+  const darker = Math.min(l1, l2);
+  return (lighter + 0.05) / (darker + 0.05);
+}

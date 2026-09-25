@@ -10,6 +10,7 @@ import (
 
 // RenderScannerAudit renders process pairing audit records in human or agent mode.
 func RenderScannerAudit(w io.Writer, records []scanner.AuditRecord, agentMode bool) {
+	w = wrapWriter(w)
 	if len(records) == 0 {
 		if agentMode {
 			_, _ = fmt.Fprintln(w, "scanner_audit count:0")

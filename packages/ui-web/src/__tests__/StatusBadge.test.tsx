@@ -77,8 +77,8 @@ describe("StatusBadge Component", () => {
   });
 
   describe("Semantic Precedence over Harness Branding (#106)", () => {
-    it("strictly preserves semantic red for ERROR even when harness is supplied", () => {
-      const html = renderToStaticMarkup(<StatusBadge lifecycle="RUNNING" activity="ERROR" harness="claude-code" />);
+    it("strictly preserves semantic red for ERROR without brand intrusion", () => {
+      const html = renderToStaticMarkup(<StatusBadge lifecycle="RUNNING" activity="ERROR" />);
       expect(html).toContain('data-semantic-status="error"');
       expect(html).toContain("bg-red-900/60");
       expect(html).toContain("text-red-200");
@@ -87,8 +87,8 @@ describe("StatusBadge Component", () => {
       expect(html).not.toContain("claude");
     });
 
-    it("strictly preserves semantic amber for WAITING_QUESTION even when harness is supplied", () => {
-      const html = renderToStaticMarkup(<StatusBadge lifecycle="RUNNING" activity="WAITING_QUESTION" harness="pi" />);
+    it("strictly preserves semantic amber for WAITING_QUESTION without brand intrusion", () => {
+      const html = renderToStaticMarkup(<StatusBadge lifecycle="RUNNING" activity="WAITING_QUESTION" />);
       expect(html).toContain('data-semantic-status="warning"');
       expect(html).toContain("bg-amber-900/60");
       expect(html).toContain("text-amber-200");
@@ -98,7 +98,7 @@ describe("StatusBadge Component", () => {
     });
 
     it("strictly preserves semantic blue for BUSY (working) without brand intrusion", () => {
-      const html = renderToStaticMarkup(<StatusBadge lifecycle="RUNNING" activity="BUSY" harness="codex" />);
+      const html = renderToStaticMarkup(<StatusBadge lifecycle="RUNNING" activity="BUSY" />);
       expect(html).toContain('data-semantic-status="info"');
       expect(html).toContain("bg-blue-900/60");
       expect(html).toContain("text-blue-200");
@@ -106,7 +106,7 @@ describe("StatusBadge Component", () => {
     });
 
     it("strictly preserves semantic emerald for EXITED (finished) without brand intrusion", () => {
-      const html = renderToStaticMarkup(<StatusBadge lifecycle="EXITED" activity="IDLE" harness="opencode" />);
+      const html = renderToStaticMarkup(<StatusBadge lifecycle="EXITED" activity="IDLE" />);
       expect(html).toContain('data-semantic-status="success"');
       expect(html).toContain("bg-emerald-950/50");
       expect(html).toContain("text-emerald-300");
