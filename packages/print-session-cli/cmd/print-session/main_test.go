@@ -373,3 +373,116 @@ func TestCLI_PrintFilterFlags(t *testing.T) {
 		})
 	}
 }
+
+const samplePiLog = `{"type":"session","version":3,"id":"pi-cli-test","timestamp":"2026-09-25T21:07:10.103Z","cwd":"/repo"}
+{"type":"message","id":"m1","timestamp":"2026-09-25T21:07:15.131Z","message":{"role":"user","content":[{"type":"text","text":"fix bug in repo"}]}}
+{"type":"message","id":"m2","timestamp":"2026-09-25T21:07:18.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Done with fix"}]}}
+`
+
+func setupSamplePiLog(t *testing.T) string {
+	t.Helper()
+	tmpDir := t.TempDir()
+	p := filepath.Join(tmpDir, "pi-cli-test.jsonl")
+	if err := os.WriteFile(p, []byte(samplePiLog), 0o644); err != nil {
+		t.Fatalf("failed to write pi test file: %v", err)
+	}
+	return p
+}
+
+func TestCLI_PiCommands(t *testing.T) {
+	piPath := setupSamplePiLog(t)
+
+	// 1. Pi help
+	cmdHelp := newRootCmd()
+	var outHelp bytes.Buffer
+	cmdHelp.SetOut(&outHelp)
+	cmdHelp.SetArgs([]string{"pi", "--help"})
+	if err := cmdHelp.Execute(); err != nil {
+		t.Fatalf("expected nil error on pi --help: %v", err)
+	}
+
+	// 2. Pi no args (help)
+	cmdNoArgs := newRootCmd()
+	var outNoArgs bytes.Buffer
+	cmdNoArgs.SetOut(&outNoArgs)
+	cmdNoArgs.SetArgs([]string{"pi"})
+	if err := cmdNoArgs.Execute(); err != nil {
+		t.Fatalf("expected nil error on pi no args: %v", err)
+	}
+
+	// 3. Pi shorthand invocation: pi <path>
+	cmdShort := newRootCmd()
+	var outShort bytes.Buffer
+	cmdShort.SetOut(&outShort)
+	cmdShort.SetArgs([]string{"pi", piPath})
+	if err := cmdShort.Execute(); err != nil {
+		t.Fatalf("unexpected error on pi shorthand: %v", err)
+	}
+	if !strings.Contains(outShort.String(), "fix bug in repo") {
+		t.Errorf("expected prompt in pi shorthand output: %s", outShort.String())
+	}
+
+	// 4. Pi print command: pi print <path>
+	cmdPrint := newRootCmd()
+	var outPrint bytes.Buffer
+	cmdPrint.SetOut(&outPrint)
+	cmdPrint.SetArgs([]string{"pi", "print", piPath})
+	if err := cmdPrint.Execute(); err != nil {
+		t.Fatalf("unexpected error on pi print: %v", err)
+	}
+	if !strings.Contains(outPrint.String(), "Done with fix") {
+		t.Errorf("expected assistant text in pi print output: %s", outPrint.String())
+	}
+
+	// 5. Pi summary: pi summary <path>
+	cmdSum := newRootCmd()
+	var outSum bytes.Buffer
+	cmdSum.SetOut(&outSum)
+	cmdSum.SetArgs([]string{"pi", "summary", piPath})
+	if err := cmdSum.Execute(); err != nil {
+		t.Fatalf("unexpected error on pi summary: %v", err)
+	}
+	if !strings.Contains(outSum.String(), "SESSION_SUMMARY") && !strings.Contains(outSum.String(), "[SESSION SUMMARY]") {
+		t.Errorf("expected summary header, got: %s", outSum.String())
+	}
+
+	// 6. Pi handoff: pi handoff <path>
+	cmdHandoff := newRootCmd()
+	var outHandoff bytes.Buffer
+	cmdHandoff.SetOut(&outHandoff)
+	cmdHandoff.SetArgs([]string{"pi", "handoff", piPath})
+	if err := cmdHandoff.Execute(); err != nil {
+		t.Fatalf("unexpected error on pi handoff: %v", err)
+	}
+	if !strings.Contains(outHandoff.String(), "CONTINUATION_CONTEXT") && !strings.Contains(outHandoff.String(), "HANDOFF") {
+		t.Errorf("expected handoff header, got: %s", outHandoff.String())
+	}
+
+	// 7. Pi missing args on print
+	cmdMissing := newRootCmd()
+	cmdMissing.SetArgs([]string{"pi", "print"})
+	if err := cmdMissing.Execute(); err == nil {
+		t.Fatal("expected error on pi print without args, got nil")
+	}
+
+	// 8. Pi missing args on summary
+	cmdSumMissing := newRootCmd()
+	cmdSumMissing.SetArgs([]string{"pi", "summary"})
+	if err := cmdSumMissing.Execute(); err == nil {
+		t.Fatal("expected error on pi summary without args, got nil")
+	}
+
+	// 9. Pi missing args on handoff
+	cmdHandMissing := newRootCmd()
+	cmdHandMissing.SetArgs([]string{"pi", "handoff"})
+	if err := cmdHandMissing.Execute(); err == nil {
+		t.Fatal("expected error on pi handoff without args, got nil")
+	}
+
+	// 10. Pi not found
+	cmdNotFound := newRootCmd()
+	cmdNotFound.SetArgs([]string{"pi", "print", "non-existent-pi-id"})
+	if err := cmdNotFound.Execute(); err == nil {
+		t.Fatal("expected error on non-existent pi session, got nil")
+	}
+}

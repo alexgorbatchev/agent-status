@@ -32,15 +32,28 @@ type PrintOptions struct {
 // PrintClaudeSession reads and parses a Claude Code transcript file using agent-parser,
 // rendering output like a harness display without trimming conversational content or injecting token telemetry.
 func PrintClaudeSession(w io.Writer, filePath string, opts PrintOptions) error {
+	p := parser.NewClaudeCodeParser()
+	return printSessionWithParser(w, filePath, opts, func(line []byte) ([]parser.ParsedEvent, error) {
+		return p.ParseLine(line)
+	})
+}
+
+// PrintPiSession reads and parses a Pi session transcript file using agent-parser,
+// rendering output like a harness display.
+func PrintPiSession(w io.Writer, filePath string, opts PrintOptions) error {
+	return printSessionWithParser(w, filePath, opts, func(line []byte) ([]parser.ParsedEvent, error) {
+		return parser.ParsePiLine(line, "")
+	})
+}
+
+func printSessionWithParser(w io.Writer, filePath string, opts PrintOptions, parseFn func([]byte) ([]parser.ParsedEvent, error)) error {
 	f, err := os.Open(filePath)
 	if err != nil {
 		return fmt.Errorf("opening transcript %s: %w", filePath, err)
 	}
 	defer func() { _ = f.Close() }()
 
-	p := parser.NewClaudeCodeParser()
 	scanner := bufio.NewScanner(f)
-	// Allow 10 MB per line to handle large Claude context payloads
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 10*1024*1024)
 
@@ -52,7 +65,7 @@ func PrintClaudeSession(w io.Writer, filePath string, opts PrintOptions) error {
 			continue
 		}
 
-		events, pErr := p.ParseLine(line)
+		events, pErr := parseFn(line)
 		if pErr != nil {
 			continue
 		}
@@ -64,6 +77,10 @@ func PrintClaudeSession(w io.Writer, filePath string, opts PrintOptions) error {
 		return fmt.Errorf("reading transcript lines: %w", err)
 	}
 
+	return processEvents(w, filePath, allEvents, opts)
+}
+
+func processEvents(w io.Writer, filePath string, allEvents []parser.ParsedEvent, opts PrintOptions) error {
 	// 1. Handoff / Continuation mode
 	if opts.Handoff {
 		handoff := ComputeHandoffContext(filePath, allEvents, 5)
@@ -217,6 +234,8 @@ func renderAgentMode(w io.Writer, filePath string, events []parser.ParsedEvent) 
 						_, _ = fmt.Fprintf(w, "%s\n", diffText)
 					}
 				}
+			} else if p, ok := ev.Data.ToolInput["path"].(string); ok && p != "" {
+				_, _ = fmt.Fprintf(w, "Path: %s\n", p)
 			} else if len(ev.Data.ToolInput) > 0 {
 				inBytes, _ := json.MarshalIndent(ev.Data.ToolInput, "", "  ")
 				_, _ = fmt.Fprintf(w, "%s\n", string(inBytes))
@@ -325,6 +344,9 @@ func renderHumanMode(w io.Writer, filePath string, events []parser.ParsedEvent) 
 						_, _ = fmt.Fprintf(w, "%s\n", wrapped)
 					}
 				}
+			} else if p, ok := ev.Data.ToolInput["path"].(string); ok && p != "" {
+				wrapped := WrapTextWithIndent("Path: "+p, "    ", termWidth)
+				_, _ = fmt.Fprintf(w, "%s\n", wrapped)
 			} else if len(ev.Data.ToolInput) > 0 {
 				inBytes, _ := json.MarshalIndent(ev.Data.ToolInput, "", "  ")
 				wrapped := WrapTextWithIndent(string(inBytes), "    ", termWidth)

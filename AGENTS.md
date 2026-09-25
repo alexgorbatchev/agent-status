@@ -13,7 +13,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - Tail dev stack logs: `just logs` (or `tail -f .tmp/dev-stack/logs/*.log`)
 - Run debug CLI: `just debug <args>`
 - Replay session offline: `just session-replay-[claude|pi|codex|opencode] <session-id>`
-- Print Claude session log: `just print-session claude print <session-id>`
+- Print session transcript: `just print-session [claude|pi] [print|summary|handoff] <session-id>`
 - Build all: `just build-all`
 - Test all: `just test-all`
 - Lint all: `just lint-all`

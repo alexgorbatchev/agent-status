@@ -396,3 +396,52 @@ func TestWrapTextWithIndent_EdgeCases(t *testing.T) {
 		t.Errorf("GetTerminalWidth = %d, want > 0", width)
 	}
 }
+
+const samplePiLog = `{"type":"session","version":3,"id":"pi-sess-1","timestamp":"2026-09-25T21:07:10.103Z","cwd":"/repo"}
+{"type":"message","id":"m1","timestamp":"2026-09-25T21:07:15.131Z","message":{"role":"user","content":[{"type":"text","text":"fix bug in file.go"}]}}
+{"type":"message","id":"m2","timestamp":"2026-09-25T21:07:16.901Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"c1","name":"read","arguments":{"path":"file.go"}}]}}
+{"type":"message","id":"m3","timestamp":"2026-09-25T21:07:17.000Z","message":{"role":"toolResult","toolCallId":"c1","content":"package main\n\nfunc main() {}"}}
+{"type":"message","id":"m4","timestamp":"2026-09-25T21:07:18.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Bug is fixed"}]}}
+`
+
+func TestPrintPiSession_Cases(t *testing.T) {
+	logPath := createTestLogFile(t, samplePiLog)
+
+	// 1. Human mode
+	var humanBuf bytes.Buffer
+	if err := PrintPiSession(&humanBuf, logPath, PrintOptions{AgentMode: false}); err != nil {
+		t.Fatalf("unexpected error on PrintPiSession human mode: %v", err)
+	}
+	humanOut := humanBuf.String()
+	if !strings.Contains(humanOut, "[USER]") || !strings.Contains(humanOut, "fix bug in file.go") {
+		t.Errorf("expected USER prompt in Pi human mode: %s", humanOut)
+	}
+	if !strings.Contains(humanOut, "[TOOL: read]") {
+		t.Errorf("expected [TOOL: read] in Pi human mode: %s", humanOut)
+	}
+	if !strings.Contains(humanOut, "[ASSISTANT]") || !strings.Contains(humanOut, "Bug is fixed") {
+		t.Errorf("expected ASSISTANT in Pi human mode: %s", humanOut)
+	}
+
+	// 2. Agent mode
+	var agentBuf bytes.Buffer
+	if err := PrintPiSession(&agentBuf, logPath, PrintOptions{AgentMode: true}); err != nil {
+		t.Fatalf("unexpected error on PrintPiSession agent mode: %v", err)
+	}
+	agentOut := agentBuf.String()
+	if !strings.Contains(agentOut, "USER:\nfix bug in file.go") {
+		t.Errorf("expected USER in Pi agent mode: %s", agentOut)
+	}
+	if !strings.Contains(agentOut, "TOOL read:") {
+		t.Errorf("expected TOOL read in Pi agent mode: %s", agentOut)
+	}
+	if !strings.Contains(agentOut, "ASSISTANT:\nBug is fixed") {
+		t.Errorf("expected ASSISTANT in Pi agent mode: %s", agentOut)
+	}
+
+	// 3. File not found
+	var notFoundBuf bytes.Buffer
+	if err := PrintPiSession(&notFoundBuf, "/non/existent/pi.jsonl", PrintOptions{}); err == nil {
+		t.Fatal("expected error on non-existent file, got nil")
+	}
+}

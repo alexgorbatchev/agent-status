@@ -136,3 +136,76 @@ func TestFindTranscriptInDir_InvalidDir(t *testing.T) {
 		t.Fatalf("expected empty string, got %s", res)
 	}
 }
+
+func TestFindPiSession_EmptyAndDirect(t *testing.T) {
+	if _, err := FindPiSession(""); err == nil {
+		t.Fatal("expected error on empty target, got nil")
+	}
+
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "pi-sess.jsonl")
+	if err := os.WriteFile(filePath, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	found, err := FindPiSession(filePath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if found != filePath {
+		t.Fatalf("expected %s, got %s", filePath, found)
+	}
+}
+
+func TestFindPiSession_SearchDirs(t *testing.T) {
+	tmpRoot := t.TempDir()
+	cwdDir := filepath.Join(tmpRoot, "--encoded-cwd--")
+	if err := os.MkdirAll(cwdDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// File with Pi timestamp prefix: 2026-09-25T21-07-10-103Z_<id>.jsonl
+	piFile := filepath.Join(cwdDir, "2026-09-25T21-07-10-103Z_pi-test-123.jsonl")
+	if err := os.WriteFile(piFile, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("PI_SESSIONS_DIR", tmpRoot)
+
+	// Exact session ID search
+	found, err := FindPiSession("pi-test-123")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if found != piFile {
+		t.Fatalf("expected %s, got %s", piFile, found)
+	}
+
+	// Not found
+	if _, err := FindPiSession("non-existent-pi-id"); err == nil {
+		t.Fatal("expected error on missing session, got nil")
+	}
+}
+
+func TestFindPiSession_XDG(t *testing.T) {
+	tmpRoot := t.TempDir()
+	xdgDir := filepath.Join(tmpRoot, "ai-registry", "pi", "sessions")
+	if err := os.MkdirAll(xdgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	xdgFile := filepath.Join(xdgDir, "xdg-pi-session.jsonl")
+	if err := os.WriteFile(xdgFile, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("PI_SESSIONS_DIR", "")
+	t.Setenv("XDG_DATA_HOME", tmpRoot)
+
+	found, err := FindPiSession("xdg-pi-session")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if found != xdgFile {
+		t.Fatalf("expected %s, got %s", xdgFile, found)
+	}
+}

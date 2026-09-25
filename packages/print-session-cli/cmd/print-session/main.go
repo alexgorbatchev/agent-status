@@ -139,6 +139,102 @@ func newRootCmd() *cobra.Command {
 	claudeCmd.AddCommand(handoffCmd)
 	rootCmd.AddCommand(claudeCmd)
 
+	// Subject: pi
+	piCmd := &cobra.Command{
+		Use:   "pi",
+		Short: "Inspect and print Pi Coding Agent session transcripts",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 0 {
+				flags := getPrintFlags(cmd)
+				return runPrintPi(cmd, args[0], flags)
+			}
+			return cmd.Help()
+		},
+	}
+
+	// Verb: pi print <session-id>
+	var piPrintFlags printFlags
+	piPrintCmd := &cobra.Command{
+		Use:   "print <session-id-or-path>",
+		Short: "Parse and print Pi session events by ID or file path",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if piPrintFlags.filePath != "" {
+				return nil
+			}
+			if len(args) != 1 {
+				return fmt.Errorf("accepts 1 arg(s), received %d", len(args))
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			target := piPrintFlags.filePath
+			if target == "" && len(args) > 0 {
+				target = args[0]
+			}
+			return runPrintPi(cmd, target, piPrintFlags)
+		},
+	}
+	setupFlags(piPrintCmd, &piPrintFlags)
+	setupFlags(piCmd, &piPrintFlags)
+
+	// Verb: pi summary <session-id>
+	var piSumFlags printFlags
+	piSummaryCmd := &cobra.Command{
+		Use:   "summary <session-id-or-path>",
+		Short: "Print a high-level token-efficient summary of a Pi session",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if piSumFlags.filePath != "" {
+				return nil
+			}
+			if len(args) != 1 {
+				return fmt.Errorf("accepts 1 arg(s), received %d", len(args))
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			target := piSumFlags.filePath
+			if target == "" && len(args) > 0 {
+				target = args[0]
+			}
+			piSumFlags.summaryOnly = true
+			return runPrintPi(cmd, target, piSumFlags)
+		},
+	}
+	piSummaryCmd.Flags().BoolVar(&piSumFlags.jsonOut, "json", false, "Output summary as formatted JSON")
+	piSummaryCmd.Flags().StringVar(&piSumFlags.filePath, "path", "", "Direct path to Pi session .jsonl file")
+
+	// Verb: pi handoff <session-id> (aliases: continue, resume)
+	var piHandoffFlags printFlags
+	piHandoffCmd := &cobra.Command{
+		Use:     "handoff <session-id-or-path>",
+		Aliases: []string{"continue", "resume"},
+		Short:   "Generate structured continuation context for resuming work started in another Pi session",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if piHandoffFlags.filePath != "" {
+				return nil
+			}
+			if len(args) != 1 {
+				return fmt.Errorf("accepts 1 arg(s), received %d", len(args))
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			target := piHandoffFlags.filePath
+			if target == "" && len(args) > 0 {
+				target = args[0]
+			}
+			piHandoffFlags.handoff = true
+			return runPrintPi(cmd, target, piHandoffFlags)
+		},
+	}
+	piHandoffCmd.Flags().BoolVar(&piHandoffFlags.jsonOut, "json", false, "Output handoff context as formatted JSON")
+	piHandoffCmd.Flags().StringVar(&piHandoffFlags.filePath, "path", "", "Direct path to Pi session .jsonl file")
+
+	piCmd.AddCommand(piPrintCmd)
+	piCmd.AddCommand(piSummaryCmd)
+	piCmd.AddCommand(piHandoffCmd)
+	rootCmd.AddCommand(piCmd)
+
 	cobrahelptree.Setup(rootCmd)
 	return rootCmd
 }
@@ -212,6 +308,32 @@ func runPrintClaude(cmd *cobra.Command, target string, flags printFlags) error {
 	}
 
 	return session.PrintClaudeSession(cmd.OutOrStdout(), resolvedPath, opts)
+}
+
+func runPrintPi(cmd *cobra.Command, target string, flags printFlags) error {
+	resolvedPath, err := session.FindPiSession(target)
+	if err != nil {
+		return err
+	}
+
+	isAgent := os.Getenv("AGENT") == "1" || os.Getenv("AGENT") == "true" || os.Getenv("AGENT") == "yes"
+
+	opts := session.PrintOptions{
+		JSON:        flags.jsonOut,
+		AgentMode:   isAgent,
+		SummaryOnly: flags.summaryOnly,
+		Handoff:     flags.handoff,
+		LastTurn:    flags.lastTurn,
+		ErrorsOnly:  flags.errorsOnly,
+		FilesOnly:   flags.filesOnly,
+		ToolsOnly:   flags.toolsOnly,
+		PromptsOnly: flags.promptsOnly,
+		Tail:        flags.tail,
+		Limit:       flags.limit,
+		All:         flags.all,
+	}
+
+	return session.PrintPiSession(cmd.OutOrStdout(), resolvedPath, opts)
 }
 
 func run(args []string) error {
