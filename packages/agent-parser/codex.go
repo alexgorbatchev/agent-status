@@ -12,8 +12,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/models"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
@@ -191,18 +193,28 @@ type rawCodexTokenCountInfo struct {
 	ModelContextWindow int64                  `json:"model_context_window"`
 }
 
+type rawCodexRateLimits struct {
+	LimitRequests     *int64 `json:"limit_requests,omitempty"`
+	RemainingRequests *int64 `json:"remaining_requests,omitempty"`
+	ResetRequests     string `json:"reset_requests,omitempty"`
+	LimitTokens       *int64 `json:"limit_tokens,omitempty"`
+	RemainingTokens   *int64 `json:"remaining_tokens,omitempty"`
+	ResetTokens       string `json:"reset_tokens,omitempty"`
+}
+
 type rawCodexEventMsgPayload struct {
-	Type             string                  `json:"type"`
-	Message          string                  `json:"message"`
-	TurnID           string                  `json:"turn_id"`
-	StartedAt        string                  `json:"started_at"`
-	CompletedAt      string                  `json:"completed_at"`
-	DurationMS       int64                   `json:"duration_ms"`
+	Type               string                  `json:"type"`
+	Message            string                  `json:"message"`
+	TurnID             string                  `json:"turn_id"`
+	StartedAt          string                  `json:"started_at"`
+	CompletedAt        string                  `json:"completed_at"`
+	DurationMS         int64                   `json:"duration_ms"`
 	LastAgentMessage   string                  `json:"last_agent_message"`
 	CodexErrorInfo     interface{}             `json:"codex_error_info,omitempty"`
 	Info               *rawCodexTokenCountInfo `json:"info"`
-	ModelContextWindow int64                 `json:"model_context_window,omitempty"`
-	Summary          []struct {
+	RateLimits         *rawCodexRateLimits     `json:"rate_limits,omitempty"`
+	ModelContextWindow int64                   `json:"model_context_window,omitempty"`
+	Summary            []struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"summary"`
@@ -234,9 +246,11 @@ type rawCodexLine struct {
 
 // CodexParser maintains session stream state when parsing Codex rollout transcripts.
 type CodexParser struct {
-	mu            sync.Mutex
-	currentModel  string
-	contextWindow int64
+	mu                sync.Mutex
+	currentModel      string
+	contextWindow     int64
+	rateLimitResetAt  *int64
+	retryAfterSeconds *int64
 }
 
 // NewCodexParser creates a new stateful parser stream for Codex transcripts.
@@ -250,6 +264,8 @@ func (p *CodexParser) Reset() {
 	defer p.mu.Unlock()
 	p.currentModel = ""
 	p.contextWindow = 0
+	p.rateLimitResetAt = nil
+	p.retryAfterSeconds = nil
 }
 
 // ParseLine parses a single line using this CodexParser instance.
@@ -257,11 +273,9 @@ func (p *CodexParser) ParseLine(line []byte) ([]ParsedEvent, error) {
 	return parseCodexLineWithState(line, p)
 }
 
-var defaultCodexParser = NewCodexParser()
-
-// ParseCodexLine parses a single line of Codex rollout JSONL log into ParsedEvent structs.
+// ParseCodexLine parses a single line of Codex rollout JSONL log into ParsedEvent structs without stream state.
 func ParseCodexLine(line []byte) ([]ParsedEvent, error) {
-	return parseCodexLineWithState(line, defaultCodexParser)
+	return parseCodexLineWithState(line, nil)
 }
 
 func parseCodexLineWithState(line []byte, p *CodexParser) ([]ParsedEvent, error) {
@@ -536,6 +550,33 @@ func parseCodexLineWithState(line []byte, p *CodexParser) ([]ParsedEvent, error)
 					modelPtr = stringPtr(activeModel)
 				}
 
+				var resetAtPtr *int64
+				var retrySecPtr *int64
+				if evt.RateLimits != nil {
+					resetAtPtr, retrySecPtr = selectCodexRateLimitReset(evt.RateLimits, ts, false)
+				}
+				if resetAtPtr != nil && *resetAtPtr <= ts {
+					resetAtPtr = nil
+					retrySecPtr = nil
+				}
+				if p != nil {
+					p.mu.Lock()
+					if resetAtPtr != nil {
+						p.rateLimitResetAt = resetAtPtr
+						p.retryAfterSeconds = retrySecPtr
+					} else if evt.RateLimits != nil &&
+						(evt.RateLimits.RemainingTokens == nil || *evt.RateLimits.RemainingTokens > 0) &&
+						(evt.RateLimits.RemainingRequests == nil || *evt.RateLimits.RemainingRequests > 0) &&
+						(evt.RateLimits.RemainingTokens != nil || evt.RateLimits.RemainingRequests != nil) {
+						p.rateLimitResetAt = nil
+						p.retryAfterSeconds = nil
+					} else if p.rateLimitResetAt != nil && *p.rateLimitResetAt <= ts {
+						p.rateLimitResetAt = nil
+						p.retryAfterSeconds = nil
+					}
+					p.mu.Unlock()
+				}
+
 				events = append(events, ParsedEvent{
 					EventType: "turn_end",
 					Timestamp: ts,
@@ -545,6 +586,8 @@ func parseCodexLineWithState(line []byte, p *CodexParser) ([]ParsedEvent, error)
 						ModelContextWindow: cwPtr,
 						ContextFullness:    fullnessPtr,
 						Usage:              usage,
+						RateLimitResetAt:   resetAtPtr,
+						RetryAfterSeconds:  retrySecPtr,
 					},
 				})
 			}
@@ -580,40 +623,56 @@ func parseCodexLineWithState(line []byte, p *CodexParser) ([]ParsedEvent, error)
 
 		case "error":
 			var isRL *bool
-			var exitCode *int
+			var httpStatusCode *int
 
 			if evt.CodexErrorInfo != nil {
 				switch info := evt.CodexErrorInfo.(type) {
 				case string:
 					switch info {
-					case "RateLimitExceeded", "rate_limit_exceeded",
-						"UsageLimitExceeded", "usage_limit_exceeded",
-						"ServerOverloaded", "server_overloaded":
+					case "RateLimitExceeded", "rate_limit_exceeded":
 						isRL = boolPtr(true)
+					case "UsageLimitExceeded", "usage_limit_exceeded",
+						"ServerOverloaded", "server_overloaded":
+						isRL = boolPtr(false)
 					}
 				case map[string]interface{}:
 					for k, v := range info {
 						switch k {
-						case "RateLimitExceeded", "rate_limit_exceeded",
-							"UsageLimitExceeded", "usage_limit_exceeded",
-							"ServerOverloaded", "server_overloaded":
+						case "RateLimitExceeded", "rate_limit_exceeded":
 							isRL = boolPtr(true)
+						case "UsageLimitExceeded", "usage_limit_exceeded",
+							"ServerOverloaded", "server_overloaded":
+							isRL = boolPtr(false)
+						case "type":
+							if s, ok := v.(string); ok {
+								switch s {
+								case "RateLimitExceeded", "rate_limit_exceeded":
+									isRL = boolPtr(true)
+								case "UsageLimitExceeded", "usage_limit_exceeded",
+									"ServerOverloaded", "server_overloaded":
+									isRL = boolPtr(false)
+								}
+							}
 						case "HttpConnectionFailed", "http_connection_failed":
 							if subMap, ok := v.(map[string]interface{}); ok {
 								if sc, ok := subMap["http_status_code"]; ok && sc != nil {
 									if code := extractInt(sc); code != nil {
-										exitCode = code
+										httpStatusCode = code
 										if *code == 429 {
 											isRL = boolPtr(true)
+										} else {
+											isRL = boolPtr(false)
 										}
 									}
 								}
 							}
 						case "http_status_code":
 							if code := extractInt(v); code != nil {
-								exitCode = code
+								httpStatusCode = code
 								if *code == 429 {
 									isRL = boolPtr(true)
+								} else {
+									isRL = boolPtr(false)
 								}
 							}
 						}
@@ -621,23 +680,93 @@ func parseCodexLineWithState(line []byte, p *CodexParser) ([]ParsedEvent, error)
 				}
 			}
 
-			lowerMsg := strings.ToLower(evt.Message)
-			if (exitCode != nil && *exitCode == 429) ||
-				strings.Contains(lowerMsg, "rate_limit") ||
-				strings.Contains(lowerMsg, "rate limit") ||
-				strings.Contains(lowerMsg, "overloaded") ||
-				strings.Contains(lowerMsg, "quota") {
-				isRL = boolPtr(true)
+			if isRL == nil && httpStatusCode != nil {
+				if *httpStatusCode == 429 {
+					isRL = boolPtr(true)
+				} else {
+					isRL = boolPtr(false)
+				}
 			}
+
+			var lineResetAt *int64
+			var lineRetrySec *int64
+			if evt.RateLimits != nil {
+				rAt, rSec := selectCodexRateLimitReset(evt.RateLimits, ts, true)
+				if rAt != nil && *rAt > ts {
+					lineResetAt = rAt
+					lineRetrySec = rSec
+				}
+				if p != nil {
+					p.mu.Lock()
+					if rAt != nil {
+						if *rAt > ts {
+							p.rateLimitResetAt = rAt
+							p.retryAfterSeconds = rSec
+						} else {
+							p.rateLimitResetAt = nil
+							p.retryAfterSeconds = nil
+						}
+					} else if p.rateLimitResetAt != nil && *p.rateLimitResetAt <= ts {
+						p.rateLimitResetAt = nil
+						p.retryAfterSeconds = nil
+					}
+					p.mu.Unlock()
+				}
+			}
+
+			if p != nil {
+				p.mu.Lock()
+				if p.rateLimitResetAt != nil && *p.rateLimitResetAt <= ts {
+					p.rateLimitResetAt = nil
+					p.retryAfterSeconds = nil
+				}
+				p.mu.Unlock()
+			}
+
+			var errResetAt *int64
+			var errRetrySec *int64
+
+			if isRL != nil && !*isRL {
+				// Explicit non-rate-limit error: preserve isRL = false, do NOT attach cached rate limit metadata.
+				errResetAt = nil
+				errRetrySec = nil
+			} else if isRL != nil && *isRL {
+				// Explicit rate-limit error: attach line metadata or cached metadata.
+				errResetAt = lineResetAt
+				errRetrySec = lineRetrySec
+				if errResetAt == nil && p != nil {
+					p.mu.Lock()
+					if p.rateLimitResetAt != nil && *p.rateLimitResetAt > ts {
+						errResetAt = p.rateLimitResetAt
+						remSec := (*p.rateLimitResetAt - ts + 999) / 1000
+						if remSec > 0 {
+							errRetrySec = &remSec
+						} else {
+							errRetrySec = nil
+						}
+					}
+					p.mu.Unlock()
+				}
+			} else {
+				// isRL == nil: only attach rate-limit metadata if the event payload itself provides structured rate-limit data.
+				// Do NOT infer isRL = true from unexpired p.rateLimitResetAt.
+				if lineResetAt != nil {
+					isRL = boolPtr(true)
+					errResetAt = lineResetAt
+					errRetrySec = lineRetrySec
+				}
+			}
+
 			events = append(events, ParsedEvent{
 				EventType: "error",
 				Timestamp: ts,
 				Data: types.TelemetryFrameData{
-					Role:        stringPtr("assistant"),
-					Content:     stringPtr(evt.Message),
-					IsError:     boolPtr(true),
-					ExitCode:    exitCode,
-					IsRateLimit: isRL,
+					Role:               stringPtr("assistant"),
+					Content:            stringPtr(evt.Message),
+					IsError:            boolPtr(true),
+					IsRateLimit:        isRL,
+					RateLimitResetAt:   errResetAt,
+					RetryAfterSeconds:  errRetrySec,
 				},
 			})
 		}
@@ -844,4 +973,76 @@ func extractInt(v interface{}) *int {
 		return &i
 	}
 	return nil
+}
+
+func selectCodexRateLimitReset(rateLimits *rawCodexRateLimits, nowMs int64, isError bool) (*int64, *int64) {
+	if rateLimits == nil {
+		return nil, nil
+	}
+	var evalRequests bool
+	var evalTokens bool
+
+	if isError {
+		evalRequests = rateLimits.ResetRequests != "" && (rateLimits.RemainingRequests == nil || *rateLimits.RemainingRequests <= 0)
+		evalTokens = rateLimits.ResetTokens != "" && (rateLimits.RemainingTokens == nil || *rateLimits.RemainingTokens <= 0)
+	} else {
+		evalRequests = rateLimits.ResetRequests != "" && rateLimits.RemainingRequests != nil && *rateLimits.RemainingRequests <= 0
+		evalTokens = rateLimits.ResetTokens != "" && rateLimits.RemainingTokens != nil && *rateLimits.RemainingTokens <= 0
+	}
+	if !evalRequests && !evalTokens {
+		return nil, nil
+	}
+	var maxResetAt *int64
+	var maxSec *int64
+
+	if evalRequests {
+		maxResetAt, maxSec = parseCodexRateLimitReset(rateLimits.ResetRequests, nowMs)
+	}
+	if evalTokens {
+		tokResetAt, tokSec := parseCodexRateLimitReset(rateLimits.ResetTokens, nowMs)
+		if tokResetAt != nil {
+			if maxResetAt == nil || *tokResetAt > *maxResetAt {
+				maxResetAt = tokResetAt
+				maxSec = tokSec
+			}
+		}
+	}
+	return maxResetAt, maxSec
+}
+
+func parseCodexRateLimitReset(resetStr string, nowMs int64) (*int64, *int64) {
+	trimmed := strings.TrimSpace(resetStr)
+	if trimmed == "" {
+		return nil, nil
+	}
+	// 1. Try Go duration (e.g. "45s", "1m30s", "500ms")
+	if dur, err := time.ParseDuration(trimmed); err == nil {
+		sec := int64(dur.Seconds())
+		resetAt := nowMs + dur.Milliseconds()
+		return &resetAt, &sec
+	}
+	// 2. Try numeric seconds (e.g. "45" or "45.0")
+	if val, err := strconv.ParseFloat(trimmed, 64); err == nil && val > 0 {
+		sec := int64(val)
+		resetAt := nowMs + int64(val*1000)
+		return &resetAt, &sec
+	}
+	// 3. Try RFC3339 / RFC3339Nano
+	if t, err := time.Parse(time.RFC3339Nano, trimmed); err == nil {
+		resetAt := t.UnixMilli()
+		sec := (resetAt - nowMs) / 1000
+		if sec < 0 {
+			sec = 0
+		}
+		return &resetAt, &sec
+	}
+	if t, err := time.Parse(time.RFC3339, trimmed); err == nil {
+		resetAt := t.UnixMilli()
+		sec := (resetAt - nowMs) / 1000
+		if sec < 0 {
+			sec = 0
+		}
+		return &resetAt, &sec
+	}
+	return nil, nil
 }

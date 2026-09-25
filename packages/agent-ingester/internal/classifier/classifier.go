@@ -23,16 +23,18 @@ type pendingSummaryCandidate struct {
 }
 
 type subagentState struct {
-	id           string
-	activity     types.ActivityState
-	activeTool   *string
-	action       string
-	lastError    *string
-	question     *string
-	inFlightTool bool
-	startedAt    int64
-	completedAt  *int64
-	status       types.SubagentStatus
+	id                string
+	activity          types.ActivityState
+	activeTool        *string
+	action            string
+	lastError         *string
+	question          *string
+	rateLimitResetAt  *int64
+	retryAfterSeconds *int64
+	inFlightTool      bool
+	startedAt         int64
+	completedAt       *int64
+	status            types.SubagentStatus
 }
 
 type agentContext struct {
@@ -48,6 +50,8 @@ type agentContext struct {
 	rootAction              string
 	rootQuestion            *string
 	rootLastError           *string
+	rootRateLimitResetAt    *int64
+	rootRetryAfterSeconds   *int64
 	rootGeneration          uint64
 	lastSummarizedToolKey   string
 	lastSummaryDispatchedAt int64
@@ -86,8 +90,9 @@ const (
 	DefaultTurnEndGrace       = DefaultIdleGracePeriod
 	DefaultDebounceWindow     = 10 * time.Second
 	DefaultTurnFloor          = 20 * time.Second
-	DefaultTurnSilenceTimeout = 30 * time.Minute
-	DefaultSubagentDwell      = 30 * time.Second
+	DefaultTurnSilenceTimeout     = 30 * time.Minute
+	DefaultRateLimitSilenceBuffer = 2 * time.Minute
+	DefaultSubagentDwell          = 30 * time.Second
 )
 
 type Classifier struct {
@@ -98,8 +103,9 @@ type Classifier struct {
 	workers            map[string]*agentWorker
 	idleTimers         map[string]*time.Timer
 	trailingTimers     map[string]*time.Timer
-	silenceTimers      map[string]*time.Timer
-	subagentTimers     map[string]*time.Timer
+	silenceTimers         map[string]*time.Timer
+	silenceTimerDurations map[string]time.Duration
+	subagentTimers        map[string]*time.Timer
 	idleGracePeriod    time.Duration
 	debounceWindow     time.Duration
 	turnFloor          time.Duration
@@ -129,8 +135,9 @@ func New(s *store.Store, p *pricing.Engine, sum *summarizer.Summarizer) *Classif
 		workers:             make(map[string]*agentWorker),
 		idleTimers:          make(map[string]*time.Timer),
 		trailingTimers:      make(map[string]*time.Timer),
-		silenceTimers:       make(map[string]*time.Timer),
-		subagentTimers:      make(map[string]*time.Timer),
+		silenceTimers:         make(map[string]*time.Timer),
+		silenceTimerDurations: make(map[string]time.Duration),
+		subagentTimers:        make(map[string]*time.Timer),
 		idleGracePeriod:     DefaultIdleGracePeriod,
 		debounceWindow:      debounce,
 		turnFloor:           DefaultTurnFloor,
@@ -161,6 +168,57 @@ func (c *Classifier) SetTurnEndGraceWindow(d time.Duration) {
 // SetTurnEndGrace sets the debounce window before transitioning from BUSY to IDLE on turn_end.
 func (c *Classifier) SetTurnEndGrace(d time.Duration) {
 	c.SetIdleGracePeriod(d)
+}
+
+// SilenceTimerDuration returns the configured duration of an active silence timer on the agent, or 0 if none.
+func (c *Classifier) SilenceTimerDuration(agentID string) time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.silenceTimerDurations == nil {
+		return 0
+	}
+	return c.silenceTimerDurations[agentID]
+}
+
+func (c *Classifier) rateLimitSilenceDurationLocked(resetAt *int64, retrySec *int64, nowMs int64) time.Duration {
+	baseTimeout := c.turnSilenceTimeout
+	if baseTimeout <= 0 {
+		return 0
+	}
+	var maxWait time.Duration
+	if retrySec != nil && *retrySec > 0 {
+		var retryDur time.Duration
+		if *retrySec >= int64(24*time.Hour/time.Second) {
+			retryDur = 24 * time.Hour
+		} else {
+			retryDur = time.Duration(*retrySec) * time.Second
+		}
+		if retryDur > maxWait {
+			maxWait = retryDur
+		}
+	}
+	refNow := nowMs
+	if refNow <= 0 {
+		refNow = time.Now().UnixMilli()
+	}
+	if resetAt != nil && *resetAt > refNow {
+		diffMs := *resetAt - refNow
+		var resetDur time.Duration
+		if diffMs >= int64(24*time.Hour/time.Millisecond) {
+			resetDur = 24 * time.Hour
+		} else {
+			resetDur = time.Duration(diffMs) * time.Millisecond
+		}
+		if resetDur > maxWait {
+			maxWait = resetDur
+		}
+	}
+
+	threshold := c.turnSilenceTimeout
+	if maxWait > threshold {
+		return maxWait + DefaultRateLimitSilenceBuffer
+	}
+	return baseTimeout
 }
 
 // TurnEndGraceWindow returns the turn-end grace window duration.
@@ -233,6 +291,7 @@ func (c *Classifier) Close() error {
 		t.Stop()
 		delete(c.silenceTimers, id)
 	}
+	c.silenceTimerDurations = make(map[string]time.Duration)
 	for id, t := range c.subagentTimers {
 		t.Stop()
 		delete(c.subagentTimers, id)
@@ -255,6 +314,7 @@ func (c *Classifier) cancelSilenceTimerLocked(agentID string) {
 		t.Stop()
 		delete(c.silenceTimers, agentID)
 	}
+	delete(c.silenceTimerDurations, agentID)
 }
 
 func (c *Classifier) cancelSubagentTimerLocked(agentID, subID string) {
@@ -349,12 +409,19 @@ func (c *Classifier) pruneExpiredSubagentsLocked(agentID string, actx *agentCont
 	}
 }
 
-func (c *Classifier) scheduleSilenceTimerLocked(agentID string, scheduledGen uint64) {
+func (c *Classifier) scheduleSilenceTimerLocked(agentID string, scheduledGen uint64, customDuration ...time.Duration) {
 	c.cancelSilenceTimerLocked(agentID)
 	if c.turnSilenceTimeout <= 0 || c.syncMode {
 		return
 	}
-	c.silenceTimers[agentID] = time.AfterFunc(c.turnSilenceTimeout, func() {
+	timeout := c.turnSilenceTimeout
+	if len(customDuration) > 0 && customDuration[0] > 0 {
+		timeout = customDuration[0]
+	}
+	if c.silenceTimerDurations != nil {
+		c.silenceTimerDurations[agentID] = timeout
+	}
+	c.silenceTimers[agentID] = time.AfterFunc(timeout, func() {
 		c.handleSilenceTransition(agentID, scheduledGen)
 	})
 }
@@ -395,6 +462,10 @@ func (c *Classifier) flushTrailingCandidateLocked(agentID string) {
 
 	cand := actx.pendingCandidate
 	actx.pendingCandidate = nil
+
+	if cand.input.Activity == types.ActivityRateLimited || actx.rootActivity == types.ActivityRateLimited {
+		return
+	}
 
 	// Check duplicate suppression: if candidate matches lastSummarizedToolKey, skip
 	if cand.toolKey != "" && cand.toolKey == actx.lastSummarizedToolKey {
@@ -650,15 +721,23 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 						st = types.SubagentCompleted
 					}
 				}
+				var rlResetAt *int64
+				var rlRetrySec *int64
+				if summary.Activity == types.ActivityRateLimited && agent.Activity.Activity == types.ActivityRateLimited {
+					rlResetAt = agent.Activity.RateLimitResetAt
+					rlRetrySec = agent.Activity.RetryAfterSeconds
+				}
 				subagentsMap[summary.ID] = &subagentState{
-					id:          summary.ID,
-					activity:    summary.Activity,
-					activeTool:  summary.ActiveTool,
-					action:      summary.Action,
-					lastError:   summary.LastError,
-					startedAt:   summary.StartedAt,
-					completedAt: summary.CompletedAt,
-					status:      st,
+					id:                summary.ID,
+					activity:          summary.Activity,
+					activeTool:        summary.ActiveTool,
+					action:            summary.Action,
+					lastError:         summary.LastError,
+					rateLimitResetAt:  rlResetAt,
+					retryAfterSeconds: rlRetrySec,
+					startedAt:         summary.StartedAt,
+					completedAt:       summary.CompletedAt,
+					status:            st,
 				}
 				preloaded[summary.ID] = struct{}{}
 			}
@@ -681,15 +760,23 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 					}
 				}
 			}
+			var initialRootRateLimitResetAt *int64
+			var initialRootRetryAfterSeconds *int64
+			if initialRootActivity == types.ActivityRateLimited {
+				initialRootRateLimitResetAt = agent.Activity.RateLimitResetAt
+				initialRootRetryAfterSeconds = agent.Activity.RetryAfterSeconds
+			}
 			actx = &agentContext{
-				seenSubagents:       preloaded,
-				subagents:           subagentsMap,
-				rootActivity:        initialRootActivity,
-				rootAction:          initialRootAction,
-				rootQuestion:        initialRootQuestion,
-				rootLastError:       initialRootLastError,
-				hasUnseenCompletion: agent.Activity.HasUnseenCompletion,
-				completedAt:         agent.Activity.CompletedAt,
+				seenSubagents:         preloaded,
+				subagents:             subagentsMap,
+				rootActivity:          initialRootActivity,
+				rootAction:            initialRootAction,
+				rootQuestion:          initialRootQuestion,
+				rootLastError:         initialRootLastError,
+				rootRateLimitResetAt:  initialRootRateLimitResetAt,
+				rootRetryAfterSeconds: initialRootRetryAfterSeconds,
+				hasUnseenCompletion:   agent.Activity.HasUnseenCompletion,
+				completedAt:           agent.Activity.CompletedAt,
 			}
 			c.agentCtx[agent.ID] = actx
 		}
@@ -704,6 +791,13 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		agent.Activity.Action = actx.rootAction
 		agent.Activity.Question = actx.rootQuestion
 		agent.Activity.LastError = actx.rootLastError
+		if actx.rootActivity == types.ActivityRateLimited {
+			agent.Activity.RateLimitResetAt = actx.rootRateLimitResetAt
+			agent.Activity.RetryAfterSeconds = actx.rootRetryAfterSeconds
+		} else {
+			agent.Activity.RateLimitResetAt = nil
+			agent.Activity.RetryAfterSeconds = nil
+		}
 		agent.Activity.HasUnseenCompletion = actx.hasUnseenCompletion
 		agent.Activity.CompletedAt = actx.completedAt
 	}
@@ -804,6 +898,8 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			agent.Activity.HasUnseenCompletion = nil
 			agent.Activity.ActiveTool = nil
 			agent.Activity.ActiveTarget = nil
+			agent.Activity.RateLimitResetAt = nil
+			agent.Activity.RetryAfterSeconds = nil
 			if frame.Data.Question != nil {
 				agent.Activity.Question = frame.Data.Question
 			}
@@ -812,7 +908,12 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		case "error":
 			c.mu.Lock()
 			c.cancelIdleTimerLocked(agent.ID)
-			c.cancelSilenceTimerLocked(agent.ID)
+			if isRateLimitFrame(frame.Data) {
+				dur := c.rateLimitSilenceDurationLocked(frame.Data.RateLimitResetAt, frame.Data.RetryAfterSeconds, now)
+				c.scheduleSilenceTimerLocked(agent.ID, actx.rootGeneration, dur)
+			} else {
+				c.cancelSilenceTimerLocked(agent.ID)
+			}
 			c.mu.Unlock()
 			if isRateLimitFrame(frame.Data) {
 				agent.Activity.Activity = types.ActivityRateLimited
@@ -843,6 +944,8 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			// Tool results (even non-zero exits) are a normal part of shell/agent workflows;
 			// the agent remains busy processing the result, not in an error state.
 			agent.Activity.Activity = types.ActivityBusy
+			agent.Activity.RateLimitResetAt = nil
+			agent.Activity.RetryAfterSeconds = nil
 			agent.Activity.HasUnseenCompletion = nil
 			agent.Activity.LastError = nil
 			agent.Activity.ActiveTool = nil
@@ -894,6 +997,8 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				if toolName == "AskUserQuestion" {
 					agent.Activity.Activity = types.ActivityWaitingQuestion
 					agent.Activity.HasUnseenCompletion = nil
+					agent.Activity.RateLimitResetAt = nil
+					agent.Activity.RetryAfterSeconds = nil
 					if frame.Data.Question != nil {
 						agent.Activity.Question = frame.Data.Question
 					}
@@ -922,6 +1027,8 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			agent.Activity.Activity = types.ActivityBusy
 			agent.Activity.HasUnseenCompletion = nil
 			agent.Activity.LastError = nil
+			agent.Activity.RateLimitResetAt = nil
+			agent.Activity.RetryAfterSeconds = nil
 			agent.Activity.ActiveTool = nil
 			agent.Activity.ActiveTarget = nil
 			agent.Activity.ActiveToolStartedAt = nil
@@ -937,6 +1044,8 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			agent.Activity.Activity = types.ActivityBusy
 			agent.Activity.HasUnseenCompletion = nil
 			agent.Activity.LastError = nil
+			agent.Activity.RateLimitResetAt = nil
+			agent.Activity.RetryAfterSeconds = nil
 			if frame.Data.Content != nil && strings.TrimSpace(*frame.Data.Content) != "" {
 				c.mu.Lock()
 				actx.lastAssistantResponse = strings.TrimSpace(*frame.Data.Content)
@@ -952,6 +1061,8 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			agent.Activity.Activity = types.ActivityBusy
 			agent.Activity.HasUnseenCompletion = nil
 			agent.Activity.LastError = nil
+			agent.Activity.RateLimitResetAt = nil
+			agent.Activity.RetryAfterSeconds = nil
 			if frame.Data.Content != nil {
 				agent.Activity.LastThinkingExcerpt = frame.Data.Content
 			}
@@ -963,6 +1074,13 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			}
 
 		case "turn_end":
+			if frame.Data.RateLimitResetAt != nil {
+				agent.Activity.RateLimitResetAt = frame.Data.RateLimitResetAt
+			}
+			if frame.Data.RetryAfterSeconds != nil {
+				agent.Activity.RetryAfterSeconds = frame.Data.RetryAfterSeconds
+			}
+
 			if frame.Data.Content != nil && strings.TrimSpace(*frame.Data.Content) != "" {
 				c.mu.Lock()
 				actx.lastAssistantResponse = strings.TrimSpace(*frame.Data.Content)
@@ -981,6 +1099,9 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			} else if inFlight || agent.Activity.ActiveTool != nil {
 				isToolUse = true
 			}
+
+			hasTerminalContent := frame.Data.Content != nil && strings.TrimSpace(*frame.Data.Content) != ""
+			isTerminalStop := frame.Data.StopReason != nil && (*frame.Data.StopReason == "end_turn" || *frame.Data.StopReason == "stop")
 
 			if isToolUse {
 				c.mu.Lock()
@@ -1001,17 +1122,34 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				c.cancelSilenceTimerLocked(agent.ID)
 				c.mu.Unlock()
 				pendingJob = c.updateSummarization(agent, true)
-			} else if agent.Activity.Activity == types.ActivityError || agent.Activity.Activity == types.ActivityRateLimited {
-				// Do not overwrite ERROR or RATE_LIMITED state on turn_end
+			} else if agent.Activity.Activity == types.ActivityError {
+				// Do not overwrite ERROR state on turn_end
 				c.mu.Lock()
 				c.cancelIdleTimerLocked(agent.ID)
 				c.cancelTrailingTimerLocked(agent.ID)
 				c.cancelSilenceTimerLocked(agent.ID)
 				c.mu.Unlock()
 				pendingJob = c.updateSummarization(agent, true)
+			} else if agent.Activity.Activity == types.ActivityRateLimited && !isTerminalStop && !hasTerminalContent {
+				// Do not overwrite RATE_LIMITED state on turn_end, and reschedule silence timer
+				resetAt := agent.Activity.RateLimitResetAt
+				if frame.Data.RateLimitResetAt != nil {
+					resetAt = frame.Data.RateLimitResetAt
+					agent.Activity.RateLimitResetAt = frame.Data.RateLimitResetAt
+				}
+				retrySec := agent.Activity.RetryAfterSeconds
+				if frame.Data.RetryAfterSeconds != nil {
+					retrySec = frame.Data.RetryAfterSeconds
+					agent.Activity.RetryAfterSeconds = frame.Data.RetryAfterSeconds
+				}
+				c.mu.Lock()
+				c.cancelIdleTimerLocked(agent.ID)
+				c.cancelTrailingTimerLocked(agent.ID)
+				dur := c.rateLimitSilenceDurationLocked(resetAt, retrySec, now)
+				c.scheduleSilenceTimerLocked(agent.ID, actx.rootGeneration, dur)
+				c.mu.Unlock()
+				pendingJob = c.updateSummarization(agent, true)
 			} else {
-				hasTerminalContent := frame.Data.Content != nil && strings.TrimSpace(*frame.Data.Content) != ""
-				isTerminalStop := frame.Data.StopReason != nil && (*frame.Data.StopReason == "end_turn" || *frame.Data.StopReason == "stop")
 				hasToolsRun := len(actx.recentTools) > 0
 				isTrulyFinished := hasTerminalContent || isTerminalStop || hasToolsRun
 
@@ -1059,9 +1197,22 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 							agent.Activity.CompletedAt = int64Ptr(now)
 						}
 						agent.Activity.Activity = types.ActivityIdle
+						if frame.Data.RateLimitResetAt == nil {
+							agent.Activity.RateLimitResetAt = nil
+						}
+						if frame.Data.RetryAfterSeconds == nil {
+							agent.Activity.RetryAfterSeconds = nil
+						}
 						pendingJob = c.updateSummarization(agent, true)
 					} else {
 						// Keep agent BUSY during grace period and schedule transition to IDLE if no new events arrive.
+						agent.Activity.Activity = types.ActivityBusy
+						if frame.Data.RateLimitResetAt == nil {
+							agent.Activity.RateLimitResetAt = nil
+						}
+						if frame.Data.RetryAfterSeconds == nil {
+							agent.Activity.RetryAfterSeconds = nil
+						}
 						c.mu.Lock()
 						c.cancelIdleTimerLocked(agent.ID)
 						targetAgentID := agent.ID
@@ -1146,18 +1297,28 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 					}
 					sub.lastError = nil
 					sub.question = nil
+					sub.rateLimitResetAt = nil
+					sub.retryAfterSeconds = nil
 				}
 			case "tool_result":
 				sub.inFlightTool = false
 				sub.activity = types.ActivityBusy
 				sub.activeTool = nil
 				sub.lastError = nil
+				sub.rateLimitResetAt = nil
+				sub.retryAfterSeconds = nil
 			case "error":
 				sub.inFlightTool = false
 				if isRateLimitFrame(frame.Data) {
 					sub.activity = types.ActivityRateLimited
+					sub.rateLimitResetAt = frame.Data.RateLimitResetAt
+					sub.retryAfterSeconds = frame.Data.RetryAfterSeconds
+					dur := c.rateLimitSilenceDurationLocked(frame.Data.RateLimitResetAt, frame.Data.RetryAfterSeconds, now)
+					c.scheduleSilenceTimerLocked(agent.ID, actx.rootGeneration, dur)
 				} else {
 					sub.activity = types.ActivityError
+					sub.rateLimitResetAt = nil
+					sub.retryAfterSeconds = nil
 				}
 				if frame.Data.Content != nil {
 					out := truncateRunes(*frame.Data.Content, 2000)
@@ -1170,6 +1331,8 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			case "question_prompt", "waiting_question":
 				sub.inFlightTool = false
 				sub.activity = types.ActivityWaitingQuestion
+				sub.rateLimitResetAt = nil
+				sub.retryAfterSeconds = nil
 				if frame.Data.Question != nil && strings.TrimSpace(*frame.Data.Question) != "" {
 					q := strings.TrimSpace(*frame.Data.Question)
 					sub.question = &q
@@ -1182,16 +1345,22 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				sub.activity = types.ActivityBusy
 				sub.activeTool = nil
 				sub.lastError = nil
+				sub.rateLimitResetAt = nil
+				sub.retryAfterSeconds = nil
 				sub.completedAt = nil
 				sub.status = types.SubagentRunning
 				c.cancelSubagentTimerLocked(agent.ID, subID)
 			case "text", "agent_message":
 				sub.activity = types.ActivityBusy
+				sub.rateLimitResetAt = nil
+				sub.retryAfterSeconds = nil
 				sub.completedAt = nil
 				sub.status = types.SubagentRunning
 				c.cancelSubagentTimerLocked(agent.ID, subID)
 			case "turn_end", "run_exited":
 				sub.activity = types.ActivityIdle
+				sub.rateLimitResetAt = nil
+				sub.retryAfterSeconds = nil
 				sub.activeTool = nil
 				sub.inFlightTool = false
 				if sub.completedAt == nil {
@@ -1215,6 +1384,13 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		actx.rootAction = agent.Activity.Action
 		actx.rootQuestion = agent.Activity.Question
 		actx.rootLastError = agent.Activity.LastError
+		if actx.rootActivity == types.ActivityRateLimited {
+			actx.rootRateLimitResetAt = agent.Activity.RateLimitResetAt
+			actx.rootRetryAfterSeconds = agent.Activity.RetryAfterSeconds
+		} else {
+			actx.rootRateLimitResetAt = nil
+			actx.rootRetryAfterSeconds = nil
+		}
 		actx.hasUnseenCompletion = agent.Activity.HasUnseenCompletion
 		actx.completedAt = agent.Activity.CompletedAt
 	}
@@ -1226,6 +1402,8 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 	} else {
 		agent.Activity.ActiveSubagents = nil
 		actx.hasUnseenCompletion = nil
+		actx.rootRateLimitResetAt = nil
+		actx.rootRetryAfterSeconds = nil
 	}
 	var persistMu *sync.Mutex
 	if actx != nil {
@@ -1319,6 +1497,17 @@ func (c *Classifier) prepareSummaryInput(agent *types.IAgentState) (summarizer.S
 }
 
 func (c *Classifier) dispatchSummaryLocked(agent *types.IAgentState, actx *agentContext, input summarizer.SummaryInput, currentToolKey string, forceTrigger bool) *summaryJob {
+	if agent.Activity.Activity == types.ActivityRateLimited {
+		agent.Activity.Action = "Rate limit reached — backoff/retry in progress"
+		agent.Activity.Phase = nil
+		agent.Activity.ActionStale = false
+		c.cancelTrailingTimerLocked(agent.ID)
+		if actx != nil {
+			actx.pendingCandidate = nil
+		}
+		return nil
+	}
+
 	eventTime := time.Now()
 	if agent.Activity.UpdatedAt > 0 {
 		eventTime = time.UnixMilli(agent.Activity.UpdatedAt)
@@ -1417,6 +1606,19 @@ func (c *Classifier) dispatchSummaryLocked(agent *types.IAgentState, actx *agent
 func (c *Classifier) updateSummarization(agent *types.IAgentState, forceTrigger bool) *summaryJob {
 	input, currentToolKey := c.prepareSummaryInput(agent)
 
+	if agent.Activity.Activity == types.ActivityRateLimited {
+		agent.Activity.Action = "Rate limit reached — backoff/retry in progress"
+		agent.Activity.Phase = nil
+		agent.Activity.ActionStale = false
+		c.mu.Lock()
+		c.cancelTrailingTimerLocked(agent.ID)
+		if actx := c.agentCtx[agent.ID]; actx != nil {
+			actx.pendingCandidate = nil
+		}
+		c.mu.Unlock()
+		return nil
+	}
+
 	// If external LLM summarization is disabled or summarizer is nil, run deterministic fallback immediately
 	if c.summarizer.IsNoSummarize() {
 		agent.Activity.ActionStale = false
@@ -1499,6 +1701,10 @@ func (c *Classifier) runWorker(agentID string, w *agentWorker) {
 }
 
 func (c *Classifier) processSummaryJob(agentID string, job summaryJob) {
+	if job.input.Activity == types.ActivityRateLimited {
+		return
+	}
+
 	res := c.summarizer.Summarize(context.Background(), job.input)
 	if res.Action == "" {
 		return
@@ -1506,6 +1712,10 @@ func (c *Classifier) processSummaryJob(agentID string, job summaryJob) {
 
 	agent, err := c.store.GetAgent(agentID)
 	if err != nil || agent == nil {
+		return
+	}
+
+	if agent.Activity.Activity == types.ActivityRateLimited {
 		return
 	}
 
@@ -1594,6 +1804,8 @@ func (c *Classifier) handleIdleTransition(agentID string, scheduledGen uint64) {
 	agent.Activity.ActiveTool = nil
 	agent.Activity.ActiveTarget = nil
 	agent.Activity.Question = nil
+	agent.Activity.RateLimitResetAt = nil
+	agent.Activity.RetryAfterSeconds = nil
 	agent.Activity.UpdatedAt = now
 
 	// Compute fallback summary purely without mutating agentContext or cancelling trailing timers
@@ -1640,6 +1852,8 @@ func (c *Classifier) handleIdleTransition(agentID string, scheduledGen uint64) {
 	}
 
 	actx.rootActivity = types.ActivityIdle
+	actx.rootRateLimitResetAt = nil
+	actx.rootRetryAfterSeconds = nil
 	actx.rootAction = agent.Activity.Action
 	actx.rootQuestion = nil
 	actx.hasUnseenCompletion = agent.Activity.HasUnseenCompletion
@@ -1677,13 +1891,24 @@ func (c *Classifier) handleSilenceTransition(agentID string, scheduledGen uint64
 		return
 	}
 	delete(c.silenceTimers, agentID)
+	delete(c.silenceTimerDurations, agentID)
 
 	actx, ok := c.agentCtx[agentID]
-	if !ok || actx.rootGeneration != scheduledGen || actx.rootActivity != types.ActivityBusy {
+	hasRateLimitedSub := false
+	if ok {
+		for _, s := range actx.subagents {
+			if s.activity == types.ActivityRateLimited {
+				hasRateLimitedSub = true
+				break
+			}
+		}
+	}
+	if !ok || actx.rootGeneration != scheduledGen || (actx.rootActivity != types.ActivityBusy && actx.rootActivity != types.ActivityRateLimited && !hasRateLimitedSub) {
 		c.mu.Unlock()
 		return
 	}
 	scheduledSaveGen := actx.saveGeneration
+	scheduledRootActivity := actx.rootActivity
 	targetActx := actx
 	c.mu.Unlock()
 
@@ -1697,6 +1922,12 @@ func (c *Classifier) handleSilenceTransition(agentID string, scheduledGen uint64
 		return
 	}
 
+	if scheduledRootActivity != types.ActivityBusy && scheduledRootActivity != types.ActivityRateLimited && agent.Activity.Activity != types.ActivityRateLimited {
+		return
+	}
+
+	origAgentActivity := agent.Activity.Activity
+
 	now := time.Now().UnixMilli()
 	if agent.Activity.Activity == types.ActivityBusy {
 		agent.Activity.HasUnseenCompletion = boolPtr(true)
@@ -1706,13 +1937,15 @@ func (c *Classifier) handleSilenceTransition(agentID string, scheduledGen uint64
 	agent.Activity.ActiveTool = nil
 	agent.Activity.ActiveTarget = nil
 	agent.Activity.Question = nil
+	agent.Activity.RateLimitResetAt = nil
+	agent.Activity.RetryAfterSeconds = nil
 	agent.Activity.UpdatedAt = now
 
 	input, currentToolKey := c.prepareSummaryInput(agent)
 
 	c.mu.Lock()
 	actx, ok = c.agentCtx[agentID]
-	if !ok || actx != targetActx || actx.rootGeneration != scheduledGen || actx.saveGeneration != scheduledSaveGen || actx.rootActivity != types.ActivityBusy {
+	if !ok || actx != targetActx || actx.rootGeneration != scheduledGen || actx.saveGeneration != scheduledSaveGen || (actx.rootActivity != types.ActivityBusy && actx.rootActivity != types.ActivityRateLimited && origAgentActivity != types.ActivityRateLimited) {
 		c.mu.Unlock()
 		return
 	}
@@ -1727,7 +1960,7 @@ func (c *Classifier) handleSilenceTransition(agentID string, scheduledGen uint64
 
 	c.mu.Lock()
 	actx, ok = c.agentCtx[agentID]
-	if !ok || actx != targetActx || actx.rootGeneration != scheduledGen || actx.saveGeneration != scheduledSaveGen || actx.rootActivity != types.ActivityBusy {
+	if !ok || actx != targetActx || actx.rootGeneration != scheduledGen || actx.saveGeneration != scheduledSaveGen || (actx.rootActivity != types.ActivityBusy && actx.rootActivity != types.ActivityRateLimited && origAgentActivity != types.ActivityRateLimited) {
 		c.mu.Unlock()
 		persistMu.Unlock()
 		return
@@ -1746,10 +1979,27 @@ func (c *Classifier) handleSilenceTransition(agentID string, scheduledGen uint64
 	}
 
 	actx.rootActivity = types.ActivityIdle
+	actx.rootRateLimitResetAt = nil
+	actx.rootRetryAfterSeconds = nil
 	actx.rootAction = agent.Activity.Action
 	actx.rootQuestion = nil
 	actx.hasUnseenCompletion = agent.Activity.HasUnseenCompletion
 	actx.completedAt = agent.Activity.CompletedAt
+
+	for subID, sub := range actx.subagents {
+		sub.activity = types.ActivityIdle
+		sub.activeTool = nil
+		sub.inFlightTool = false
+		sub.rateLimitResetAt = nil
+		sub.retryAfterSeconds = nil
+		if sub.completedAt == nil {
+			comp := now
+			sub.completedAt = &comp
+		}
+		sub.status = types.SubagentCompleted
+		c.scheduleSubagentDwellTimerLocked(agentID, subID, sub, now)
+	}
+
 	c.rollupActivityLocked(agent, actx)
 	actx.hasUnseenCompletion = agent.Activity.HasUnseenCompletion
 	actx.completedAt = agent.Activity.CompletedAt
@@ -1859,10 +2109,14 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 		agent.Activity.Activity = types.ActivityError
 		agent.Activity.LastError = actx.rootLastError
 		agent.Activity.HasUnseenCompletion = nil
+		agent.Activity.RateLimitResetAt = nil
+		agent.Activity.RetryAfterSeconds = nil
 		return
 	} else if subError != nil {
 		agent.Activity.Activity = types.ActivityError
 		agent.Activity.HasUnseenCompletion = nil
+		agent.Activity.RateLimitResetAt = nil
+		agent.Activity.RetryAfterSeconds = nil
 		if subError.LastError != nil {
 			errStr := fmt.Sprintf("[Subagent %s] %s", subError.ID, *subError.LastError)
 			agent.Activity.LastError = &errStr
@@ -1877,10 +2131,14 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 		agent.Activity.Activity = types.ActivityWaitingQuestion
 		agent.Activity.Question = actx.rootQuestion
 		agent.Activity.HasUnseenCompletion = nil
+		agent.Activity.RateLimitResetAt = nil
+		agent.Activity.RetryAfterSeconds = nil
 		return
 	} else if subQuestion != nil {
 		agent.Activity.Activity = types.ActivityWaitingQuestion
 		agent.Activity.HasUnseenCompletion = nil
+		agent.Activity.RateLimitResetAt = nil
+		agent.Activity.RetryAfterSeconds = nil
 		if sub, ok := actx.subagents[subQuestion.ID]; ok && sub.question != nil {
 			qStr := fmt.Sprintf("[Subagent %s] %s", subQuestion.ID, *sub.question)
 			agent.Activity.Question = &qStr
@@ -1894,6 +2152,8 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 	if actx.rootActivity == types.ActivityRateLimited {
 		agent.Activity.Activity = types.ActivityRateLimited
 		agent.Activity.HasUnseenCompletion = nil
+		agent.Activity.RateLimitResetAt = actx.rootRateLimitResetAt
+		agent.Activity.RetryAfterSeconds = actx.rootRetryAfterSeconds
 		return
 	} else if subRateLimited != nil {
 		agent.Activity.Activity = types.ActivityRateLimited
@@ -1902,7 +2162,16 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 			errStr := fmt.Sprintf("[Subagent %s] %s", subRateLimited.ID, *subRateLimited.LastError)
 			agent.Activity.LastError = &errStr
 		}
+		if sub, ok := actx.subagents[subRateLimited.ID]; ok {
+			agent.Activity.RateLimitResetAt = sub.rateLimitResetAt
+			agent.Activity.RetryAfterSeconds = sub.retryAfterSeconds
+		}
 		return
+	} else {
+		if agent.Activity.Activity == types.ActivityRateLimited {
+			agent.Activity.RateLimitResetAt = nil
+			agent.Activity.RetryAfterSeconds = nil
+		}
 	}
 
 	// 3. Busy vs Idle
@@ -1910,9 +2179,13 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 		agent.Activity.Activity = types.ActivityBusy
 		agent.Activity.Action = actx.rootAction
 		agent.Activity.HasUnseenCompletion = nil
+		agent.Activity.RateLimitResetAt = nil
+		agent.Activity.RetryAfterSeconds = nil
 	} else if subBusy != nil {
 		agent.Activity.Activity = types.ActivityBusy
 		agent.Activity.HasUnseenCompletion = nil
+		agent.Activity.RateLimitResetAt = nil
+		agent.Activity.RetryAfterSeconds = nil
 		if subBusy.ActiveTool != nil && *subBusy.ActiveTool != "" {
 			agent.Activity.Action = fmt.Sprintf("Running subagent %s: %s", subBusy.ID, *subBusy.ActiveTool)
 		} else if subBusy.Action != "" {
@@ -1928,6 +2201,8 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 			agent.Activity.CompletedAt = int64Ptr(now)
 		}
 		agent.Activity.Activity = types.ActivityIdle
+		agent.Activity.RateLimitResetAt = nil
+		agent.Activity.RetryAfterSeconds = nil
 		if actx.rootAction != "" && actx.rootAction != "Thinking" {
 			agent.Activity.Action = actx.rootAction
 		} else {
@@ -1981,31 +2256,13 @@ func isToolUseStopReason(reason string) bool {
 
 // isRateLimitFrame reports whether a telemetry frame represents an API rate limiting / throttling event.
 func isRateLimitFrame(data types.TelemetryFrameData) bool {
-	if data.IsRateLimit != nil && *data.IsRateLimit {
-		return true
-	}
-	if data.ExitCode != nil && *data.ExitCode == 429 {
-		return true
+	if data.IsRateLimit != nil {
+		return *data.IsRateLimit
 	}
 	if data.RateLimitResetAt != nil || data.RetryAfterSeconds != nil {
 		return true
 	}
-	for _, strPtr := range []*string{data.Content, data.ToolOutput} {
-		if strPtr != nil && isRateLimitString(*strPtr) {
-			return true
-		}
-	}
 	return false
-}
-
-// isRateLimitString checks if an error message contains rate limiting indicators.
-func isRateLimitString(s string) bool {
-	lower := strings.ToLower(s)
-	return strings.Contains(lower, "rate_limit") ||
-		strings.Contains(lower, "rate limit") ||
-		strings.Contains(lower, "429") ||
-		strings.Contains(lower, "overloaded") ||
-		strings.Contains(lower, "quota")
 }
 
 // truncateRunes truncates string s to at most maxRunes, preserving valid UTF-8 on rune boundaries.

@@ -72,6 +72,8 @@ CREATE TABLE IF NOT EXISTS agents (
     model                 TEXT,
     context_window        INTEGER,
     context_fullness      REAL,
+    rate_limit_reset_at   INTEGER,
+    retry_after_seconds   INTEGER,
     UNIQUE (environment_id, harness, session_id)
 );
 
@@ -448,6 +450,117 @@ func TestStore_GetStatus(t *testing.T) {
 		// Agent 1 has silence >= 120s (stalled) so attention count = 1
 		if status.RequiresAttentionCount != 1 {
 			t.Errorf("RequiresAttentionCount = %d, want 1", status.RequiresAttentionCount)
+		}
+	})
+
+	t.Run("rate limited attention respects rate_limit_reset_at", func(t *testing.T) {
+		sRL := setupTestDB(t)
+		ctx := context.Background()
+		now := time.Now().UnixMilli()
+
+		_, err := sRL.db.ExecContext(ctx, `
+			INSERT INTO environments (id, label, hostname, platform, user, dropped_frames, last_heartbeat_at)
+			VALUES ('env-rl-att', 'macbook', 'macbook.local', 'darwin', 'alex', 0, ?)
+		`, now)
+		if err != nil {
+			t.Fatalf("inserting environment: %v", err)
+		}
+
+		_, err = sRL.db.ExecContext(ctx, `
+			INSERT INTO runs (id, agent_id, pid, harness_version, started_at, ended_at)
+			VALUES ('run-rl-att', 'agent-rl-att', 1001, '1.0', ?, NULL)
+		`, now-300000)
+		if err != nil {
+			t.Fatalf("inserting run: %v", err)
+		}
+
+		stalledUpdate := now - 130000
+		futureResetAt := now + 60000
+		_, err = sRL.db.ExecContext(ctx, `
+			INSERT INTO agents (
+				id, session_id, environment_id, harness, project_id, project_name, canonical_root,
+				branch, is_detached, is_worktree, worktree_rel_path, cwd, current_run_id,
+				activity, title, action, action_stale, phase, active_tool, active_target,
+				active_tool_started_at,
+				tokens_input, tokens_output, tokens_cache_read, tokens_cache_write,
+				tokens_reasoning, tokens_total, cost_usd, subagent_count, first_started_at, updated_at,
+				rate_limit_reset_at, retry_after_seconds
+			) VALUES (
+				'agent-rl-att', 'sess-rl-att', 'env-rl-att', 'claude-code', 'proj', 'proj', '/repo',
+				'main', 0, 0, NULL, '/repo', 'run-rl-att',
+				'RATE_LIMITED', 'Throttled', 'Waiting for quota', 0, 'editing', NULL, NULL,
+				NULL,
+				0, 0, 0, 0, 0, 0, 0, 0, ?, ?,
+				?, 60
+			)
+		`, now-300000, stalledUpdate, futureResetAt)
+		if err != nil {
+			t.Fatalf("inserting agent: %v", err)
+		}
+
+		// 1. Future reset_at: attention suppressed (count = 0) even though retry_after_seconds (60) has elapsed (130s >= 60s)
+		status, err := sRL.GetStatus(ctx)
+		if err != nil {
+			t.Fatalf("GetStatus failed: %v", err)
+		}
+		if status.ActiveAgentCount != 1 {
+			t.Errorf("ActiveAgentCount = %d, want 1", status.ActiveAgentCount)
+		}
+		if status.RequiresAttentionCount != 0 {
+			t.Errorf("RequiresAttentionCount = %d, want 0 when resetAt in future", status.RequiresAttentionCount)
+		}
+
+		// 2. Past reset_at: attention triggers (count = 1) even though retry_after_seconds (3600) has NOT elapsed
+		pastResetAt := now - 10000
+		_, err = sRL.db.ExecContext(ctx, `UPDATE agents SET rate_limit_reset_at = ?, retry_after_seconds = 3600 WHERE id = 'agent-rl-att'`, pastResetAt)
+		if err != nil {
+			t.Fatalf("updating agent resetAt: %v", err)
+		}
+		status, err = sRL.GetStatus(ctx)
+		if err != nil {
+			t.Fatalf("GetStatus failed: %v", err)
+		}
+		if status.RequiresAttentionCount != 1 {
+			t.Errorf("RequiresAttentionCount = %d, want 1 when resetAt in past (precedence over unelapsed retry_after_seconds)", status.RequiresAttentionCount)
+		}
+
+		// 3. NULL reset_at with unelapsed retry_after_seconds (3600): attention suppressed (count = 0)
+		_, err = sRL.db.ExecContext(ctx, `UPDATE agents SET rate_limit_reset_at = NULL, retry_after_seconds = 3600 WHERE id = 'agent-rl-att'`)
+		if err != nil {
+			t.Fatalf("updating agent resetAt to NULL: %v", err)
+		}
+		status, err = sRL.GetStatus(ctx)
+		if err != nil {
+			t.Fatalf("GetStatus failed: %v", err)
+		}
+		if status.RequiresAttentionCount != 0 {
+			t.Errorf("RequiresAttentionCount = %d, want 0 when resetAt is NULL and retry_after_seconds not elapsed", status.RequiresAttentionCount)
+		}
+
+		// 4. NULL reset_at with elapsed retry_after_seconds (60): attention triggers (count = 1)
+		_, err = sRL.db.ExecContext(ctx, `UPDATE agents SET rate_limit_reset_at = NULL, retry_after_seconds = 60 WHERE id = 'agent-rl-att'`)
+		if err != nil {
+			t.Fatalf("updating agent retry_after_seconds: %v", err)
+		}
+		status, err = sRL.GetStatus(ctx)
+		if err != nil {
+			t.Fatalf("GetStatus failed: %v", err)
+		}
+		if status.RequiresAttentionCount != 1 {
+			t.Errorf("RequiresAttentionCount = %d, want 1 when resetAt is NULL and retry_after_seconds elapsed", status.RequiresAttentionCount)
+		}
+
+		// 5. NULL reset_at with NULL retry_after_seconds and updated_at >= 120s: attention triggers (count = 1)
+		_, err = sRL.db.ExecContext(ctx, `UPDATE agents SET rate_limit_reset_at = NULL, retry_after_seconds = NULL WHERE id = 'agent-rl-att'`)
+		if err != nil {
+			t.Fatalf("updating agent retry_after_seconds to NULL: %v", err)
+		}
+		status, err = sRL.GetStatus(ctx)
+		if err != nil {
+			t.Fatalf("GetStatus failed: %v", err)
+		}
+		if status.RequiresAttentionCount != 1 {
+			t.Errorf("RequiresAttentionCount = %d, want 1 when resetAt is NULL and retry_after_seconds is NULL", status.RequiresAttentionCount)
 		}
 	})
 }
@@ -851,13 +964,16 @@ func TestStore_RateLimitedFilterAndStatus(t *testing.T) {
 	_, err = st.db.Exec(`
 		INSERT INTO runs (id, agent_id, pid, harness_version, started_at)
 		VALUES ('run-rl-1', 'env-rl:claude-code:sess-fresh', 1234, '1.0.0', ?),
-		       ('run-rl-2', 'env-rl:claude-code:sess-stalled', 5678, '1.0.0', ?);
-	`, now, now-200000)
+		       ('run-rl-2', 'env-rl:claude-code:sess-stalled', 5678, '1.0.0', ?),
+		       ('run-rl-3', 'env-rl:claude-code:sess-retry-suppressed', 9012, '1.0.0', ?);
+	`, now, now-200000, now-200000)
 	if err != nil {
 		t.Fatalf("seeding runs: %v", err)
 	}
 
-	// Insert fresh rate-limited agent (updated 10s ago)
+	// Insert fresh rate-limited agent (updated 10s ago) with rate_limit metadata
+	resetAtVal := now + 45000
+	retrySecVal := int64(45)
 	_, err = st.db.Exec(`
 		INSERT INTO agents (
 			id, session_id, environment_id, harness,
@@ -867,7 +983,8 @@ func TestStore_RateLimitedFilterAndStatus(t *testing.T) {
 			phase, last_error,
 			tokens_input, tokens_output, tokens_cache_read, tokens_cache_write,
 			tokens_reasoning, tokens_total, cost_usd, subagent_count,
-			first_started_at, updated_at
+			first_started_at, updated_at,
+			rate_limit_reset_at, retry_after_seconds
 		) VALUES (
 			'env-rl:claude-code:sess-fresh', 'sess-fresh', 'env-rl', 'claude-code',
 			'github.com/org/repo-rl', 'repo-rl', '/path/to/repo-rl',
@@ -876,9 +993,10 @@ func TestStore_RateLimitedFilterAndStatus(t *testing.T) {
 			'planning', 'rate_limit_exceeded',
 			100, 50, 0, 0,
 			0, 150, 0.25, 0,
+			?, ?,
 			?, ?
 		);
-	`, now-10000, now-10000)
+	`, now-10000, now-10000, resetAtVal, retrySecVal)
 	if err != nil {
 		t.Fatalf("seeding fresh rate-limited agent: %v", err)
 	}
@@ -909,6 +1027,37 @@ func TestStore_RateLimitedFilterAndStatus(t *testing.T) {
 		t.Fatalf("seeding stalled rate-limited agent: %v", err)
 	}
 
+	// Insert rate-limited agent with active retry_after_seconds (updated 150s ago, retry_after 300s)
+	// Even though updated_at > 120s ago, retry_after_seconds has not elapsed yet (150s < 300s),
+	// so attention must be suppressed!
+	retry300 := int64(300)
+	_, err = st.db.Exec(`
+		INSERT INTO agents (
+			id, session_id, environment_id, harness,
+			project_id, project_name, canonical_root,
+			branch, is_detached, is_worktree, worktree_rel_path, cwd,
+			current_run_id, activity, title, action, action_stale,
+			phase, last_error,
+			tokens_input, tokens_output, tokens_cache_read, tokens_cache_write,
+			tokens_reasoning, tokens_total, cost_usd, subagent_count,
+			first_started_at, updated_at,
+			rate_limit_reset_at, retry_after_seconds
+		) VALUES (
+			'env-rl:claude-code:sess-retry-suppressed', 'sess-retry-suppressed', 'env-rl', 'claude-code',
+			'github.com/org/repo-rl', 'repo-rl', '/path/to/repo-rl',
+			'main', 0, 0, NULL, '/path/to/repo-rl',
+			'run-rl-3', 'RATE_LIMITED', 'Rate limited retry suppressed', 'Backing off', 0,
+			'planning', 'rate_limit_exceeded',
+			100, 50, 0, 0,
+			0, 150, 0.25, 0,
+			?, ?,
+			NULL, ?
+		);
+	`, now-200000, now-150000, retry300)
+	if err != nil {
+		t.Fatalf("seeding retry-suppressed rate-limited agent: %v", err)
+	}
+
 	ctx := context.Background()
 
 	// Test filter by ActivityRateLimited
@@ -916,8 +1065,8 @@ func TestStore_RateLimitedFilterAndStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAgents with ActivityRateLimited failed: %v", err)
 	}
-	if len(agents) != 2 {
-		t.Fatalf("expected 2 rate-limited agents, got %d", len(agents))
+	if len(agents) != 3 {
+		t.Fatalf("expected 3 rate-limited agents, got %d", len(agents))
 	}
 	for _, a := range agents {
 		if a.Activity.Activity != types.ActivityRateLimited {
@@ -925,16 +1074,28 @@ func TestStore_RateLimitedFilterAndStatus(t *testing.T) {
 		}
 	}
 
-	// Test GetStatus: both agents are active (current_run_id IS NOT NULL),
-	// but only the stalled one (> 120s) requires attention!
+	// Test GetStatus: all 3 agents are active (current_run_id IS NOT NULL),
+	// but only the stalled one with no future reset/retry (run-rl-2) requires attention!
+	// run-rl-1 has future resetAt, and run-rl-3 has future retryAfterSeconds.
 	status, err := st.GetStatus(ctx)
 	if err != nil {
 		t.Fatalf("GetStatus failed: %v", err)
 	}
-	if status.ActiveAgentCount != 2 {
-		t.Errorf("expected ActiveAgentCount = 2, got %d", status.ActiveAgentCount)
+	if status.ActiveAgentCount != 3 {
+		t.Errorf("expected ActiveAgentCount = 3, got %d", status.ActiveAgentCount)
 	}
 	if status.RequiresAttentionCount != 1 {
-		t.Errorf("expected RequiresAttentionCount = 1 (only stalled), got %d", status.RequiresAttentionCount)
+		t.Errorf("expected RequiresAttentionCount = 1 (only stalled with no future retry), got %d", status.RequiresAttentionCount)
+	}
+
+	agentFresh, err := st.GetAgentByID(ctx, "env-rl:claude-code:sess-fresh")
+	if err != nil {
+		t.Fatalf("GetAgentByID failed: %v", err)
+	}
+	if agentFresh.Activity.RateLimitResetAt == nil || *agentFresh.Activity.RateLimitResetAt != resetAtVal {
+		t.Errorf("expected RateLimitResetAt %d, got %v", resetAtVal, agentFresh.Activity.RateLimitResetAt)
+	}
+	if agentFresh.Activity.RetryAfterSeconds == nil || *agentFresh.Activity.RetryAfterSeconds != retrySecVal {
+		t.Errorf("expected RetryAfterSeconds %d, got %v", retrySecVal, agentFresh.Activity.RetryAfterSeconds)
 	}
 }

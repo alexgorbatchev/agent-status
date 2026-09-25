@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/models"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
@@ -598,6 +600,9 @@ func ReconstructSessionEvents(session *OpencodeSession, messages []OpencodeMessa
 
 			var errorPartTexts []string
 			var toolErrorTexts []string
+			var isRL bool
+			var retryAfterSeconds *int64
+			var rateLimitResetAt *int64
 
 			for _, p := range msgParts {
 				partTs := p.TimeCreated
@@ -697,9 +702,37 @@ func ReconstructSessionEvents(session *OpencodeSession, messages []OpencodeMessa
 
 				case "retry":
 					if p.Data.Error != nil {
-						txt := extractOpencodeError(p.Data.Error)
-						if txt != "" {
-							errorPartTexts = append(errorPartTexts, txt)
+						rInfo := parseOpencodeApiErrorInfo(p.Data.Error, p.TimeCreated)
+						if rInfo.message != "" {
+							errorPartTexts = append(errorPartTexts, rInfo.message)
+						}
+						if rInfo.isRateLimit {
+							isRL = true
+							if rInfo.retryAfterSeconds != nil {
+								retryAfterSeconds = rInfo.retryAfterSeconds
+							}
+							if rInfo.rateLimitResetAt != nil {
+								rateLimitResetAt = rInfo.rateLimitResetAt
+							}
+
+							errText := rInfo.message
+							if errText == "" {
+								errText = "Rate limit exceeded"
+							}
+							events = append(events, ParsedEvent{
+								EventType: "error",
+								Timestamp: partTs,
+								CWD:       cwd,
+								Data: types.TelemetryFrameData{
+									Role:              stringPtr("assistant"),
+									Content:           stringPtr(errText),
+									Model:             stringPtr(msgModel),
+									IsError:           boolPtr(true),
+									IsRateLimit:       boolPtr(true),
+									RetryAfterSeconds: rInfo.retryAfterSeconds,
+									RateLimitResetAt:  rInfo.rateLimitResetAt,
+								},
+							})
 						}
 					}
 				}
@@ -767,6 +800,23 @@ func ReconstructSessionEvents(session *OpencodeSession, messages []OpencodeMessa
 				})
 			}
 
+			var isRLPtr *bool
+			if msg.Data.Error != nil {
+				mInfo := parseOpencodeApiErrorInfo(msg.Data.Error, msg.TimeCreated)
+				isRL = mInfo.isRateLimit
+				retryAfterSeconds = mInfo.retryAfterSeconds
+				rateLimitResetAt = mInfo.rateLimitResetAt
+				if isRL {
+					isRLPtr = boolPtr(true)
+				} else {
+					isRLPtr = boolPtr(false)
+					retryAfterSeconds = nil
+					rateLimitResetAt = nil
+				}
+			} else if isRL {
+				isRLPtr = boolPtr(true)
+			}
+
 			isAborted := isOpencodeMessageAborted(msg.Data.Error)
 			hasTerminalError := !isAborted && (
 				(msg.Data.Finish != nil && *msg.Data.Finish == "error") ||
@@ -797,6 +847,9 @@ func ReconstructSessionEvents(session *OpencodeSession, messages []OpencodeMessa
 						Model:              stringPtr(msgModel),
 						ModelContextWindow: contextWindowPtr,
 						IsError:            boolPtr(true),
+						IsRateLimit:        isRLPtr,
+						RetryAfterSeconds:  retryAfterSeconds,
+						RateLimitResetAt:   rateLimitResetAt,
 					},
 				})
 			}
@@ -958,6 +1011,120 @@ func isOpencodeMessageAborted(err interface{}) bool {
 		}
 	}
 	return false
+}
+
+type opencodeErrorInfo struct {
+	statusCode        *int
+	isRateLimit       bool
+	retryAfterSeconds *int64
+	rateLimitResetAt  *int64
+	message           string
+}
+
+func parseOpencodeApiErrorInfo(v interface{}, nowMs int64) opencodeErrorInfo {
+	var info opencodeErrorInfo
+	if v == nil {
+		return info
+	}
+
+	m, ok := v.(map[string]interface{})
+	if !ok {
+		info.message = extractOpencodeError(v)
+		return info
+	}
+
+	var dataMap map[string]interface{}
+	if dVal, ok := m["data"].(map[string]interface{}); ok {
+		dataMap = dVal
+	} else {
+		dataMap = m
+	}
+
+	for _, cand := range []map[string]interface{}{dataMap, m} {
+		if cand == nil || info.statusCode != nil {
+			continue
+		}
+		if sc, ok := cand["statusCode"]; ok && sc != nil {
+			if code := extractInt(sc); code != nil {
+				info.statusCode = code
+				if *code == 429 {
+					info.isRateLimit = true
+				}
+				break
+			}
+		}
+		if sc, ok := cand["status"]; ok && sc != nil {
+			if code := extractInt(sc); code != nil {
+				info.statusCode = code
+				if *code == 429 {
+					info.isRateLimit = true
+				}
+				break
+			}
+		}
+	}
+
+	if msg, ok := dataMap["message"].(string); ok && strings.TrimSpace(msg) != "" {
+		info.message = strings.TrimSpace(msg)
+	} else {
+		info.message = extractOpencodeError(v)
+	}
+
+	var headerCandidates []map[string]interface{}
+	for _, cand := range []map[string]interface{}{dataMap, m} {
+		if cand == nil {
+			continue
+		}
+		if h, ok := cand["responseHeaders"].(map[string]interface{}); ok {
+			headerCandidates = append(headerCandidates, h)
+		}
+		if h, ok := cand["headers"].(map[string]interface{}); ok {
+			headerCandidates = append(headerCandidates, h)
+		}
+	}
+
+	for _, headers := range headerCandidates {
+		for k, val := range headers {
+			lowerK := strings.ToLower(k)
+			if lowerK == "retry-after" || lowerK == "retry_after" {
+				valStr := fmt.Sprintf("%v", val)
+				trimmed := strings.TrimSpace(valStr)
+				if sec, err := strconv.ParseFloat(trimmed, 64); err == nil && sec > 0 {
+					s := int64(sec)
+					info.retryAfterSeconds = &s
+					resetAt := nowMs + int64(sec*1000)
+					info.rateLimitResetAt = &resetAt
+					info.isRateLimit = true
+					break
+				} else if t, err := time.Parse(time.RFC1123, trimmed); err == nil {
+					resetAt := t.UnixMilli()
+					info.rateLimitResetAt = &resetAt
+					s := (resetAt - nowMs) / 1000
+					if s < 0 {
+						s = 0
+					}
+					info.retryAfterSeconds = &s
+					info.isRateLimit = true
+					break
+				} else if t, err := time.Parse(time.RFC3339Nano, trimmed); err == nil {
+					resetAt := t.UnixMilli()
+					info.rateLimitResetAt = &resetAt
+					s := (resetAt - nowMs) / 1000
+					if s < 0 {
+						s = 0
+					}
+					info.retryAfterSeconds = &s
+					info.isRateLimit = true
+					break
+				}
+			}
+		}
+		if info.rateLimitResetAt != nil {
+			break
+		}
+	}
+
+	return info
 }
 
 // extractOpencodeError extracts a human-readable error message from arbitrary error payloads

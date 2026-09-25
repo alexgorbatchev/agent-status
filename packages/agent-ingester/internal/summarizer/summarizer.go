@@ -373,6 +373,10 @@ func (s *Summarizer) AllowAt(agentID string, eventTime time.Time) bool {
 
 // Summarize generates a structured action summary using configured LLM providers with automatic fallback.
 func (s *Summarizer) Summarize(ctx context.Context, input SummaryInput) SummaryResult {
+	if input.Activity == types.ActivityRateLimited {
+		return FallbackSummary(input)
+	}
+
 	if s.noSummarize || len(s.providers) == 0 {
 		return FallbackSummary(input)
 	}
@@ -970,6 +974,15 @@ func FallbackSummary(input SummaryInput) SummaryResult {
 		activeTarget = input.ActiveTarget
 	}
 
+	if input.Activity == types.ActivityRateLimited {
+		return SummaryResult{
+			Action:       "Rate limit reached — backoff/retry in progress",
+			Phase:        nil,
+			ActiveTarget: activeTarget,
+			IsFallback:   true,
+		}
+	}
+
 	if input.ActiveTool != nil && *input.ActiveTool != "" {
 		tool := *input.ActiveTool
 		target := ""
@@ -998,8 +1011,6 @@ func FallbackSummary(input SummaryInput) SummaryResult {
 			}
 
 		case types.ActivityRateLimited:
-			p := types.PhasePlanning
-			phase = &p
 			action = "Rate limit reached — backoff/retry in progress"
 
 		case types.ActivityIdle:

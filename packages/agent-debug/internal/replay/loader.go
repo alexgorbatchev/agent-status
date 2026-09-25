@@ -337,8 +337,9 @@ func loadCodexSession(filePath string, sessionIDOverride string, cwdOverride str
 
 	effectiveCWD := cwdOverride
 
+	codexParser := parser.NewCodexParser()
 	mainEvents, inferredCWD, err := readJSONLLines(filePath, func(line []byte) ([]parser.ParsedEvent, error) {
-		return parser.ParseCodexLine(line)
+		return codexParser.ParseLine(line)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("reading codex transcript %s: %w", filePath, err)

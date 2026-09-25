@@ -114,7 +114,7 @@ func main() {
 	}
 }
 
-func parseLineForHarness(harness types.HarnessType, line []byte, cwd string, ccParser *parser.ClaudeCodeParser) ([]parser.ParsedEvent, error) {
+func parseLineForHarness(harness types.HarnessType, line []byte, cwd string, ccParser *parser.ClaudeCodeParser, codexParser *parser.CodexParser) ([]parser.ParsedEvent, error) {
 	switch harness {
 	case types.HarnessClaudeCode:
 		if ccParser == nil {
@@ -124,7 +124,10 @@ func parseLineForHarness(harness types.HarnessType, line []byte, cwd string, ccP
 	case types.HarnessPi:
 		return parser.ParsePiLine(line, cwd)
 	case types.HarnessCodex:
-		return parser.ParseCodexLine(line)
+		if codexParser == nil {
+			codexParser = parser.NewCodexParser()
+		}
+		return codexParser.ParseLine(line)
 	default:
 		return nil, fmt.Errorf("unsupported harness type: %q", harness)
 	}
@@ -358,10 +361,14 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 		if harness == types.HarnessClaudeCode {
 			ccParser = parser.NewClaudeCodeParser()
 		}
+		var codexParser *parser.CodexParser
+		if harness == types.HarnessCodex {
+			codexParser = parser.NewCodexParser()
+		}
 
 		var t *tailer.Tailer
 		t, err := tailer.NewTailerWithOffsetHandler(path, cursorStore, func(line []byte, offset int64) error {
-			events, pErr := parseLineForHarness(harness, line, cwd, ccParser)
+			events, pErr := parseLineForHarness(harness, line, cwd, ccParser, codexParser)
 			if pErr != nil {
 				logging.Warn("transcript_line_parse_failed", "harness", harness, "path", path, "err", pErr)
 				_ = t.Commit(offset)

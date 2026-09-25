@@ -103,12 +103,16 @@ func (s *Store) GetStatus(ctx context.Context) (*types.StatusResponse, error) {
 				WHEN current_run_id IS NOT NULL AND (
 					activity IN ('WAITING_QUESTION', 'ERROR') OR
 					(active_tool_started_at IS NOT NULL AND (? - active_tool_started_at) >= 180000) OR
-					(activity IN ('BUSY', 'RATE_LIMITED') AND (? - updated_at) >= 120000)
+					(activity = 'BUSY' AND (? - updated_at) >= 120000) OR
+					(activity = 'RATE_LIMITED' AND (? - updated_at) >= 120000 AND (
+						(rate_limit_reset_at IS NOT NULL AND rate_limit_reset_at <= ?) OR
+						(rate_limit_reset_at IS NULL AND (retry_after_seconds IS NULL OR (? - updated_at) >= (retry_after_seconds * 1000)))
+					))
 				) THEN 1 ELSE 0 END), 0) AS attention_count,
 			SUM(cost_usd) AS total_spend
 		FROM agents
 	`
-	err = s.db.QueryRowContext(ctx, query, nowMs, nowMs).Scan(&activeAgentCount, &requiresAttentionCount, &totalSpend)
+	err = s.db.QueryRowContext(ctx, query, nowMs, nowMs, nowMs, nowMs, nowMs).Scan(&activeAgentCount, &requiresAttentionCount, &totalSpend)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("querying status aggregates: %w", err)
 	}
@@ -141,7 +145,8 @@ const selectAgentBaseQuery = `
 		e.label, e.hostname, e.platform, e.user, e.last_heartbeat_at,
 		r.pid, r.harness_version, r.started_at, r.ended_at,
 		a.is_hidden, a.hidden_at,
-		a.model, a.context_window, a.context_fullness
+		a.model, a.context_window, a.context_fullness,
+		a.rate_limit_reset_at, a.retry_after_seconds
 	FROM agents a
 	INNER JOIN environments e ON a.environment_id = e.id
 	LEFT JOIN runs r ON a.current_run_id = r.id
@@ -182,6 +187,7 @@ func scanAgent(s agentRowScanner, nowMs int64) (*types.IAgentState, error) {
 		modelStr                                                      sql.NullString
 		contextWindow                                                 sql.NullInt64
 		contextFullness                                               sql.NullFloat64
+		rateLimitResetAt, retryAfterSeconds                           sql.NullInt64
 	)
 
 	err := s.Scan(
@@ -198,6 +204,7 @@ func scanAgent(s agentRowScanner, nowMs int64) (*types.IAgentState, error) {
 		&runPID, &runHarnessVersion, &runStartedAt, &runEndedAt,
 		&isHidden, &hiddenAt,
 		&modelStr, &contextWindow, &contextFullness,
+		&rateLimitResetAt, &retryAfterSeconds,
 	)
 	if err != nil {
 		return nil, err
@@ -344,6 +351,14 @@ func scanAgent(s agentRowScanner, nowMs int64) (*types.IAgentState, error) {
 	if contextFullness.Valid {
 		v := contextFullness.Float64
 		agent.Activity.ContextFullness = &v
+	}
+	if rateLimitResetAt.Valid {
+		v := rateLimitResetAt.Int64
+		agent.Activity.RateLimitResetAt = &v
+	}
+	if retryAfterSeconds.Valid {
+		v := retryAfterSeconds.Int64
+		agent.Activity.RetryAfterSeconds = &v
 	}
 
 	if activeSubagents.Valid && strings.TrimSpace(activeSubagents.String) != "" {

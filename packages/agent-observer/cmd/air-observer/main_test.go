@@ -18,6 +18,7 @@ import (
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/scanner"
 	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/tailer"
+	parser "github.com/alexgorbatchev/agent-status/packages/agent-parser"
 	"github.com/coder/websocket"
 )
 
@@ -274,7 +275,7 @@ func TestParserDispatchForHarnessTypes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			events, pErr := parseLineForHarness(tt.harness, tt.line, tt.cwd, nil)
+			events, pErr := parseLineForHarness(tt.harness, tt.line, tt.cwd, nil, nil)
 
 			if (pErr != nil) != tt.wantErr {
 				t.Fatalf("parseLineForHarness(%v) error = %v, wantErr %v", tt.harness, pErr, tt.wantErr)
@@ -289,6 +290,43 @@ func TestParserDispatchForHarnessTypes(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("codex parser preserves state across lines", func(t *testing.T) {
+		codexParser := parser.NewCodexParser()
+		line1 := []byte(`{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:43.000Z",
+			"payload": {
+				"type": "token_count",
+				"info": { "total_token_usage": { "total_tokens": 100 } },
+				"rate_limits": { "remaining_tokens": 0, "reset_tokens": "45s" }
+			}
+		}`)
+		_, err := parseLineForHarness(types.HarnessCodex, line1, "", nil, codexParser)
+		if err != nil {
+			t.Fatalf("unexpected error line 1: %v", err)
+		}
+
+		line2 := []byte(`{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:44.000Z",
+			"payload": {
+				"type": "error",
+				"message": "Rate limit reached",
+				"codex_error_info": "RateLimitExceeded"
+			}
+		}`)
+		evs, err := parseLineForHarness(types.HarnessCodex, line2, "", nil, codexParser)
+		if err != nil {
+			t.Fatalf("unexpected error line 2: %v", err)
+		}
+		if len(evs) != 1 {
+			t.Fatalf("expected 1 event, got %d", len(evs))
+		}
+		if evs[0].Data.RetryAfterSeconds == nil || *evs[0].Data.RetryAfterSeconds != 44 {
+			t.Fatalf("expected RetryAfterSeconds=44 (45s discounted by 1s) from preserved state, got %v", evs[0].Data.RetryAfterSeconds)
+		}
+	})
 }
 
 func TestObserverRunLogging(t *testing.T) {

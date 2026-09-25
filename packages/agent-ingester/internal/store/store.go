@@ -209,6 +209,7 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 			branch, is_detached, is_worktree, worktree_rel_path, cwd,
 			current_run_id, activity, title, action, action_stale,
 			phase, active_tool, active_target, active_tool_started_at, question, last_thinking_excerpt, last_error,
+			rate_limit_reset_at, retry_after_seconds,
 			tokens_input, tokens_output, tokens_cache_read, tokens_cache_write, tokens_reasoning, tokens_total,
 			cost_usd, subagent_count, active_subagents, first_started_at, updated_at,
 			is_hidden, hidden_at,
@@ -219,6 +220,7 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 			?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?, ?, ?,
+			?, ?,
 			?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
 			?, ?,
@@ -245,6 +247,8 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 			question = excluded.question,
 			last_thinking_excerpt = excluded.last_thinking_excerpt,
 			last_error = excluded.last_error,
+			rate_limit_reset_at = excluded.rate_limit_reset_at,
+			retry_after_seconds = excluded.retry_after_seconds,
 			tokens_input = excluded.tokens_input,
 			tokens_output = excluded.tokens_output,
 			tokens_cache_read = excluded.tokens_cache_read,
@@ -266,6 +270,7 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 		agent.Workspace.Branch, isDetached, isWorktree, agent.Workspace.RelPath, agent.Workspace.CWD,
 		currentRunID, string(agent.Activity.Activity), agent.Activity.Title, agent.Activity.Action, actionStale,
 		phaseStr, agent.Activity.ActiveTool, agent.Activity.ActiveTarget, agent.Activity.ActiveToolStartedAt, agent.Activity.Question, agent.Activity.LastThinkingExcerpt, agent.Activity.LastError,
+		agent.Activity.RateLimitResetAt, agent.Activity.RetryAfterSeconds,
 		agent.Activity.Usage.Input, agent.Activity.Usage.Output, agent.Activity.Usage.CacheRead, agent.Activity.Usage.CacheWrite, agent.Activity.Usage.Reasoning, agent.Activity.Usage.Total,
 		costUSD, agent.Activity.SubagentCount, activeSubagentsStr, agent.Activity.FirstStartedAt, agent.Activity.UpdatedAt,
 		isHidden, hiddenAt,
@@ -285,6 +290,7 @@ func (s *Store) GetAgent(id string) (*types.IAgentState, error) {
 			a.branch, a.is_detached, a.is_worktree, a.worktree_rel_path, a.cwd,
 			a.current_run_id, a.activity, a.title, a.action, a.action_stale,
 			a.phase, a.active_tool, a.active_target, a.active_tool_started_at, a.question, a.last_thinking_excerpt, a.last_error,
+			a.rate_limit_reset_at, a.retry_after_seconds,
 			a.tokens_input, a.tokens_output, a.tokens_cache_read, a.tokens_cache_write, a.tokens_reasoning, a.tokens_total,
 			a.cost_usd, a.subagent_count, a.active_subagents, a.first_started_at, a.updated_at,
 			e.id, e.label, e.hostname, e.platform, e.user, e.last_heartbeat_at,
@@ -306,6 +312,7 @@ func (s *Store) GetAgent(id string) (*types.IAgentState, error) {
 		phaseStr                                           sql.NullString
 		activeTool, activeTarget, question, thinking, lErr sql.NullString
 		activeToolStartedAt                                sql.NullInt64
+		rateLimitResetAt, retryAfterSeconds                sql.NullInt64
 		worktreeRel                                        sql.NullString
 		costUSD                                            sql.NullFloat64
 		activeSubagents                                    sql.NullString
@@ -325,6 +332,7 @@ func (s *Store) GetAgent(id string) (*types.IAgentState, error) {
 		&agent.Workspace.Branch, &isDetached, &isWorktree, &worktreeRel, &agent.Workspace.CWD,
 		&currentRunID, &activityStr, &agent.Activity.Title, &agent.Activity.Action, &actionStale,
 		&phaseStr, &activeTool, &activeTarget, &activeToolStartedAt, &question, &thinking, &lErr,
+		&rateLimitResetAt, &retryAfterSeconds,
 		&agent.Activity.Usage.Input, &agent.Activity.Usage.Output, &agent.Activity.Usage.CacheRead, &agent.Activity.Usage.CacheWrite, &agent.Activity.Usage.Reasoning, &agent.Activity.Usage.Total,
 		&costUSD, &agent.Activity.SubagentCount, &activeSubagents, &agent.Activity.FirstStartedAt, &agent.Activity.UpdatedAt,
 		&agent.Environment.ID, &agent.Environment.Label, &agent.Environment.Hostname, &envPlatform, &agent.Environment.User, &agent.Environment.LastHeartbeatAt,
@@ -380,6 +388,14 @@ func (s *Store) GetAgent(id string) (*types.IAgentState, error) {
 	}
 	if lErr.Valid {
 		agent.Activity.LastError = &lErr.String
+	}
+	if rateLimitResetAt.Valid {
+		v := rateLimitResetAt.Int64
+		agent.Activity.RateLimitResetAt = &v
+	}
+	if retryAfterSeconds.Valid {
+		v := retryAfterSeconds.Int64
+		agent.Activity.RetryAfterSeconds = &v
 	}
 	if costUSD.Valid {
 		agent.Activity.Cost = &types.ICostInfo{

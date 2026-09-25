@@ -83,8 +83,6 @@ export interface IAgentActivity {
   lastError: string | null;
   rateLimitResetAt?: number | null;
   retryAfterSeconds?: number | null;
-  rate_limit_reset_at?: number | null;
-  retry_after_seconds?: number | null;
   model?: string | null;
   contextWindow?: number | null;
   contextFullness?: number | null;

@@ -72,6 +72,8 @@ func setupTestDB(t *testing.T) (string, func()) {
 		tokens_total INTEGER NOT NULL DEFAULT 0,
 		cost_usd REAL,
 		subagent_count INTEGER NOT NULL DEFAULT 0,
+		rate_limit_reset_at INTEGER,
+		retry_after_seconds INTEGER,
 		first_started_at INTEGER NOT NULL,
 		updated_at INTEGER NOT NULL
 	);
@@ -401,6 +403,39 @@ func TestListAgents(t *testing.T) {
 	_, err = ListAgents(ctx, filepath.Join(t.TempDir(), "nonexistent.db"))
 	if err == nil {
 		t.Fatal("expected error for invalid db path, got nil")
+	}
+}
+
+func TestInspect_RateLimitMetadata(t *testing.T) {
+	ctx := context.Background()
+	dbPath, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	resetAt := int64(1789900060000)
+	retrySec := int64(60)
+	_, err = db.Exec(`UPDATE agents SET activity = 'RATE_LIMITED', rate_limit_reset_at = ?, retry_after_seconds = ? WHERE session_id = 'ses-abc-123'`, resetAt, retrySec)
+	if err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
+
+	agent, err := InspectSession(ctx, dbPath, "ses-abc-123")
+	if err != nil {
+		t.Fatalf("InspectSession failed: %v", err)
+	}
+	if agent.Agent == nil {
+		t.Fatalf("agent.Agent is nil")
+	}
+	if agent.Agent.Activity.RateLimitResetAt == nil || *agent.Agent.Activity.RateLimitResetAt != resetAt {
+		t.Errorf("got RateLimitResetAt %v, want %d", agent.Agent.Activity.RateLimitResetAt, resetAt)
+	}
+	if agent.Agent.Activity.RetryAfterSeconds == nil || *agent.Agent.Activity.RetryAfterSeconds != retrySec {
+		t.Errorf("got RetryAfterSeconds %v, want %d", agent.Agent.Activity.RetryAfterSeconds, retrySec)
 	}
 }
 

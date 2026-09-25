@@ -105,7 +105,8 @@ const selectAgentQuery = `
 		a.tokens_reasoning, a.tokens_total,
 		a.cost_usd, a.subagent_count, a.first_started_at, a.updated_at,
 		COALESCE(e.label, ''), COALESCE(e.hostname, ''), COALESCE(e.platform, ''), COALESCE(e.user, ''), COALESCE(e.last_heartbeat_at, 0),
-		r.pid, r.harness_version, r.started_at, r.ended_at
+		r.pid, r.harness_version, r.started_at, r.ended_at,
+		a.rate_limit_reset_at, a.retry_after_seconds
 	FROM agents a
 	LEFT JOIN environments e ON a.environment_id = e.id
 	LEFT JOIN runs r ON a.current_run_id = r.id
@@ -142,6 +143,7 @@ func scanAgentRow(s rowScanner) (*types.IAgentState, error) {
 		runPID                                                       sql.NullInt64
 		runHarnessVersion                                            sql.NullString
 		runStartedAt, runEndedAt                                     sql.NullInt64
+		rateLimitResetAt, retryAfterSeconds                          sql.NullInt64
 	)
 
 	err := s.Scan(
@@ -156,6 +158,7 @@ func scanAgentRow(s rowScanner) (*types.IAgentState, error) {
 		&costUSD, &subagentCount, &firstStartedAt, &updatedAt,
 		&envLabel, &envHostname, &envPlatform, &envUser, &envLastHeartbeat,
 		&runPID, &runHarnessVersion, &runStartedAt, &runEndedAt,
+		&rateLimitResetAt, &retryAfterSeconds,
 	)
 	if err != nil {
 		return nil, err
@@ -248,6 +251,14 @@ func scanAgentRow(s rowScanner) (*types.IAgentState, error) {
 	if lastThinkingExcerpt.Valid {
 		agent.Activity.LastThinkingExcerpt = &lastThinkingExcerpt.String
 	}
+	if rateLimitResetAt.Valid {
+		v := rateLimitResetAt.Int64
+		agent.Activity.RateLimitResetAt = &v
+	}
+	if retryAfterSeconds.Valid {
+		v := retryAfterSeconds.Int64
+		agent.Activity.RetryAfterSeconds = &v
+	}
 
 	return agent, nil
 }
@@ -264,7 +275,8 @@ const selectAllAgentsQuery = `
 		a.tokens_reasoning, a.tokens_total,
 		a.cost_usd, a.subagent_count, a.first_started_at, a.updated_at,
 		COALESCE(e.label, ''), COALESCE(e.hostname, ''), COALESCE(e.platform, ''), COALESCE(e.user, ''), COALESCE(e.last_heartbeat_at, 0),
-		r.pid, r.harness_version, r.started_at, r.ended_at
+		r.pid, r.harness_version, r.started_at, r.ended_at,
+		a.rate_limit_reset_at, a.retry_after_seconds
 	FROM agents a
 	LEFT JOIN environments e ON a.environment_id = e.id
 	LEFT JOIN runs r ON a.current_run_id = r.id

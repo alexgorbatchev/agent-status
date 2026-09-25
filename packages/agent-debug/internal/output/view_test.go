@@ -837,6 +837,252 @@ func TestRenderAgentView_HumanMode_SemanticPrecedence_RateLimited(t *testing.T) 
 	}
 }
 
+func TestRenderAgentView_RateLimitedWithRemainingWait(t *testing.T) {
+	nowMs := int64(1000000)
+	resetAt := nowMs + 45000 // 45 seconds remaining
+	retrySec := int64(45)
+
+	agent := types.IAgentState{
+		ID:        "env-1:pi:ses-rl-wait",
+		SessionID: "ses-rl-wait",
+		Harness:   types.HarnessPi,
+		Activity: types.IAgentActivity{
+			Lifecycle:         types.LifecycleRunning,
+			Activity:          types.ActivityRateLimited,
+			Title:             "Pi Throttled Session",
+			Action:            "Rate limit wait",
+			RateLimitResetAt:  &resetAt,
+			RetryAfterSeconds: &retrySec,
+			UpdatedAt:         nowMs,
+		},
+	}
+
+	var bufHuman bytes.Buffer
+	RenderAgentViewAt(&bufHuman, agent, false, nowMs)
+	humanOut := bufHuman.String()
+
+	if !strings.Contains(humanOut, "retry in 45s") && !strings.Contains(humanOut, "45s") {
+		t.Errorf("expected human output to contain remaining wait time (45s), got:\n%s", humanOut)
+	}
+
+	var bufAgent bytes.Buffer
+	RenderAgentViewAt(&bufAgent, agent, true, nowMs)
+	agentOut := bufAgent.String()
+
+	if !strings.Contains(agentOut, "activity:RATE_LIMITED") {
+		t.Errorf("expected agent mode output to contain activity:RATE_LIMITED, got:\n%s", agentOut)
+	}
+	if !strings.Contains(agentOut, "45s") {
+		t.Errorf("expected agent mode output to contain remaining wait time (45s), got:\n%s", agentOut)
+	}
+}
+
+func TestFormatRateLimitWait(t *testing.T) {
+	nowMs := int64(1000000)
+
+	// 1. ResetAt in future
+	futureReset := nowMs + 45000
+	act1 := types.IAgentActivity{
+		RateLimitResetAt: &futureReset,
+	}
+	if got := formatRateLimitWait(act1, nowMs); got != "retry in 45s" {
+		t.Errorf("expected %q, got %q", "retry in 45s", got)
+	}
+
+	// 2. ResetAt in past with RetryAfterSeconds present -> must return "" (no fallthrough)
+	pastReset := nowMs - 5000
+	retrySec := int64(60)
+	act2 := types.IAgentActivity{
+		RateLimitResetAt:  &pastReset,
+		RetryAfterSeconds: &retrySec,
+		UpdatedAt:         nowMs,
+	}
+	if got := formatRateLimitWait(act2, nowMs); got != "" {
+		t.Errorf("expected empty string when resetAt has passed, got %q", got)
+	}
+
+	// 3. Only RetryAfterSeconds present, partial elapsed
+	act3 := types.IAgentActivity{
+		RetryAfterSeconds: &retrySec,
+		UpdatedAt:         nowMs - 15000, // 15s elapsed
+	}
+	if got := formatRateLimitWait(act3, nowMs); got != "retry in 45s" {
+		t.Errorf("expected %q, got %q", "retry in 45s", got)
+	}
+
+	// 4. Only RetryAfterSeconds present, fully elapsed
+	shortSec := int64(30)
+	act4 := types.IAgentActivity{
+		RetryAfterSeconds: &shortSec,
+		UpdatedAt:         nowMs - 45000, // 45s elapsed (> 30s)
+	}
+	if got := formatRateLimitWait(act4, nowMs); got != "" {
+		t.Errorf("expected empty string when retryAfter has passed, got %q", got)
+	}
+
+	// 5. Boundary: exactly 120s remaining -> "retry in 120s"
+	reset120 := nowMs + 120000
+	act5 := types.IAgentActivity{
+		RateLimitResetAt: &reset120,
+	}
+	if got := formatRateLimitWait(act5, nowMs); got != "retry in 120s" {
+		t.Errorf("expected %q, got %q", "retry in 120s", got)
+	}
+
+	// 6. ResetAt > 120s: 125s -> "retry in 2m 5s"
+	reset125 := nowMs + 125000
+	act6 := types.IAgentActivity{
+		RateLimitResetAt: &reset125,
+	}
+	if got := formatRateLimitWait(act6, nowMs); got != "retry in 2m 5s" {
+		t.Errorf("expected %q, got %q", "retry in 2m 5s", got)
+	}
+
+	// 7. ResetAt > 120s: 300s (5m) -> "retry in 5m"
+	reset300 := nowMs + 300000
+	act7 := types.IAgentActivity{
+		RateLimitResetAt: &reset300,
+	}
+	if got := formatRateLimitWait(act7, nowMs); got != "retry in 5m" {
+		t.Errorf("expected %q, got %q", "retry in 5m", got)
+	}
+
+	// 8. ResetAt > 120s: 3600s (1h) -> "retry in 1h"
+	reset3600 := nowMs + 3600000
+	act8 := types.IAgentActivity{
+		RateLimitResetAt: &reset3600,
+	}
+	if got := formatRateLimitWait(act8, nowMs); got != "retry in 1h" {
+		t.Errorf("expected %q, got %q", "retry in 1h", got)
+	}
+
+	// 9. ResetAt > 120s: 3660s (1h 1m) -> "retry in 1h 1m"
+	reset3660 := nowMs + 3660000
+	act9 := types.IAgentActivity{
+		RateLimitResetAt: &reset3660,
+	}
+	if got := formatRateLimitWait(act9, nowMs); got != "retry in 1h 1m" {
+		t.Errorf("expected %q, got %q", "retry in 1h 1m", got)
+	}
+
+	// 10. RetryAfterSeconds > 120s: 300s (5m) -> "retry in 5m"
+	retrySec300 := int64(300)
+	act10 := types.IAgentActivity{
+		RetryAfterSeconds: &retrySec300,
+		UpdatedAt:         nowMs,
+	}
+	if got := formatRateLimitWait(act10, nowMs); got != "retry in 5m" {
+		t.Errorf("expected %q, got %q", "retry in 5m", got)
+	}
+
+	// 11. RetryAfterSeconds > 120s: 3600s (1h) -> "retry in 1h"
+	retrySec3600 := int64(3600)
+	act11 := types.IAgentActivity{
+		RetryAfterSeconds: &retrySec3600,
+		UpdatedAt:         nowMs,
+	}
+	if got := formatRateLimitWait(act11, nowMs); got != "retry in 1h" {
+		t.Errorf("expected %q, got %q", "retry in 1h", got)
+	}
+}
+
+func TestRenderAgentView_RateLimitedFallbackMessage(t *testing.T) {
+	nowMs := int64(1000000)
+	agent := types.IAgentState{
+		ID:        "env-1:claude-code:ses-rl-fallback",
+		SessionID: "ses-rl-fallback",
+		Harness:   types.HarnessClaudeCode,
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityRateLimited,
+			Title:     "Rate Limited Agent",
+			Action:    "Rate limit reached — backoff/retry in progress",
+			UpdatedAt: nowMs,
+		},
+	}
+
+	// Human mode without wait
+	var bufHuman bytes.Buffer
+	RenderAgentViewAt(&bufHuman, agent, false, nowMs)
+	humanOut := bufHuman.String()
+	if !strings.Contains(humanOut, "Rate limit reached — backoff/retry in progress") {
+		t.Errorf("expected human output to contain fallback message with em-dash, got:\n%s", humanOut)
+	}
+
+	// Agent mode without wait
+	var bufAgent bytes.Buffer
+	RenderAgentViewAt(&bufAgent, agent, true, nowMs)
+	agentOut := bufAgent.String()
+	if !strings.Contains(agentOut, `rate_limit:"Rate limit reached — backoff/retry in progress"`) {
+		t.Errorf("expected agent mode to contain aligned fallback rate limit, got:\n%s", agentOut)
+	}
+
+	// With future resetAt
+	futureReset := nowMs + 30000
+	agent.Activity.RateLimitResetAt = &futureReset
+
+	var bufHumanWait bytes.Buffer
+	RenderAgentViewAt(&bufHumanWait, agent, false, nowMs)
+	humanWaitOut := bufHumanWait.String()
+	if !strings.Contains(humanWaitOut, "Rate limit reached — retry in 30s") {
+		t.Errorf("expected human wait output to contain em-dash retry, got:\n%s", humanWaitOut)
+	}
+
+	var bufAgentWait bytes.Buffer
+	RenderAgentViewAt(&bufAgentWait, agent, true, nowMs)
+	agentWaitOut := bufAgentWait.String()
+	if !strings.Contains(agentWaitOut, `rate_limit:"Rate limit reached — retry in 30s"`) {
+		t.Errorf("expected agent wait output to contain em-dash retry, got:\n%s", agentWaitOut)
+	}
+
+	// With future resetAt > 120s (e.g., 5m)
+	futureReset5m := nowMs + 300000
+	agent.Activity.RateLimitResetAt = &futureReset5m
+
+	var bufHumanWait5m bytes.Buffer
+	RenderAgentViewAt(&bufHumanWait5m, agent, false, nowMs)
+	humanWait5mOut := bufHumanWait5m.String()
+	if !strings.Contains(humanWait5mOut, "Rate limit reached — retry in 5m") {
+		t.Errorf("expected human wait output to contain 'retry in 5m', got:\n%s", humanWait5mOut)
+	}
+
+	var bufAgentWait5m bytes.Buffer
+	RenderAgentViewAt(&bufAgentWait5m, agent, true, nowMs)
+	agentWait5mOut := bufAgentWait5m.String()
+	if !strings.Contains(agentWait5mOut, `rate_limit:"Rate limit reached — retry in 5m"`) {
+		t.Errorf("expected agent wait output to contain 'retry in 5m', got:\n%s", agentWait5mOut)
+	}
+}
+
+func TestFormatHumanDuration(t *testing.T) {
+	tests := []struct {
+		name string
+		ms   int64
+		want string
+	}{
+		{"seconds", 45000, "45s"},
+		{"single second", 5000, "5s"},
+		{"exact minute", 60000, "1m"},
+		{"minutes and seconds", 75000, "1m 15s"},
+		{"minutes and seconds 2m 15s", 135000, "2m 15s"},
+		{"minutes and seconds 3m 22s", 202000, "3m 22s"},
+		{"exact 5 minutes", 300000, "5m"},
+		{"exact 10 minutes", 600000, "10m"},
+		{"exact hour", 3600000, "1h"},
+		{"hours and minutes 1h 1m", 3660000, "1h 1m"},
+		{"exact 2 hours", 7200000, "2h"},
+		{"hours and minutes 2h 15m", 8100000, "2h 15m"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := formatHumanDuration(tt.ms); got != tt.want {
+				t.Errorf("formatHumanDuration(%d) = %q, want %q", tt.ms, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRenderAgentView_ColorGating_NoColor(t *testing.T) {
 	t.Setenv("NO_COLOR", "1")
 

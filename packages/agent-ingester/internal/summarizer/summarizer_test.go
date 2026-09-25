@@ -352,7 +352,7 @@ func TestDeterministicFallbackSummary(t *testing.T) {
 				Activity: types.ActivityRateLimited,
 			},
 			wantAction: "Rate limit reached — backoff/retry in progress",
-			wantPhase:  types.PhasePlanning,
+			wantPhase:  "", // Phase should be nil (not PhasePlanning)
 		},
 		{
 			name: "idle activity",
@@ -360,7 +360,7 @@ func TestDeterministicFallbackSummary(t *testing.T) {
 				Activity: types.ActivityIdle,
 			},
 			wantAction: "Idle",
-			wantPhase:  types.PhasePlanning, // nil phase in fallback gets no phase check or Idle
+			wantPhase:  "",
 		},
 		{
 			name: "direct assistant response without tools",
@@ -369,7 +369,7 @@ func TestDeterministicFallbackSummary(t *testing.T) {
 				LastAssistantResponse: "I have explained the architecture.",
 			},
 			wantAction: "Responded to user",
-			wantPhase:  types.PhasePlanning,
+			wantPhase:  "",
 		},
 		{
 			name: "direct assistant response on busy activity without tools",
@@ -378,7 +378,7 @@ func TestDeterministicFallbackSummary(t *testing.T) {
 				LastAssistantResponse: "The requested changes are summarized below.",
 			},
 			wantAction: "Responded to user",
-			wantPhase:  types.PhasePlanning,
+			wantPhase:  "",
 		},
 		{
 			name: "thinking activity",
@@ -395,7 +395,7 @@ func TestDeterministicFallbackSummary(t *testing.T) {
 				Activity: types.ActivityBusy,
 			},
 			wantAction: "Working",
-			wantPhase:  types.PhasePlanning,
+			wantPhase:  "",
 		},
 		{
 			name: "busy preserves existing CurrentAction over thinking",
@@ -405,7 +405,7 @@ func TestDeterministicFallbackSummary(t *testing.T) {
 				LastThinkingExcerpt: "Thinking about next step...",
 			},
 			wantAction: "Refactoring auth middleware",
-			wantPhase:  types.PhasePlanning,
+			wantPhase:  "",
 		},
 		{
 			name: "busy preserves recent tool over thinking when tool completed",
@@ -426,6 +426,15 @@ func TestDeterministicFallbackSummary(t *testing.T) {
 			res := FallbackSummary(tt.input)
 			if res.Action != tt.wantAction {
 				t.Errorf("got Action %q, want %q", res.Action, tt.wantAction)
+			}
+			if tt.wantPhase != "" {
+				if res.Phase == nil || *res.Phase != tt.wantPhase {
+					t.Errorf("got Phase %v, want %q", res.Phase, tt.wantPhase)
+				}
+			} else {
+				if res.Phase != nil {
+					t.Errorf("got Phase %v, want nil", *res.Phase)
+				}
 			}
 			if !res.IsFallback {
 				t.Errorf("expected IsFallback = true, got false")
@@ -998,6 +1007,75 @@ func TestSummarizer_WithMockOpenAIServer(t *testing.T) {
 	}
 	if atomic.LoadInt64(&requestCount) != 1 {
 		t.Errorf("expected 1 request to mock server, got %d", requestCount)
+	}
+}
+
+func TestSummarizer_ActivityRateLimited_BypassesLLM(t *testing.T) {
+	var requestCount int64
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&requestCount, 1)
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]interface{}{
+			"id":     "chatcmpl-rl-1",
+			"object": "chat.completion",
+			"choices": []map[string]interface{}{
+				{
+					"index": 0,
+					"message": map[string]interface{}{
+						"role":    "assistant",
+						"content": `{"action":"Some LLM action","phase":"debugging"}`,
+					},
+					"finish_reason": "stop",
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(mockServer.Close)
+
+	p, err := openai.New(
+		anyllm.WithBaseURL(mockServer.URL+"/v1"),
+		anyllm.WithAPIKey("test-key"),
+	)
+	if err != nil {
+		t.Fatalf("openai.New() failed: %v", err)
+	}
+
+	s, err := New(Config{
+		Providers: []ProviderConfig{
+			{
+				Name:     "mock-openai",
+				Provider: p,
+				Model:    "gpt-4o-mini",
+			},
+		},
+		DebounceWindow: 10 * time.Millisecond,
+		Timeout:        2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("New() failed: %v", err)
+	}
+
+	input := SummaryInput{
+		AgentID:    "agent-rl",
+		LastPrompt: "Do something",
+		Activity:   types.ActivityRateLimited,
+		ActiveTool: ptrString("Edit"),
+	}
+
+	res := s.Summarize(context.Background(), input)
+	if !res.IsFallback {
+		t.Errorf("expected fallback result for ActivityRateLimited, got non-fallback")
+	}
+	if res.Action != "Rate limit reached — backoff/retry in progress" {
+		t.Errorf("expected deterministic rate limit action, got %q", res.Action)
+	}
+	if res.Phase != nil {
+		t.Errorf("expected phase to be nil, got %v", res.Phase)
+	}
+	if atomic.LoadInt64(&requestCount) != 0 {
+		t.Errorf("expected 0 requests to LLM provider when ActivityRateLimited, got %d", requestCount)
 	}
 }
 

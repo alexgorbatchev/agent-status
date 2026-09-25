@@ -139,8 +139,6 @@ func (a *IAgentActivity) UnmarshalJSON(data []byte) error {
 		*Alias
 		SnakeHasUnseenCompletion *bool  `json:"has_unseen_completion"`
 		SnakeCompletedAt         *int64 `json:"completed_at"`
-		SnakeRateLimitResetAt    *int64 `json:"rate_limit_reset_at"`
-		SnakeRetryAfterSeconds   *int64 `json:"retry_after_seconds"`
 	}{
 		Alias: (*Alias)(a),
 	}
@@ -152,12 +150,6 @@ func (a *IAgentActivity) UnmarshalJSON(data []byte) error {
 	}
 	if a.CompletedAt == nil && aux.SnakeCompletedAt != nil {
 		a.CompletedAt = aux.SnakeCompletedAt
-	}
-	if a.RateLimitResetAt == nil && aux.SnakeRateLimitResetAt != nil {
-		a.RateLimitResetAt = aux.SnakeRateLimitResetAt
-	}
-	if a.RetryAfterSeconds == nil && aux.SnakeRetryAfterSeconds != nil {
-		a.RetryAfterSeconds = aux.SnakeRetryAfterSeconds
 	}
 	return nil
 }

@@ -414,8 +414,8 @@ func TestClaudeCodeParser_ParseLine_Cases(t *testing.T) {
 		if evs[0].Data.IsError == nil || !*evs[0].Data.IsError {
 			t.Errorf("expected isError = true")
 		}
-		if evs[0].Data.IsRateLimit == nil || !*evs[0].Data.IsRateLimit {
-			t.Errorf("expected isRateLimit = true for rate_limit_exceeded")
+		if evs[0].Data.IsRateLimit != nil && *evs[0].Data.IsRateLimit {
+			t.Errorf("expected isRateLimit = false/nil for top-level error string without status 429")
 		}
 	})
 
@@ -449,10 +449,220 @@ func TestClaudeCodeParser_ParseLine_Cases(t *testing.T) {
 				if ev.Data.Model == nil || *ev.Data.Model != "claude-3-7-sonnet-20250219" {
 					t.Errorf("error model = %v, want claude-3-7-sonnet-20250219", ev.Data.Model)
 				}
+				if ev.Data.IsRateLimit != nil && *ev.Data.IsRateLimit {
+					t.Errorf("status 529 (server overloaded) must not be classified as rate limit")
+				}
 			}
 		}
 		if !hasErrorEvent {
 			t.Errorf("expected error event to be emitted for api error message, got: %+v", evs)
+		}
+	})
+
+	t.Run("assistant api_error_status 429 sets IsRateLimit", func(t *testing.T) {
+		line := `{
+			"type": "assistant",
+			"uuid": "a-err-429",
+			"timestamp": "2026-09-19T10:00:05.000Z",
+			"api_error_status": 429,
+			"error": "rate_limit_exceeded: retry after 60s"
+		}`
+		evs, err := parseLine(line)
+		if err != nil {
+			t.Fatal(err)
+		}
+		hasErrorEvent := false
+		for _, ev := range evs {
+			if ev.EventType == "error" {
+				hasErrorEvent = true
+				if ev.Data.IsRateLimit == nil || !*ev.Data.IsRateLimit {
+					t.Errorf("expected IsRateLimit = true for api_error_status 429")
+				}
+				if ev.Data.ExitCode != nil {
+					t.Errorf("expected ExitCode = nil (HTTP status codes must not be assigned to ExitCode), got %v", ev.Data.ExitCode)
+				}
+			}
+		}
+		if !hasErrorEvent {
+			t.Errorf("expected error event emitted for api_error_status 429")
+		}
+	})
+
+	t.Run("assistant api_error_status alone emits error with formatted status", func(t *testing.T) {
+		line := `{
+			"type": "assistant",
+			"uuid": "a-err-429-snake",
+			"timestamp": "2026-09-19T10:00:05.000Z",
+			"api_error_status": 429
+		}`
+		evs, err := parseLine(line)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var errEv *ParsedEvent
+		for _, ev := range evs {
+			if ev.EventType == "error" {
+				errEv = &ev
+				break
+			}
+		}
+		if errEv == nil {
+			t.Fatalf("expected error event emitted for api_error_status 429 alone")
+		}
+		if errEv.Data.Content == nil || *errEv.Data.Content != "API error: status 429" {
+			t.Errorf("expected Content = 'API error: status 429', got %v", errEv.Data.Content)
+		}
+		if errEv.Data.IsRateLimit == nil || !*errEv.Data.IsRateLimit {
+			t.Errorf("expected IsRateLimit = true for status 429")
+		}
+		if errEv.Data.ExitCode != nil {
+			t.Errorf("expected ExitCode = nil (HTTP status codes must not be assigned to ExitCode), got %v", errEv.Data.ExitCode)
+		}
+	})
+
+	t.Run("assistant status alone emits error with formatted status", func(t *testing.T) {
+		line := `{
+			"type": "assistant",
+			"uuid": "a-err-500",
+			"timestamp": "2026-09-19T10:00:05.000Z",
+			"status": 500
+		}`
+		evs, err := parseLine(line)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var errEv *ParsedEvent
+		for _, ev := range evs {
+			if ev.EventType == "error" {
+				errEv = &ev
+				break
+			}
+		}
+		if errEv == nil {
+			t.Fatalf("expected error event emitted for status 500")
+		}
+		if errEv.Data.Content == nil || *errEv.Data.Content != "API error: status 500" {
+			t.Errorf("expected Content = 'API error: status 500', got %v", errEv.Data.Content)
+		}
+		if errEv.Data.IsRateLimit != nil && *errEv.Data.IsRateLimit {
+			t.Errorf("expected IsRateLimit = false for status 500")
+		}
+		if errEv.Data.ExitCode != nil {
+			t.Errorf("expected ExitCode = nil (HTTP status codes must not be assigned to ExitCode), got %v", errEv.Data.ExitCode)
+		}
+	})
+
+	t.Run("assistant status 200 or 201 does not emit error", func(t *testing.T) {
+		for _, status := range []int{200, 201} {
+			line := fmt.Sprintf(`{
+				"type": "assistant",
+				"uuid": "a-ok-%d",
+				"timestamp": "2026-09-19T10:00:05.000Z",
+				"status": %d,
+				"message": { "role": "assistant", "content": "All good" }
+			}`, status, status)
+			evs, err := parseLine(line)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, ev := range evs {
+				if ev.EventType == "error" {
+					t.Errorf("status %d should not be treated as an error event", status)
+				}
+			}
+
+			lineMsg := fmt.Sprintf(`{
+				"type": "assistant",
+				"uuid": "a-msg-ok-%d",
+				"timestamp": "2026-09-19T10:00:05.000Z",
+				"message": { "role": "assistant", "status": %d, "content": "All good" }
+			}`, status, status)
+			evsMsg, err := parseLine(lineMsg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, ev := range evsMsg {
+				if ev.EventType == "error" {
+					t.Errorf("message.status %d should not be treated as an error event", status)
+				}
+			}
+		}
+	})
+
+	t.Run("assistant message api_error_status snake and status emit error", func(t *testing.T) {
+		line1 := `{
+			"type": "assistant",
+			"uuid": "a-msg-429",
+			"timestamp": "2026-09-19T10:00:05.000Z",
+			"message": { "api_error_status": 429 }
+		}`
+		evs1, err := parseLine(line1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var errEv1 *ParsedEvent
+		for _, ev := range evs1 {
+			if ev.EventType == "error" {
+				errEv1 = &ev
+				break
+			}
+		}
+		if errEv1 == nil {
+			t.Fatalf("expected error event for message.api_error_status")
+		}
+		if errEv1.Data.Content == nil || *errEv1.Data.Content != "API error: status 429" {
+			t.Errorf("expected 'API error: status 429', got %v", errEv1.Data.Content)
+		}
+
+		line2 := `{
+			"type": "assistant",
+			"uuid": "a-msg-503",
+			"timestamp": "2026-09-19T10:00:05.000Z",
+			"message": { "status": 503 }
+		}`
+		evs2, err := parseLine(line2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var errEv2 *ParsedEvent
+		for _, ev := range evs2 {
+			if ev.EventType == "error" {
+				errEv2 = &ev
+				break
+			}
+		}
+		if errEv2 == nil {
+			t.Fatalf("expected error event for message.status")
+		}
+		if errEv2.Data.Content == nil || *errEv2.Data.Content != "API error: status 503" {
+			t.Errorf("expected 'API error: status 503', got %v", errEv2.Data.Content)
+		}
+	})
+
+	t.Run("assistant isApiErrorMessage with api_error_status formats status code", func(t *testing.T) {
+		line := `{
+			"type": "assistant",
+			"uuid": "a-is-api-err",
+			"timestamp": "2026-09-19T10:00:05.000Z",
+			"isApiErrorMessage": true,
+			"api_error_status": 429
+		}`
+		evs, err := parseLine(line)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var errEv *ParsedEvent
+		for _, ev := range evs {
+			if ev.EventType == "error" {
+				errEv = &ev
+				break
+			}
+		}
+		if errEv == nil {
+			t.Fatalf("expected error event")
+		}
+		if errEv.Data.Content == nil || *errEv.Data.Content != "API error: status 429" {
+			t.Errorf("expected 'API error: status 429', got %v", errEv.Data.Content)
 		}
 	})
 

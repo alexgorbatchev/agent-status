@@ -3,6 +3,7 @@ package parser
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 func TestParseCodexRolloutPath(t *testing.T) {
@@ -426,7 +427,7 @@ func TestParseCodexLine(t *testing.T) {
 		}
 	})
 
-	t.Run("event_msg error rate limit from text", func(t *testing.T) {
+	t.Run("event_msg error without structured info does not classify as rate limit from text", func(t *testing.T) {
 		line := `{
 			"type": "event_msg",
 			"timestamp": "2026-06-12T16:08:43.000Z",
@@ -442,8 +443,8 @@ func TestParseCodexLine(t *testing.T) {
 		if evs[0].EventType != "error" || *evs[0].Data.Content != "Connection rate limit exceeded" || !*evs[0].Data.IsError {
 			t.Errorf("unexpected error event: %+v", evs[0])
 		}
-		if evs[0].Data.IsRateLimit == nil || !*evs[0].Data.IsRateLimit {
-			t.Errorf("expected isRateLimit = true for rate limit text")
+		if evs[0].Data.IsRateLimit != nil && *evs[0].Data.IsRateLimit {
+			t.Errorf("expected isRateLimit = false/nil for rate limit text without structured info")
 		}
 	})
 
@@ -486,8 +487,8 @@ func TestParseCodexLine(t *testing.T) {
 		if evs[0].EventType != "error" || !*evs[0].Data.IsError {
 			t.Errorf("unexpected error event: %+v", evs[0])
 		}
-		if evs[0].Data.IsRateLimit == nil || !*evs[0].Data.IsRateLimit {
-			t.Errorf("expected isRateLimit = true for usage_limit_exceeded")
+		if evs[0].Data.IsRateLimit != nil && *evs[0].Data.IsRateLimit {
+			t.Errorf("expected isRateLimit = false (quota exhaustion is fatal error, not rate limit) for usage_limit_exceeded")
 		}
 	})
 
@@ -508,8 +509,118 @@ func TestParseCodexLine(t *testing.T) {
 		if evs[0].EventType != "error" || !*evs[0].Data.IsError {
 			t.Errorf("unexpected error event: %+v", evs[0])
 		}
-		if evs[0].Data.IsRateLimit == nil || !*evs[0].Data.IsRateLimit {
-			t.Errorf("expected isRateLimit = true for ServerOverloaded")
+		if evs[0].Data.IsRateLimit != nil && *evs[0].Data.IsRateLimit {
+			t.Errorf("expected isRateLimit = false for ServerOverloaded")
+		}
+	})
+
+	t.Run("token_count with both reset_requests and reset_tokens selects max duration", func(t *testing.T) {
+		parser := NewCodexParser()
+		line := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:43.000Z",
+			"payload": {
+				"type": "token_count",
+				"info": {
+					"total_token_usage": { "total_tokens": 1500, "prompt_tokens": 1000, "completion_tokens": 500 },
+					"last_token_usage": { "total_tokens": 150, "prompt_tokens": 100, "completion_tokens": 50 },
+					"model_context_window": 128000
+				},
+				"rate_limits": {
+					"limit_requests": 500,
+					"remaining_requests": 490,
+					"reset_requests": "10ms",
+					"limit_tokens": 100000,
+					"remaining_tokens": 0,
+					"reset_tokens": "60s"
+				}
+			}
+		}`
+		evs, err := parser.ParseLine([]byte(line))
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("failed token_count parsing: evs=%v err=%v", evs, err)
+		}
+		if evs[0].Data.RetryAfterSeconds == nil || *evs[0].Data.RetryAfterSeconds != 60 {
+			t.Fatalf("expected RetryAfterSeconds = 60, got %v", evs[0].Data.RetryAfterSeconds)
+		}
+
+		// Subsequent error should inherit the token reset (60s)
+		errLine := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:44.000Z",
+			"payload": {
+				"type": "error",
+				"message": "Rate limit exceeded",
+				"codex_error_info": "RateLimitExceeded"
+			}
+		}`
+		errEvs, err := parser.ParseLine([]byte(errLine))
+		if err != nil || len(errEvs) != 1 {
+			t.Fatalf("failed error parsing: evs=%v err=%v", errEvs, err)
+		}
+		if errEvs[0].Data.RetryAfterSeconds == nil || *errEvs[0].Data.RetryAfterSeconds != 59 {
+			t.Fatalf("expected error RetryAfterSeconds = 59 (60s discounted by 1s), got %v", errEvs[0].Data.RetryAfterSeconds)
+		}
+	})
+
+	t.Run("event_msg error with rate_limits selects max reset duration", func(t *testing.T) {
+		line := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:43.000Z",
+			"payload": {
+				"type": "error",
+				"message": "Rate limit exceeded",
+				"codex_error_info": "RateLimitExceeded",
+				"rate_limits": {
+					"reset_requests": "10ms",
+					"reset_tokens": "2m"
+				}
+			}
+		}`
+		evs, err := ParseCodexLine([]byte(line))
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("failed error parsing: evs=%v err=%v", evs, err)
+		}
+		if evs[0].Data.RetryAfterSeconds == nil || *evs[0].Data.RetryAfterSeconds != 120 {
+			t.Fatalf("expected RetryAfterSeconds = 120, got %v", evs[0].Data.RetryAfterSeconds)
+		}
+	})
+
+	t.Run("token_count with rate_limits metadata", func(t *testing.T) {
+		line := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:43.000Z",
+			"payload": {
+				"type": "token_count",
+				"info": {
+					"total_token_usage": {
+						"total_tokens": 1500,
+						"prompt_tokens": 1000,
+						"completion_tokens": 500
+					},
+					"last_token_usage": {
+						"total_tokens": 150,
+						"prompt_tokens": 100,
+						"completion_tokens": 50
+					},
+					"model_context_window": 128000
+				},
+				"rate_limits": {
+					"limit_requests": 500,
+					"remaining_requests": 0,
+					"reset_requests": "45s"
+				}
+			}
+		}`
+		evs, err := ParseCodexLine([]byte(line))
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("failed token_count parsing: evs=%v err=%v", evs, err)
+		}
+		if evs[0].Data.RetryAfterSeconds == nil || *evs[0].Data.RetryAfterSeconds != 45 {
+			t.Errorf("expected RetryAfterSeconds = 45, got %v", evs[0].Data.RetryAfterSeconds)
+		}
+		if evs[0].Data.RateLimitResetAt == nil {
+			t.Errorf("expected RateLimitResetAt to be populated from reset_requests")
 		}
 	})
 
@@ -534,8 +645,8 @@ func TestParseCodexLine(t *testing.T) {
 		if evs[0].EventType != "error" {
 			t.Errorf("unexpected event type: %+v", evs[0])
 		}
-		if evs[0].Data.ExitCode == nil || *evs[0].Data.ExitCode != 429 {
-			t.Errorf("ExitCode = %v, want 429", evs[0].Data.ExitCode)
+		if evs[0].Data.ExitCode != nil {
+			t.Errorf("ExitCode = %v, want nil", evs[0].Data.ExitCode)
 		}
 		if evs[0].Data.IsRateLimit == nil || !*evs[0].Data.IsRateLimit {
 			t.Errorf("expected isRateLimit = true for HttpConnectionFailed 429")
@@ -563,11 +674,784 @@ func TestParseCodexLine(t *testing.T) {
 		if evs[0].EventType != "error" {
 			t.Errorf("unexpected event type: %+v", evs[0])
 		}
-		if evs[0].Data.ExitCode == nil || *evs[0].Data.ExitCode != 503 {
-			t.Errorf("ExitCode = %v, want 503", evs[0].Data.ExitCode)
+		if evs[0].Data.ExitCode != nil {
+			t.Errorf("ExitCode = %v, want nil", evs[0].Data.ExitCode)
 		}
 		if evs[0].Data.IsRateLimit != nil && *evs[0].Data.IsRateLimit {
 			t.Errorf("expected isRateLimit = false/nil for 503")
+		}
+	})
+
+	t.Run("parseCodexRateLimitReset variants", func(t *testing.T) {
+		nowMs := int64(1700000000000)
+
+		// 1. Duration string
+		resetAt, sec := parseCodexRateLimitReset("30s", nowMs)
+		if resetAt == nil || *resetAt != nowMs+30000 || sec == nil || *sec != 30 {
+			t.Errorf("failed duration: resetAt=%v, sec=%v", resetAt, sec)
+		}
+
+		// 2. Numeric seconds
+		resetAt, sec = parseCodexRateLimitReset("60", nowMs)
+		if resetAt == nil || *resetAt != nowMs+60000 || sec == nil || *sec != 60 {
+			t.Errorf("failed numeric: resetAt=%v, sec=%v", resetAt, sec)
+		}
+
+		// 3. RFC3339
+		rfcStr := "2026-06-12T16:08:43Z"
+		parsedT, _ := time.Parse(time.RFC3339, rfcStr)
+		resetAt, sec = parseCodexRateLimitReset(rfcStr, nowMs)
+		expectedSec := (parsedT.UnixMilli() - nowMs) / 1000
+		if resetAt == nil || *resetAt != parsedT.UnixMilli() || sec == nil || *sec != expectedSec {
+			t.Errorf("failed RFC3339: resetAt=%v, sec=%v", resetAt, sec)
+		}
+
+		// 4. RFC3339Nano
+		rfcNanoStr := "2026-06-12T16:08:43.123456789Z"
+		parsedNanoT, _ := time.Parse(time.RFC3339Nano, rfcNanoStr)
+		resetAt, sec = parseCodexRateLimitReset(rfcNanoStr, nowMs)
+		expectedNanoSec := (parsedNanoT.UnixMilli() - nowMs) / 1000
+		if resetAt == nil || *resetAt != parsedNanoT.UnixMilli() || sec == nil || *sec != expectedNanoSec {
+			t.Errorf("failed RFC3339Nano: resetAt=%v, sec=%v", resetAt, sec)
+		}
+
+		// 5. Empty and invalid
+		resetAt, sec = parseCodexRateLimitReset("", nowMs)
+		if resetAt != nil || sec != nil {
+			t.Errorf("expected nil for empty")
+		}
+		resetAt, sec = parseCodexRateLimitReset("invalid-string", nowMs)
+		if resetAt != nil || sec != nil {
+			t.Errorf("expected nil for invalid")
+		}
+	})
+
+	t.Run("ParseCodexLine is stateless and does not persist state across calls", func(t *testing.T) {
+		tokenLine := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:43.000Z",
+			"payload": {
+				"type": "token_count",
+				"info": {
+					"total_token_usage": {"total_tokens": 100, "prompt_tokens": 80, "completion_tokens": 20},
+					"last_token_usage": {"total_tokens": 100, "prompt_tokens": 80, "completion_tokens": 20}
+				},
+				"rate_limits": {
+					"remaining_tokens": 0,
+					"reset_tokens": "60s"
+				}
+			}
+		}`
+		errLine := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:44.000Z",
+			"payload": {
+				"type": "error",
+				"message": "Rate limit exceeded",
+				"codex_error_info": "RateLimitExceeded"
+			}
+		}`
+
+		// Using ParseCodexLine (stateless): error line should NOT inherit rate limit reset info
+		_, _ = ParseCodexLine([]byte(tokenLine))
+		evs, err := ParseCodexLine([]byte(errLine))
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("ParseCodexLine failed: %v", err)
+		}
+		if evs[0].Data.RetryAfterSeconds != nil {
+			t.Errorf("expected nil RetryAfterSeconds for stateless ParseCodexLine, got %v", *evs[0].Data.RetryAfterSeconds)
+		}
+
+		// Using NewCodexParser (stateful): error line DOES inherit rate limit reset info
+		inst := NewCodexParser()
+		_, _ = inst.ParseLine([]byte(tokenLine))
+		evsStateful, err := inst.ParseLine([]byte(errLine))
+		if err != nil || len(evsStateful) != 1 {
+			t.Fatalf("inst.ParseLine failed: %v", err)
+		}
+		if evsStateful[0].Data.RetryAfterSeconds == nil || *evsStateful[0].Data.RetryAfterSeconds != 59 {
+			t.Errorf("expected RetryAfterSeconds 59 for stateful parser, got %v", evsStateful[0].Data.RetryAfterSeconds)
+		}
+	})
+
+	t.Run("event_msg error with RateLimits on payload", func(t *testing.T) {
+		parser := NewCodexParser()
+		line := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:43.000Z",
+			"payload": {
+				"type": "error",
+				"message": "Rate limit exceeded on request",
+				"codex_error_info": "RateLimitExceeded",
+				"rate_limits": {
+					"reset_tokens": "20s"
+				}
+			}
+		}`
+		evs, err := parser.ParseLine([]byte(line))
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("failed parse: evs=%v err=%v", evs, err)
+		}
+		if evs[0].Data.RetryAfterSeconds == nil || *evs[0].Data.RetryAfterSeconds != 20 {
+			t.Errorf("expected RetryAfterSeconds = 20, got %v", evs[0].Data.RetryAfterSeconds)
+		}
+	})
+
+	t.Run("token_count does not extract reset metadata when quota is not exhausted", func(t *testing.T) {
+		parser := NewCodexParser()
+		line := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:43.000Z",
+			"payload": {
+				"type": "token_count",
+				"info": {
+					"total_token_usage": { "total_tokens": 100 }
+				},
+				"rate_limits": {
+					"remaining_tokens": 50000,
+					"remaining_requests": 200,
+					"reset_tokens": "30s",
+					"reset_requests": "10s"
+				}
+			}
+		}`
+		evs, err := parser.ParseLine([]byte(line))
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("failed parse: evs=%v err=%v", evs, err)
+		}
+		if evs[0].Data.RateLimitResetAt != nil {
+			t.Errorf("expected RateLimitResetAt == nil when quota not exhausted, got %v", evs[0].Data.RateLimitResetAt)
+		}
+		if evs[0].Data.RetryAfterSeconds != nil {
+			t.Errorf("expected RetryAfterSeconds == nil when quota not exhausted, got %v", evs[0].Data.RetryAfterSeconds)
+		}
+	})
+
+	t.Run("token_count extracts reset metadata when remaining_tokens is 0", func(t *testing.T) {
+		parser := NewCodexParser()
+		line := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:43.000Z",
+			"payload": {
+				"type": "token_count",
+				"info": {
+					"total_token_usage": { "total_tokens": 100 }
+				},
+				"rate_limits": {
+					"remaining_tokens": 0,
+					"remaining_requests": 200,
+					"reset_tokens": "30s",
+					"reset_requests": "10s"
+				}
+			}
+		}`
+		evs, err := parser.ParseLine([]byte(line))
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("failed parse: evs=%v err=%v", evs, err)
+		}
+		if evs[0].Data.RetryAfterSeconds == nil || *evs[0].Data.RetryAfterSeconds != 30 {
+			t.Errorf("expected RetryAfterSeconds == 30, got %v", evs[0].Data.RetryAfterSeconds)
+		}
+	})
+
+	t.Run("token_count extracts reset metadata when remaining_requests is 0", func(t *testing.T) {
+		parser := NewCodexParser()
+		line := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:43.000Z",
+			"payload": {
+				"type": "token_count",
+				"info": {
+					"total_token_usage": { "total_tokens": 100 }
+				},
+				"rate_limits": {
+					"remaining_tokens": 50000,
+					"remaining_requests": 0,
+					"reset_tokens": "10s",
+					"reset_requests": "45s"
+				}
+			}
+		}`
+		evs, err := parser.ParseLine([]byte(line))
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("failed parse: evs=%v err=%v", evs, err)
+		}
+		if evs[0].Data.RetryAfterSeconds == nil || *evs[0].Data.RetryAfterSeconds != 45 {
+			t.Errorf("expected RetryAfterSeconds == 45, got %v", evs[0].Data.RetryAfterSeconds)
+		}
+	})
+
+	t.Run("token_count isolates exhausted quota: tokens exhausted ignores requests reset", func(t *testing.T) {
+		parser := NewCodexParser()
+		line := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:43.000Z",
+			"payload": {
+				"type": "token_count",
+				"info": {
+					"total_token_usage": { "total_tokens": 100 }
+				},
+				"rate_limits": {
+					"remaining_tokens": 0,
+					"remaining_requests": 200,
+					"reset_tokens": "15s",
+					"reset_requests": "2h"
+				}
+			}
+		}`
+		evs, err := parser.ParseLine([]byte(line))
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("failed parse: evs=%v err=%v", evs, err)
+		}
+		if evs[0].Data.RetryAfterSeconds == nil || *evs[0].Data.RetryAfterSeconds != 15 {
+			t.Errorf("expected RetryAfterSeconds == 15 (ignored non-exhausted 2h requests reset), got %v", evs[0].Data.RetryAfterSeconds)
+		}
+	})
+
+	t.Run("token_count isolates exhausted quota: requests exhausted ignores tokens reset", func(t *testing.T) {
+		parser := NewCodexParser()
+		line := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:43.000Z",
+			"payload": {
+				"type": "token_count",
+				"info": {
+					"total_token_usage": { "total_tokens": 100 }
+				},
+				"rate_limits": {
+					"remaining_tokens": 50000,
+					"remaining_requests": 0,
+					"reset_tokens": "3h",
+					"reset_requests": "20s"
+				}
+			}
+		}`
+		evs, err := parser.ParseLine([]byte(line))
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("failed parse: evs=%v err=%v", evs, err)
+		}
+		if evs[0].Data.RetryAfterSeconds == nil || *evs[0].Data.RetryAfterSeconds != 20 {
+			t.Errorf("expected RetryAfterSeconds == 20 (ignored non-exhausted 3h tokens reset), got %v", evs[0].Data.RetryAfterSeconds)
+		}
+	})
+
+	t.Run("selectCodexRateLimitReset takes max of resetRequests and resetTokens", func(t *testing.T) {
+		parser := NewCodexParser()
+		line := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:43.000Z",
+			"payload": {
+				"type": "error",
+				"message": "Rate limit exceeded",
+				"rate_limits": {
+					"remaining_tokens": 0,
+					"reset_requests": "60s",
+					"reset_tokens": "15s"
+				}
+			}
+		}`
+		evs, err := parser.ParseLine([]byte(line))
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("failed parse: evs=%v err=%v", evs, err)
+		}
+		if evs[0].Data.RetryAfterSeconds == nil || *evs[0].Data.RetryAfterSeconds != 60 {
+			t.Errorf("expected max(60, 15) = 60s even when remaining_tokens=0, got %v", evs[0].Data.RetryAfterSeconds)
+		}
+	})
+
+	t.Run("cached rateLimitResetAt invalidated once expired", func(t *testing.T) {
+		parser := NewCodexParser()
+		// First line: error at 16:00:00 with reset in 10s (expires 16:00:10)
+		line1 := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:00:00.000Z",
+			"payload": {
+				"type": "error",
+				"message": "Rate limit reached",
+				"rate_limits": {
+					"reset_tokens": "10s"
+				}
+			}
+		}`
+		evs1, err := parser.ParseLine([]byte(line1))
+		if err != nil || len(evs1) != 1 {
+			t.Fatalf("failed parse 1: evs=%v err=%v", evs1, err)
+		}
+		if evs1[0].Data.RetryAfterSeconds == nil || *evs1[0].Data.RetryAfterSeconds != 10 {
+			t.Fatalf("expected RetryAfterSeconds = 10, got %v", evs1[0].Data.RetryAfterSeconds)
+		}
+
+		// Second line: error at 16:00:20 (20s later, reset has expired) without rate_limits
+		line2 := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:00:20.000Z",
+			"payload": {
+				"type": "error",
+				"message": "Rate limit reached again"
+			}
+		}`
+		evs2, err := parser.ParseLine([]byte(line2))
+		if err != nil || len(evs2) != 1 {
+			t.Fatalf("failed parse 2: evs=%v err=%v", evs2, err)
+		}
+		if evs2[0].Data.RateLimitResetAt != nil {
+			t.Errorf("expected cached RateLimitResetAt to be invalidated after expiration, got %v", evs2[0].Data.RateLimitResetAt)
+		}
+		if evs2[0].Data.RetryAfterSeconds != nil {
+			t.Errorf("expected cached RetryAfterSeconds to be invalidated after expiration, got %v", evs2[0].Data.RetryAfterSeconds)
+		}
+	})
+
+	t.Run("event_msg error with codex_error_info HttpConnectionFailed 503 does not fallback to substring match", func(t *testing.T) {
+		line := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:43.000Z",
+			"payload": {
+				"type": "error",
+				"message": "Service unavailable: internal server error while evaluating rate limit policy",
+				"codex_error_info": {
+					"http_connection_failed": {
+						"http_status_code": 503
+					}
+				}
+			}
+		}`
+		evs, err := ParseCodexLine([]byte(line))
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("failed error event parsing: evs=%v err=%v", evs, err)
+		}
+		if evs[0].EventType != "error" {
+			t.Errorf("unexpected event type: %+v", evs[0])
+		}
+		if evs[0].Data.ExitCode != nil {
+			t.Errorf("ExitCode = %v, want nil", evs[0].Data.ExitCode)
+		}
+		if evs[0].Data.IsRateLimit == nil || *evs[0].Data.IsRateLimit {
+			t.Errorf("expected isRateLimit = false for 503, got %v", evs[0].Data.IsRateLimit)
+		}
+	})
+
+	t.Run("stateful codex parser attaches rate limit metadata to error event", func(t *testing.T) {
+		parser := NewCodexParser()
+		tokenCountLine := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:40.000Z",
+			"payload": {
+				"type": "token_count",
+				"info": {
+					"total_token_usage": {"total_tokens": 1000, "prompt_tokens": 800, "completion_tokens": 200},
+					"last_token_usage": {"total_tokens": 100, "prompt_tokens": 80, "completion_tokens": 20}
+				},
+				"rate_limits": {
+					"remaining_requests": 0,
+					"reset_requests": "45s"
+				}
+			}
+		}`
+		_, err := parser.ParseLine([]byte(tokenCountLine))
+		if err != nil {
+			t.Fatalf("token_count parse failed: %v", err)
+		}
+
+		errorLine := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:42.000Z",
+			"payload": {
+				"type": "error",
+				"message": "Rate limit exceeded",
+				"codex_error_info": "RateLimitExceeded"
+			}
+		}`
+		evs, err := parser.ParseLine([]byte(errorLine))
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("errorLine parse failed: evs=%v err=%v", evs, err)
+		}
+		errEv := evs[0]
+		if errEv.EventType != "error" {
+			t.Fatalf("expected error event, got %s", errEv.EventType)
+		}
+		if errEv.Data.IsRateLimit == nil || !*errEv.Data.IsRateLimit {
+			t.Errorf("expected IsRateLimit = true")
+		}
+		if errEv.Data.RetryAfterSeconds == nil || *errEv.Data.RetryAfterSeconds != 43 {
+			t.Errorf("expected RetryAfterSeconds = 43 (45s discounted by 2s), got %v", errEv.Data.RetryAfterSeconds)
+		}
+		if errEv.Data.RateLimitResetAt == nil {
+			t.Errorf("expected RateLimitResetAt to be set")
+		}
+
+		// Reset should clear parser metadata
+		parser.Reset()
+		evs2, err := parser.ParseLine([]byte(errorLine))
+		if err != nil || len(evs2) != 1 {
+			t.Fatalf("second errorLine parse failed: %v", err)
+		}
+		if evs2[0].Data.RetryAfterSeconds != nil {
+			t.Errorf("expected nil RetryAfterSeconds after reset, got %v", evs2[0].Data.RetryAfterSeconds)
+		}
+	})
+
+	t.Run("unrelated errors are not classified as rate-limited even with active cached reset timestamp", func(t *testing.T) {
+		parser := NewCodexParser()
+		tokenCountLine := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:00.000Z",
+			"payload": {
+				"type": "token_count",
+				"info": {
+					"total_tokens": 100
+				},
+				"rate_limits": {
+					"remaining_requests": 0,
+					"reset_requests": "60s"
+				}
+			}
+		}`
+		_, err := parser.ParseLine([]byte(tokenCountLine))
+		if err != nil {
+			t.Fatalf("token_count parse failed: %v", err)
+		}
+
+		// Generic unclassified error without explicit rate limit words or 429 code
+		errorLine := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:10.000Z",
+			"payload": {
+				"type": "error",
+				"message": "Stream interrupted connection reset by peer"
+			}
+		}`
+		evs, err := parser.ParseLine([]byte(errorLine))
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("errorLine parse failed: evs=%v err=%v", evs, err)
+		}
+		errEv := evs[0]
+		if errEv.EventType != "error" {
+			t.Fatalf("expected error event, got %s", errEv.EventType)
+		}
+		if errEv.Data.IsRateLimit != nil && *errEv.Data.IsRateLimit {
+			t.Fatalf("expected unclassified error to NOT be classified as rate limit, got %v", errEv.Data.IsRateLimit)
+		}
+		if errEv.Data.RateLimitResetAt != nil {
+			t.Fatalf("expected unclassified error to have nil RateLimitResetAt, got %v", errEv.Data.RateLimitResetAt)
+		}
+		if errEv.Data.RetryAfterSeconds != nil {
+			t.Fatalf("expected unclassified error to have nil RetryAfterSeconds, got %v", errEv.Data.RetryAfterSeconds)
+		}
+
+		// Tool crash error
+		toolCrashLine := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:12.000Z",
+			"payload": {
+				"type": "error",
+				"message": "Tool execution failed: exit status 1"
+			}
+		}`
+		evsCrash, err := parser.ParseLine([]byte(toolCrashLine))
+		if err != nil || len(evsCrash) != 1 {
+			t.Fatalf("toolCrashLine parse failed: evs=%v err=%v", evsCrash, err)
+		}
+		if evsCrash[0].Data.IsRateLimit != nil && *evsCrash[0].Data.IsRateLimit {
+			t.Fatalf("expected tool crash to NOT be classified as rate limit, got %v", evsCrash[0].Data.IsRateLimit)
+		}
+		if evsCrash[0].Data.RateLimitResetAt != nil {
+			t.Fatalf("expected tool crash to have nil RateLimitResetAt, got %v", evsCrash[0].Data.RateLimitResetAt)
+		}
+
+		// Syntax error
+		syntaxErrLine := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:14.000Z",
+			"payload": {
+				"type": "error",
+				"message": "SyntaxError: Unexpected token < in JSON at position 0"
+			}
+		}`
+		evsSyntax, err := parser.ParseLine([]byte(syntaxErrLine))
+		if err != nil || len(evsSyntax) != 1 {
+			t.Fatalf("syntaxErrLine parse failed: evs=%v err=%v", evsSyntax, err)
+		}
+		if evsSyntax[0].Data.IsRateLimit != nil && *evsSyntax[0].Data.IsRateLimit {
+			t.Fatalf("expected syntax error to NOT be classified as rate limit, got %v", evsSyntax[0].Data.IsRateLimit)
+		}
+		if evsSyntax[0].Data.RateLimitResetAt != nil {
+			t.Fatalf("expected syntax error to have nil RateLimitResetAt, got %v", evsSyntax[0].Data.RateLimitResetAt)
+		}
+
+		// Positively identified rate limit DOES inherit active cached rate limit metadata
+		rlLine := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:16.000Z",
+			"payload": {
+				"type": "error",
+				"message": "Rate limit reached for requests per minute",
+				"codex_error_info": "RateLimitExceeded"
+			}
+		}`
+		evsRL, err := parser.ParseLine([]byte(rlLine))
+		if err != nil || len(evsRL) != 1 {
+			t.Fatalf("rlLine parse failed: evs=%v err=%v", evsRL, err)
+		}
+		if evsRL[0].Data.IsRateLimit == nil || !*evsRL[0].Data.IsRateLimit {
+			t.Fatalf("expected positively identified rate limit to have IsRateLimit = true, got %v", evsRL[0].Data.IsRateLimit)
+		}
+		if evsRL[0].Data.RateLimitResetAt == nil {
+			t.Fatalf("expected positively identified rate limit to inherit cached RateLimitResetAt")
+		}
+		if evsRL[0].Data.RetryAfterSeconds == nil {
+			t.Fatalf("expected positively identified rate limit to inherit cached RetryAfterSeconds")
+		}
+
+		// Explicit non-429 error (HTTP 500) preserves IsRateLimit = false and does NOT attach cached rate limit metadata even if prior cached reset timestamps exist
+		error500Line := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:15.000Z",
+			"payload": {
+				"type": "error",
+				"message": "Gateway error",
+				"codex_error_info": {
+					"HttpConnectionFailed": {
+						"http_status_code": 500
+					}
+				}
+			}
+		}`
+		evs500, err := parser.ParseLine([]byte(error500Line))
+		if err != nil || len(evs500) != 1 {
+			t.Fatalf("error500Line parse failed: evs=%v err=%v", evs500, err)
+		}
+		if evs500[0].Data.IsRateLimit == nil || *evs500[0].Data.IsRateLimit {
+			t.Fatalf("expected error event with HTTP 500 to have IsRateLimit = false, got %v", evs500[0].Data.IsRateLimit)
+		}
+		if evs500[0].Data.RateLimitResetAt != nil {
+			t.Fatalf("expected error event with HTTP 500 to NOT attach RateLimitResetAt, got %v", evs500[0].Data.RateLimitResetAt)
+		}
+		if evs500[0].Data.RetryAfterSeconds != nil {
+			t.Fatalf("expected error event with HTTP 500 to NOT attach RetryAfterSeconds, got %v", evs500[0].Data.RetryAfterSeconds)
+		}
+
+		// Explicit non-rate-limit error (UsageLimitExceeded) preserves IsRateLimit = false and does NOT attach cached rate limit metadata even if prior cached reset timestamps exist
+		usageLimitLine := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:18.000Z",
+			"payload": {
+				"type": "error",
+				"message": "Usage limit reached for this month",
+				"codex_error_info": "UsageLimitExceeded"
+			}
+		}`
+		evsUsage, err := parser.ParseLine([]byte(usageLimitLine))
+		if err != nil || len(evsUsage) != 1 {
+			t.Fatalf("usageLimitLine parse failed: evs=%v err=%v", evsUsage, err)
+		}
+		if evsUsage[0].Data.IsRateLimit == nil || *evsUsage[0].Data.IsRateLimit {
+			t.Fatalf("expected error event with UsageLimitExceeded to have IsRateLimit = false, got %v", evsUsage[0].Data.IsRateLimit)
+		}
+		if evsUsage[0].Data.RateLimitResetAt != nil {
+			t.Fatalf("expected error event with UsageLimitExceeded to NOT attach RateLimitResetAt, got %v", evsUsage[0].Data.RateLimitResetAt)
+		}
+		if evsUsage[0].Data.RetryAfterSeconds != nil {
+			t.Fatalf("expected error event with UsageLimitExceeded to NOT attach RetryAfterSeconds, got %v", evsUsage[0].Data.RetryAfterSeconds)
+		}
+	})
+
+	t.Run("turn with positive quota availability restores quota and clears cached rate limit metadata", func(t *testing.T) {
+		parser := NewCodexParser()
+
+		// 1. Initial event with exhausted requests sets cached rate limit metadata
+		tokenCountLine := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:00.000Z",
+			"payload": {
+				"type": "token_count",
+				"info": {
+					"total_tokens": 100
+				},
+				"rate_limits": {
+					"remaining_requests": 0,
+					"reset_requests": "60s"
+				}
+			}
+		}`
+		evs1, err := parser.ParseLine([]byte(tokenCountLine))
+		if err != nil || len(evs1) != 1 {
+			t.Fatalf("first token_count parse failed: evs=%v err=%v", evs1, err)
+		}
+		if evs1[0].Data.RateLimitResetAt == nil {
+			t.Fatalf("expected initial token_count to set RateLimitResetAt")
+		}
+
+		// 2. Subsequent turn confirming positive quota availability clears cached rate limit
+		restoredTurnLine := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:10.000Z",
+			"payload": {
+				"type": "token_count",
+				"info": {
+					"total_tokens": 150
+				},
+				"rate_limits": {
+					"remaining_requests": 250,
+					"remaining_tokens": 50000
+				}
+			}
+		}`
+		evs2, err := parser.ParseLine([]byte(restoredTurnLine))
+		if err != nil || len(evs2) != 1 {
+			t.Fatalf("restored token_count parse failed: evs=%v err=%v", evs2, err)
+		}
+		if evs2[0].Data.RateLimitResetAt != nil {
+			t.Fatalf("expected restored turn to have nil RateLimitResetAt, got %v", evs2[0].Data.RateLimitResetAt)
+		}
+		if evs2[0].Data.RetryAfterSeconds != nil {
+			t.Fatalf("expected restored turn to have nil RetryAfterSeconds, got %v", evs2[0].Data.RetryAfterSeconds)
+		}
+
+		// 3. Generic error occurring before original 60s window should NOT inherit cached rate limit
+		genericErrorLine := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:15.000Z",
+			"payload": {
+				"type": "error",
+				"message": "Connection reset by peer"
+			}
+		}`
+		evs3, err := parser.ParseLine([]byte(genericErrorLine))
+		if err != nil || len(evs3) != 1 {
+			t.Fatalf("generic error parse failed: evs=%v err=%v", evs3, err)
+		}
+		if evs3[0].Data.IsRateLimit != nil && *evs3[0].Data.IsRateLimit {
+			t.Fatalf("expected generic error after restored quota to NOT be classified as rate limit, got %v", evs3[0].Data.IsRateLimit)
+		}
+		if evs3[0].Data.RateLimitResetAt != nil {
+			t.Fatalf("expected generic error after restored quota to have nil RateLimitResetAt, got %v", evs3[0].Data.RateLimitResetAt)
+		}
+		if evs3[0].Data.RetryAfterSeconds != nil {
+			t.Fatalf("expected generic error after restored quota to have nil RetryAfterSeconds, got %v", evs3[0].Data.RetryAfterSeconds)
+		}
+	})
+
+	t.Run("cached rate limit not wiped when one quota remains exhausted", func(t *testing.T) {
+		parser := NewCodexParser()
+
+		// 1. Initial event with exhausted tokens sets cached rate limit metadata
+		initialLine := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:00.000Z",
+			"payload": {
+				"type": "token_count",
+				"info": {
+					"total_tokens": 100
+				},
+				"rate_limits": {
+					"remaining_tokens": 0,
+					"reset_tokens": "60s"
+				}
+			}
+		}`
+		evs1, err := parser.ParseLine([]byte(initialLine))
+		if err != nil || len(evs1) != 1 {
+			t.Fatalf("initial token_count parse failed: evs=%v err=%v", evs1, err)
+		}
+		if evs1[0].Data.RateLimitResetAt == nil {
+			t.Fatalf("expected initial token_count to set RateLimitResetAt")
+		}
+
+		// 2. Subsequent turn where remaining_tokens == 0 and remaining_requests == 100
+		// must NOT wipe cached rate limit metadata
+		turnLine := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:10.000Z",
+			"payload": {
+				"type": "token_count",
+				"info": {
+					"total_tokens": 150
+				},
+				"rate_limits": {
+					"remaining_tokens": 0,
+					"remaining_requests": 100
+				}
+			}
+		}`
+		evs2, err := parser.ParseLine([]byte(turnLine))
+		if err != nil || len(evs2) != 1 {
+			t.Fatalf("subsequent token_count parse failed: evs=%v err=%v", evs2, err)
+		}
+
+		// 3. Subsequent RateLimitExceeded error arrives without rate_limits object
+		// It must still inherit the cached RateLimitResetAt because the cache was NOT wiped.
+		rlErrorLine := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:15.000Z",
+			"payload": {
+				"type": "error",
+				"message": "Rate limit reached for model tokens",
+				"codex_error_info": "RateLimitExceeded"
+			}
+		}`
+		evs3, err := parser.ParseLine([]byte(rlErrorLine))
+		if err != nil || len(evs3) != 1 {
+			t.Fatalf("RateLimitExceeded parse failed: evs=%v err=%v", evs3, err)
+		}
+		if evs3[0].Data.RateLimitResetAt == nil {
+			t.Fatalf("expected RateLimitExceeded to inherit cached RateLimitResetAt when remaining_tokens == 0 and remaining_requests == 100")
+		}
+	})
+
+	t.Run("turn_end with expired rate limit reset does not attach expired metadata", func(t *testing.T) {
+		parser := NewCodexParser()
+
+		// Token count at 16:08:00 with reset_requests at 16:07:00 (in the past <= ts)
+		line := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:00.000Z",
+			"payload": {
+				"type": "token_count",
+				"info": {
+					"total_tokens": 100
+				},
+				"rate_limits": {
+					"remaining_requests": 0,
+					"reset_requests": "2026-06-12T16:07:00.000Z"
+				}
+			}
+		}`
+		evs, err := parser.ParseLine([]byte(line))
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("token_count parse failed: evs=%v err=%v", evs, err)
+		}
+		if evs[0].Data.RateLimitResetAt != nil {
+			t.Fatalf("expected turn_end to have nil RateLimitResetAt when reset is expired (<= ts), got %v", *evs[0].Data.RateLimitResetAt)
+		}
+		if evs[0].Data.RetryAfterSeconds != nil {
+			t.Fatalf("expected turn_end to have nil RetryAfterSeconds when reset is expired, got %v", *evs[0].Data.RetryAfterSeconds)
+		}
+	})
+
+	t.Run("event_msg error excludes non-exhausted quotas when selecting reset duration", func(t *testing.T) {
+		parser := NewCodexParser()
+		line := `{
+			"type": "event_msg",
+			"timestamp": "2026-06-12T16:08:43.000Z",
+			"payload": {
+				"type": "error",
+				"message": "Rate limit exceeded",
+				"codex_error_info": "RateLimitExceeded",
+				"rate_limits": {
+					"remaining_requests": 0,
+					"reset_requests": "15s",
+					"remaining_tokens": 100000,
+					"reset_tokens": "24h"
+				}
+			}
+		}`
+		evs, err := parser.ParseLine([]byte(line))
+		if err != nil || len(evs) != 1 {
+			t.Fatalf("failed parse: evs=%v err=%v", evs, err)
+		}
+		if evs[0].Data.RetryAfterSeconds == nil || *evs[0].Data.RetryAfterSeconds != 15 {
+			t.Fatalf("expected RetryAfterSeconds == 15, got %v", evs[0].Data.RetryAfterSeconds)
 		}
 	})
 
@@ -945,6 +1829,46 @@ func TestParseCodexLine(t *testing.T) {
 			t.Errorf("expected IsError=false, got true")
 		}
 	})
+}
+
+func TestParseCodexRateLimitReset(t *testing.T) {
+	nowMs := int64(1700000000000)
+
+	// empty
+	resetAt, sec := parseCodexRateLimitReset("", nowMs)
+	if resetAt != nil || sec != nil {
+		t.Errorf("expected nil for empty")
+	}
+
+	// numeric string
+	resetAt, sec = parseCodexRateLimitReset("30", nowMs)
+	if resetAt == nil || *resetAt != nowMs+30000 || sec == nil || *sec != 30 {
+		t.Errorf("numeric string parse failed: %v, %v", resetAt, sec)
+	}
+
+	// duration string
+	resetAt, sec = parseCodexRateLimitReset("1m", nowMs)
+	if resetAt == nil || *resetAt != nowMs+60000 || sec == nil || *sec != 60 {
+		t.Errorf("duration string parse failed: %v, %v", resetAt, sec)
+	}
+
+	// RFC3339
+	resetAt, sec = parseCodexRateLimitReset("2023-11-14T22:14:20Z", nowMs)
+	if resetAt == nil || sec == nil {
+		t.Errorf("RFC3339 parse failed")
+	}
+
+	// RFC3339Nano past
+	resetAt, sec = parseCodexRateLimitReset("2020-01-01T00:00:00.000Z", nowMs)
+	if resetAt == nil || sec == nil || *sec != 0 {
+		t.Errorf("past RFC3339Nano parse failed: %v, %v", resetAt, sec)
+	}
+
+	// invalid
+	resetAt, sec = parseCodexRateLimitReset("invalid-reset-string", nowMs)
+	if resetAt != nil || sec != nil {
+		t.Errorf("expected nil for invalid")
+	}
 }
 
 func TestCodexParser_NormalizedFileModification(t *testing.T) {

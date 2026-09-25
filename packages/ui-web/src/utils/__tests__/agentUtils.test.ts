@@ -14,6 +14,7 @@ import {
   isSessionStalled,
   trimProjectTitlePrefix,
   getIdleFreshness,
+  formatRateLimitCallout,
 } from "../agentUtils";
 import { factory_createAgent, fixture_testEnvironment, fixture_testStaleEnvironment } from "./fixtures";
 import type { IAgentState } from "../../types";
@@ -225,6 +226,50 @@ describe("agentUtils", () => {
           lifecycle: "RUNNING",
           activity: "RATE_LIMITED",
           updatedAt: now - 130000,
+        },
+      });
+      expect(isAgentRequiringAttention(agent, now)).toBe(true);
+    });
+
+    it("suppresses Act Now attention when rateLimitResetAt is in the future even if stalled (> 2m)", () => {
+      const now = Date.now();
+      const agent = factory_createAgent({
+        activity: {
+          ...factory_createAgent().activity,
+          lifecycle: "RUNNING",
+          activity: "RATE_LIMITED",
+          updatedAt: now - 130000,
+          rateLimitResetAt: now + 30000,
+        },
+      });
+      expect(isAgentRequiringAttention(agent, now)).toBe(false);
+    });
+
+    it("suppresses Act Now attention when rateLimitResetAt is null but retryAfterSeconds is in the future", () => {
+      const now = Date.now();
+      const agent = factory_createAgent({
+        activity: {
+          ...factory_createAgent().activity,
+          lifecycle: "RUNNING",
+          activity: "RATE_LIMITED",
+          updatedAt: now - 150000, // 150s ago (> 120s stall threshold)
+          rateLimitResetAt: null,
+          retryAfterSeconds: 300, // 300s retryAfter (150s remaining)
+        },
+      });
+      expect(isAgentRequiringAttention(agent, now)).toBe(false);
+    });
+
+    it("returns true for attention when rateLimitResetAt is null and retryAfterSeconds has elapsed", () => {
+      const now = Date.now();
+      const agent = factory_createAgent({
+        activity: {
+          ...factory_createAgent().activity,
+          lifecycle: "RUNNING",
+          activity: "RATE_LIMITED",
+          updatedAt: now - 350000, // 350s ago
+          rateLimitResetAt: null,
+          retryAfterSeconds: 300, // 300s retryAfter (elapsed 50s ago)
         },
       });
       expect(isAgentRequiringAttention(agent, now)).toBe(true);
@@ -454,6 +499,15 @@ describe("agentUtils", () => {
       expect(formatDuration(135000)).toBe("2m 15s");
       expect(formatDuration(202000)).toBe("3m 22s");
     });
+
+    it("formats exact minutes without trailing 0s", () => {
+      expect(formatDuration(600000)).toBe("10m");
+    });
+
+    it("formats hours and hours with minutes", () => {
+      expect(formatDuration(7200000)).toBe("2h");
+      expect(formatDuration(8100000)).toBe("2h 15m");
+    });
   });
 
   describe("isAgentRequiringAttention with stalled tools", () => {
@@ -682,6 +736,110 @@ describe("agentUtils", () => {
 
       const threeHoursAgo = Date.now() - 3 * 60 * 60 * 1000;
       expect(getIdleFreshness(threeHoursAgo)).toBe("stale");
+    });
+  });
+
+  describe("formatRateLimitCallout", () => {
+    it("formats remaining seconds when resetAt is in the future", () => {
+      const now = 1_000_000;
+      const activity = {
+        ...factory_createAgent().activity,
+        activity: "RATE_LIMITED" as const,
+        lastError: "Rate limit exceeded",
+        rateLimitResetAt: now + 45_000,
+      };
+      expect(formatRateLimitCallout(activity, now)).toBe("Rate limit exceeded (retry in 45s)");
+    });
+
+    it("does not format wait string or fall through to retryAfter when resetAt is in the past", () => {
+      const now = 1_000_000;
+      const activity = {
+        ...factory_createAgent().activity,
+        activity: "RATE_LIMITED" as const,
+        lastError: "Rate limit exceeded",
+        rateLimitResetAt: now - 5000,
+        retryAfterSeconds: 60,
+      };
+      // Must NOT fall through to retryAfterSeconds (the backoff has already elapsed)
+      expect(formatRateLimitCallout(activity, now)).toBe("Rate limit exceeded");
+    });
+
+    it("computes remaining seconds relative to updatedAt when only retryAfter is present", () => {
+      const now = 1_000_000;
+      const activity = {
+        ...factory_createAgent().activity,
+        activity: "RATE_LIMITED" as const,
+        lastError: "Rate limit exceeded",
+        retryAfterSeconds: 60,
+        updatedAt: now - 15_000, // 15 seconds elapsed
+      };
+      expect(formatRateLimitCallout(activity, now)).toBe("Rate limit exceeded (retry in 45s)");
+    });
+
+    it("does not format wait string when only retryAfter is present and has already elapsed", () => {
+      const now = 1_000_000;
+      const activity = {
+        ...factory_createAgent().activity,
+        activity: "RATE_LIMITED" as const,
+        lastError: "Rate limit exceeded",
+        retryAfterSeconds: 30,
+        updatedAt: now - 45_000, // 45 seconds elapsed (> 30s)
+      };
+      expect(formatRateLimitCallout(activity, now)).toBe("Rate limit exceeded");
+    });
+
+    it("formats fallback message when lastError is not set and wait is remaining", () => {
+      const now = 1_000_000;
+      const activity = {
+        ...factory_createAgent().activity,
+        activity: "RATE_LIMITED" as const,
+        rateLimitResetAt: now + 30_000,
+      };
+      expect(formatRateLimitCallout(activity, now)).toBe("Rate limit reached — retry in 30s");
+    });
+
+    it("formats fallback message without wait when lastError is not set and resetAt has elapsed", () => {
+      const now = 1_000_000;
+      const activity = {
+        ...factory_createAgent().activity,
+        activity: "RATE_LIMITED" as const,
+        rateLimitResetAt: now - 1000,
+      };
+      expect(formatRateLimitCallout(activity, now)).toBe("Rate limit reached — backoff/retry in progress");
+    });
+
+    it("formats durations <= 120s in seconds and durations > 120s humanized", () => {
+      const now = 1_000_000;
+      const baseActivity = {
+        ...factory_createAgent().activity,
+        activity: "RATE_LIMITED" as const,
+        lastError: "Rate limit exceeded",
+      };
+
+      // Exactly 120s remaining -> "retry in 120s"
+      expect(formatRateLimitCallout({ ...baseActivity, rateLimitResetAt: now + 120_000 }, now)).toBe(
+        "Rate limit exceeded (retry in 120s)",
+      );
+
+      // 121s remaining (2m 1s) -> "retry in 2m 1s"
+      expect(formatRateLimitCallout({ ...baseActivity, rateLimitResetAt: now + 121_000 }, now)).toBe(
+        "Rate limit exceeded (retry in 2m 1s)",
+      );
+
+      // 600s remaining (10m) -> "retry in 10m"
+      expect(formatRateLimitCallout({ ...baseActivity, rateLimitResetAt: now + 600_000 }, now)).toBe(
+        "Rate limit exceeded (retry in 10m)",
+      );
+
+      // 7200s remaining (2h) -> "retry in 2h"
+      expect(formatRateLimitCallout({ ...baseActivity, rateLimitResetAt: now + 7_200_000 }, now)).toBe(
+        "Rate limit exceeded (retry in 2h)",
+      );
+
+      // retryAfterSeconds exceeding 120s (600s, 0 elapsed) -> "retry in 10m"
+      expect(formatRateLimitCallout({ ...baseActivity, retryAfterSeconds: 600, updatedAt: now }, now)).toBe(
+        "Rate limit exceeded (retry in 10m)",
+      );
     });
   });
 });

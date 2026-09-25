@@ -3,6 +3,7 @@ package classifier
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -8522,42 +8523,47 @@ func TestClassifier_RateLimitedActivity(t *testing.T) {
 		isRateLimit  *bool
 		resetAt      *int64
 		retrySeconds *int64
+		wantActivity types.ActivityState
 	}{
 		{
-			name:    "HTTP 429 in content",
-			content: "HTTP 429: Too Many Requests",
+			name:         "overloaded_error string without structured signal is fatal error",
+			content:      "overloaded_error: Anthropic API is currently overloaded",
+			wantActivity: types.ActivityError,
 		},
 		{
-			name:    "rate_limit string in error",
-			content: "rate_limit_exceeded: token bucket empty",
+			name:         "quota string is fatal execution error not rate limit",
+			content:      "insufficient_quota: model quota exceeded for current tier",
+			wantActivity: types.ActivityError,
 		},
 		{
-			name:    "rate limit with space",
-			content: "Connection rate limit exceeded",
+			name:         "HTTP 429 keyword without structured flag is fatal error",
+			content:      "HTTP 429: Too Many Requests",
+			wantActivity: types.ActivityError,
 		},
 		{
-			name:    "overloaded_error string",
-			content: "overloaded_error: Anthropic API is currently overloaded",
+			name:         "explicit isRateLimit false is fatal error",
+			content:      "UsageLimitExceeded",
+			isRateLimit:  boolPtr(false),
+			wantActivity: types.ActivityError,
 		},
 		{
-			name:    "quota string",
-			content: "insufficient_quota: model quota exceeded for current tier",
+			name:         "isRateLimit boolean flag true",
+			content:      "transient api rejection",
+			isRateLimit:  boolPtr(true),
+			wantActivity: types.ActivityRateLimited,
 		},
 		{
-			name:        "isRateLimit boolean flag true",
-			content:     "transient api rejection",
-			isRateLimit: boolPtr(true),
-		},
-		{
-			name:     "exitCode 429",
-			content:  "API error",
-			exitCode: makeIntPtr(429),
+			name:         "exitCode 429 without structured rate limit flag is fatal error",
+			content:      "API error",
+			exitCode:     makeIntPtr(429),
+			wantActivity: types.ActivityError,
 		},
 		{
 			name:         "with rateLimitResetAt and retryAfterSeconds metadata",
 			content:      "rate limit: backoff required",
 			resetAt:      int64Ptr(1789900060000),
 			retrySeconds: int64Ptr(45),
+			wantActivity: types.ActivityRateLimited,
 		},
 	}
 
@@ -8582,10 +8588,10 @@ func TestClassifier_RateLimitedActivity(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ProcessFrame failed: %v", err)
 			}
-			if agent.Activity.Activity != types.ActivityRateLimited {
-				t.Errorf("expected activity %s, got %s", types.ActivityRateLimited, agent.Activity.Activity)
+			if agent.Activity.Activity != tc.wantActivity {
+				t.Errorf("expected activity %s, got %s", tc.wantActivity, agent.Activity.Activity)
 			}
-			if tc.resetAt != nil {
+			if tc.wantActivity == types.ActivityRateLimited && tc.resetAt != nil {
 				if agent.Activity.RateLimitResetAt == nil || *agent.Activity.RateLimitResetAt != *tc.resetAt {
 					t.Errorf("expected RateLimitResetAt %v, got %v", tc.resetAt, agent.Activity.RateLimitResetAt)
 				}
@@ -8596,22 +8602,242 @@ func TestClassifier_RateLimitedActivity(t *testing.T) {
 				}
 			}
 
-			// Verify turn_end preserves RATE_LIMITED state instead of resetting to IDLE
+			// Verify non-terminal turn_end preserves state instead of resetting to IDLE
 			fEnd := f
 			fEnd.Seq = 2
 			fEnd.Timestamp = 1010
 			fEnd.EventType = "turn_end"
-			stopReason := "end_turn"
-			fEnd.Data = types.TelemetryFrameData{StopReason: &stopReason}
+			fEnd.Data = types.TelemetryFrameData{}
 			agentEnd, err := c.ProcessFrame(fEnd)
 			if err != nil {
 				t.Fatalf("turn_end failed: %v", err)
 			}
-			if agentEnd.Activity.Activity != types.ActivityRateLimited {
-				t.Errorf("expected activity %s preserved across turn_end, got %s", types.ActivityRateLimited, agentEnd.Activity.Activity)
+			if agentEnd.Activity.Activity != tc.wantActivity {
+				t.Errorf("expected activity %s preserved across turn_end, got %s", tc.wantActivity, agentEnd.Activity.Activity)
 			}
 		})
 	}
+
+	t.Run("turn_end copies RateLimitResetAt and RetryAfterSeconds onto agent.Activity when RATE_LIMITED", func(t *testing.T) {
+		c := newTestClassifier()
+		fStart := baseFrame
+		fStart.AgentID = "agent-te-rl"
+		fStart.SessionID = "sess-te-rl"
+		fStart.Seq = 1
+		fStart.Timestamp = 1000
+		fStart.EventType = "error"
+		isRL := true
+		fStart.Data = types.TelemetryFrameData{
+			IsRateLimit: &isRL,
+		}
+		_, err := c.ProcessFrame(fStart)
+		if err != nil {
+			t.Fatalf("error failed: %v", err)
+		}
+
+		fEnd := baseFrame
+		fEnd.AgentID = "agent-te-rl"
+		fEnd.SessionID = "sess-te-rl"
+		fEnd.Seq = 2
+		fEnd.Timestamp = 2000
+		fEnd.EventType = "turn_end"
+		resetAt := int64(1700000060000)
+		retrySec := int64(60)
+		fEnd.Data = types.TelemetryFrameData{
+			RateLimitResetAt:  &resetAt,
+			RetryAfterSeconds: &retrySec,
+		}
+		agentEnd, err := c.ProcessFrame(fEnd)
+		if err != nil {
+			t.Fatalf("turn_end failed: %v", err)
+		}
+		if agentEnd.Activity.RateLimitResetAt == nil || *agentEnd.Activity.RateLimitResetAt != resetAt {
+			t.Errorf("expected RateLimitResetAt %d on turn_end, got %v", resetAt, agentEnd.Activity.RateLimitResetAt)
+		}
+		if agentEnd.Activity.RetryAfterSeconds == nil || *agentEnd.Activity.RetryAfterSeconds != retrySec {
+			t.Errorf("expected RetryAfterSeconds %d on turn_end, got %v", retrySec, agentEnd.Activity.RetryAfterSeconds)
+		}
+	})
+
+	t.Run("turn_end preserves specifically supplied RateLimitResetAt and RetryAfterSeconds on busy agent", func(t *testing.T) {
+		c := newTestClassifier()
+		fStart := baseFrame
+		fStart.AgentID = "agent-te-rl-busy"
+		fStart.SessionID = "sess-te-rl-busy"
+		fStart.Seq = 1
+		fStart.Timestamp = 1000
+		fStart.EventType = "turn_start"
+		agentStart, err := c.ProcessFrame(fStart)
+		if err != nil {
+			t.Fatalf("turn_start failed: %v", err)
+		}
+		if agentStart.Activity.Activity != types.ActivityBusy {
+			t.Fatalf("expected ActivityBusy, got %v", agentStart.Activity.Activity)
+		}
+
+		fEnd := baseFrame
+		fEnd.AgentID = "agent-te-rl-busy"
+		fEnd.SessionID = "sess-te-rl-busy"
+		fEnd.Seq = 2
+		fEnd.Timestamp = 2000
+		fEnd.EventType = "turn_end"
+		stopReason := "end_turn"
+		resetAt := int64(1700000060000)
+		retrySec := int64(60)
+		fEnd.Data = types.TelemetryFrameData{
+			StopReason:        &stopReason,
+			RateLimitResetAt:  &resetAt,
+			RetryAfterSeconds: &retrySec,
+		}
+		agentEnd, err := c.ProcessFrame(fEnd)
+		if err != nil {
+			t.Fatalf("turn_end failed: %v", err)
+		}
+		if agentEnd.Activity.RateLimitResetAt == nil || *agentEnd.Activity.RateLimitResetAt != resetAt {
+			t.Fatalf("expected RateLimitResetAt %d preserved on turn_end, got %v", resetAt, agentEnd.Activity.RateLimitResetAt)
+		}
+		if agentEnd.Activity.RetryAfterSeconds == nil || *agentEnd.Activity.RetryAfterSeconds != retrySec {
+			t.Fatalf("expected RetryAfterSeconds %d preserved on turn_end, got %v", retrySec, agentEnd.Activity.RetryAfterSeconds)
+		}
+	})
+
+	t.Run("rate limit error schedules silence timer and transitions to IDLE on timeout", func(t *testing.T) {
+		c := newTestClassifier()
+		c.turnSilenceTimeout = 50 * time.Millisecond
+		f := baseFrame
+		f.AgentID = "agent-rl-timer"
+		f.SessionID = "sess-rl-timer"
+		f.Seq = 1
+		f.Timestamp = 1000
+		f.EventType = "error"
+		isRL := true
+		f.Data = types.TelemetryFrameData{
+			IsRateLimit: &isRL,
+		}
+		agent, err := c.ProcessFrame(f)
+		if err != nil {
+			t.Fatalf("error frame failed: %v", err)
+		}
+		if agent.Activity.Activity != types.ActivityRateLimited {
+			t.Fatalf("expected ActivityRateLimited, got %v", agent.Activity.Activity)
+		}
+
+		c.mu.Lock()
+		_, timerScheduled := c.silenceTimers[agent.ID]
+		c.mu.Unlock()
+		if !timerScheduled {
+			t.Fatalf("expected silence timer to be scheduled on rate limit error")
+		}
+
+		// Wait for silence timer to fire
+		time.Sleep(100 * time.Millisecond)
+
+		// After silence timeout, unrecovered throttled session must transition to IDLE
+		agentLoaded, err := c.store.GetAgent(agent.ID)
+		if err != nil {
+			t.Fatalf("GetAgent failed: %v", err)
+		}
+		if agentLoaded.Activity.Activity != types.ActivityIdle {
+			t.Errorf("expected Activity IDLE after silence timeout, got %v", agentLoaded.Activity.Activity)
+		}
+		if agentLoaded.Activity.RateLimitResetAt != nil {
+			t.Errorf("expected nil RateLimitResetAt after silence timeout, got %v", agentLoaded.Activity.RateLimitResetAt)
+		}
+	})
+
+	t.Run("long rate limit reset extends silence timer duration beyond default silence timeout", func(t *testing.T) {
+		c := newTestClassifier()
+		f := baseFrame
+		f.AgentID = "agent-rl-long-reset"
+		f.SessionID = "sess-rl-long-reset"
+		f.Seq = 1
+		f.Timestamp = 1000
+		f.EventType = "error"
+		isRL := true
+		retrySec := int64(3600) // 60 minutes, exceeds DefaultTurnSilenceTimeout (30m)
+		f.Data = types.TelemetryFrameData{
+			IsRateLimit:       &isRL,
+			RetryAfterSeconds: &retrySec,
+		}
+		agent, err := c.ProcessFrame(f)
+		if err != nil {
+			t.Fatalf("error frame failed: %v", err)
+		}
+		if agent.Activity.Activity != types.ActivityRateLimited {
+			t.Fatalf("expected ActivityRateLimited, got %v", agent.Activity.Activity)
+		}
+
+		dur := c.SilenceTimerDuration(agent.ID)
+		expectedDur := 3600*time.Second + DefaultRateLimitSilenceBuffer
+		if dur != expectedDur {
+			t.Errorf("expected silence timer duration %v (60m + buffer), got %v", expectedDur, dur)
+		}
+
+		// Also verify with RateLimitResetAt
+		f2 := baseFrame
+		f2.AgentID = "agent-rl-long-resetat"
+		f2.SessionID = "sess-rl-long-resetat"
+		f2.Seq = 1
+		nowMs := time.Now().UnixMilli()
+		f2.Timestamp = nowMs
+		f2.EventType = "error"
+		resetAt := nowMs + int64(45*time.Minute/time.Millisecond) // 45m from now > 30m
+		f2.Data = types.TelemetryFrameData{
+			IsRateLimit:      &isRL,
+			RateLimitResetAt: &resetAt,
+		}
+		agent2, err := c.ProcessFrame(f2)
+		if err != nil {
+			t.Fatalf("error frame 2 failed: %v", err)
+		}
+		dur2 := c.SilenceTimerDuration(agent2.ID)
+		// Expected is roughly 45m + buffer
+		minExpected := 44*time.Minute + DefaultRateLimitSilenceBuffer
+		maxExpected := 46*time.Minute + DefaultRateLimitSilenceBuffer
+		if dur2 < minExpected || dur2 > maxExpected {
+			t.Errorf("expected silence timer duration around 45m + buffer, got %v", dur2)
+		}
+
+		// Verify that a short rate limit does NOT extend silence timer duration
+		f3 := baseFrame
+		f3.AgentID = "agent-rl-short-retry"
+		f3.SessionID = "sess-rl-short-retry"
+		f3.Seq = 1
+		f3.Timestamp = 1000
+		f3.EventType = "error"
+		shortRetrySec := int64(60) // 1 minute < 30m
+		f3.Data = types.TelemetryFrameData{
+			IsRateLimit:       &isRL,
+			RetryAfterSeconds: &shortRetrySec,
+		}
+		agent3, err := c.ProcessFrame(f3)
+		if err != nil {
+			t.Fatalf("error frame 3 failed: %v", err)
+		}
+		dur3 := c.SilenceTimerDuration(agent3.ID)
+		if dur3 != c.turnSilenceTimeout {
+			t.Errorf("expected silence timer duration %v (base turnSilenceTimeout), got %v", c.turnSilenceTimeout, dur3)
+		}
+
+		// Verify that turn_end on a RateLimited agent retains/extends the silence timer duration
+		f4 := baseFrame
+		f4.AgentID = "agent-rl-long-reset"
+		f4.SessionID = "sess-rl-long-reset"
+		f4.Seq = 2
+		f4.Timestamp = 2000
+		f4.EventType = "turn_end"
+		agent4, err := c.ProcessFrame(f4)
+		if err != nil {
+			t.Fatalf("turn_end frame failed: %v", err)
+		}
+		if agent4.Activity.Activity != types.ActivityRateLimited {
+			t.Fatalf("expected agent to remain ActivityRateLimited, got %v", agent4.Activity.Activity)
+		}
+		dur4 := c.SilenceTimerDuration(agent4.ID)
+		if dur4 != expectedDur {
+			t.Errorf("expected silence timer duration %v after turn_end, got %v", expectedDur, dur4)
+		}
+	})
 
 	t.Run("non-rate-limit fatal error remains ActivityError", func(t *testing.T) {
 		c := newTestClassifier()
@@ -8657,7 +8883,14 @@ func TestClassifier_RateLimitedActivity(t *testing.T) {
 		fSub.Timestamp = 1050
 		fSub.EventType = "error"
 		rlMsg := "rate_limit_exceeded on subagent provider"
-		fSub.Data = types.TelemetryFrameData{Content: &rlMsg}
+		subResetAt := int64(1700000080000)
+		subRetrySec := int64(80)
+		fSub.Data = types.TelemetryFrameData{
+			Content:           &rlMsg,
+			IsRateLimit:       boolPtr(true),
+			RateLimitResetAt:  &subResetAt,
+			RetryAfterSeconds: &subRetrySec,
+		}
 
 		agent, err := c.ProcessFrame(fSub)
 		if err != nil {
@@ -8665,6 +8898,530 @@ func TestClassifier_RateLimitedActivity(t *testing.T) {
 		}
 		if agent.Activity.Activity != types.ActivityRateLimited {
 			t.Errorf("expected root activity %s from subagent rate limit, got %s", types.ActivityRateLimited, agent.Activity.Activity)
+		}
+		if agent.Activity.RateLimitResetAt == nil || *agent.Activity.RateLimitResetAt != subResetAt {
+			t.Errorf("expected rolled up RateLimitResetAt %d, got %v", subResetAt, agent.Activity.RateLimitResetAt)
+		}
+		if agent.Activity.RetryAfterSeconds == nil || *agent.Activity.RetryAfterSeconds != subRetrySec {
+			t.Errorf("expected rolled up RetryAfterSeconds %d, got %v", subRetrySec, agent.Activity.RetryAfterSeconds)
+		}
+
+		// When subagent resumes with text or turn_start, rate limit is cleared
+		fSubResume := baseFrame
+		fSubResume.AgentID = "agent-root-rl"
+		fSubResume.SessionID = "session-root-rl"
+		fSubResume.SubagentID = &subID
+		fSubResume.Seq = 3
+		fSubResume.Timestamp = 1100
+		fSubResume.EventType = "turn_start"
+		agentResumed, err := c.ProcessFrame(fSubResume)
+		if err != nil {
+			t.Fatalf("subagent turn_start failed: %v", err)
+		}
+		if agentResumed.Activity.Activity != types.ActivityBusy {
+			t.Errorf("expected root activity %s after subagent turn_start, got %s", types.ActivityBusy, agentResumed.Activity.Activity)
+		}
+		if agentResumed.Activity.RateLimitResetAt != nil {
+			t.Errorf("expected nil RateLimitResetAt after subagent resumed, got %v", agentResumed.Activity.RateLimitResetAt)
+		}
+		if agentResumed.Activity.RetryAfterSeconds != nil {
+			t.Errorf("expected nil RetryAfterSeconds after subagent resumed, got %v", agentResumed.Activity.RetryAfterSeconds)
+		}
+	})
+
+	t.Run("subagent turn_end or run_exited clears rate-limit metadata when transitioning to ActivityIdle", func(t *testing.T) {
+		for _, eventType := range []string{"turn_end", "run_exited"} {
+			t.Run(eventType, func(t *testing.T) {
+				c := newTestClassifier()
+				fRoot := baseFrame
+				fRoot.AgentID = "agent-sub-rl-" + eventType
+				fRoot.SessionID = "sess-sub-rl-" + eventType
+				fRoot.Seq = 1
+				fRoot.Timestamp = 1000
+				fRoot.EventType = "turn_start"
+				_, err := c.ProcessFrame(fRoot)
+				if err != nil {
+					t.Fatalf("root turn_start failed: %v", err)
+				}
+
+				subID := "sub-rl-" + eventType
+				fSub := baseFrame
+				fSub.AgentID = fRoot.AgentID
+				fSub.SessionID = fRoot.SessionID
+				fSub.SubagentID = &subID
+				fSub.Seq = 2
+				fSub.Timestamp = 1010
+				fSub.EventType = "error"
+				rlMsg := "rate limited subagent"
+				subResetAt := int64(2000000000000)
+				subRetrySec := int64(60)
+				fSub.Data = types.TelemetryFrameData{
+					Content:           &rlMsg,
+					IsRateLimit:       boolPtr(true),
+					RateLimitResetAt:  &subResetAt,
+					RetryAfterSeconds: &subRetrySec,
+				}
+				agentRL, err := c.ProcessFrame(fSub)
+				if err != nil {
+					t.Fatalf("sub error failed: %v", err)
+				}
+				if agentRL.Activity.Activity != types.ActivityRateLimited {
+					t.Fatalf("expected root ActivityRateLimited, got %v", agentRL.Activity.Activity)
+				}
+
+				// Now subagent completes with turn_end or run_exited
+				fEnd := baseFrame
+				fEnd.AgentID = fRoot.AgentID
+				fEnd.SessionID = fRoot.SessionID
+				fEnd.SubagentID = &subID
+				fEnd.Seq = 3
+				fEnd.Timestamp = 1050
+				fEnd.EventType = eventType
+				agentEnd, err := c.ProcessFrame(fEnd)
+				if err != nil {
+					t.Fatalf("sub %s failed: %v", eventType, err)
+				}
+				// Verify subagent state in context
+				c.mu.Lock()
+				actx := c.agentCtx[fRoot.AgentID]
+				subState := actx.subagents[subID]
+				c.mu.Unlock()
+				if subState.activity != types.ActivityIdle {
+					t.Errorf("expected subagent activity ActivityIdle, got %v", subState.activity)
+				}
+				if subState.rateLimitResetAt != nil {
+					t.Errorf("expected subagent rateLimitResetAt to be cleared (nil), got %v", subState.rateLimitResetAt)
+				}
+				if subState.retryAfterSeconds != nil {
+					t.Errorf("expected subagent retryAfterSeconds to be cleared (nil), got %v", subState.retryAfterSeconds)
+				}
+				// Also verify root agent has rolled up and cleared rate limit
+				if agentEnd.Activity.RateLimitResetAt != nil {
+					t.Errorf("expected root RateLimitResetAt to be cleared (nil), got %v", agentEnd.Activity.RateLimitResetAt)
+				}
+				if agentEnd.Activity.RetryAfterSeconds != nil {
+					t.Errorf("expected root RetryAfterSeconds to be cleared (nil), got %v", agentEnd.Activity.RetryAfterSeconds)
+				}
+			})
+		}
+	})
+
+	t.Run("stale rate limit metadata cleared on text and thinking transitions", func(t *testing.T) {
+		c := newTestClassifier()
+		f := baseFrame
+		f.AgentID = "agent-stale-rl"
+		f.SessionID = "sess-stale-rl"
+		f.Seq = 1
+		f.Timestamp = 1000
+		f.EventType = "error"
+		resetAt := int64(1700000060000)
+		retrySec := int64(60)
+		f.Data = types.TelemetryFrameData{
+			IsRateLimit:       boolPtr(true),
+			RateLimitResetAt:  &resetAt,
+			RetryAfterSeconds: &retrySec,
+		}
+		agent, err := c.ProcessFrame(f)
+		if err != nil {
+			t.Fatalf("error frame failed: %v", err)
+		}
+		if agent.Activity.Activity != types.ActivityRateLimited {
+			t.Fatalf("expected ActivityRateLimited, got %v", agent.Activity.Activity)
+		}
+
+		// Send text frame -> should transition to BUSY and clear rate limit metadata
+		fText := baseFrame
+		fText.AgentID = "agent-stale-rl"
+		fText.SessionID = "sess-stale-rl"
+		fText.Seq = 2
+		fText.Timestamp = 2000
+		fText.EventType = "text"
+		txt := "I am processing now"
+		fText.Data = types.TelemetryFrameData{Content: &txt}
+		agentText, err := c.ProcessFrame(fText)
+		if err != nil {
+			t.Fatalf("text frame failed: %v", err)
+		}
+		if agentText.Activity.Activity != types.ActivityBusy {
+			t.Errorf("expected ActivityBusy, got %v", agentText.Activity.Activity)
+		}
+		if agentText.Activity.RateLimitResetAt != nil {
+			t.Errorf("expected nil RateLimitResetAt after text, got %v", agentText.Activity.RateLimitResetAt)
+		}
+		if agentText.Activity.RetryAfterSeconds != nil {
+			t.Errorf("expected nil RetryAfterSeconds after text, got %v", agentText.Activity.RetryAfterSeconds)
+		}
+
+		// Rate limit again
+		f.Seq = 3
+		f.Timestamp = 3000
+		_, err = c.ProcessFrame(f)
+		if err != nil {
+			t.Fatalf("second error frame failed: %v", err)
+		}
+
+		// Send thinking frame -> should transition to BUSY and clear rate limit metadata
+		fThink := baseFrame
+		fThink.AgentID = "agent-stale-rl"
+		fThink.SessionID = "sess-stale-rl"
+		fThink.Seq = 4
+		fThink.Timestamp = 4000
+		fThink.EventType = "thinking"
+		thk := "thinking about plan"
+		fThink.Data = types.TelemetryFrameData{Content: &thk}
+		agentThink, err := c.ProcessFrame(fThink)
+		if err != nil {
+			t.Fatalf("thinking frame failed: %v", err)
+		}
+		if agentThink.Activity.Activity != types.ActivityBusy {
+			t.Errorf("expected ActivityBusy, got %v", agentThink.Activity.Activity)
+		}
+		if agentThink.Activity.RateLimitResetAt != nil {
+			t.Errorf("expected nil RateLimitResetAt after thinking, got %v", agentThink.Activity.RateLimitResetAt)
+		}
+		if agentThink.Activity.RetryAfterSeconds != nil {
+			t.Errorf("expected nil RetryAfterSeconds after thinking, got %v", agentThink.Activity.RetryAfterSeconds)
+		}
+	})
+
+	t.Run("stale rate limit metadata cleared on handleIdleTransition", func(t *testing.T) {
+		c := newTestClassifier()
+		f := baseFrame
+		f.AgentID = "agent-stale-rl-idle"
+		f.SessionID = "sess-stale-rl-idle"
+		f.Seq = 1
+		f.Timestamp = 1000
+		f.EventType = "error"
+		resetAt := int64(1700000060000)
+		retrySec := int64(60)
+		f.Data = types.TelemetryFrameData{
+			IsRateLimit:       boolPtr(true),
+			RateLimitResetAt:  &resetAt,
+			RetryAfterSeconds: &retrySec,
+		}
+		_, err := c.ProcessFrame(f)
+		if err != nil {
+			t.Fatalf("error frame failed: %v", err)
+		}
+
+		c.mu.Lock()
+		actx := c.agentCtx["agent-stale-rl-idle"]
+		// Set root activity to Busy so handleIdleTransition can process it
+		actx.rootActivity = types.ActivityBusy
+		actx.inTurn = false
+		actx.inFlightTool = false
+		c.mu.Unlock()
+
+		c.handleIdleTransition("agent-stale-rl-idle", actx.rootGeneration)
+
+		agentLoaded, err := c.store.GetAgent("agent-stale-rl-idle")
+		if err != nil {
+			t.Fatalf("GetAgent failed: %v", err)
+		}
+		if agentLoaded.Activity.Activity != types.ActivityIdle {
+			t.Errorf("expected ActivityIdle, got %v", agentLoaded.Activity.Activity)
+		}
+		if agentLoaded.Activity.RateLimitResetAt != nil {
+			t.Errorf("expected nil RateLimitResetAt after idle transition, got %v", agentLoaded.Activity.RateLimitResetAt)
+		}
+		if agentLoaded.Activity.RetryAfterSeconds != nil {
+			t.Errorf("expected nil RetryAfterSeconds after idle transition, got %v", agentLoaded.Activity.RetryAfterSeconds)
+		}
+	})
+
+	t.Run("turn_end on RateLimited does not cancel silence timer and transitions to IDLE", func(t *testing.T) {
+		c := newTestClassifier()
+		c.turnSilenceTimeout = 50 * time.Millisecond
+		f := baseFrame
+		f.AgentID = "agent-rl-turn-end"
+		f.SessionID = "sess-rl-turn-end"
+		f.Seq = 1
+		f.Timestamp = 1000
+		f.EventType = "error"
+		isRL := true
+		f.Data = types.TelemetryFrameData{
+			IsRateLimit: &isRL,
+		}
+		agent, err := c.ProcessFrame(f)
+		if err != nil {
+			t.Fatalf("error frame failed: %v", err)
+		}
+		if agent.Activity.Activity != types.ActivityRateLimited {
+			t.Fatalf("expected ActivityRateLimited, got %v", agent.Activity.Activity)
+		}
+
+		c.mu.Lock()
+		_, timerScheduled := c.silenceTimers[agent.ID]
+		c.mu.Unlock()
+		if !timerScheduled {
+			t.Fatalf("expected silence timer to be scheduled on rate limit error")
+		}
+
+		// Process turn_end event
+		fEnd := baseFrame
+		fEnd.AgentID = "agent-rl-turn-end"
+		fEnd.SessionID = "sess-rl-turn-end"
+		fEnd.Seq = 2
+		fEnd.Timestamp = 1050
+		fEnd.EventType = "turn_end"
+		agentEnd, err := c.ProcessFrame(fEnd)
+		if err != nil {
+			t.Fatalf("turn_end frame failed: %v", err)
+		}
+		if agentEnd.Activity.Activity != types.ActivityRateLimited {
+			t.Fatalf("expected ActivityRateLimited preserved on turn_end, got %v", agentEnd.Activity.Activity)
+		}
+
+		// Verify silence timer was NOT cancelled by turn_end
+		c.mu.Lock()
+		_, timerStillScheduled := c.silenceTimers[agent.ID]
+		c.mu.Unlock()
+		if !timerStillScheduled {
+			t.Fatalf("silence timer was cancelled on turn_end for RateLimited agent!")
+		}
+
+		// Wait for silence timer to fire
+		time.Sleep(100 * time.Millisecond)
+
+		agentLoaded, err := c.store.GetAgent(agent.ID)
+		if err != nil {
+			t.Fatalf("GetAgent failed: %v", err)
+		}
+		if agentLoaded.Activity.Activity != types.ActivityIdle {
+			t.Errorf("expected transition to ActivityIdle via silence timer, got %v", agentLoaded.Activity.Activity)
+		}
+	})
+
+	t.Run("turn_end with terminal stopReason or content transitions RATE_LIMITED agent to ActivityIdle", func(t *testing.T) {
+		strPtr := func(s string) *string { return &s }
+		for _, tc := range []struct {
+			name       string
+			stopReason *string
+			content    *string
+		}{
+			{
+				name:       "stopReason end_turn",
+				stopReason: strPtr("end_turn"),
+			},
+			{
+				name:       "stopReason stop",
+				stopReason: strPtr("stop"),
+			},
+			{
+				name:    "terminal content",
+				content: strPtr("I have completed the task."),
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				c := newTestClassifier()
+				f := baseFrame
+				f.AgentID = "agent-rl-term-" + tc.name
+				f.SessionID = "sess-rl-term-" + tc.name
+				f.Seq = 1
+				f.Timestamp = 1000
+				f.EventType = "error"
+				isRL := true
+				resetAt := int64(2000000000000)
+				retrySec := int64(60)
+				f.Data = types.TelemetryFrameData{
+					IsRateLimit:       &isRL,
+					RateLimitResetAt:  &resetAt,
+					RetryAfterSeconds: &retrySec,
+				}
+				agent, err := c.ProcessFrame(f)
+				if err != nil {
+					t.Fatalf("error frame failed: %v", err)
+				}
+				if agent.Activity.Activity != types.ActivityRateLimited {
+					t.Fatalf("expected ActivityRateLimited, got %v", agent.Activity.Activity)
+				}
+				if agent.Activity.RateLimitResetAt == nil || *agent.Activity.RateLimitResetAt != resetAt {
+					t.Fatalf("expected RateLimitResetAt %d, got %v", resetAt, agent.Activity.RateLimitResetAt)
+				}
+
+				// Process turn_end with terminal condition
+				fEnd := baseFrame
+				fEnd.AgentID = f.AgentID
+				fEnd.SessionID = f.SessionID
+				fEnd.Seq = 2
+				fEnd.Timestamp = 1050
+				fEnd.EventType = "turn_end"
+				fEnd.Data = types.TelemetryFrameData{
+					StopReason: tc.stopReason,
+					Content:    tc.content,
+				}
+				agentEnd, err := c.ProcessFrame(fEnd)
+				if err != nil {
+					t.Fatalf("turn_end frame failed: %v", err)
+				}
+				if agentEnd.Activity.Activity != types.ActivityIdle {
+					t.Fatalf("expected ActivityIdle, got %v", agentEnd.Activity.Activity)
+				}
+				if agentEnd.Activity.RateLimitResetAt != nil {
+					t.Fatalf("expected RateLimitResetAt to be cleared (nil), got %v", agentEnd.Activity.RateLimitResetAt)
+				}
+				if agentEnd.Activity.RetryAfterSeconds != nil {
+					t.Fatalf("expected RetryAfterSeconds to be cleared (nil), got %v", agentEnd.Activity.RetryAfterSeconds)
+				}
+
+				// Verify silence timer was cancelled
+				c.mu.Lock()
+				_, timerScheduled := c.silenceTimers[agentEnd.ID]
+				c.mu.Unlock()
+				if timerScheduled {
+					t.Fatalf("expected silence timer to be cancelled")
+				}
+			})
+		}
+	})
+
+	t.Run("stale rate limit metadata cleared on tool_result", func(t *testing.T) {
+		c := newTestClassifier()
+		f := baseFrame
+		f.AgentID = "agent-rl-tool-res"
+		f.SessionID = "sess-rl-tool-res"
+		f.Seq = 1
+		f.Timestamp = 1000
+		f.EventType = "error"
+		isRL := true
+		resetAt := int64(1700000060000)
+		retrySec := int64(60)
+		f.Data = types.TelemetryFrameData{
+			IsRateLimit:       &isRL,
+			RateLimitResetAt:  &resetAt,
+			RetryAfterSeconds: &retrySec,
+		}
+		agent, err := c.ProcessFrame(f)
+		if err != nil {
+			t.Fatalf("error frame failed: %v", err)
+		}
+		if agent.Activity.Activity != types.ActivityRateLimited {
+			t.Fatalf("expected ActivityRateLimited, got %v", agent.Activity.Activity)
+		}
+
+		fRes := baseFrame
+		fRes.AgentID = "agent-rl-tool-res"
+		fRes.SessionID = "sess-rl-tool-res"
+		fRes.Seq = 2
+		fRes.Timestamp = 1100
+		fRes.EventType = "tool_result"
+		agentRes, err := c.ProcessFrame(fRes)
+		if err != nil {
+			t.Fatalf("tool_result frame failed: %v", err)
+		}
+		if agentRes.Activity.Activity != types.ActivityBusy {
+			t.Errorf("expected ActivityBusy on tool_result, got %v", agentRes.Activity.Activity)
+		}
+		if agentRes.Activity.RateLimitResetAt != nil {
+			t.Errorf("expected RateLimitResetAt cleared on tool_result, got %v", agentRes.Activity.RateLimitResetAt)
+		}
+		if agentRes.Activity.RetryAfterSeconds != nil {
+			t.Errorf("expected RetryAfterSeconds cleared on tool_result, got %v", agentRes.Activity.RetryAfterSeconds)
+		}
+	})
+
+	t.Run("stale rate limit metadata cleared on question_prompt and AskUserQuestion", func(t *testing.T) {
+		c := newTestClassifier()
+		f := baseFrame
+		f.AgentID = "agent-rl-qp"
+		f.SessionID = "sess-rl-qp"
+		f.Seq = 1
+		f.Timestamp = 1000
+		f.EventType = "error"
+		isRL := true
+		resetAt := int64(1700000060000)
+		retrySec := int64(60)
+		f.Data = types.TelemetryFrameData{
+			IsRateLimit:       &isRL,
+			RateLimitResetAt:  &resetAt,
+			RetryAfterSeconds: &retrySec,
+		}
+		_, err := c.ProcessFrame(f)
+		if err != nil {
+			t.Fatalf("error frame failed: %v", err)
+		}
+
+		fQP := baseFrame
+		fQP.AgentID = "agent-rl-qp"
+		fQP.SessionID = "sess-rl-qp"
+		fQP.Seq = 2
+		fQP.Timestamp = 1100
+		fQP.EventType = "question_prompt"
+		q := "Proceed?"
+		fQP.Data = types.TelemetryFrameData{Content: &q}
+		agentQP, err := c.ProcessFrame(fQP)
+		if err != nil {
+			t.Fatalf("question_prompt frame failed: %v", err)
+		}
+		if agentQP.Activity.Activity != types.ActivityWaitingQuestion {
+			t.Errorf("expected ActivityWaitingQuestion, got %v", agentQP.Activity.Activity)
+		}
+		if agentQP.Activity.RateLimitResetAt != nil {
+			t.Errorf("expected RateLimitResetAt cleared on question_prompt, got %v", agentQP.Activity.RateLimitResetAt)
+		}
+		if agentQP.Activity.RetryAfterSeconds != nil {
+			t.Errorf("expected RetryAfterSeconds cleared on question_prompt, got %v", agentQP.Activity.RetryAfterSeconds)
+		}
+	})
+
+	t.Run("stale rate limit metadata cleared on rollup when root is Error or WaitingQuestion", func(t *testing.T) {
+		c := newTestClassifier()
+		f := baseFrame
+		f.AgentID = "agent-rl-rollup"
+		f.SessionID = "sess-rl-rollup"
+		f.Seq = 1
+		f.Timestamp = 1000
+		f.EventType = "error"
+		isRL := true
+		resetAt := int64(1700000060000)
+		retrySec := int64(60)
+		f.Data = types.TelemetryFrameData{
+			IsRateLimit:       &isRL,
+			RateLimitResetAt:  &resetAt,
+			RetryAfterSeconds: &retrySec,
+		}
+		agent, err := c.ProcessFrame(f)
+		if err != nil {
+			t.Fatalf("error frame failed: %v", err)
+		}
+
+		c.mu.Lock()
+		actx := c.agentCtx[agent.ID]
+		// Add a subagent so rollupActivityLocked executes precedence logic
+		actx.subagents = map[string]*subagentState{
+			"sub-1": {id: "sub-1", activity: types.ActivityBusy},
+		}
+		// Force root activity to Error
+		actx.rootActivity = types.ActivityError
+		c.rollupActivityLocked(agent, actx)
+		c.mu.Unlock()
+
+		if agent.Activity.Activity != types.ActivityError {
+			t.Errorf("expected ActivityError, got %v", agent.Activity.Activity)
+		}
+		if agent.Activity.RateLimitResetAt != nil {
+			t.Errorf("expected RateLimitResetAt cleared on rollup for root error, got %v", agent.Activity.RateLimitResetAt)
+		}
+		if agent.Activity.RetryAfterSeconds != nil {
+			t.Errorf("expected RetryAfterSeconds cleared on rollup for root error, got %v", agent.Activity.RetryAfterSeconds)
+		}
+
+		// Now test WaitingQuestion
+		agent.Activity.RateLimitResetAt = &resetAt
+		agent.Activity.RetryAfterSeconds = &retrySec
+		c.mu.Lock()
+		actx.rootActivity = types.ActivityWaitingQuestion
+		c.rollupActivityLocked(agent, actx)
+		c.mu.Unlock()
+
+		if agent.Activity.Activity != types.ActivityWaitingQuestion {
+			t.Errorf("expected ActivityWaitingQuestion, got %v", agent.Activity.Activity)
+		}
+		if agent.Activity.RateLimitResetAt != nil {
+			t.Errorf("expected RateLimitResetAt cleared on rollup for waiting question, got %v", agent.Activity.RateLimitResetAt)
+		}
+		if agent.Activity.RetryAfterSeconds != nil {
+			t.Errorf("expected RetryAfterSeconds cleared on rollup for waiting question, got %v", agent.Activity.RetryAfterSeconds)
 		}
 	})
 }
@@ -8902,6 +9659,648 @@ func TestClassifier_TruncateRunesBoundary(t *testing.T) {
 		t.Errorf("expected LastError to end with complete rune '世', got %q", (*subErr)[len(*subErr)-10:])
 	}
 }
+
+func TestClassifier_HandleSilenceTransition_SubagentRateLimit(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, _ := newTestClassifier(t, sum)
+	c.syncMode = false
+	c.SetIdleGracePeriod(10 * time.Second)
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{
+		ID:       "env-silence-subrl",
+		Label:    "workstation",
+		Hostname: "workstation",
+		Platform: "darwin",
+		User:     "engineer",
+	}
+	ws := types.IWorkspaceInfo{
+		Branch: "main",
+		CWD:    "/path/to/repo",
+	}
+	proj := types.IProjectInfo{
+		ID:            "repo",
+		Name:          "repo",
+		CanonicalRoot: "/path/to/repo",
+	}
+	agentID := "env-silence-subrl:claude-code:sess-silence-subrl"
+
+	baseFrame := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-silence-subrl",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+	}
+
+	// 1. run_started
+	startNow := time.Now().UnixMilli()
+	fStart := baseFrame
+	fStart.Seq = 1
+	fStart.Timestamp = startNow
+	fStart.EventType = "run_started"
+	if _, err := c.ProcessFrame(fStart); err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+
+	// 2. Subagent gets 429 rate limit error
+	subID := "sub-rl-1"
+	exitCode429 := 429
+	retrySec := int64(60)
+	resetAt := int64(startNow + 60000)
+	errMsg := "Rate limit exceeded"
+
+	fSub := baseFrame
+	fSub.Seq = 2
+	fSub.Timestamp = startNow + 10
+	fSub.SubagentID = &subID
+	fSub.EventType = "error"
+	fSub.Data = types.TelemetryFrameData{
+		ExitCode:          &exitCode429,
+		RetryAfterSeconds: &retrySec,
+		RateLimitResetAt:  &resetAt,
+		Content:           &errMsg,
+	}
+	agent, err := c.ProcessFrame(fSub)
+	if err != nil {
+		t.Fatalf("subagent error frame failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityRateLimited {
+		t.Fatalf("expected rolled-up activity RATE_LIMITED, got %v", agent.Activity.Activity)
+	}
+
+	// Capture scheduled root generation
+	c.mu.Lock()
+	actx := c.agentCtx[agentID]
+	if actx == nil {
+		c.mu.Unlock()
+		t.Fatalf("expected agentContext to exist")
+	}
+	scheduledGen := actx.rootGeneration
+	c.mu.Unlock()
+
+	// 3. Trigger handleSilenceTransition
+	c.handleSilenceTransition(agentID, scheduledGen)
+
+	// 4. Verify agent in store transitioned to IDLE and rate limits are cleared
+	loaded, err := c.store.GetAgent(agentID)
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if loaded == nil {
+		t.Fatalf("expected agent to exist in store")
+	}
+	if loaded.Activity.Activity != types.ActivityIdle {
+		t.Errorf("expected agent Activity to transition to IDLE, got %v", loaded.Activity.Activity)
+	}
+	if loaded.Activity.RateLimitResetAt != nil {
+		t.Errorf("expected RateLimitResetAt to be nil, got %v", *loaded.Activity.RateLimitResetAt)
+	}
+	if loaded.Activity.RetryAfterSeconds != nil {
+		t.Errorf("expected RetryAfterSeconds to be nil, got %v", *loaded.Activity.RetryAfterSeconds)
+	}
+	if len(loaded.Activity.ActiveSubagents) != 1 {
+		t.Fatalf("expected 1 subagent summary, got %d", len(loaded.Activity.ActiveSubagents))
+	}
+	subSummary := loaded.Activity.ActiveSubagents[0]
+	if subSummary.Activity != types.ActivityIdle {
+		t.Errorf("expected subagent summary Activity to be IDLE, got %v", subSummary.Activity)
+	}
+	if subSummary.Status != types.SubagentCompleted {
+		t.Errorf("expected subagent summary Status to be COMPLETED, got %v", subSummary.Status)
+	}
+}
+
+func TestClassifier_RateLimitSilenceDuration_EventTimestampAware(t *testing.T) {
+	c, _ := newTestClassifier(t, nil)
+	defer func() { _ = c.Close() }()
+
+	c.turnSilenceTimeout = 30 * time.Minute
+	nowMs := int64(1700000000000) // Timestamp from the past relative to wall clock
+	resetAt := nowMs + 40*60*1000 // 40 minutes in future relative to nowMs
+
+	c.mu.Lock()
+	dur := c.rateLimitSilenceDurationLocked(&resetAt, nil, nowMs)
+	c.mu.Unlock()
+
+	// 40m > 30m threshold, so expected is resetDur + DefaultRateLimitSilenceBuffer (40m + 2m = 42m)
+	expected := 42 * time.Minute
+	if dur != expected {
+		t.Errorf("expected silence duration %v computed relative to nowMs, got %v", expected, dur)
+	}
+}
+
+func TestClassifier_RateLimitSilenceDuration_CustomSilenceTimeout(t *testing.T) {
+	c, _ := newTestClassifier(t, nil)
+	defer func() { _ = c.Close() }()
+
+	c.turnSilenceTimeout = 5 * time.Minute
+	retrySec := int64(600) // 10 minutes wait
+	nowMs := int64(1700000000000)
+
+	c.mu.Lock()
+	dur := c.rateLimitSilenceDurationLocked(nil, &retrySec, nowMs)
+	c.mu.Unlock()
+
+	// 10m > 5m custom threshold, so expected is 10m + DefaultRateLimitSilenceBuffer (10m + 2m = 12m)
+	expected := 12 * time.Minute
+	if dur != expected {
+		t.Errorf("expected silence duration %v respecting custom threshold 5m, got %v", expected, dur)
+	}
+}
+
+func TestClassifier_RateLimitSilenceDuration_HugeResetAt_OverflowProtection(t *testing.T) {
+	c, _ := newTestClassifier(t, nil)
+	defer func() { _ = c.Close() }()
+
+	c.turnSilenceTimeout = 5 * time.Minute
+	nowMs := int64(1700000000000)
+	hugeResetAt := int64(math.MaxInt64)
+
+	c.mu.Lock()
+	dur := c.rateLimitSilenceDurationLocked(&hugeResetAt, nil, nowMs)
+	c.mu.Unlock()
+
+	expected := 24*time.Hour + DefaultRateLimitSilenceBuffer
+	if dur != expected {
+		t.Errorf("expected silence duration capped at %v for huge resetAt, got %v", expected, dur)
+	}
+}
+
+func TestClassifier_TurnEnd_IdleGracePeriod_PreservesSuppliedRateLimitMetadata(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, _ := newTestClassifier(t, sum)
+	c.syncMode = false
+	c.SetIdleGracePeriod(10 * time.Second)
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{
+		ID:       "env-turnend-rl",
+		Label:    "workstation",
+		Hostname: "workstation",
+		Platform: "darwin",
+		User:     "engineer",
+	}
+	ws := types.IWorkspaceInfo{
+		Branch: "main",
+		CWD:    "/path/to/repo",
+	}
+	proj := types.IProjectInfo{
+		ID:            "repo",
+		Name:          "repo",
+		CanonicalRoot: "/path/to/repo",
+	}
+	agentID := "env-turnend-rl:claude-code:sess-turnend-rl"
+
+	baseFrame := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-turnend-rl",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+	}
+
+	startNow := time.Now().UnixMilli()
+	fStart := baseFrame
+	fStart.Seq = 1
+	fStart.Timestamp = startNow
+	fStart.EventType = "run_started"
+	if _, err := c.ProcessFrame(fStart); err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+
+	// Turn starts, transitioning agent to BUSY
+	fTurnStart := baseFrame
+	fTurnStart.Seq = 2
+	fTurnStart.Timestamp = startNow + 10
+	fTurnStart.EventType = "turn_start"
+	if _, err := c.ProcessFrame(fTurnStart); err != nil {
+		t.Fatalf("turn_start failed: %v", err)
+	}
+
+	// Turn ends with rate-limit metadata during active idle grace period
+	resetAt := startNow + 60000
+	retrySec := int64(60)
+	stopReason := "end_turn"
+	fTurnEnd := baseFrame
+	fTurnEnd.Seq = 3
+	fTurnEnd.Timestamp = startNow + 20
+	fTurnEnd.EventType = "turn_end"
+	fTurnEnd.Data = types.TelemetryFrameData{
+		StopReason:        &stopReason,
+		RateLimitResetAt:  &resetAt,
+		RetryAfterSeconds: &retrySec,
+	}
+
+	agent, err := c.ProcessFrame(fTurnEnd)
+	if err != nil {
+		t.Fatalf("turn_end failed: %v", err)
+	}
+
+	// During grace period, agent remains BUSY and supplied rate-limit metadata must be preserved
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Fatalf("expected agent Activity to be BUSY during grace period, got %v", agent.Activity.Activity)
+	}
+	if agent.Activity.RateLimitResetAt == nil || *agent.Activity.RateLimitResetAt != resetAt {
+		t.Errorf("expected RateLimitResetAt %d preserved, got %v", resetAt, agent.Activity.RateLimitResetAt)
+	}
+	if agent.Activity.RetryAfterSeconds == nil || *agent.Activity.RetryAfterSeconds != retrySec {
+		t.Errorf("expected RetryAfterSeconds %d preserved, got %v", retrySec, agent.Activity.RetryAfterSeconds)
+	}
+
+	// Also verify stored agent in database
+	loaded, err := c.store.GetAgent(agentID)
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if loaded == nil {
+		t.Fatalf("expected agent to exist in store")
+	}
+	if loaded.Activity.Activity != types.ActivityBusy {
+		t.Errorf("expected stored agent Activity to be BUSY, got %v", loaded.Activity.Activity)
+	}
+	if loaded.Activity.RateLimitResetAt == nil || *loaded.Activity.RateLimitResetAt != resetAt {
+		t.Errorf("expected stored RateLimitResetAt %d preserved, got %v", resetAt, loaded.Activity.RateLimitResetAt)
+	}
+	if loaded.Activity.RetryAfterSeconds == nil || *loaded.Activity.RetryAfterSeconds != retrySec {
+		t.Errorf("expected stored RetryAfterSeconds %d preserved, got %v", retrySec, loaded.Activity.RetryAfterSeconds)
+	}
+
+	// Subsequent turn_end without rate-limit metadata clears it
+	fTurnEnd2 := baseFrame
+	fTurnEnd2.Seq = 4
+	fTurnEnd2.Timestamp = startNow + 30
+	fTurnEnd2.EventType = "turn_end"
+	fTurnEnd2.Data = types.TelemetryFrameData{
+		StopReason: &stopReason,
+	}
+	agent2, err := c.ProcessFrame(fTurnEnd2)
+	if err != nil {
+		t.Fatalf("turn_end 2 failed: %v", err)
+	}
+	if agent2.Activity.RateLimitResetAt != nil {
+		t.Errorf("expected RateLimitResetAt cleared when not supplied on turn_end, got %v", agent2.Activity.RateLimitResetAt)
+	}
+	if agent2.Activity.RetryAfterSeconds != nil {
+		t.Errorf("expected RetryAfterSeconds cleared when not supplied on turn_end, got %v", agent2.Activity.RetryAfterSeconds)
+	}
+}
+
+func TestClassifier_RootRateLimitPreservedAcrossSubagentPreemption(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, _ := newTestClassifier(t, sum)
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{
+		ID:       "env-root-rl-sub",
+		Label:    "workstation",
+		Hostname: "workstation",
+		Platform: "darwin",
+		User:     "engineer",
+	}
+	ws := types.IWorkspaceInfo{
+		Branch: "main",
+		CWD:    "/path/to/repo",
+	}
+	proj := types.IProjectInfo{
+		ID:            "repo",
+		Name:          "repo",
+		CanonicalRoot: "/path/to/repo",
+	}
+	agentID := "env-root-rl-sub:claude-code:sess-root-rl-sub"
+
+	baseFrame := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-root-rl-sub",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+	}
+
+	startNow := time.Now().UnixMilli()
+	fStart := baseFrame
+	fStart.Seq = 1
+	fStart.Timestamp = startNow
+	fStart.EventType = "run_started"
+	if _, err := c.ProcessFrame(fStart); err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+
+	// 1. Root agent encounters a rate-limiting error
+	resetAt := startNow + 120000
+	retrySec := int64(120)
+	isRL := true
+	errMsg := "API rate limit exceeded, retry after 120s"
+	fError := baseFrame
+	fError.Seq = 2
+	fError.Timestamp = startNow + 10
+	fError.EventType = "error"
+	fError.Data = types.TelemetryFrameData{
+		Content:           &errMsg,
+		IsRateLimit:       &isRL,
+		RateLimitResetAt:  &resetAt,
+		RetryAfterSeconds: &retrySec,
+	}
+	agent, err := c.ProcessFrame(fError)
+	if err != nil {
+		t.Fatalf("root error frame failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityRateLimited {
+		t.Fatalf("expected root activity to be RATE_LIMITED, got %v", agent.Activity.Activity)
+	}
+	if agent.Activity.RateLimitResetAt == nil || *agent.Activity.RateLimitResetAt != resetAt {
+		t.Fatalf("expected RateLimitResetAt %d, got %v", resetAt, agent.Activity.RateLimitResetAt)
+	}
+	if agent.Activity.RetryAfterSeconds == nil || *agent.Activity.RetryAfterSeconds != retrySec {
+		t.Fatalf("expected RetryAfterSeconds %d, got %v", retrySec, agent.Activity.RetryAfterSeconds)
+	}
+
+	// 2. Subagent encounters a transient error, preempting root RATE_LIMITED state
+	subagentID := "sub-transient-1"
+	subErrMsg := "Tool crash in subagent"
+	fSubErr := baseFrame
+	fSubErr.SubagentID = &subagentID
+	fSubErr.Seq = 3
+	fSubErr.Timestamp = startNow + 20
+	fSubErr.EventType = "error"
+	fSubErr.Data = types.TelemetryFrameData{
+		Content: &subErrMsg,
+	}
+	agent, err = c.ProcessFrame(fSubErr)
+	if err != nil {
+		t.Fatalf("subagent error frame failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityError {
+		t.Fatalf("expected composite activity to be ERROR due to subagent error precedence, got %v", agent.Activity.Activity)
+	}
+	if agent.Activity.RateLimitResetAt != nil {
+		t.Fatalf("expected RateLimitResetAt to be nil during subagent error, got %v", agent.Activity.RateLimitResetAt)
+	}
+	if agent.Activity.RetryAfterSeconds != nil {
+		t.Fatalf("expected RetryAfterSeconds to be nil during subagent error, got %v", agent.Activity.RetryAfterSeconds)
+	}
+
+	// 3. Transient subagent error resolves (subagent emits turn_end and goes idle)
+	stopReason := "end_turn"
+	fSubEnd := baseFrame
+	fSubEnd.SubagentID = &subagentID
+	fSubEnd.Seq = 4
+	fSubEnd.Timestamp = startNow + 30
+	fSubEnd.EventType = "turn_end"
+	fSubEnd.Data = types.TelemetryFrameData{
+		StopReason: &stopReason,
+	}
+	agent, err = c.ProcessFrame(fSubEnd)
+	if err != nil {
+		t.Fatalf("subagent turn_end frame failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityRateLimited {
+		t.Fatalf("expected composite activity to restore to RATE_LIMITED after subagent error resolved, got %v", agent.Activity.Activity)
+	}
+	if agent.Activity.RateLimitResetAt == nil || *agent.Activity.RateLimitResetAt != resetAt {
+		t.Fatalf("expected root RateLimitResetAt %d to be restored, got %v", resetAt, agent.Activity.RateLimitResetAt)
+	}
+	if agent.Activity.RetryAfterSeconds == nil || *agent.Activity.RetryAfterSeconds != retrySec {
+		t.Fatalf("expected root RetryAfterSeconds %d to be restored, got %v", retrySec, agent.Activity.RetryAfterSeconds)
+	}
+
+	// 4. Root agent transitions out of RATE_LIMITED (e.g. root turn starts)
+	fTurnStart := baseFrame
+	fTurnStart.Seq = 5
+	fTurnStart.Timestamp = startNow + 40
+	fTurnStart.EventType = "turn_start"
+	agent, err = c.ProcessFrame(fTurnStart)
+	if err != nil {
+		t.Fatalf("turn_start frame failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Fatalf("expected root activity to be BUSY on turn_start, got %v", agent.Activity.Activity)
+	}
+	if agent.Activity.RateLimitResetAt != nil {
+		t.Errorf("expected RateLimitResetAt to be cleared on agent, got %v", agent.Activity.RateLimitResetAt)
+	}
+	if agent.Activity.RetryAfterSeconds != nil {
+		t.Errorf("expected RetryAfterSeconds to be cleared on agent, got %v", agent.Activity.RetryAfterSeconds)
+	}
+
+	// Check internal agentContext to verify rootRateLimitResetAt and rootRetryAfterSeconds were cleared
+	c.mu.Lock()
+	actx := c.agentCtx[agentID]
+	if actx != nil {
+		if actx.rootRateLimitResetAt != nil {
+			t.Errorf("expected actx.rootRateLimitResetAt to be nil after root transitioned out of RATE_LIMITED, got %v", actx.rootRateLimitResetAt)
+		}
+		if actx.rootRetryAfterSeconds != nil {
+			t.Errorf("expected actx.rootRetryAfterSeconds to be nil after root transitioned out of RATE_LIMITED, got %v", actx.rootRetryAfterSeconds)
+		}
+	}
+	c.mu.Unlock()
+}
+
+func TestClassifier_RateLimitedActivity_BypassesLLMSummarization(t *testing.T) {
+	var requestCount int64
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&requestCount, 1)
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]interface{}{
+			"id":     "chatcmpl-rl-bypass",
+			"object": "chat.completion",
+			"choices": []map[string]interface{}{
+				{
+					"index": 0,
+					"message": map[string]interface{}{
+						"role":    "assistant",
+						"content": `{"action":"Some unwanted LLM summary","phase":"debugging"}`,
+					},
+					"finish_reason": "stop",
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(mockServer.Close)
+
+	p, err := openai.New(
+		anyllm.WithBaseURL(mockServer.URL+"/v1"),
+		anyllm.WithAPIKey("test-key"),
+	)
+	if err != nil {
+		t.Fatalf("openai.New() failed: %v", err)
+	}
+
+	sum, err := summarizer.New(summarizer.Config{
+		Providers: []summarizer.ProviderConfig{
+			{
+				Name:     "mock-openai",
+				Provider: p,
+				Model:    "gpt-4o-mini",
+			},
+		},
+		DebounceWindow: 10 * time.Millisecond,
+		Timeout:        2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+
+	c, s := newTestClassifier(t, sum)
+	defer func() { _ = c.Close() }()
+	c.SetSyncMode(true)
+
+	env := types.IEnvironmentInfo{ID: "env-rl-llm", Label: "devbox", Hostname: "devbox", Platform: "linux", User: "testuser"}
+	ws := types.IWorkspaceInfo{Branch: "main", CWD: "/workspace"}
+	proj := types.IProjectInfo{ID: "repo-rl-llm", Name: "repo", CanonicalRoot: "/workspace"}
+	agentID := "env-rl-llm:claude-code:sess-rl-llm"
+
+	// 1. Initial turn_start
+	_, err = c.ProcessFrame(types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-rl-llm",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   1000,
+		EventType:   "turn_start",
+	})
+	if err != nil {
+		t.Fatalf("turn_start failed: %v", err)
+	}
+
+	// 2. Dispatch rate-limit error frame
+	errContent := "Rate limit reached: 429 too many requests"
+	isRL := true
+	resetAt := int64(1000 + 60000)
+	retrySec := int64(60)
+
+	agent, err := c.ProcessFrame(types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-rl-llm",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   2000,
+		EventType:   "error",
+		Data: types.TelemetryFrameData{
+			Content:           &errContent,
+			IsRateLimit:       &isRL,
+			RateLimitResetAt:  &resetAt,
+			RetryAfterSeconds: &retrySec,
+		},
+	})
+	if err != nil {
+		t.Fatalf("error frame failed: %v", err)
+	}
+
+	if agent.Activity.Activity != types.ActivityRateLimited {
+		t.Fatalf("expected ActivityRateLimited, got %v", agent.Activity.Activity)
+	}
+	if agent.Activity.Action != "Rate limit reached — backoff/retry in progress" {
+		t.Errorf("expected deterministic rate limit action, got %q", agent.Activity.Action)
+	}
+	if agent.Activity.Phase != nil {
+		t.Errorf("expected nil phase for rate limit, got %v", agent.Activity.Phase)
+	}
+
+	// Flush timers and jobs
+	c.FlushAll()
+
+	// Verify no LLM call was made in sync mode
+	if count := atomic.LoadInt64(&requestCount); count != 0 {
+		t.Errorf("expected 0 LLM requests for rate-limited agent in sync mode, got %d", count)
+	}
+
+	// Verify agent persisted in store retains deterministic action and nil phase
+	dbAgent, err := s.GetAgent(agentID)
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if dbAgent.Activity.Activity != types.ActivityRateLimited {
+		t.Errorf("expected DB agent activity RATE_LIMITED, got %v", dbAgent.Activity.Activity)
+	}
+	if dbAgent.Activity.Action != "Rate limit reached — backoff/retry in progress" {
+		t.Errorf("expected DB agent deterministic action, got %q", dbAgent.Activity.Action)
+	}
+	if dbAgent.Activity.Phase != nil {
+		t.Errorf("expected DB agent nil phase, got %v", dbAgent.Activity.Phase)
+	}
+
+	// 3. Also verify async mode
+	c.SetSyncMode(false)
+	agentAsyncID := "env-rl-llm:claude-code:sess-rl-async"
+	_, err = c.ProcessFrame(types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentAsyncID,
+		SessionID:   "sess-rl-async",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   3000,
+		EventType:   "turn_start",
+	})
+	if err != nil {
+		t.Fatalf("turn_start async failed: %v", err)
+	}
+
+	agentAsync, err := c.ProcessFrame(types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentAsyncID,
+		SessionID:   "sess-rl-async",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   4000,
+		EventType:   "error",
+		Data: types.TelemetryFrameData{
+			Content:           &errContent,
+			IsRateLimit:       &isRL,
+			RateLimitResetAt:  &resetAt,
+			RetryAfterSeconds: &retrySec,
+		},
+	})
+	if err != nil {
+		t.Fatalf("error frame async failed: %v", err)
+	}
+	if agentAsync.Activity.Activity != types.ActivityRateLimited {
+		t.Fatalf("expected async ActivityRateLimited, got %v", agentAsync.Activity.Activity)
+	}
+	c.FlushAll()
+	time.Sleep(50 * time.Millisecond)
+
+	if count := atomic.LoadInt64(&requestCount); count != 0 {
+		t.Errorf("expected 0 LLM requests for rate-limited agent across sync and async modes, got %d", count)
+	}
+}
+
+
 
 
 

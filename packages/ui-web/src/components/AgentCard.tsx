@@ -21,6 +21,7 @@ import {
 import { useRelativeTime } from "../hooks/useRelativeTime";
 import {
   formatExactTime,
+  formatRateLimitCallout,
   getToolExecutionDuration,
   getToolStallTier,
   formatDuration,
@@ -360,9 +361,7 @@ export function AgentCard({
             <IconWrapper size="md" tone="warning" align="top">
               <Clock size={16} />
             </IconWrapper>
-            <span className="line-clamp-2 font-mono text-[11px]">
-              {activity.lastError || "Rate limit reached — backoff/retry in progress"}
-            </span>
+            <span className="line-clamp-2 font-mono text-[11px]">{formatRateLimitCallout(activity, now)}</span>
           </div>
         )}
 

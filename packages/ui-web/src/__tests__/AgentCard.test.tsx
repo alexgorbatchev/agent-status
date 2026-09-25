@@ -79,6 +79,24 @@ describe("AgentCard Component", () => {
     expect(html).toContain('data-callout-type="warning"');
   });
 
+  it("renders remaining wait time or reset timestamp in rate limited callout when rateLimitResetAt is present", () => {
+    const futureReset = Date.now() + 45000;
+    const rateLimitedAgent = factory_agentState({
+      activity: {
+        ...fixture_agentStateRunning.activity,
+        lifecycle: "RUNNING",
+        activity: "RATE_LIMITED",
+        lastError: "Rate limit exceeded",
+        rateLimitResetAt: futureReset,
+        retryAfterSeconds: 45,
+      },
+    });
+    const html = renderToStaticMarkup(<AgentCard agent={rateLimitedAgent} />);
+
+    expect(html).toContain('data-testid="AgentCard--rate-limited"');
+    expect(html).toMatch(/retry in 45s|45s/);
+  });
+
   it("renders fallback values for minimal agent with omitted fields", () => {
     const html = renderToStaticMarkup(<AgentCard agent={fixture_minimalAgentState} />);
 

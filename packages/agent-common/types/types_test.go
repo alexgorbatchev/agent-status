@@ -726,31 +726,6 @@ func TestMessagesAndEventsJSON(t *testing.T) {
 			t.Errorf("expected RetryAfterSeconds %d, got %v", retrySec, decodedRL.RetryAfterSeconds)
 		}
 
-		snakeRLJSON := `{"lifecycle":"RUNNING","activity":"RATE_LIMITED","rate_limit_reset_at":1700000060000,"retry_after_seconds":30}`
-		var decodedSnakeRL IAgentActivity
-		if err := json.Unmarshal([]byte(snakeRLJSON), &decodedSnakeRL); err != nil {
-			t.Fatalf("json.Unmarshal snake_case rate limit failed: %v", err)
-		}
-		if decodedSnakeRL.RateLimitResetAt == nil || *decodedSnakeRL.RateLimitResetAt != resetAt {
-			t.Errorf("expected RateLimitResetAt %d from snake_case, got %v", resetAt, decodedSnakeRL.RateLimitResetAt)
-		}
-		if decodedSnakeRL.RetryAfterSeconds == nil || *decodedSnakeRL.RetryAfterSeconds != retrySec {
-			t.Errorf("expected RetryAfterSeconds %d from snake_case, got %v", retrySec, decodedSnakeRL.RetryAfterSeconds)
-		}
-
-		// When both camelCase and snake_case are provided, camelCase takes precedence
-		bothRLJSON := `{"lifecycle":"RUNNING","activity":"RATE_LIMITED","rateLimitResetAt":100,"rate_limit_reset_at":200,"retryAfterSeconds":10,"retry_after_seconds":20}`
-		var decodedBothRL IAgentActivity
-		if err := json.Unmarshal([]byte(bothRLJSON), &decodedBothRL); err != nil {
-			t.Fatalf("json.Unmarshal both RL failed: %v", err)
-		}
-		if decodedBothRL.RateLimitResetAt == nil || *decodedBothRL.RateLimitResetAt != 100 {
-			t.Errorf("expected camelCase 100 to win, got %v", decodedBothRL.RateLimitResetAt)
-		}
-		if decodedBothRL.RetryAfterSeconds == nil || *decodedBothRL.RetryAfterSeconds != 10 {
-			t.Errorf("expected camelCase 10 to win, got %v", decodedBothRL.RetryAfterSeconds)
-		}
-
 		var invalid IAgentActivity
 		if err := json.Unmarshal([]byte(`{"lifecycle": 123}`), &invalid); err == nil {
 			t.Errorf("expected error unmarshaling invalid json")

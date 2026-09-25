@@ -27,8 +27,8 @@ func TestOpen_Memory(t *testing.T) {
 	if err := st.DB().QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("query user_version failed: %v", err)
 	}
-	if version != 6 {
-		t.Errorf("got user_version = %d, want 6", version)
+	if version != 7 {
+		t.Errorf("got user_version = %d, want 7", version)
 	}
 }
 
@@ -71,10 +71,20 @@ func TestOpen_InvalidPath(t *testing.T) {
 }
 
 func TestOpen_MigrationFailure(t *testing.T) {
-	// Attempt to open /dev/null as a database which fails migration table creation
-	_, err := Open("/dev/null")
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "conflict.db")
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open failed: %v", err)
+	}
+	if _, err := db.Exec("CREATE TABLE agents (conflict TEXT); PRAGMA user_version = 0;"); err != nil {
+		t.Fatalf("creating conflict table failed: %v", err)
+	}
+	_ = db.Close()
+
+	_, err = Open(dbPath)
 	if err == nil {
-		t.Errorf("expected error opening /dev/null, got nil")
+		t.Errorf("expected migration failure in Open, got nil")
 	}
 }
 
@@ -203,8 +213,8 @@ func TestMigrate_V2ToV4(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 6 {
-		t.Errorf("got user_version = %d, want 6", version)
+	if version != 7 {
+		t.Errorf("got user_version = %d, want 7", version)
 	}
 }
 
@@ -245,8 +255,8 @@ func TestMigrate_V4ToV5(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 6 {
-		t.Errorf("got user_version = %d, want 6", version)
+	if version != 7 {
+		t.Errorf("got user_version = %d, want 7", version)
 	}
 
 	// Verify new columns exist by selecting them
@@ -356,8 +366,8 @@ CREATE TABLE agents (
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 6 {
-		t.Errorf("got user_version = %d, want 6", version)
+	if version != 7 {
+		t.Errorf("got user_version = %d, want 7", version)
 	}
 
 	// Now inserting RATE_LIMITED must succeed
@@ -371,6 +381,98 @@ CREATE TABLE agents (
 	}
 	if readActivity != "RATE_LIMITED" {
 		t.Errorf("got activity %q, want 'RATE_LIMITED'", readActivity)
+	}
+}
+
+func TestMigrate_V6ToV7(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open failed: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	if err := Migrate(db); err != nil {
+		t.Fatalf("initial Migrate() failed: %v", err)
+	}
+
+	var version int
+	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
+		t.Fatalf("reading user_version: %v", err)
+	}
+	if version != 7 {
+		t.Errorf("got user_version = %d, want 7", version)
+	}
+
+	// Verify columns exist by querying them
+	var resetAt, retrySec sql.NullInt64
+	err = db.QueryRow("SELECT rate_limit_reset_at, retry_after_seconds FROM agents LIMIT 1;").Scan(&resetAt, &retrySec)
+	if err != nil && err != sql.ErrNoRows {
+		t.Errorf("columns rate_limit_reset_at and retry_after_seconds missing: %v", err)
+	}
+}
+
+func TestSaveAndGetAgent_RateLimitMetadata(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "agent-status.db")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	resetAt := int64(1789900060000)
+	retrySec := int64(45)
+
+	agent := types.IAgentState{
+		ID:        "env-1:claude-code:ses-rl-meta",
+		SessionID: "ses-rl-meta",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:              "env-1",
+			Label:           "local",
+			Hostname:        "host",
+			Platform:        "darwin",
+			User:            "user",
+			LastHeartbeatAt: 1000,
+		},
+		Project: types.IProjectInfo{
+			ID:            "proj-1",
+			Name:          "agent-status",
+			CanonicalRoot: "/repo",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "main",
+			CWD:    "/repo",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle:         types.LifecycleRunning,
+			Activity:          types.ActivityRateLimited,
+			Title:             "Rate limited agent",
+			Action:            "Backing off",
+			RateLimitResetAt:  &resetAt,
+			RetryAfterSeconds: &retrySec,
+			FirstStartedAt:    1000,
+			UpdatedAt:         2000,
+		},
+	}
+
+	if err := st.SaveAgentState(agent); err != nil {
+		t.Fatalf("SaveAgentState failed: %v", err)
+	}
+
+	loaded, err := st.GetAgent(agent.ID)
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if loaded == nil {
+		t.Fatalf("GetAgent returned nil")
+	}
+
+	if loaded.Activity.RateLimitResetAt == nil || *loaded.Activity.RateLimitResetAt != resetAt {
+		t.Errorf("got RateLimitResetAt %v, want %d", loaded.Activity.RateLimitResetAt, resetAt)
+	}
+	if loaded.Activity.RetryAfterSeconds == nil || *loaded.Activity.RetryAfterSeconds != retrySec {
+		t.Errorf("got RetryAfterSeconds %v, want %d", loaded.Activity.RetryAfterSeconds, retrySec)
 	}
 }
 
@@ -405,8 +507,8 @@ func TestMigrate_V3ToV4(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 6 {
-		t.Errorf("got user_version = %d, want 6", version)
+	if version != 7 {
+		t.Errorf("got user_version = %d, want 7", version)
 	}
 }
 
@@ -436,8 +538,8 @@ func TestMigrate_V1ToV2(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 6 {
-		t.Errorf("got user_version = %d, want 6", version)
+	if version != 7 {
+		t.Errorf("got user_version = %d, want 7", version)
 	}
 
 	var indexCount int
@@ -1136,6 +1238,47 @@ func TestStore_EndCurrentRun_ClosedDB(t *testing.T) {
 	_ = st.Close()
 	if err := st.EndCurrentRun("agent-1", 100); err == nil {
 		t.Errorf("expected error from EndCurrentRun on closed DB")
+	}
+}
+
+func TestStore_GetAllEnvironments_ScanError(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	if _, err := st.DB().Exec("DROP TABLE environments; CREATE VIEW environments AS SELECT 'e1' AS id, 'l' AS label, 'h' AS hostname, 'p' AS platform, 'u' AS user, 'bad-int' AS last_heartbeat_at;"); err != nil {
+		t.Fatalf("creating view failed: %v", err)
+	}
+	if _, err := st.GetAllEnvironments(); err == nil {
+		t.Errorf("expected scan error in GetAllEnvironments")
+	}
+}
+
+func TestStore_SaveAgentState_RunInsertError(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	if _, err := st.DB().Exec("DROP TABLE runs;"); err != nil {
+		t.Fatalf("drop runs failed: %v", err)
+	}
+	agentWithRun := types.IAgentState{
+		ID:        "a-run-fail",
+		SessionID: "s-run-fail",
+		Environment: types.IEnvironmentInfo{
+			ID: "e1",
+		},
+		Harness: types.HarnessClaudeCode,
+		Activity: types.IAgentActivity{
+			CurrentRun: &types.IRunInfo{ID: "run-fail", PID: 123},
+		},
+	}
+	if err := st.SaveAgentState(agentWithRun); err == nil {
+		t.Errorf("expected error when runs table is dropped")
 	}
 }
 
@@ -2135,6 +2278,17 @@ func TestStore_EndCurrentRun_WithRun(t *testing.T) {
 	}
 }
 
+func TestMigrate_ClosedDB(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open failed: %v", err)
+	}
+	_ = db.Close()
+	if err := Migrate(db); err == nil {
+		t.Errorf("expected error on closed db")
+	}
+}
+
 func TestStore_Migrate_ErrorPaths(t *testing.T) {
 	// 0. Error in v1 migration (e.g. conflicting table schema)
 	t.Run("v1 error on invalid schema", func(t *testing.T) {
@@ -2412,6 +2566,50 @@ func TestStore_Migrate_ErrorPaths(t *testing.T) {
 		}
 		if err := Migrate(db); err == nil {
 			t.Errorf("expected error in Migrate v6 on conflicting index name")
+		}
+	})
+
+	// 10. Error in v7 migration on duplicate rate_limit_reset_at
+	t.Run("v7 error on duplicate rate_limit_reset_at", func(t *testing.T) {
+		db, err := sql.Open("sqlite3", ":memory:")
+		if err != nil {
+			t.Fatalf("sql.Open failed: %v", err)
+		}
+		defer func() { _ = db.Close() }()
+
+		if _, err := db.Exec(schemaV1); err != nil {
+			t.Fatalf("schemaV1 failed: %v", err)
+		}
+		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN rate_limit_reset_at INTEGER;"); err != nil {
+			t.Fatalf("adding duplicate column failed: %v", err)
+		}
+		if _, err := db.Exec("PRAGMA user_version = 6;"); err != nil {
+			t.Fatalf("setting user_version = 6 failed: %v", err)
+		}
+		if err := Migrate(db); err == nil {
+			t.Errorf("expected error in Migrate v7 on duplicate rate_limit_reset_at")
+		}
+	})
+
+	// 11. Error in v7 migration on duplicate retry_after_seconds
+	t.Run("v7 error on duplicate retry_after_seconds", func(t *testing.T) {
+		db, err := sql.Open("sqlite3", ":memory:")
+		if err != nil {
+			t.Fatalf("sql.Open failed: %v", err)
+		}
+		defer func() { _ = db.Close() }()
+
+		if _, err := db.Exec(schemaV1); err != nil {
+			t.Fatalf("schemaV1 failed: %v", err)
+		}
+		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN retry_after_seconds INTEGER;"); err != nil {
+			t.Fatalf("adding duplicate column failed: %v", err)
+		}
+		if _, err := db.Exec("PRAGMA user_version = 6;"); err != nil {
+			t.Fatalf("setting user_version = 6 failed: %v", err)
+		}
+		if err := Migrate(db); err == nil {
+			t.Errorf("expected error in Migrate v7 on duplicate retry_after_seconds")
 		}
 	})
 }

@@ -72,9 +72,20 @@ export function formatDuration(durationMs: number): string {
     const seconds = Math.floor(durationMs / 1000);
     return `${seconds}s`;
   }
-  const mins = Math.floor(durationMs / 60000);
+  const hours = Math.floor(durationMs / 3600000);
+  const mins = Math.floor((durationMs % 3600000) / 60000);
   const secs = Math.floor((durationMs % 60000) / 1000);
-  return `${mins}m ${secs}s`;
+
+  if (hours > 0) {
+    if (mins > 0) {
+      return `${hours}h ${mins}m`;
+    }
+    return `${hours}h`;
+  }
+  if (secs > 0) {
+    return `${mins}m ${secs}s`;
+  }
+  return `${mins}m`;
 }
 
 export function isSessionStalled(updatedAt: number, now: number = Date.now(), thresholdMs: number = 120_000): boolean {
@@ -92,6 +103,20 @@ export function isAgentRequiringAttention(agent: IAgentState, now: number = Date
     return true;
   }
   if (agent.activity.activity === "RATE_LIMITED") {
+    const resetAt = agent.activity.rateLimitResetAt;
+    if (resetAt !== undefined && resetAt !== null) {
+      if (resetAt > now) {
+        return false;
+      }
+    } else {
+      const retryAfter = agent.activity.retryAfterSeconds;
+      if (retryAfter !== undefined && retryAfter !== null) {
+        const remainingSec = retryAfter - Math.floor((now - (agent.activity.updatedAt || 0)) / 1000);
+        if (remainingSec > 0) {
+          return false;
+        }
+      }
+    }
     return isSessionStalled(agent.activity.updatedAt, now);
   }
   const durationMs = getToolExecutionDuration(agent.activity, now);
@@ -99,6 +124,35 @@ export function isAgentRequiringAttention(agent: IAgentState, now: number = Date
     return true;
   }
   return agent.activity.activity === "BUSY" && isSessionStalled(agent.activity.updatedAt, now);
+}
+
+export function formatRateLimitCallout(activity: IAgentActivity, now: number = Date.now()): string {
+  const baseMsg = activity.lastError || "Rate limit reached — backoff/retry in progress";
+  const resetAt = activity.rateLimitResetAt;
+  const retryAfter = activity.retryAfterSeconds;
+
+  let waitStr = "";
+  if (resetAt !== undefined && resetAt !== null) {
+    if (resetAt > now) {
+      const remainingSec = Math.max(1, Math.ceil((resetAt - now) / 1000));
+      waitStr = remainingSec > 120 ? `retry in ${formatDuration(remainingSec * 1000)}` : `retry in ${remainingSec}s`;
+    }
+  } else if (retryAfter !== undefined && retryAfter !== null && retryAfter > 0) {
+    const elapsedSec = Math.floor((now - (activity.updatedAt || 0)) / 1000);
+    const remainingSec = Math.max(0, retryAfter - elapsedSec);
+    if (remainingSec > 0) {
+      waitStr = remainingSec > 120 ? `retry in ${formatDuration(remainingSec * 1000)}` : `retry in ${remainingSec}s`;
+    }
+  }
+
+  if (waitStr && !baseMsg.includes(waitStr)) {
+    if (activity.lastError) {
+      return `${baseMsg} (${waitStr})`;
+    }
+    return `Rate limit reached — ${waitStr}`;
+  }
+
+  return baseMsg;
 }
 
 export function formatRelativeTime(timestamp: number, now: number = Date.now()): string {

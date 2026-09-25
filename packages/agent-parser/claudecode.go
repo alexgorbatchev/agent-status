@@ -47,41 +47,45 @@ type rawUsage struct {
 }
 
 type rawMessage struct {
-	ID             string      `json:"id,omitempty"`
-	Role           string      `json:"role"`
-	Model          string      `json:"model"`
-	StopReason     string      `json:"stop_reason"`
-	Content        interface{} `json:"content"`
-	Usage          *rawUsage   `json:"usage"`
-	Error          string      `json:"error,omitempty"`
-	APIErrorStatus *int        `json:"apiErrorStatus,omitempty"`
+	ID                  string      `json:"id,omitempty"`
+	Role                string      `json:"role"`
+	Model               string      `json:"model"`
+	StopReason          string      `json:"stop_reason"`
+	Content             interface{} `json:"content"`
+	Usage               *rawUsage   `json:"usage"`
+	Error               string      `json:"error,omitempty"`
+	APIErrorStatus      *int        `json:"apiErrorStatus,omitempty"`
+	APIErrorStatusSnake *int        `json:"api_error_status,omitempty"`
+	Status              *int        `json:"status,omitempty"`
 }
 
 type rawJSONLine struct {
-	Type              string      `json:"type"`
-	UUID              string      `json:"uuid"`
-	ParentUUID        *string     `json:"parentUuid"`
-	SessionID         string      `json:"sessionId"`
-	AgentID           string      `json:"agentId,omitempty"`
-	Timestamp         interface{} `json:"timestamp"`
-	CWD               string      `json:"cwd"`
-	GitBranch         string      `json:"gitBranch"`
-	IsSidechain       bool        `json:"isSidechain"`
-	Title             string      `json:"title"`
-	CustomTitle       string      `json:"customTitle,omitempty"`
-	AITitle           string      `json:"aiTitle"`
-	AITitleSnake      string      `json:"ai_title,omitempty"`
-	AgentName         string      `json:"agentName,omitempty"`
-	Name              string      `json:"name,omitempty"`
-	LastPrompt        string      `json:"lastPrompt"`
-	Message           *rawMessage `json:"message"`
-	Content           interface{} `json:"content"`
-	Question          string      `json:"question"`
-	Error             string      `json:"error,omitempty"`
-	APIErrorStatus    *int        `json:"apiErrorStatus,omitempty"`
-	IsAPIErrorMessage bool        `json:"isApiErrorMessage,omitempty"`
-	RequestID         string      `json:"requestId,omitempty"`
-	APIBlockIndex     *int        `json:"apiBlockIndex,omitempty"`
+	Type                string      `json:"type"`
+	UUID                string      `json:"uuid"`
+	ParentUUID          *string     `json:"parentUuid"`
+	SessionID           string      `json:"sessionId"`
+	AgentID             string      `json:"agentId,omitempty"`
+	Timestamp           interface{} `json:"timestamp"`
+	CWD                 string      `json:"cwd"`
+	GitBranch           string      `json:"gitBranch"`
+	IsSidechain         bool        `json:"isSidechain"`
+	Title               string      `json:"title"`
+	CustomTitle         string      `json:"customTitle,omitempty"`
+	AITitle             string      `json:"aiTitle"`
+	AITitleSnake        string      `json:"ai_title,omitempty"`
+	AgentName           string      `json:"agentName,omitempty"`
+	Name                string      `json:"name,omitempty"`
+	LastPrompt          string      `json:"lastPrompt"`
+	Message             *rawMessage `json:"message"`
+	Content             interface{} `json:"content"`
+	Question            string      `json:"question"`
+	Error               string      `json:"error,omitempty"`
+	APIErrorStatus      *int        `json:"apiErrorStatus,omitempty"`
+	APIErrorStatusSnake *int        `json:"api_error_status,omitempty"`
+	Status              *int        `json:"status,omitempty"`
+	IsAPIErrorMessage   bool        `json:"isApiErrorMessage,omitempty"`
+	RequestID           string      `json:"requestId,omitempty"`
+	APIBlockIndex       *int        `json:"apiBlockIndex,omitempty"`
 }
 
 func parseTimestamp(v interface{}) int64 {
@@ -792,7 +796,12 @@ func parseClaudeCodeLineEvents(
 		hasError := raw.Error != "" ||
 			raw.IsAPIErrorMessage ||
 			(raw.APIErrorStatus != nil && *raw.APIErrorStatus > 0) ||
-			(raw.Message != nil && (raw.Message.Error != "" || (raw.Message.APIErrorStatus != nil && *raw.Message.APIErrorStatus > 0)))
+			(raw.APIErrorStatusSnake != nil && *raw.APIErrorStatusSnake > 0) ||
+			(raw.Status != nil && *raw.Status >= 400) ||
+			(raw.Message != nil && (raw.Message.Error != "" ||
+				(raw.Message.APIErrorStatus != nil && *raw.Message.APIErrorStatus > 0) ||
+				(raw.Message.APIErrorStatusSnake != nil && *raw.Message.APIErrorStatusSnake > 0) ||
+				(raw.Message.Status != nil && *raw.Message.Status >= 400)))
 
 		if hasError {
 			errText := raw.Error
@@ -805,30 +814,37 @@ func parseClaudeCodeLineEvents(
 			if errText == "" && raw.Content != nil {
 				errText = extractContentString(raw.Content)
 			}
+
+			var isRL *bool
+			var apiStatus *int
+			if raw.APIErrorStatus != nil {
+				apiStatus = raw.APIErrorStatus
+			} else if raw.APIErrorStatusSnake != nil {
+				apiStatus = raw.APIErrorStatusSnake
+			} else if raw.Status != nil && *raw.Status >= 400 {
+				apiStatus = raw.Status
+			} else if raw.Message != nil {
+				if raw.Message.APIErrorStatus != nil {
+					apiStatus = raw.Message.APIErrorStatus
+				} else if raw.Message.APIErrorStatusSnake != nil {
+					apiStatus = raw.Message.APIErrorStatusSnake
+				} else if raw.Message.Status != nil && *raw.Message.Status >= 400 {
+					apiStatus = raw.Message.Status
+				}
+			}
+
 			if errText == "" {
-				if raw.APIErrorStatus != nil && *raw.APIErrorStatus > 0 {
-					errText = fmt.Sprintf("API error: status %d", *raw.APIErrorStatus)
-				} else if raw.Message != nil && raw.Message.APIErrorStatus != nil && *raw.Message.APIErrorStatus > 0 {
-					errText = fmt.Sprintf("API error: status %d", *raw.Message.APIErrorStatus)
+				if apiStatus != nil && *apiStatus > 0 {
+					errText = fmt.Sprintf("API error: status %d", *apiStatus)
 				} else {
 					errText = "API error"
 				}
 			}
 
-			var isRL *bool
-			var exitCode *int
-			if raw.APIErrorStatus != nil {
-				exitCode = raw.APIErrorStatus
-			} else if raw.Message != nil && raw.Message.APIErrorStatus != nil {
-				exitCode = raw.Message.APIErrorStatus
-			}
-			lowerErr := strings.ToLower(errText)
-			if (exitCode != nil && *exitCode == 429) ||
-				strings.Contains(lowerErr, "rate_limit") ||
-				strings.Contains(lowerErr, "rate limit") ||
-				strings.Contains(lowerErr, "overloaded") ||
-				strings.Contains(lowerErr, "429") {
+			if apiStatus != nil && *apiStatus == 429 {
 				isRL = boolPtr(true)
+			} else if apiStatus != nil {
+				isRL = boolPtr(false)
 			}
 
 			events = append(events, ParsedEvent{
@@ -841,7 +857,6 @@ func parseClaudeCodeLineEvents(
 					Content:     stringPtr(errText),
 					Model:       modelPtr,
 					IsError:     boolPtr(true),
-					ExitCode:    exitCode,
 					IsRateLimit: isRL,
 				},
 			})

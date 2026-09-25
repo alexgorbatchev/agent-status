@@ -346,6 +346,33 @@ CREATE INDEX IF NOT EXISTS idx_agents_hidden      ON agents(is_hidden);
 		if _, err := db.Exec("PRAGMA user_version = 6;"); err != nil {
 			return fmt.Errorf("updating user_version to 6: %w", err)
 		}
+		version = 6
+	}
+
+	if version < 7 {
+		tx, err := db.Begin()
+		if err != nil {
+			return fmt.Errorf("beginning migration v7 transaction: %w", err)
+		}
+		defer func() {
+			_ = tx.Rollback()
+		}()
+
+		if _, err := tx.Exec("ALTER TABLE agents ADD COLUMN rate_limit_reset_at INTEGER;"); err != nil {
+			return fmt.Errorf("executing migration v7 rate_limit_reset_at: %w", err)
+		}
+		if _, err := tx.Exec("ALTER TABLE agents ADD COLUMN retry_after_seconds INTEGER;"); err != nil {
+			return fmt.Errorf("executing migration v7 retry_after_seconds: %w", err)
+		}
+
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("committing migration v7: %w", err)
+		}
+
+		if _, err := db.Exec("PRAGMA user_version = 7;"); err != nil {
+			return fmt.Errorf("updating user_version to 7: %w", err)
+		}
+		version = 7
 	}
 
 	return nil

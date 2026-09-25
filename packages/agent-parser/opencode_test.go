@@ -934,8 +934,8 @@ func TestOpencode_ErrorEventEmission(t *testing.T) {
 						Error: map[string]interface{}{
 							"name": "APIError",
 							"data": map[string]interface{}{
-								"message":    "Rate limit exceeded: 429",
-								"statusCode": 429,
+								"message":    "Service Unavailable: 503",
+								"statusCode": 503,
 							},
 						},
 					},
@@ -1000,8 +1000,8 @@ func TestOpencode_ErrorEventEmission(t *testing.T) {
 						Error: map[string]interface{}{
 							"name": "APIError",
 							"data": map[string]interface{}{
-								"message":    "Rate limit exceeded: 429",
-								"statusCode": 429,
+								"message":    "Service Unavailable: 503",
+								"statusCode": 503,
 							},
 						},
 					},
@@ -1263,6 +1263,556 @@ func TestParseOpencodePartData_RetryPart(t *testing.T) {
 	}
 	if part.Error == nil {
 		t.Fatalf("part.Error is nil, expected map")
+	}
+}
+
+func TestOpencode_RateLimitParsing(t *testing.T) {
+	session := &OpencodeSession{
+		ID:          "ses_rl_test",
+		Directory:   "/workspace/project",
+		Title:       "Rate Limit Test",
+		Model:       "claude-3-7-sonnet",
+		TimeCreated: 1700000000000,
+	}
+
+	finishErr := "error"
+	finishStop := "stop"
+
+	t.Run("APIError with statusCode 429 and retry-after header", func(t *testing.T) {
+		msgs := []OpencodeMessage{
+			{
+				ID:          "msg_rl_1",
+				SessionID:   session.ID,
+				TimeCreated: 1700000005000,
+				Data: OpencodeMessageData{
+					Role:   "assistant",
+					Finish: &finishErr,
+					Error: map[string]interface{}{
+						"name": "APIError",
+						"data": map[string]interface{}{
+							"message":    "Rate limit exceeded",
+							"statusCode": 429,
+							"responseHeaders": map[string]interface{}{
+								"retry-after": "60",
+							},
+						},
+					},
+				},
+			},
+		}
+
+		events := ReconstructSessionEvents(session, msgs, nil)
+		var errEvent *ParsedEvent
+		for i := range events {
+			if events[i].EventType == "error" {
+				errEvent = &events[i]
+				break
+			}
+		}
+		if errEvent == nil {
+			t.Fatalf("expected error event emitted, got %d events", len(events))
+		}
+		if errEvent.Data.IsRateLimit == nil || !*errEvent.Data.IsRateLimit {
+			t.Errorf("expected IsRateLimit = true for statusCode 429")
+		}
+		if errEvent.Data.ExitCode != nil {
+			t.Errorf("expected ExitCode = nil (HTTP status codes must not be assigned to ExitCode), got %v", errEvent.Data.ExitCode)
+		}
+		if errEvent.Data.RetryAfterSeconds == nil || *errEvent.Data.RetryAfterSeconds != 60 {
+			t.Errorf("expected RetryAfterSeconds = 60, got %v", errEvent.Data.RetryAfterSeconds)
+		}
+		if errEvent.Data.RateLimitResetAt == nil || *errEvent.Data.RateLimitResetAt != 1700000065000 {
+			t.Errorf("expected RateLimitResetAt = 1700000065000, got %v", errEvent.Data.RateLimitResetAt)
+		}
+	})
+
+	t.Run("APIError with statusCode 429 and RFC3339 retry-after header", func(t *testing.T) {
+		msgs := []OpencodeMessage{
+			{
+				ID:          "msg_rl_rfc3339",
+				SessionID:   session.ID,
+				TimeCreated: 1781280493000, // 2026-06-12T16:08:13Z
+				Data: OpencodeMessageData{
+					Role:   "assistant",
+					Finish: &finishErr,
+					Error: map[string]interface{}{
+						"name": "APIError",
+						"data": map[string]interface{}{
+							"message":    "Rate limit exceeded",
+							"statusCode": 429,
+							"responseHeaders": map[string]interface{}{
+								"retry-after": "2026-06-12T16:08:43Z",
+							},
+						},
+					},
+				},
+			},
+		}
+
+		events := ReconstructSessionEvents(session, msgs, nil)
+		var errEvent *ParsedEvent
+		for i := range events {
+			if events[i].EventType == "error" {
+				errEvent = &events[i]
+				break
+			}
+		}
+		if errEvent == nil {
+			t.Fatalf("expected error event emitted, got %d events", len(events))
+		}
+		if errEvent.Data.IsRateLimit == nil || !*errEvent.Data.IsRateLimit {
+			t.Errorf("expected IsRateLimit = true")
+		}
+		if errEvent.Data.RetryAfterSeconds == nil || *errEvent.Data.RetryAfterSeconds != 30 {
+			t.Errorf("expected RetryAfterSeconds = 30, got %v (must not scan 2026 as numeric seconds)", errEvent.Data.RetryAfterSeconds)
+		}
+		if errEvent.Data.RateLimitResetAt == nil || *errEvent.Data.RateLimitResetAt != 1781280523000 {
+			t.Errorf("expected RateLimitResetAt = 1781280523000, got %v", errEvent.Data.RateLimitResetAt)
+		}
+	})
+
+	t.Run("RetryPart with statusCode 429 and retry-after header", func(t *testing.T) {
+		msgs := []OpencodeMessage{
+			{
+				ID:          "msg_rl_2",
+				SessionID:   session.ID,
+				TimeCreated: 1700000010000,
+				Data: OpencodeMessageData{
+					Role:   "assistant",
+					Finish: &finishErr,
+				},
+			},
+		}
+		parts := []OpencodePart{
+			{
+				ID:          "part_retry_429",
+				MessageID:   "msg_rl_2",
+				SessionID:   session.ID,
+				TimeCreated: 1700000010500,
+				Data: OpencodePartData{
+					Type:    "retry",
+					Attempt: intPtr(1),
+					Error: map[string]interface{}{
+						"name": "APIError",
+						"data": map[string]interface{}{
+							"message":    "Rate limit exceeded: 429",
+							"statusCode": 429,
+							"responseHeaders": map[string]interface{}{
+								"retry-after": "30",
+							},
+						},
+					},
+				},
+			},
+		}
+
+		events := ReconstructSessionEvents(session, msgs, parts)
+		var errEvent *ParsedEvent
+		for i := range events {
+			if events[i].EventType == "error" {
+				errEvent = &events[i]
+				break
+			}
+		}
+		if errEvent == nil {
+			t.Fatalf("expected error event emitted, got %d events", len(events))
+		}
+		if errEvent.Data.IsRateLimit == nil || !*errEvent.Data.IsRateLimit {
+			t.Errorf("expected IsRateLimit = true for RetryPart 429")
+		}
+		if errEvent.Data.ExitCode != nil {
+			t.Errorf("expected ExitCode = nil (HTTP status codes must not be assigned to ExitCode), got %v", errEvent.Data.ExitCode)
+		}
+		if errEvent.Data.RetryAfterSeconds == nil || *errEvent.Data.RetryAfterSeconds != 30 {
+			t.Errorf("expected RetryAfterSeconds = 30, got %v", errEvent.Data.RetryAfterSeconds)
+		}
+	})
+
+	t.Run("In-flight RetryPart with statusCode 429 and nil finish emits error event", func(t *testing.T) {
+		msgs := []OpencodeMessage{
+			{
+				ID:          "msg_inflight_rl",
+				SessionID:   session.ID,
+				TimeCreated: 1700000015000,
+				Data: OpencodeMessageData{
+					Role: "assistant",
+				},
+			},
+		}
+		parts := []OpencodePart{
+			{
+				ID:          "part_inflight_429",
+				MessageID:   "msg_inflight_rl",
+				SessionID:   session.ID,
+				TimeCreated: 1700000015500,
+				Data: OpencodePartData{
+					Type:    "retry",
+					Attempt: intPtr(1),
+					Error: map[string]interface{}{
+						"name": "APIError",
+						"data": map[string]interface{}{
+							"message":    "Too many requests: 429",
+							"statusCode": 429,
+							"responseHeaders": map[string]interface{}{
+								"retry-after": "45",
+							},
+						},
+					},
+				},
+			},
+		}
+
+		events := ReconstructSessionEvents(session, msgs, parts)
+		var errEvent *ParsedEvent
+		for i := range events {
+			if events[i].EventType == "error" {
+				errEvent = &events[i]
+				break
+			}
+		}
+		if errEvent == nil {
+			t.Fatalf("expected error event emitted for in-flight retry 429, got %d events", len(events))
+		}
+		if errEvent.Data.IsRateLimit == nil || !*errEvent.Data.IsRateLimit {
+			t.Errorf("expected IsRateLimit = true for in-flight RetryPart 429")
+		}
+		if errEvent.Data.ExitCode != nil {
+			t.Errorf("expected ExitCode = nil (HTTP status codes must not be assigned to ExitCode), got %v", errEvent.Data.ExitCode)
+		}
+		if errEvent.Data.RetryAfterSeconds == nil || *errEvent.Data.RetryAfterSeconds != 45 {
+			t.Errorf("expected RetryAfterSeconds = 45, got %v", errEvent.Data.RetryAfterSeconds)
+		}
+		if errEvent.Data.RateLimitResetAt == nil || *errEvent.Data.RateLimitResetAt != 1700000015500+45000 {
+			t.Errorf("expected RateLimitResetAt = %d, got %v", 1700000015500+45000, errEvent.Data.RateLimitResetAt)
+		}
+	})
+
+	t.Run("In-flight RetryPart with statusCode 429 and stop finish emits error event", func(t *testing.T) {
+		msgs := []OpencodeMessage{
+			{
+				ID:          "msg_stop_rl",
+				SessionID:   session.ID,
+				TimeCreated: 1700000016000,
+				Data: OpencodeMessageData{
+					Role:   "assistant",
+					Finish: &finishStop,
+				},
+			},
+		}
+		parts := []OpencodePart{
+			{
+				ID:          "part_stop_429",
+				MessageID:   "msg_stop_rl",
+				SessionID:   session.ID,
+				TimeCreated: 1700000016500,
+				Data: OpencodePartData{
+					Type:    "retry",
+					Attempt: intPtr(1),
+					Error: map[string]interface{}{
+						"name": "APIError",
+						"data": map[string]interface{}{
+							"message":    "Rate limit exceeded: 429",
+							"statusCode": 429,
+							"responseHeaders": map[string]interface{}{
+								"retry-after": "20",
+							},
+						},
+					},
+				},
+			},
+		}
+
+		events := ReconstructSessionEvents(session, msgs, parts)
+		var errEvent *ParsedEvent
+		for i := range events {
+			if events[i].EventType == "error" {
+				errEvent = &events[i]
+				break
+			}
+		}
+		if errEvent == nil {
+			t.Fatalf("expected error event emitted for retry 429 with stop finish, got %d events", len(events))
+		}
+		if errEvent.Data.IsRateLimit == nil || !*errEvent.Data.IsRateLimit {
+			t.Errorf("expected IsRateLimit = true for RetryPart 429 with stop finish")
+		}
+		if errEvent.Data.ExitCode != nil {
+			t.Errorf("expected ExitCode = nil (HTTP status codes must not be assigned to ExitCode), got %v", errEvent.Data.ExitCode)
+		}
+		if errEvent.Data.RetryAfterSeconds == nil || *errEvent.Data.RetryAfterSeconds != 20 {
+			t.Errorf("expected RetryAfterSeconds = 20, got %v", errEvent.Data.RetryAfterSeconds)
+		}
+	})
+
+	t.Run("APIError with statusCode 500 is not rate limited", func(t *testing.T) {
+		msgs := []OpencodeMessage{
+			{
+				ID:          "msg_err_500",
+				SessionID:   session.ID,
+				TimeCreated: 1700000020000,
+				Data: OpencodeMessageData{
+					Role:   "assistant",
+					Finish: &finishErr,
+					Error: map[string]interface{}{
+						"name": "APIError",
+						"data": map[string]interface{}{
+							"message":    "Internal server error",
+							"statusCode": 500,
+						},
+					},
+				},
+			},
+		}
+
+		events := ReconstructSessionEvents(session, msgs, nil)
+		var errEvent *ParsedEvent
+		for i := range events {
+			if events[i].EventType == "error" {
+				errEvent = &events[i]
+				break
+			}
+		}
+		if errEvent == nil {
+			t.Fatalf("expected error event emitted, got %d events", len(events))
+		}
+		if errEvent.Data.IsRateLimit != nil && *errEvent.Data.IsRateLimit {
+			t.Errorf("expected IsRateLimit = false or nil for statusCode 500, got true")
+		}
+	})
+
+	t.Run("terminal non-rate-limit error takes strict precedence over intermediate retry rate limit", func(t *testing.T) {
+		session := &OpencodeSession{
+			ID:        "ses-terminal-precedence",
+			Directory: "/repo",
+		}
+		finishErr := "error"
+		msgs := []OpencodeMessage{
+			{
+				ID:          "msg-retry-then-500",
+				SessionID:   session.ID,
+				TimeCreated: 1700000000000,
+				Data: OpencodeMessageData{
+					Role:   "assistant",
+					Finish: &finishErr,
+					Error: map[string]interface{}{
+						"name": "APIError",
+						"data": map[string]interface{}{
+							"message":    "Internal server error",
+							"statusCode": 500,
+						},
+					},
+				},
+			},
+		}
+		parts := []OpencodePart{
+			{
+				ID:          "prt-retry-429",
+				MessageID:   "msg-retry-then-500",
+				TimeCreated: 1700000001000,
+				Data: OpencodePartData{
+					Type: "retry",
+					Error: map[string]interface{}{
+						"name": "RateLimitError",
+						"data": map[string]interface{}{
+							"statusCode": 429,
+							"headers": map[string]interface{}{
+								"retry-after": "45",
+							},
+						},
+					},
+				},
+			},
+		}
+
+		events := ReconstructSessionEvents(session, msgs, parts)
+		var terminalErrEvent *ParsedEvent
+		for i := len(events) - 1; i >= 0; i-- {
+			if events[i].EventType == "error" {
+				terminalErrEvent = &events[i]
+				break
+			}
+		}
+		if terminalErrEvent == nil {
+			t.Fatalf("expected terminal error event emitted, got %d events", len(events))
+		}
+		if terminalErrEvent.Data.IsRateLimit == nil || *terminalErrEvent.Data.IsRateLimit {
+			t.Errorf("expected IsRateLimit = false for terminal 500 failure, got %v", terminalErrEvent.Data.IsRateLimit)
+		}
+		if terminalErrEvent.Data.RetryAfterSeconds != nil {
+			t.Errorf("expected RetryAfterSeconds = nil for terminal 500 failure, got %v", terminalErrEvent.Data.RetryAfterSeconds)
+		}
+		if terminalErrEvent.Data.RateLimitResetAt != nil {
+			t.Errorf("expected RateLimitResetAt = nil for terminal 500 failure, got %v", terminalErrEvent.Data.RateLimitResetAt)
+		}
+	})
+}
+
+func TestParseOpencodeApiErrorInfo_Branches(t *testing.T) {
+	nowMs := int64(1700000000000)
+
+	// nil
+	res := parseOpencodeApiErrorInfo(nil, nowMs)
+	if res.statusCode != nil || res.isRateLimit {
+		t.Errorf("expected empty for nil")
+	}
+
+	// non-map
+	res = parseOpencodeApiErrorInfo("simple error string", nowMs)
+	if res.message != "simple error string" {
+		t.Errorf("expected string message, got %q", res.message)
+	}
+
+	// status in root map
+	res = parseOpencodeApiErrorInfo(map[string]interface{}{
+		"status":  429,
+		"message": "Too many requests",
+		"responseHeaders": map[string]interface{}{
+			"retry-after": "Wed, 21 Oct 2026 07:28:00 GMT",
+		},
+	}, nowMs)
+	if !res.isRateLimit || res.statusCode == nil || *res.statusCode != 429 {
+		t.Errorf("expected rate limit for root status 429")
+	}
+	if res.rateLimitResetAt == nil {
+		t.Errorf("expected rateLimitResetAt for RFC1123 header")
+	}
+
+	// past RFC1123
+	res = parseOpencodeApiErrorInfo(map[string]interface{}{
+		"status": 429,
+		"responseHeaders": map[string]interface{}{
+			"retry-after": "Wed, 21 Oct 2020 07:28:00 GMT",
+		},
+	}, nowMs)
+	if res.retryAfterSeconds == nil || *res.retryAfterSeconds != 0 {
+		t.Errorf("expected retryAfterSeconds = 0 for past RFC1123")
+	}
+
+	// statusCode omitted, but retry-after header present (numeric)
+	res = parseOpencodeApiErrorInfo(map[string]interface{}{
+		"message": "Quota exceeded",
+		"responseHeaders": map[string]interface{}{
+			"retry-after": "60",
+		},
+	}, nowMs)
+	if !res.isRateLimit {
+		t.Errorf("expected isRateLimit = true when retry-after header is present even without statusCode")
+	}
+	if res.retryAfterSeconds == nil || *res.retryAfterSeconds != 60 {
+		t.Errorf("expected retryAfterSeconds = 60, got %v", res.retryAfterSeconds)
+	}
+	if res.statusCode != nil {
+		t.Errorf("expected nil statusCode, got %v", res.statusCode)
+	}
+
+	// statusCode omitted, but retry-after header present (RFC1123)
+	res = parseOpencodeApiErrorInfo(map[string]interface{}{
+		"message": "Slow down",
+		"responseHeaders": map[string]interface{}{
+			"retry-after": "Wed, 21 Oct 2026 07:28:00 GMT",
+		},
+	}, nowMs)
+	if !res.isRateLimit {
+		t.Errorf("expected isRateLimit = true for RFC1123 retry-after header even without statusCode")
+	}
+	if res.rateLimitResetAt == nil {
+		t.Errorf("expected rateLimitResetAt for RFC1123 header without statusCode")
+	}
+
+	// ISO8601/RFC3339 retry-after header correctly falls through to date parser
+	// rather than scanning 2026 as numeric seconds
+	isoDateStr := "2026-06-12T16:08:43Z"
+	parsedIsoTime, err := time.Parse(time.RFC3339, isoDateStr)
+	if err != nil {
+		t.Fatalf("failed to parse test RFC3339 date: %v", err)
+	}
+	expectedResetAt := parsedIsoTime.UnixMilli()
+	isoNowMs := expectedResetAt - 30000 // 30 seconds before reset
+
+	res = parseOpencodeApiErrorInfo(map[string]interface{}{
+		"status":  429,
+		"message": "Too many requests",
+		"responseHeaders": map[string]interface{}{
+			"retry-after": isoDateStr,
+		},
+	}, isoNowMs)
+	if !res.isRateLimit {
+		t.Errorf("expected isRateLimit = true for ISO8601/RFC3339 retry-after")
+	}
+	if res.rateLimitResetAt == nil || *res.rateLimitResetAt != expectedResetAt {
+		t.Errorf("expected rateLimitResetAt = %d, got %v", expectedResetAt, res.rateLimitResetAt)
+	}
+	if res.retryAfterSeconds == nil || *res.retryAfterSeconds != 30 {
+		t.Errorf("expected retryAfterSeconds = 30, got %v (must not scan 2026 as numeric seconds)", res.retryAfterSeconds)
+	}
+
+	// retry-after in the past (RFC3339)
+	res = parseOpencodeApiErrorInfo(map[string]interface{}{
+		"status": 429,
+		"responseHeaders": map[string]interface{}{
+			"retry-after": "2020-01-01T00:00:00Z",
+		},
+	}, nowMs)
+	if res.retryAfterSeconds == nil || *res.retryAfterSeconds != 0 {
+		t.Errorf("expected retryAfterSeconds = 0 for past RFC3339")
+	}
+
+	// headers fallback in root map m
+	res = parseOpencodeApiErrorInfo(map[string]interface{}{
+		"message": "Too many requests",
+		"headers": map[string]interface{}{
+			"retry-after": "60",
+		},
+	}, nowMs)
+	if !res.isRateLimit {
+		t.Errorf("expected isRateLimit = true for headers fallback in root map")
+	}
+	if res.retryAfterSeconds == nil || *res.retryAfterSeconds != 60 {
+		t.Errorf("expected retryAfterSeconds = 60, got %v", res.retryAfterSeconds)
+	}
+
+	// headers fallback in nested dataMap
+	res = parseOpencodeApiErrorInfo(map[string]interface{}{
+		"data": map[string]interface{}{
+			"message": "Too many requests",
+			"headers": map[string]interface{}{
+				"retry-after": "120",
+			},
+		},
+	}, nowMs)
+	if !res.isRateLimit {
+		t.Errorf("expected isRateLimit = true for headers fallback in dataMap")
+	}
+	if res.retryAfterSeconds == nil || *res.retryAfterSeconds != 120 {
+		t.Errorf("expected retryAfterSeconds = 120, got %v", res.retryAfterSeconds)
+	}
+
+	// statusCode in root map m while dataMap exists
+	res = parseOpencodeApiErrorInfo(map[string]interface{}{
+		"statusCode": 429,
+		"data": map[string]interface{}{
+			"message": "Rate limited from upstream",
+		},
+	}, nowMs)
+	if !res.isRateLimit {
+		t.Errorf("expected isRateLimit = true when statusCode is in root map m and data map exists")
+	}
+	if res.statusCode == nil || *res.statusCode != 429 {
+		t.Errorf("expected statusCode = 429 from root map m, got %v", res.statusCode)
+	}
+
+	// status in root map m while dataMap exists
+	res = parseOpencodeApiErrorInfo(map[string]interface{}{
+		"status": 429,
+		"data": map[string]interface{}{
+			"message": "Rate limited from upstream",
+		},
+	}, nowMs)
+	if !res.isRateLimit {
+		t.Errorf("expected isRateLimit = true when status is in root map m and data map exists")
+	}
+	if res.statusCode == nil || *res.statusCode != 429 {
+		t.Errorf("expected statusCode = 429 from root map m, got %v", res.statusCode)
 	}
 }
 

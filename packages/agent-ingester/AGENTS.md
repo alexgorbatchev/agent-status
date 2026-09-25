@@ -9,7 +9,9 @@ Central telemetry ingestion daemon (`air-ingester`) that receives agent events, 
 - Lint: `just lint`
 
 ## Local conventions
-- SQLite migrations are defined sequentially in `internal/store/migrations.go`; migration v6 updates the SQLite `activity` check constraint to include `'RATE_LIMITED'` alongside `'BUSY'`, `'WAITING_QUESTION'`, `'ERROR'`, and `'IDLE'`.
+- SQLite migrations are defined sequentially in `internal/store/migrations.go`; migration v6 updates the SQLite `activity` check constraint to include `'RATE_LIMITED'` alongside `'BUSY'`, `'WAITING_QUESTION'`, `'ERROR'`, and `'IDLE'`, and migration v7 adds nullable integer columns `rate_limit_reset_at` (epoch ms) and `retry_after_seconds` to the `agents` table.
+- Structured rate-limit metadata (`RateLimitResetAt`, `RetryAfterSeconds`) extracted from telemetry frames is persisted to the `agents` table and attached to `IAgentActivity`, elevating activity to `RATE_LIMITED` and preserving reset targets across turns (`internal/classifier/classifier.go`, `internal/store/store.go`).
+- Silence timers are scheduled on rate-limit error frames (`scheduleSilenceTimerLocked`) so that unrecovered or abandoned throttled sessions transition to `IDLE` after the silence timeout window instead of stalling in `RATE_LIMITED` indefinitely (`internal/classifier/classifier.go`).
 - Hidden agent state is stored in SQLite (`is_hidden`, `hidden_at`); incoming telemetry frames with new activity automatically reset `is_hidden = 0`.
 - Real-time updates broadcast over Unix domain socket `$XDG_RUNTIME_DIR/agent-status/notify.sock` via `internal/notify/publisher.go`.
 - Turn-end debouncing uses `DefaultIdleGracePeriod = 2500ms` (`DefaultTurnEndGraceWindow`) to smooth short gaps between tool results and subsequent thinking turns before declaring idle.
@@ -18,7 +20,7 @@ Central telemetry ingestion daemon (`air-ingester`) that receives agent events, 
 - WebSocket receiver configures a 64 MiB read limit (`conn.SetReadLimit(64 * 1024 * 1024)`) on observer connections to handle oversized frame batches, diffs, and bash outputs.
 - Telemetry and session logging resolves human environment and project names for clean human-facing logs while preserving machine IDs under `AGENT=1`.
 - Pricing calculations use static rates defined in `internal/pricing/pricing.go`.
-- Action summarization runs asynchronously via per-agent serialized queues to avoid blocking WebSocket ingestion.
+- Action summarization runs asynchronously via per-agent serialized queues to avoid blocking WebSocket ingestion; when an agent is in `ActivityRateLimited`, external LLM summarization is bypassed to preserve the deterministic action (`"Rate limit reached — backoff/retry in progress"`) and `phase = nil`.
 - Summaries use specialized prompt templates (Thinking + Tool, Thinking only, Tool only) with sanitized tool arguments (max 300 chars).
 - Semantic deduplication rejects state updates with >= 60% word overlap (Jaccard similarity) when target and phase are unchanged.
 - Herdr terminal window activation (`activateTerminalWindow`) uses thread-safe `herdr.MockExecCommand` for test mocking to prevent OS window focus-stealing on macOS.

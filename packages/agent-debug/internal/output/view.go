@@ -135,7 +135,7 @@ func RenderAgentView(w io.Writer, agent types.IAgentState, agentMode bool) {
 func RenderAgentViewAt(w io.Writer, agent types.IAgentState, agentMode bool, nowMs int64) {
 	w = wrapWriter(w)
 	if agentMode {
-		renderAgentViewAgentMode(w, agent)
+		renderAgentViewAgentMode(w, agent, nowMs)
 		return
 	}
 	renderAgentViewHumanMode(w, agent, nowMs)
@@ -282,7 +282,7 @@ func RenderFleetViewAt(w io.Writer, agents []types.IAgentState, agentMode bool, 
 			prefixParts = append(prefixParts, fmt.Sprintf("is_worktree:%t", isWt))
 
 			var buf strings.Builder
-			renderAgentViewAgentMode(&buf, agent)
+			renderAgentViewAgentMode(&buf, agent, nowMs)
 			_, _ = fmt.Fprintf(w, "%s %s", strings.Join(prefixParts, " "), buf.String())
 		}
 		return
@@ -390,7 +390,51 @@ func renderFleetAgentLine(w io.Writer, agent types.IAgentState, grpName string, 
 	}
 }
 
-func renderAgentViewAgentMode(w io.Writer, agent types.IAgentState) {
+func formatHumanDuration(durationMs int64) string {
+	if durationMs < 60000 {
+		seconds := durationMs / 1000
+		return fmt.Sprintf("%ds", seconds)
+	}
+	hours := durationMs / 3600000
+	mins := (durationMs % 3600000) / 60000
+	secs := (durationMs % 60000) / 1000
+
+	if hours > 0 {
+		if mins > 0 {
+			return fmt.Sprintf("%dh %dm", hours, mins)
+		}
+		return fmt.Sprintf("%dh", hours)
+	}
+	if secs > 0 {
+		return fmt.Sprintf("%dm %ds", mins, secs)
+	}
+	return fmt.Sprintf("%dm", mins)
+}
+
+func formatRateLimitWait(activity types.IAgentActivity, nowMs int64) string {
+	if activity.RateLimitResetAt != nil {
+		if *activity.RateLimitResetAt > nowMs {
+			remainingSec := (*activity.RateLimitResetAt - nowMs + 999) / 1000
+			if remainingSec > 120 {
+				return fmt.Sprintf("retry in %s", formatHumanDuration(remainingSec*1000))
+			}
+			return fmt.Sprintf("retry in %ds", remainingSec)
+		}
+		return ""
+	}
+	if activity.RetryAfterSeconds != nil && *activity.RetryAfterSeconds > 0 {
+		rem := *activity.RetryAfterSeconds - (nowMs-activity.UpdatedAt)/1000
+		if rem > 0 {
+			if rem > 120 {
+				return fmt.Sprintf("retry in %s", formatHumanDuration(rem*1000))
+			}
+			return fmt.Sprintf("retry in %ds", rem)
+		}
+	}
+	return ""
+}
+
+func renderAgentViewAgentMode(w io.Writer, agent types.IAgentState, nowMs int64) {
 	harness := SanitizeTranscriptText(string(agent.Harness))
 	if harness == "" {
 		harness = "unknown"
@@ -456,8 +500,20 @@ func renderAgentViewAgentMode(w io.Writer, agent types.IAgentState) {
 		parts = append(parts, fmt.Sprintf("question:%q", SanitizeTranscriptText(*agent.Activity.Question)))
 	} else if agent.Activity.Activity == types.ActivityError && agent.Activity.LastError != nil && *agent.Activity.LastError != "" {
 		parts = append(parts, fmt.Sprintf("error:%q", SanitizeTranscriptText(*agent.Activity.LastError)))
-	} else if agent.Activity.Activity == types.ActivityRateLimited && agent.Activity.LastError != nil && *agent.Activity.LastError != "" {
-		parts = append(parts, fmt.Sprintf("rate_limit:%q", SanitizeTranscriptText(*agent.Activity.LastError)))
+	} else if agent.Activity.Activity == types.ActivityRateLimited {
+		msg := "Rate limit reached — backoff/retry in progress"
+		if agent.Activity.LastError != nil && *agent.Activity.LastError != "" {
+			msg = SanitizeTranscriptText(*agent.Activity.LastError)
+		}
+		waitStr := formatRateLimitWait(agent.Activity, nowMs)
+		if waitStr != "" && !strings.Contains(msg, waitStr) {
+			if agent.Activity.LastError != nil && *agent.Activity.LastError != "" {
+				msg = fmt.Sprintf("%s (%s)", msg, waitStr)
+			} else {
+				msg = fmt.Sprintf("Rate limit reached — %s", waitStr)
+			}
+		}
+		parts = append(parts, fmt.Sprintf("rate_limit:%q", msg))
 	}
 
 	parts = append(parts, fmt.Sprintf("lifecycle:%s", lifecycle))
@@ -554,9 +610,17 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 	} else if agent.Activity.Activity == types.ActivityError && agent.Activity.LastError != nil && *agent.Activity.LastError != "" {
 		callout = fmt.Sprintf("%s%s %s%s", AnsiRed, GlyphAlert, SanitizeTranscriptText(*agent.Activity.LastError), AnsiReset)
 	} else if agent.Activity.Activity == types.ActivityRateLimited {
-		msg := "Rate limit reached - backoff/retry in progress"
+		msg := "Rate limit reached — backoff/retry in progress"
 		if agent.Activity.LastError != nil && *agent.Activity.LastError != "" {
 			msg = SanitizeTranscriptText(*agent.Activity.LastError)
+		}
+		waitStr := formatRateLimitWait(agent.Activity, nowMs)
+		if waitStr != "" && !strings.Contains(msg, waitStr) {
+			if agent.Activity.LastError != nil && *agent.Activity.LastError != "" {
+				msg = fmt.Sprintf("%s (%s)", msg, waitStr)
+			} else {
+				msg = fmt.Sprintf("Rate limit reached — %s", waitStr)
+			}
 		}
 		callout = fmt.Sprintf("%s%s %s%s", AnsiYellow, GlyphWarn, msg, AnsiReset)
 	}
