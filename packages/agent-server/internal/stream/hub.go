@@ -1,9 +1,11 @@
 package stream
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 )
 
@@ -13,26 +15,51 @@ const (
 )
 
 type Hub struct {
-	mu           sync.RWMutex
-	globalSubscribers map[chan *types.IServerEvent]struct{}
-	agentSubscribers  map[string]map[chan *types.ITelemetryFrame]struct{}
-	closed       bool
+	mu                sync.RWMutex
+	logger            *logging.Logger
+	subSeq            uint64
+	globalSubscribers map[chan *types.IServerEvent]string
+	agentSubscribers  map[string]map[chan *types.ITelemetryFrame]string
+	closed            bool
 }
 
-func NewHub() *Hub {
+func NewHub(loggers ...*logging.Logger) *Hub {
+	var l *logging.Logger
+	if len(loggers) > 0 && loggers[0] != nil {
+		l = loggers[0]
+	} else {
+		l = logging.With()
+	}
 	return &Hub{
-		globalSubscribers: make(map[chan *types.IServerEvent]struct{}),
-		agentSubscribers:  make(map[string]map[chan *types.ITelemetryFrame]struct{}),
+		logger:            l,
+		globalSubscribers: make(map[chan *types.IServerEvent]string),
+		agentSubscribers:  make(map[string]map[chan *types.ITelemetryFrame]string),
 	}
 }
 
-// SubscribeGlobal registers a channel to receive all server events.
+func (h *Hub) log() *logging.Logger {
+	if h.logger != nil {
+		return h.logger
+	}
+	return logging.With()
+}
+
+// SubscribeGlobal registers a channel to receive all server events with an auto-generated subscriber ID.
 func (h *Hub) SubscribeGlobal() chan *types.IServerEvent {
+	return h.SubscribeGlobalWithID("")
+}
+
+// SubscribeGlobalWithID registers a channel to receive all server events with a specific subscriber ID.
+func (h *Hub) SubscribeGlobalWithID(id string) chan *types.IServerEvent {
 	ch := make(chan *types.IServerEvent, ClientChanBufferSize)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if !h.closed {
-		h.globalSubscribers[ch] = struct{}{}
+		if id == "" {
+			h.subSeq++
+			id = fmt.Sprintf("sub-%d", h.subSeq)
+		}
+		h.globalSubscribers[ch] = id
 	} else {
 		close(ch)
 	}
@@ -51,16 +78,25 @@ func (h *Hub) UnsubscribeGlobal(ch chan *types.IServerEvent) {
 
 // SubscribeAgentTail registers a channel to receive live telemetry frames for a specific agent.
 func (h *Hub) SubscribeAgentTail(agentID string) chan *types.ITelemetryFrame {
+	return h.SubscribeAgentTailWithID(agentID, "")
+}
+
+// SubscribeAgentTailWithID registers a channel to receive live telemetry frames for a specific agent with a specific subscriber ID.
+func (h *Hub) SubscribeAgentTailWithID(agentID string, id string) chan *types.ITelemetryFrame {
 	ch := make(chan *types.ITelemetryFrame, ClientChanBufferSize)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if !h.closed {
 		subs, ok := h.agentSubscribers[agentID]
 		if !ok {
-			subs = make(map[chan *types.ITelemetryFrame]struct{})
+			subs = make(map[chan *types.ITelemetryFrame]string)
 			h.agentSubscribers[agentID] = subs
 		}
-		subs[ch] = struct{}{}
+		if id == "" {
+			h.subSeq++
+			id = fmt.Sprintf("tail-%d", h.subSeq)
+		}
+		subs[ch] = id
 	} else {
 		close(ch)
 	}
@@ -87,28 +123,34 @@ func (h *Hub) Broadcast(event *types.IServerEvent) {
 	if event == nil {
 		return
 	}
-	h.mu.RLock()
-	defer h.mu.RUnlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
 
 	if h.closed {
 		return
 	}
 
-	for ch := range h.globalSubscribers {
+	for ch, subID := range h.globalSubscribers {
 		select {
 		case ch <- event:
 		default:
-			// Non-blocking drop if channel buffer is full to prevent slow consumers from blocking hub
+			if event.Type == "snapshot" {
+				delete(h.globalSubscribers, ch)
+				close(ch)
+				h.log().Warn("subscriber_evicted", "subscriber_id", subID, "event_type", event.Type)
+			} else {
+				h.log().Warn("subscriber_dropped", "subscriber_id", subID, "event_type", event.Type)
+			}
 		}
 	}
 
 	if event.Type == "log_append" && event.Event != nil && event.AgentID != "" {
 		if subs, ok := h.agentSubscribers[event.AgentID]; ok {
-			for ch := range subs {
+			for ch, subID := range subs {
 				select {
 				case ch <- event.Event:
 				default:
-					// Non-blocking drop for slow consumers
+					h.log().Warn("subscriber_dropped", "subscriber_id", subID, "agent_id", event.AgentID)
 				}
 			}
 		}

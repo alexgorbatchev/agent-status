@@ -93,7 +93,7 @@ func run(ctx context.Context, cfg config.Config) error {
 		_ = sqliteStore.Close()
 	}()
 
-	hub := stream.NewHub()
+	hub := stream.NewHub(logger)
 	defer hub.Close()
 
 	subscriber := stream.NewSubscriber(stream.SubscriberConfig{
