@@ -120,6 +120,7 @@ type Classifier struct {
 	beforeIdleSummarizeHook func(agentID string)
 	beforeIdleSaveHook      func(agentID string)
 	beforeSilenceSaveHook   func(agentID string)
+	afterSubagentDwellHook  func(agentID, subagentID string)
 }
 
 func New(s *store.Store, p *pricing.Engine, sum *summarizer.Summarizer) *Classifier {
@@ -354,39 +355,54 @@ func (c *Classifier) scheduleSubagentDwellTimerLocked(agentID, subID string, sub
 
 func (c *Classifier) handleSubagentDwellExpired(agentID, subID string) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.closed {
+		c.mu.Unlock()
 		return
 	}
 	key := fmt.Sprintf("%s:%s", agentID, subID)
 	delete(c.subagentTimers, key)
 	actx := c.agentCtx[agentID]
 	if actx == nil {
+		c.mu.Unlock()
 		return
 	}
 	sub, ok := actx.subagents[subID]
 	if !ok || sub.completedAt == nil {
+		c.mu.Unlock()
 		return
 	}
 	now := time.Now().UnixMilli()
 	dwellMs := int64(c.subagentDwell / time.Millisecond)
-	if now < sub.startedAt+dwellMs {
+	targetTime := sub.startedAt + dwellMs
+	if diff := targetTime - now; diff > 1 {
+		c.subagentTimers[key] = time.AfterFunc(time.Duration(diff)*time.Millisecond, func() {
+			c.handleSubagentDwellExpired(agentID, subID)
+		})
+		c.mu.Unlock()
 		return
 	}
 	delete(actx.subagents, subID)
 
 	if c.store == nil {
+		c.mu.Unlock()
 		return
 	}
 	agent, err := c.store.GetAgent(agentID)
 	if err != nil || agent == nil || agent.Activity.Lifecycle == types.LifecycleExited {
+		c.mu.Unlock()
 		return
 	}
 	c.rollupActivityLocked(agent, actx)
 	_ = c.store.SaveAgentState(*agent)
 	cb := c.onUpdate
+	hook := c.afterSubagentDwellHook
+	c.mu.Unlock()
+
 	if cb != nil {
-		go cb(agent)
+		cb(agent)
+	}
+	if hook != nil {
+		hook(agentID, subID)
 	}
 }
 

@@ -7486,6 +7486,17 @@ func TestClassifier_Subagent_DwellTimerEvictionAsync(t *testing.T) {
 	proj := types.IProjectInfo{ID: "repo", Name: "repo", CanonicalRoot: "/repo"}
 	ws := types.IWorkspaceInfo{Branch: "main", CWD: "/repo"}
 	agentID := "env-1:claude-code:sess-subagent-async-dwell"
+	subID := "sub-timer"
+
+	dwellDone := make(chan struct{}, 1)
+	c.afterSubagentDwellHook = func(aID, sID string) {
+		if aID == agentID && sID == subID {
+			select {
+			case dwellDone <- struct{}{}:
+			default:
+			}
+		}
+	}
 
 	baseFrame := types.ITelemetryFrame{
 		Version:     "1.0",
@@ -7504,7 +7515,6 @@ func TestClassifier_Subagent_DwellTimerEvictionAsync(t *testing.T) {
 		t.Fatalf("run_started failed: %v", err)
 	}
 
-	subID := "sub-timer"
 	toolName := "Read"
 	fSubStart := baseFrame
 	fSubStart.Seq = 2
@@ -7520,7 +7530,7 @@ func TestClassifier_Subagent_DwellTimerEvictionAsync(t *testing.T) {
 	fSubEnd := baseFrame
 	fSubEnd.Seq = 3
 	fSubEnd.SubagentID = &subID
-	fSubEnd.Timestamp = time.Now().UnixMilli()
+	fSubEnd.Timestamp = fSubStart.Timestamp + 1
 	fSubEnd.EventType = "turn_end"
 	agent, err := c.ProcessFrame(fSubEnd)
 	if err != nil {
@@ -7530,8 +7540,12 @@ func TestClassifier_Subagent_DwellTimerEvictionAsync(t *testing.T) {
 		t.Fatalf("expected 1 subagent during dwell, got %d", len(agent.Activity.ActiveSubagents))
 	}
 
-	// Wait for dwell timer to fire (dwell is 40ms, wait 80ms)
-	time.Sleep(80 * time.Millisecond)
+	// Wait for dwell timer to fire deterministically via hook
+	select {
+	case <-dwellDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for subagent dwell timer eviction")
+	}
 
 	reloaded, err := s.GetAgent(agentID)
 	if err != nil || reloaded == nil {
@@ -7706,6 +7720,17 @@ func TestClassifier_Subagent_DwellTimer_OnUpdateAndEdgeCases(t *testing.T) {
 	proj := types.IProjectInfo{ID: "repo", Name: "repo", CanonicalRoot: "/repo"}
 	ws := types.IWorkspaceInfo{Branch: "main", CWD: "/repo"}
 	agentID := "env-1:claude-code:sess-subagent-onupdate"
+	subID := "sub-update"
+
+	dwellDone := make(chan struct{}, 1)
+	c.afterSubagentDwellHook = func(aID, sID string) {
+		if aID == agentID && sID == subID {
+			select {
+			case dwellDone <- struct{}{}:
+			default:
+			}
+		}
+	}
 
 	baseFrame := types.ITelemetryFrame{
 		Version:     "1.0",
@@ -7724,7 +7749,6 @@ func TestClassifier_Subagent_DwellTimer_OnUpdateAndEdgeCases(t *testing.T) {
 		t.Fatalf("run_started failed: %v", err)
 	}
 
-	subID := "sub-update"
 	toolName := "Grep"
 	fStart := baseFrame
 	fStart.Seq = 2
@@ -7739,17 +7763,19 @@ func TestClassifier_Subagent_DwellTimer_OnUpdateAndEdgeCases(t *testing.T) {
 	fEnd := baseFrame
 	fEnd.Seq = 3
 	fEnd.SubagentID = &subID
-	fEnd.Timestamp = time.Now().UnixMilli()
+	fEnd.Timestamp = fStart.Timestamp + 1
 	fEnd.EventType = "turn_end"
 	if _, err := c.ProcessFrame(fEnd); err != nil {
 		t.Fatalf("turn_end failed: %v", err)
 	}
 
-	// Wait up to 1 second for onUpdate callback to receive the dwell expiration
-	deadline := time.Now().Add(1 * time.Second)
-	for !updateReceived.Load() && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
+	// Wait deterministically for dwell timer expiration via hook
+	select {
+	case <-dwellDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for dwell timer callback")
 	}
+
 	if !updateReceived.Load() {
 		t.Errorf("expected onUpdate callback to be invoked after subagent dwell expiration")
 	}
@@ -7779,6 +7805,138 @@ func TestClassifier_Subagent_DwellTimer_OnUpdateAndEdgeCases(t *testing.T) {
 	c.closed = true
 	c.mu.Unlock()
 	c.handleSubagentDwellExpired(agentID, "sub-update")
+}
+
+func TestClassifier_Subagent_DwellTimer_EarlyRescheduleAndJitter(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, _ := newTestClassifier(t, sum)
+	c.SetSyncMode(false)
+	c.SetSubagentDwell(60 * time.Millisecond)
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{ID: "env-1", Label: "host", Platform: "linux"}
+	proj := types.IProjectInfo{ID: "repo", Name: "repo", CanonicalRoot: "/repo"}
+	ws := types.IWorkspaceInfo{Branch: "main", CWD: "/repo"}
+	agentID := "env-1:claude-code:sess-subagent-reschedule"
+	subID := "sub-resched"
+
+	dwellDone := make(chan struct{}, 1)
+	c.afterSubagentDwellHook = func(aID, sID string) {
+		if aID == agentID && sID == subID {
+			select {
+			case dwellDone <- struct{}{}:
+			default:
+			}
+		}
+	}
+
+	start := time.Now().UnixMilli()
+	baseFrame := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       "env-1",
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-subagent-reschedule",
+		PID:         1006,
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   start,
+		EventType:   "run_started",
+	}
+	if _, err := c.ProcessFrame(baseFrame); err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+
+	toolName := "Read"
+	fStart := baseFrame
+	fStart.Seq = 2
+	fStart.SubagentID = &subID
+	fStart.Timestamp = start
+	fStart.EventType = "tool_call"
+	fStart.Data = types.TelemetryFrameData{ToolName: &toolName}
+	if _, err := c.ProcessFrame(fStart); err != nil {
+		t.Fatalf("tool_call failed: %v", err)
+	}
+
+	fEnd := baseFrame
+	fEnd.Seq = 3
+	fEnd.SubagentID = &subID
+	fEnd.Timestamp = start + 1
+	fEnd.EventType = "turn_end"
+	if _, err := c.ProcessFrame(fEnd); err != nil {
+		t.Fatalf("turn_end failed: %v", err)
+	}
+
+	// 1. Cancel the automatic timer and prematurely invoke handleSubagentDwellExpired
+	// while diff > 1. Without rescheduling, the timer is dropped and never fires.
+	c.mu.Lock()
+	c.cancelSubagentTimerLocked(agentID, subID)
+	c.mu.Unlock()
+
+	c.handleSubagentDwellExpired(agentID, subID)
+
+	select {
+	case <-dwellDone:
+		// Succeeded: timer was rescheduled and fired when dwell expired
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for rescheduled dwell timer eviction")
+	}
+
+	// 2. Test jitter condition (diff <= 1ms): should proceed directly with eviction
+	subIDJitter := "sub-jitter"
+	jitterDone := make(chan struct{}, 1)
+	c.afterSubagentDwellHook = func(aID, sID string) {
+		if aID == agentID && sID == subIDJitter {
+			select {
+			case jitterDone <- struct{}{}:
+			default:
+			}
+		}
+	}
+
+	now := time.Now().UnixMilli()
+	// Anchor startedAt so targetTime = now + 1 (diff == 1ms, <= 1ms jitter)
+	dwellMs := int64(c.subagentDwell / time.Millisecond)
+	targetStartedAt := now + 1 - dwellMs
+
+	fJitterStart := baseFrame
+	fJitterStart.Seq = 4
+	fJitterStart.SubagentID = &subIDJitter
+	fJitterStart.Timestamp = targetStartedAt
+	fJitterStart.EventType = "tool_call"
+	fJitterStart.Data = types.TelemetryFrameData{ToolName: &toolName}
+	if _, err := c.ProcessFrame(fJitterStart); err != nil {
+		t.Fatalf("tool_call failed: %v", err)
+	}
+
+	fJitterEnd := baseFrame
+	fJitterEnd.Seq = 5
+	fJitterEnd.SubagentID = &subIDJitter
+	fJitterEnd.Timestamp = targetStartedAt + 1
+	fJitterEnd.EventType = "turn_end"
+	if _, err := c.ProcessFrame(fJitterEnd); err != nil {
+		t.Fatalf("turn_end failed: %v", err)
+	}
+
+	// Cancel scheduled timer and invoke handleSubagentDwellExpired directly at jitter boundary
+	c.mu.Lock()
+	c.cancelSubagentTimerLocked(agentID, subIDJitter)
+	// Ensure sub.startedAt is exactly targetStartedAt
+	c.agentCtx[agentID].subagents[subIDJitter].startedAt = targetStartedAt
+	c.mu.Unlock()
+
+	c.handleSubagentDwellExpired(agentID, subIDJitter)
+
+	select {
+	case <-jitterDone:
+		// Succeeded: proceeded with eviction immediately due to <= 1ms jitter tolerance
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("expected immediate eviction for <= 1ms jitter, but timed out")
+	}
 }
 
 func TestClassifier_TurnEndGraceWindow_Defaults(t *testing.T) {
