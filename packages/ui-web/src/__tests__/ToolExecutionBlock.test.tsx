@@ -336,6 +336,58 @@ describe("ToolExecutionBlock Component", () => {
     }
   });
 
+  it("copies raw toolOutput to clipboard even when line numbers are stripped in file read tools", async () => {
+    let copiedText = "";
+    const originalClipboard = navigator.clipboard;
+    Object.assign(navigator, {
+      clipboard: {
+        writeText: mock(async (text: string) => {
+          copiedText = text;
+        }),
+      },
+    });
+
+    const { mockDoc, cleanup } = setupMockDomEnvironment();
+    try {
+      const rawOutput = "1\tpackage installer\n2\timport context";
+      const { container, unmount } = await mountComponent(
+        <ToolExecutionBlock toolName="read" toolOutput={rawOutput} />,
+        mockDoc,
+      );
+
+      const copyBtn = container.querySelector('[data-testid="ToolExecutionBlock--copy-output-btn"]');
+      assert(copyBtn);
+      copyBtn.click();
+
+      expect(copiedText).toBe(rawOutput);
+      await unmount();
+    } finally {
+      cleanup();
+      Object.assign(navigator, { clipboard: originalClipboard });
+    }
+  });
+
+  it("does not strip leading numeric columns from non-read tool output (e.g. bash)", () => {
+    const tsvData = "1\talice\n2\tbob\n3\tcarol";
+    const html = renderToString(<ToolExecutionBlock toolName="bash" toolOutput={tsvData} />);
+
+    const outputMatch =
+      html.match(/<pre[^>]*data-testid="ToolExecutionBlock--output"[^>]*>([\s\S]*?)<\/pre>/)?.[1] ?? "";
+    expect(outputMatch).toContain("1\talice");
+    expect(outputMatch).toContain("2\tbob");
+    expect(outputMatch).toContain("3\tcarol");
+  });
+
+  it("does not strip leading numeric columns when toolName is undefined", () => {
+    const tableData = "1  apples   10\n2  pears    20";
+    const html = renderToString(<ToolExecutionBlock toolOutput={tableData} />);
+
+    const outputMatch =
+      html.match(/<pre[^>]*data-testid="ToolExecutionBlock--output"[^>]*>([\s\S]*?)<\/pre>/)?.[1] ?? "";
+    expect(outputMatch).toContain("1  apples   10");
+    expect(outputMatch).toContain("2  pears    20");
+  });
+
   it("renders duration badge formatted as milliseconds, seconds, or minutes", () => {
     const htmlMs = renderToString(<ToolExecutionBlock toolName="bash" durationMs={450} />);
     expect(htmlMs).toContain('data-testid="ToolExecutionBlock--duration"');

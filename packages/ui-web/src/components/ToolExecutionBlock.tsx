@@ -86,10 +86,10 @@ export function ToolExecutionBlock({
   };
 
   const handleCopyOutput = async (): Promise<void> => {
-    if (!cleanedOutput) return;
+    if (!toolOutput) return;
     try {
       if (typeof navigator !== "undefined" && navigator.clipboard) {
-        await navigator.clipboard.writeText(cleanedOutput);
+        await navigator.clipboard.writeText(toolOutput);
         setHasCopiedOutput(true);
         setTimeout(() => setHasCopiedOutput(false), 2000);
       }
@@ -102,7 +102,7 @@ export function ToolExecutionBlock({
     cleanedOutput,
     startLine,
     lines: outputLines,
-  } = useMemo(() => stripEmbeddedLineNumbers(toolOutput ?? ""), [toolOutput]);
+  } = useMemo(() => stripEmbeddedLineNumbers(toolOutput ?? "", toolName), [toolOutput, toolName]);
   const lineCount = outputLines.length;
   const streamType = isFailure ? "STDERR" : "OUTPUT";
 
