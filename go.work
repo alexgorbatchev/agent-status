@@ -2,10 +2,9 @@ go 1.26.2
 
 use (
 	./packages/agent-common
-	./packages/agent-parser
-	./packages/agent-observer
-	./packages/agent-ingester
-	./packages/agent-server
 	./packages/agent-debug
+	./packages/agent-ingester
+	./packages/agent-observer
+	./packages/agent-server
 	./packages/print-session-cli
 )

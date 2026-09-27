@@ -16,7 +16,7 @@ import (
 	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/scanner"
 	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/shipper"
 	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/tailer"
-	"github.com/alexgorbatchev/agent-status/packages/agent-parser"
+	"github.com/alexgorbatchev/agent-parser"
 	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree"
 	_ "github.com/ncruces/go-sqlite3/driver"
 	"github.com/spf13/cobra"

@@ -1,9 +1,9 @@
 ---
 name: harness-log-compliance-review
 description: >-
-  REQUIRED when reviewing, auditing, or verifying agent log parsers (`packages/agent-parser/`,
+  REQUIRED when reviewing, auditing, or verifying agent log parsers (`github.com/alexgorbatchev/agent-parser`,
   `packages/agent-observer/`, `packages/agent-ingester/`) against canonical harness specifications
-  in `docs/harness-logs/` (`claude-code.ts`, `pi.ts`, `codex.ts`, `opencode.ts`). You MUST read
+  in `github.com/alexgorbatchev/agent-parser` (`docs/harness-logs/`: `claude-code.ts`, `pi.ts`, `codex.ts`, `opencode.ts`). You MUST read
   this to execute the schema compliance checklist, identify parsing gaps, verify downstream
   telemetry wiring, and file findings as GitHub issues. Do NOT use for general UI component review.
 author: alexgorbatchev
@@ -15,11 +15,7 @@ metadata:
 
 ## 1. Ground Truth Schema Verification
 
-Always typecheck and inspect the canonical TypeScript reference specifications in `docs/harness-logs/` before reviewing code:
-
-```bash
-bun x tsc --noEmit docs/harness-logs/*.ts
-```
+Always inspect the canonical TypeScript reference specifications in the `agent-parser` repository (`https://github.com/alexgorbatchev/agent-parser/tree/main/docs/harness-logs` or local checkout) before reviewing code:
 
 Inspect the 4 reference harness contracts:
 
@@ -32,7 +28,7 @@ Inspect the 4 reference harness contracts:
 
 ## 2. Parser Schema Compliance Checklist
 
-Systematically audit `packages/agent-parser/` against each harness contract:
+Systematically audit `agent-parser` (`github.com/alexgorbatchev/agent-parser`) against each harness contract:
 
 ### A. Top-Level Line & Record Parsing
 

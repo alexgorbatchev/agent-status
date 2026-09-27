@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
-	"github.com/alexgorbatchev/agent-status/packages/agent-parser"
+	"github.com/alexgorbatchev/agent-parser"
 )
 
 func TestComputeHandoffContext_EmptyEvents(t *testing.T) {

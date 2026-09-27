@@ -3,7 +3,7 @@ package types
 import (
 	"encoding/json"
 
-	parser "github.com/alexgorbatchev/agent-status/packages/agent-parser"
+	parser "github.com/alexgorbatchev/agent-parser"
 )
 
 type LifecycleState string

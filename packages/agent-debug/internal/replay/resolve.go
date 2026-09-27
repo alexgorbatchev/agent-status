@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
-	"github.com/alexgorbatchev/agent-status/packages/agent-parser"
+	"github.com/alexgorbatchev/agent-parser"
 )
 
 // ResolvedTarget holds the resolved file path, harness type, and optional session ID.

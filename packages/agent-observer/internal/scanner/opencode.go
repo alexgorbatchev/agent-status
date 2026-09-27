@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/alexgorbatchev/agent-status/packages/agent-parser"
+	"github.com/alexgorbatchev/agent-parser"
 	"github.com/shirou/gopsutil/v4/process"
 )
 

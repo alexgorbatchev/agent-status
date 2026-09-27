@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alexgorbatchev/agent-status/packages/agent-parser"
+	"github.com/alexgorbatchev/agent-parser"
 )
 
 // ToolUsageStat tracks usage count and errors for a specific tool.

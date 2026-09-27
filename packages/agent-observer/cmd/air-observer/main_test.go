@@ -18,7 +18,7 @@ import (
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/scanner"
 	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/tailer"
-	parser "github.com/alexgorbatchev/agent-status/packages/agent-parser"
+	parser "github.com/alexgorbatchev/agent-parser"
 	"github.com/coder/websocket"
 )
 

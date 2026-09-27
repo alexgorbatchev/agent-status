@@ -13,7 +13,7 @@ import (
 	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/output"
 	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/replay"
 	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/scanner"
-	"github.com/alexgorbatchev/agent-status/packages/agent-parser"
+	"github.com/alexgorbatchev/agent-parser"
 	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree"
 	"github.com/spf13/cobra"
 )

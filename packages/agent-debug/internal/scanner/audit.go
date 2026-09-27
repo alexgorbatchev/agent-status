@@ -12,7 +12,7 @@ import (
 	"time"
 
 	observerscanner "github.com/alexgorbatchev/agent-status/packages/agent-observer/scanner"
-	"github.com/alexgorbatchev/agent-status/packages/agent-parser"
+	"github.com/alexgorbatchev/agent-parser"
 	"github.com/shirou/gopsutil/v4/process"
 )
 

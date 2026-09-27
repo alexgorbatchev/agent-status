@@ -3,7 +3,7 @@ module github.com/alexgorbatchev/agent-status/packages/agent-common
 go 1.26.2
 
 require (
-	github.com/alexgorbatchev/agent-status/packages/agent-parser v0.0.0-00010101000000-000000000000
+	github.com/alexgorbatchev/agent-parser v1.0.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
 
@@ -13,5 +13,3 @@ require (
 	github.com/ncruces/julianday v1.0.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 )
-
-replace github.com/alexgorbatchev/agent-status/packages/agent-parser => ../agent-parser

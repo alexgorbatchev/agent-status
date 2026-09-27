@@ -3,8 +3,8 @@ module github.com/alexgorbatchev/agent-status/packages/agent-observer
 go 1.26.2
 
 require (
+	github.com/alexgorbatchev/agent-parser v1.0.0
 	github.com/alexgorbatchev/agent-status/packages/agent-common v0.0.0-00010101000000-000000000000
-	github.com/alexgorbatchev/agent-status/packages/agent-parser v0.0.0-00010101000000-000000000000
 	github.com/alexgorbatchev/cobra-help-tree v1.1.0
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/coder/websocket v1.8.15
@@ -27,11 +27,8 @@ require (
 	github.com/tklauser/numcpus v0.11.0 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	golang.org/x/sys v0.48.0 // indirect
-	golang.org/x/term v0.45.0 // indirect
+	golang.org/x/term v0.46.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 )
 
-replace (
-	github.com/alexgorbatchev/agent-status/packages/agent-common => ../agent-common
-	github.com/alexgorbatchev/agent-status/packages/agent-parser => ../agent-parser
-)
+replace github.com/alexgorbatchev/agent-status/packages/agent-common => ../agent-common

@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
-	"github.com/alexgorbatchev/agent-status/packages/agent-parser"
+	"github.com/alexgorbatchev/agent-parser"
 )
 
 const sampleClaudeLog = `{"type":"ai-title","title":"Refactor parser","sessionId":"test-session-123"}

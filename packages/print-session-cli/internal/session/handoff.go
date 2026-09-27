@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/alexgorbatchev/agent-status/packages/agent-parser"
+	"github.com/alexgorbatchev/agent-parser"
 )
 
 // RecentToolActivity captures a recent tool call and its execution result.

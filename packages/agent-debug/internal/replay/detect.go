@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
-	"github.com/alexgorbatchev/agent-status/packages/agent-parser"
+	"github.com/alexgorbatchev/agent-parser"
 )
 
 var (

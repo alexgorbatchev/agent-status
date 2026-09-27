@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
-	"github.com/alexgorbatchev/agent-status/packages/agent-parser"
+	"github.com/alexgorbatchev/agent-parser"
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
 
