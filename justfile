@@ -38,7 +38,7 @@ run-debug *args:
 
 # Run print-session CLI utility via go run
 print-session *args:
-    go run github.com/alexgorbatchev/agent-print-session-cli/cmd/print-session@latest {{args}}
+    go run github.com/alexgorbatchev/agent-print-session-cli/cmd/agent-print-session@latest {{args}}
 
 # Build only dev stack binaries and bundle ui-web (omitting agent-debug)
 build-stack:
