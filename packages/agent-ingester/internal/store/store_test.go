@@ -1,9 +1,11 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -270,7 +272,9 @@ func TestMigrate_V4ToV5(t *testing.T) {
 }
 
 func TestMigrate_V5ToV6(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	dbPath := filepath.Join(t.TempDir(), "v5tov6.db")
+	dsn := "file:" + dbPath + "?_pragma=foreign_keys(on)&_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
@@ -339,6 +343,18 @@ CREATE TABLE agents (
     context_fullness      REAL,
     UNIQUE (environment_id, harness, session_id)
 );
+
+CREATE TABLE telemetry_events (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id      TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    subagent_id   TEXT,
+    event_type    TEXT NOT NULL,
+    timestamp     INTEGER NOT NULL,
+    data_json     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_events_agent_ts ON telemetry_events(agent_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_events_subagent ON telemetry_events(agent_id, subagent_id);
+CREATE INDEX IF NOT EXISTS idx_events_ts       ON telemetry_events(timestamp);
 `
 	if _, err := db.Exec(schemaV1Old); err != nil {
 		t.Fatalf("schemaV1Old failed: %v", err)
@@ -350,6 +366,18 @@ CREATE TABLE agents (
 		t.Fatalf("setting user_version = 5 failed: %v", err)
 	}
 
+	// Seed existing agent and telemetry event before migration
+	const insertExistingAgent = `INSERT INTO agents (id, session_id, environment_id, harness, project_id, project_name, canonical_root, branch, cwd, first_started_at, updated_at, activity)
+		VALUES ('existing-agent', 's0', 'env-1', 'claude-code', 'p1', 'p1', '/repo', 'main', '/repo', 900, 900, 'BUSY');`
+	if _, err := db.Exec(insertExistingAgent); err != nil {
+		t.Fatalf("inserting existing agent failed: %v", err)
+	}
+	const insertExistingEvent = `INSERT INTO telemetry_events (agent_id, subagent_id, event_type, timestamp, data_json)
+		VALUES ('existing-agent', NULL, 'session_start', 901, '{"type":"start"}');`
+	if _, err := db.Exec(insertExistingEvent); err != nil {
+		t.Fatalf("inserting existing event failed: %v", err)
+	}
+
 	// In v5, attempting to insert an agent with RATE_LIMITED must fail check constraint
 	const insertAgent = `INSERT INTO agents (id, session_id, environment_id, harness, project_id, project_name, canonical_root, branch, cwd, first_started_at, updated_at, activity)
 		VALUES ('a1', 's1', 'env-1', 'claude-code', 'p1', 'p1', '/repo', 'main', '/repo', 1000, 1000, 'RATE_LIMITED');`
@@ -357,7 +385,7 @@ CREATE TABLE agents (
 		t.Fatalf("expected CHECK constraint failure inserting RATE_LIMITED before migration v6")
 	}
 
-	// Now run Migrate to upgrade from v5 to v6
+	// Now run Migrate to upgrade from v5 to v6 (and then v7)
 	if err := Migrate(db); err != nil {
 		t.Fatalf("Migrate() from v5 to v6 failed: %v", err)
 	}
@@ -368,6 +396,71 @@ CREATE TABLE agents (
 	}
 	if version != 7 {
 		t.Errorf("got user_version = %d, want 7", version)
+	}
+
+	// Verify existing agent and telemetry event rows survived migration
+	var agentCount int
+	if err := db.QueryRow("SELECT COUNT(*) FROM agents WHERE id = 'existing-agent';").Scan(&agentCount); err != nil {
+		t.Fatalf("querying existing agent count: %v", err)
+	}
+	if agentCount != 1 {
+		t.Errorf("expected 1 existing agent, got %d", agentCount)
+	}
+
+	var eventCount int
+	if err := db.QueryRow("SELECT COUNT(*) FROM telemetry_events;").Scan(&eventCount); err != nil {
+		t.Fatalf("querying telemetry_events count: %v", err)
+	}
+	if eventCount != 1 {
+		t.Errorf("expected 1 existing telemetry event, got %d", eventCount)
+	}
+
+	// Verify foreign key integrity
+	var fkErrors int
+	fkRows, err := db.Query("PRAGMA foreign_key_check;")
+	if err != nil {
+		t.Fatalf("PRAGMA foreign_key_check failed: %v", err)
+	}
+	defer func() { _ = fkRows.Close() }()
+	for fkRows.Next() {
+		fkErrors++
+	}
+	if fkErrors > 0 {
+		t.Errorf("expected 0 foreign key violations, got %d", fkErrors)
+	}
+
+	// Verify recreated indexes exist on agents table
+	var indexNames []string
+	idxRows, err := db.Query("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'agents';")
+	if err != nil {
+		t.Fatalf("querying indexes failed: %v", err)
+	}
+	defer func() { _ = idxRows.Close() }()
+	for idxRows.Next() {
+		var name string
+		if err := idxRows.Scan(&name); err != nil {
+			t.Fatalf("scanning index name: %v", err)
+		}
+		indexNames = append(indexNames, name)
+	}
+	expectedIndexes := []string{
+		"idx_agents_project",
+		"idx_agents_environment",
+		"idx_agents_activity",
+		"idx_agents_updated",
+		"idx_agents_hidden",
+	}
+	for _, expected := range expectedIndexes {
+		found := false
+		for _, name := range indexNames {
+			if name == expected {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected index %s not found on agents table, got %v", expected, indexNames)
+		}
 	}
 
 	// Now inserting RATE_LIMITED must succeed
@@ -381,6 +474,167 @@ CREATE TABLE agents (
 	}
 	if readActivity != "RATE_LIMITED" {
 		t.Errorf("got activity %q, want 'RATE_LIMITED'", readActivity)
+	}
+}
+
+func TestMigrate_V6_ForeignKeyCheckFailure(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "fk_fail.db")
+	db, err := sql.Open("sqlite3", "file:"+dbPath)
+	if err != nil {
+		t.Fatalf("sql.Open failed: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	if _, err := db.Exec(schemaV1); err != nil {
+		t.Fatalf("schemaV1 failed: %v", err)
+	}
+	v2v5 := []string{
+		"ALTER TABLE agents ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0;",
+		"ALTER TABLE agents ADD COLUMN hidden_at INTEGER;",
+		"CREATE INDEX IF NOT EXISTS idx_agents_hidden ON agents(is_hidden);",
+		"ALTER TABLE agents ADD COLUMN active_tool_started_at INTEGER;",
+		"ALTER TABLE agents ADD COLUMN active_subagents TEXT;",
+		"ALTER TABLE agents ADD COLUMN model TEXT;",
+		"ALTER TABLE agents ADD COLUMN context_window INTEGER;",
+		"ALTER TABLE agents ADD COLUMN context_fullness REAL;",
+		"PRAGMA user_version = 5;",
+	}
+	for _, stmt := range v2v5 {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("exec %q failed: %v", stmt, err)
+		}
+	}
+
+	// Insert orphan telemetry event referencing nonexistent agent while foreign keys are off
+	if _, err := db.Exec("PRAGMA foreign_keys = OFF;"); err != nil {
+		t.Fatalf("disabling fk: %v", err)
+	}
+	if _, err := db.Exec("INSERT INTO telemetry_events (agent_id, event_type, timestamp, data_json) VALUES ('nonexistent-agent', 'ev', 1000, '{}');"); err != nil {
+		t.Fatalf("insert orphan event: %v", err)
+	}
+
+	err = Migrate(db)
+	if err == nil {
+		t.Fatalf("expected Migrate() to fail on foreign key violation, got nil")
+	}
+	if !strings.Contains(err.Error(), "foreign key check failed") {
+		t.Errorf("expected error to mention 'foreign key check failed', got: %v", err)
+	}
+}
+
+func TestMigrate_V5ToV6_PreservesTelemetryEventsWithForeignKeys(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	dsn := "file:" + dbPath + "?_pragma=foreign_keys(on)&_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open failed: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	db.SetMaxOpenConns(5)
+	db.SetMaxIdleConns(5)
+
+	// Build schema up to v5
+	if _, err := db.Exec(schemaV1); err != nil {
+		t.Fatalf("schemaV1 failed: %v", err)
+	}
+	v2v5 := []string{
+		"ALTER TABLE agents ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0;",
+		"ALTER TABLE agents ADD COLUMN hidden_at INTEGER;",
+		"CREATE INDEX IF NOT EXISTS idx_agents_hidden ON agents(is_hidden);",
+		"ALTER TABLE agents ADD COLUMN active_tool_started_at INTEGER;",
+		"ALTER TABLE agents ADD COLUMN active_subagents TEXT;",
+		"ALTER TABLE agents ADD COLUMN model TEXT;",
+		"ALTER TABLE agents ADD COLUMN context_window INTEGER;",
+		"ALTER TABLE agents ADD COLUMN context_fullness REAL;",
+		"PRAGMA user_version = 5;",
+	}
+	for _, stmt := range v2v5 {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("executing v5 setup %q failed: %v", stmt, err)
+		}
+	}
+
+	// Seed environment, agent, telemetry events
+	if _, err := db.Exec("INSERT INTO environments VALUES ('env-1', 'dev', 'host', 'darwin', 'user', 0, 1000);"); err != nil {
+		t.Fatalf("insert env failed: %v", err)
+	}
+	const insertAgent = `INSERT INTO agents (
+		id, session_id, environment_id, harness,
+		project_id, project_name, canonical_root,
+		branch, cwd, first_started_at, updated_at, activity
+	) VALUES (
+		'a1', 's1', 'env-1', 'claude-code',
+		'p1', 'p1', '/repo',
+		'main', '/repo', 1000, 1000, 'BUSY'
+	);`
+	if _, err := db.Exec(insertAgent); err != nil {
+		t.Fatalf("insert agent failed: %v", err)
+	}
+
+	const insertEvent1 = `INSERT INTO telemetry_events (agent_id, subagent_id, event_type, timestamp, data_json)
+		VALUES ('a1', NULL, 'session_start', 1000, '{"type":"start"}');`
+	const insertEvent2 = `INSERT INTO telemetry_events (agent_id, subagent_id, event_type, timestamp, data_json)
+		VALUES ('a1', 'sub-1', 'tool_use', 1001, '{"tool":"bash"}');`
+	if _, err := db.Exec(insertEvent1); err != nil {
+		t.Fatalf("insert event 1 failed: %v", err)
+	}
+	if _, err := db.Exec(insertEvent2); err != nil {
+		t.Fatalf("insert event 2 failed: %v", err)
+	}
+
+	// Warm up multiple connections in the pool so that db.freeConn has at least 2 connections.
+	// In database/sql, free connections are kept in a FIFO queue.
+	// When Migrate runs unpinned, db.Exec("PRAGMA foreign_keys = OFF;") pops conn 1,
+	// disables foreign keys on conn 1, and returns it to the back of the queue.
+	// Then db.Begin() pops conn 2, which still has foreign keys ON.
+	// When DROP TABLE agents runs on conn 2 with foreign keys ON, SQLite's ON DELETE CASCADE
+	// deletes all rows in telemetry_events referencing the dropped agents.
+	ctx := context.Background()
+	c1, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("db.Conn 1 failed: %v", err)
+	}
+	c2, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatalf("db.Conn 2 failed: %v", err)
+	}
+	_ = c1.Close()
+	_ = c2.Close()
+
+	// Setting ConnMaxLifetime very short causes database/sql to retire connections
+	// after use. Under unpinned execution (db.Exec followed by db.Begin), the connection
+	// that executed "PRAGMA foreign_keys = OFF;" expires and is closed, and db.Begin()
+	// opens a new connection with _pragma=foreign_keys(on), wiping telemetry_events
+	// via ON DELETE CASCADE when DROP TABLE agents executes.
+	db.SetConnMaxLifetime(1 * time.Nanosecond)
+	time.Sleep(2 * time.Millisecond)
+
+	if err := Migrate(db); err != nil {
+		t.Fatalf("Migrate() failed: %v", err)
+	}
+
+	// Verify telemetry_events are preserved
+	var eventCount int
+	if err := db.QueryRow("SELECT COUNT(*) FROM telemetry_events;").Scan(&eventCount); err != nil {
+		t.Fatalf("reading telemetry_events count: %v", err)
+	}
+	if eventCount != 2 {
+		t.Fatalf("expected 2 telemetry_events to be preserved, got %d", eventCount)
+	}
+
+	// Verify foreign key integrity
+	var fkErrors int
+	rows, err := db.Query("PRAGMA foreign_key_check;")
+	if err != nil {
+		t.Fatalf("PRAGMA foreign_key_check failed: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		fkErrors++
+	}
+	if fkErrors > 0 {
+		t.Fatalf("expected 0 foreign key violations, got %d", fkErrors)
 	}
 }
 
@@ -1216,6 +1470,19 @@ func TestStore_EndCurrentRun_TriggerErrors(t *testing.T) {
 	}
 	if err := st.EndCurrentRun("a1", 2000); err == nil {
 		t.Errorf("expected error updating agents in EndCurrentRun")
+	}
+
+	// 3. Error querying agents in EndCurrentRun
+	stDrop, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer func() { _ = stDrop.Close() }()
+	if _, err := stDrop.db.Exec("DROP TABLE agents;"); err != nil {
+		t.Fatalf("drop agents failed: %v", err)
+	}
+	if err := stDrop.EndCurrentRun("a1", 2000); err == nil {
+		t.Errorf("expected error querying agents in EndCurrentRun")
 	}
 }
 
@@ -2558,6 +2825,19 @@ func TestStore_Migrate_ErrorPaths(t *testing.T) {
 		if _, err := db.Exec(schemaV1); err != nil {
 			t.Fatalf("schemaV1 failed: %v", err)
 		}
+		for _, col := range []string{
+			"ALTER TABLE agents ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0;",
+			"ALTER TABLE agents ADD COLUMN hidden_at INTEGER;",
+			"ALTER TABLE agents ADD COLUMN active_tool_started_at INTEGER;",
+			"ALTER TABLE agents ADD COLUMN active_subagents TEXT;",
+			"ALTER TABLE agents ADD COLUMN model TEXT;",
+			"ALTER TABLE agents ADD COLUMN context_window INTEGER;",
+			"ALTER TABLE agents ADD COLUMN context_fullness REAL;",
+		} {
+			if _, err := db.Exec(col); err != nil {
+				t.Fatalf("adding col failed: %v", err)
+			}
+		}
 		if _, err := db.Exec("DROP INDEX IF EXISTS idx_agents_project; CREATE VIEW idx_agents_project AS SELECT 1;"); err != nil {
 			t.Fatalf("creating conflicting view failed: %v", err)
 		}
@@ -2962,5 +3242,31 @@ func TestStore_GetAgent_ExitedWithHistoricalRun(t *testing.T) {
 		t.Errorf("EndCurrentRun on non-existent agent failed: %v", err)
 	}
 }
+
+func TestStore_GetAllActiveAgents_Coverage(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	// Insert an agent with an environment that doesn't exist (with FK off)
+	if _, err := st.db.Exec("PRAGMA foreign_keys = OFF;"); err != nil {
+		t.Fatalf("disabling fk: %v", err)
+	}
+	if _, err := st.db.Exec("INSERT INTO agents (id, session_id, environment_id, harness, project_id, project_name, canonical_root, branch, cwd, first_started_at, updated_at, activity) VALUES ('orphan-agent', 's', 'nonexistent-env', 'claude-code', 'p', 'p', '/', 'main', '/', 1, 1, 'BUSY');"); err != nil {
+		t.Fatalf("insert orphan agent: %v", err)
+	}
+
+	// GetAllActiveAgents should handle a == nil gracefully when JOIN fails
+	agents, err := st.GetAllActiveAgents()
+	if err != nil {
+		t.Fatalf("GetAllActiveAgents failed: %v", err)
+	}
+	if len(agents) != 0 {
+		t.Errorf("expected 0 agents, got %d", len(agents))
+	}
+}
+
 
 

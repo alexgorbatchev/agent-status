@@ -10,6 +10,7 @@ Central telemetry ingestion daemon (`air-ingester`) that receives agent events, 
 
 ## Local conventions
 - SQLite migrations are defined sequentially in `internal/store/migrations.go`; migration v6 updates the SQLite `activity` check constraint to include `'RATE_LIMITED'` alongside `'BUSY'`, `'WAITING_QUESTION'`, `'ERROR'`, and `'IDLE'`, and migration v7 adds nullable integer columns `rate_limit_reset_at` (epoch ms) and `retry_after_seconds` to the `agents` table.
+- Table rebuild migrations (e.g. migration v6) must pin a single connection via `db.Conn(ctx)` to disable foreign keys, run the transaction, verify `PRAGMA foreign_key_check`, and re-enable foreign keys, preventing accidental cascade deletion of related tables across pooled connections (#113).
 - Structured rate-limit metadata (`RateLimitResetAt`, `RetryAfterSeconds`) extracted from telemetry frames is persisted to the `agents` table and attached to `IAgentActivity`, elevating activity to `RATE_LIMITED` and preserving reset targets across turns (`internal/classifier/classifier.go`, `internal/store/store.go`).
 - Silence timers are scheduled on rate-limit error frames (`scheduleSilenceTimerLocked`) so that unrecovered or abandoned throttled sessions transition to `IDLE` after the silence timeout window instead of stalling in `RATE_LIMITED` indefinitely (`internal/classifier/classifier.go`).
 - Hidden agent state is stored in SQLite (`is_hidden`, `hidden_at`); incoming telemetry frames with new activity automatically reset `is_hidden = 0`.

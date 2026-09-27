@@ -1,8 +1,10 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 const schemaV1 = `
@@ -222,18 +224,71 @@ func Migrate(db *sql.DB) error {
 	}
 
 	if version < 6 {
-		if _, err := db.Exec("PRAGMA foreign_keys = OFF;"); err != nil {
-			return fmt.Errorf("disabling foreign keys for migration v6: %w", err)
+		if err := migrateV6(db); err != nil {
+			return err
 		}
+		version = 6
+	}
+
+	if version < 7 {
 		tx, err := db.Begin()
 		if err != nil {
-			return fmt.Errorf("beginning migration v6 transaction: %w", err)
+			return fmt.Errorf("beginning migration v7 transaction: %w", err)
 		}
 		defer func() {
 			_ = tx.Rollback()
 		}()
 
-		const createAgentsV6 = `
+		if _, err := tx.Exec("ALTER TABLE agents ADD COLUMN rate_limit_reset_at INTEGER;"); err != nil {
+			return fmt.Errorf("executing migration v7 rate_limit_reset_at: %w", err)
+		}
+		if _, err := tx.Exec("ALTER TABLE agents ADD COLUMN retry_after_seconds INTEGER;"); err != nil {
+			return fmt.Errorf("executing migration v7 retry_after_seconds: %w", err)
+		}
+
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("committing migration v7: %w", err)
+		}
+
+		if _, err := db.Exec("PRAGMA user_version = 7;"); err != nil {
+			return fmt.Errorf("updating user_version to 7: %w", err)
+		}
+		version = 7
+	}
+
+	return nil
+}
+
+func migrateV6(db *sql.DB) error {
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("getting connection for migration v6: %w", err)
+	}
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	fkReenabled := false
+	defer func() {
+		if !fkReenabled {
+			_, _ = conn.ExecContext(ctx, "PRAGMA foreign_keys = ON;")
+		}
+	}()
+
+	if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys = OFF;"); err != nil {
+		return fmt.Errorf("disabling foreign keys for migration v6: %w", err)
+	}
+
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning migration v6 transaction: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	const createAgentsV6 = `
 CREATE TABLE agents_new (
     id                    TEXT PRIMARY KEY,
     session_id            TEXT NOT NULL,
@@ -278,11 +333,11 @@ CREATE TABLE agents_new (
     UNIQUE (environment_id, harness, session_id)
 );
 `
-		if _, err := tx.Exec(createAgentsV6); err != nil {
-			return fmt.Errorf("creating agents_new table for migration v6: %w", err)
-		}
+	if _, err := tx.ExecContext(ctx, createAgentsV6); err != nil {
+		return fmt.Errorf("creating agents_new table for migration v6: %w", err)
+	}
 
-		const copyAgentsV6 = `
+	const copyAgentsV6 = `
 INSERT INTO agents_new (
     id, session_id, environment_id, harness,
     project_id, project_name, canonical_root,
@@ -312,67 +367,67 @@ SELECT
     model, context_window, context_fullness
 FROM agents;
 `
-		if _, err := tx.Exec(copyAgentsV6); err != nil {
-			return fmt.Errorf("copying data to agents_new for migration v6: %w", err)
-		}
+	if _, err := tx.ExecContext(ctx, copyAgentsV6); err != nil {
+		return fmt.Errorf("copying data to agents_new for migration v6: %w", err)
+	}
 
-		if _, err := tx.Exec("DROP TABLE agents;"); err != nil {
-			return fmt.Errorf("dropping old agents table for migration v6: %w", err)
-		}
+	if _, err := tx.ExecContext(ctx, "DROP TABLE agents;"); err != nil {
+		return fmt.Errorf("dropping old agents table for migration v6: %w", err)
+	}
 
-		if _, err := tx.Exec("ALTER TABLE agents_new RENAME TO agents;"); err != nil {
-			return fmt.Errorf("renaming agents_new to agents for migration v6: %w", err)
-		}
+	if _, err := tx.ExecContext(ctx, "ALTER TABLE agents_new RENAME TO agents;"); err != nil {
+		return fmt.Errorf("renaming agents_new to agents for migration v6: %w", err)
+	}
 
-		const recreateIndexesV6 = `
+	const recreateIndexesV6 = `
 CREATE INDEX IF NOT EXISTS idx_agents_project     ON agents(project_id);
 CREATE INDEX IF NOT EXISTS idx_agents_environment ON agents(environment_id);
 CREATE INDEX IF NOT EXISTS idx_agents_activity    ON agents(activity);
 CREATE INDEX IF NOT EXISTS idx_agents_updated     ON agents(updated_at);
 CREATE INDEX IF NOT EXISTS idx_agents_hidden      ON agents(is_hidden);
 `
-		if _, err := tx.Exec(recreateIndexesV6); err != nil {
-			return fmt.Errorf("recreating indexes for migration v6: %w", err)
-		}
-
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("committing migration v6: %w", err)
-		}
-
-		if _, err := db.Exec("PRAGMA foreign_keys = ON;"); err != nil {
-			return fmt.Errorf("re-enabling foreign keys after migration v6: %w", err)
-		}
-
-		if _, err := db.Exec("PRAGMA user_version = 6;"); err != nil {
-			return fmt.Errorf("updating user_version to 6: %w", err)
-		}
-		version = 6
+	if _, err := tx.ExecContext(ctx, recreateIndexesV6); err != nil {
+		return fmt.Errorf("recreating indexes for migration v6: %w", err)
 	}
 
-	if version < 7 {
-		tx, err := db.Begin()
-		if err != nil {
-			return fmt.Errorf("beginning migration v7 transaction: %w", err)
-		}
-		defer func() {
-			_ = tx.Rollback()
-		}()
+	rows, err := tx.QueryContext(ctx, "PRAGMA foreign_key_check;")
+	if err != nil {
+		return fmt.Errorf("checking foreign keys for migration v6: %w", err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
 
-		if _, err := tx.Exec("ALTER TABLE agents ADD COLUMN rate_limit_reset_at INTEGER;"); err != nil {
-			return fmt.Errorf("executing migration v7 rate_limit_reset_at: %w", err)
+	var fkViolations []string
+	for rows.Next() {
+		var table, parent string
+		var rowid any
+		var fkid int
+		if err := rows.Scan(&table, &rowid, &parent, &fkid); err != nil {
+			return fmt.Errorf("scanning foreign key check row for migration v6: %w", err)
 		}
-		if _, err := tx.Exec("ALTER TABLE agents ADD COLUMN retry_after_seconds INTEGER;"); err != nil {
-			return fmt.Errorf("executing migration v7 retry_after_seconds: %w", err)
-		}
+		fkViolations = append(fkViolations, fmt.Sprintf("table %s (rowid %v, parent %s)", table, rowid, parent))
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterating foreign key check rows for migration v6: %w", err)
+	}
+	_ = rows.Close()
 
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("committing migration v7: %w", err)
-		}
+	if len(fkViolations) > 0 {
+		return fmt.Errorf("foreign key check failed for migration v6: %s", strings.Join(fkViolations, "; "))
+	}
 
-		if _, err := db.Exec("PRAGMA user_version = 7;"); err != nil {
-			return fmt.Errorf("updating user_version to 7: %w", err)
-		}
-		version = 7
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing migration v6: %w", err)
+	}
+
+	if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys = ON;"); err != nil {
+		return fmt.Errorf("re-enabling foreign keys after migration v6: %w", err)
+	}
+	fkReenabled = true
+
+	if _, err := conn.ExecContext(ctx, "PRAGMA user_version = 6;"); err != nil {
+		return fmt.Errorf("updating user_version to 6: %w", err)
 	}
 
 	return nil
