@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/fsnotify/fsnotify"
 )
 
 func TestTailerReadAndAppend(t *testing.T) {
@@ -373,7 +376,12 @@ func TestTailerCloseWatcherEventsDirectly(t *testing.T) {
 	targetFile := filepath.Join(tmpDir, "close_watcher.jsonl")
 	_ = os.WriteFile(targetFile, []byte("line\n"), 0600)
 
-	tail, err := NewTailer(targetFile, store, func(line []byte) error { return nil })
+	reg, err := NewWatcherRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tail, err := NewTailer(targetFile, store, func(line []byte) error { return nil }, WithWatcherRegistry(reg))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,7 +394,7 @@ func TestTailerCloseWatcherEventsDirectly(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Closing watcher directly causes events channel to close and Start to return nil
-	_ = tail.watcher.Close()
+	_ = tail.registry.Close()
 
 	select {
 	case err := <-doneCh:
@@ -728,5 +736,597 @@ func TestTailerAtomicFileReplacementNewInode(t *testing.T) {
 	}
 }
 
+func TestTailerSharedDirectoryWatcher(t *testing.T) {
+	tmpDir := t.TempDir()
+	store, _ := NewCursorStore(filepath.Join(tmpDir, "cursors.json"))
+	fileA := filepath.Join(tmpDir, "subagent-1.jsonl")
+	fileB := filepath.Join(tmpDir, "subagent-2.jsonl")
+	_ = os.WriteFile(fileA, []byte("init a\n"), 0600)
+	_ = os.WriteFile(fileB, []byte("init b\n"), 0600)
 
+	reg, err := NewWatcherRegistry()
+	if err != nil {
+		t.Fatalf("NewWatcherRegistry error: %v", err)
+	}
+	defer func() { _ = reg.Close() }()
+
+	tailA, err := NewTailer(fileA, store, func([]byte) error { return nil }, WithWatcherRegistry(reg))
+	if err != nil {
+		t.Fatalf("NewTailer A error: %v", err)
+	}
+	tailB, err := NewTailer(fileB, store, func([]byte) error { return nil }, WithWatcherRegistry(reg))
+	if err != nil {
+		t.Fatalf("NewTailer B error: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() { _ = tailA.Start(ctx) }()
+	go func() { _ = tailB.Start(ctx) }()
+
+	// Wait for tailers to start and register directory watches
+	time.Sleep(100 * time.Millisecond)
+
+	// Ref count for tmpDir must be 2
+	refCount := reg.DirRefCount(tmpDir)
+	if refCount != 2 {
+		t.Errorf("expected DirRefCount = 2 for shared directory, got %d", refCount)
+	}
+
+	// Underlying fsnotify watcher must only have 1 watched path (tmpDir)
+	watchList := reg.WatchList()
+	if len(watchList) != 1 {
+		t.Errorf("expected 1 fsnotify watch in registry, got %d: %v", len(watchList), watchList)
+	}
+}
+
+func TestTailerSelectiveDispatchNoWakeup(t *testing.T) {
+	tmpDir := t.TempDir()
+	store, _ := NewCursorStore(filepath.Join(tmpDir, "cursors.json"))
+	fileA := filepath.Join(tmpDir, "subagent-1.jsonl")
+	fileB := filepath.Join(tmpDir, "subagent-2.jsonl")
+	_ = os.WriteFile(fileA, []byte("init a\n"), 0600)
+	_ = os.WriteFile(fileB, []byte("init b\n"), 0600)
+
+	reg, err := NewWatcherRegistry()
+	if err != nil {
+		t.Fatalf("NewWatcherRegistry error: %v", err)
+	}
+	defer func() { _ = reg.Close() }()
+
+	var linesA []string
+	var muA sync.Mutex
+	tailA, err := NewTailer(fileA, store, func(line []byte) error {
+		muA.Lock()
+		defer muA.Unlock()
+		linesA = append(linesA, string(line))
+		return nil
+	}, WithWatcherRegistry(reg))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var linesB []string
+	var muB sync.Mutex
+	tailB, err := NewTailer(fileB, store, func(line []byte) error {
+		muB.Lock()
+		defer muB.Unlock()
+		linesB = append(linesB, string(line))
+		return nil
+	}, WithWatcherRegistry(reg))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() { _ = tailA.Start(ctx) }()
+	go func() { _ = tailB.Start(ctx) }()
+
+	// Allow initial read
+	time.Sleep(100 * time.Millisecond)
+
+	initialWakeA := tailA.WakeCount()
+	initialWakeB := tailB.WakeCount()
+
+	// Append to fileA only
+	fA, err := os.OpenFile(fileA, os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = fA.WriteString("appended to a\n")
+	_ = fA.Close()
+
+	// Wait for Tailer A to read the new line
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		muA.Lock()
+		count := len(linesA)
+		muA.Unlock()
+		if count >= 2 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	muA.Lock()
+	if len(linesA) != 2 {
+		t.Errorf("expected 2 lines in tailA, got %d", len(linesA))
+	}
+	muA.Unlock()
+
+	// Verify Tailer A was woken up
+	wakeDeltaA := tailA.WakeCount() - initialWakeA
+	if wakeDeltaA < 1 {
+		t.Errorf("expected tailA wakeCount to increase, delta = %d", wakeDeltaA)
+	}
+
+	// Verify Tailer B was NOT woken up
+	wakeDeltaB := tailB.WakeCount() - initialWakeB
+	if wakeDeltaB != 0 {
+		t.Errorf("quadratic wakeup detected: tailB wakeCount increased by %d after write to fileA", wakeDeltaB)
+	}
+
+	muB.Lock()
+	if len(linesB) != 1 {
+		t.Errorf("expected tailB to have only initial line, got %d: %v", len(linesB), linesB)
+	}
+	muB.Unlock()
+}
+
+func TestTailerDirectoryWatchCleanupOnStop(t *testing.T) {
+	tmpDir := t.TempDir()
+	store, _ := NewCursorStore(filepath.Join(tmpDir, "cursors.json"))
+	fileA := filepath.Join(tmpDir, "subagent-1.jsonl")
+	fileB := filepath.Join(tmpDir, "subagent-2.jsonl")
+	_ = os.WriteFile(fileA, []byte("init a\n"), 0600)
+	_ = os.WriteFile(fileB, []byte("init b\n"), 0600)
+
+	reg, err := NewWatcherRegistry()
+	if err != nil {
+		t.Fatalf("NewWatcherRegistry error: %v", err)
+	}
+	defer func() { _ = reg.Close() }()
+
+	tailA, _ := NewTailer(fileA, store, func([]byte) error { return nil }, WithWatcherRegistry(reg))
+	tailB, _ := NewTailer(fileB, store, func([]byte) error { return nil }, WithWatcherRegistry(reg))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() { _ = tailA.Start(ctx) }()
+	go func() { _ = tailB.Start(ctx) }()
+
+	time.Sleep(100 * time.Millisecond)
+
+	if rc := reg.DirRefCount(tmpDir); rc != 2 {
+		t.Fatalf("expected initial DirRefCount = 2, got %d", rc)
+	}
+
+	// Stop Tailer A
+	tailA.Stop()
+	time.Sleep(50 * time.Millisecond)
+
+	if rc := reg.DirRefCount(tmpDir); rc != 1 {
+		t.Errorf("expected DirRefCount = 1 after stopping tailA, got %d", rc)
+	}
+	if wl := reg.WatchList(); len(wl) != 1 {
+		t.Errorf("expected 1 watch still active in fsnotify, got %d: %v", len(wl), wl)
+	}
+
+	// Stop Tailer B
+	tailB.Stop()
+	time.Sleep(50 * time.Millisecond)
+
+	if rc := reg.DirRefCount(tmpDir); rc != 0 {
+		t.Errorf("expected DirRefCount = 0 after stopping all tailers, got %d", rc)
+	}
+	if wl := reg.WatchList(); len(wl) != 0 {
+		t.Errorf("expected 0 watches in fsnotify after stopping all tailers, got %d: %v", len(wl), wl)
+	}
+}
+
+func TestWatcherRegistryUnit(t *testing.T) {
+	// Test nil WatchList
+	var nilReg *WatcherRegistry
+	if nilReg.WatchList() != nil {
+		t.Errorf("expected nil WatchList for nil registry")
+	}
+
+	reg, err := NewWatcherRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = reg.Close() }()
+
+	if reg.WatchedDirCount() != 0 {
+		t.Errorf("expected 0 watched dirs, got %d", reg.WatchedDirCount())
+	}
+	if reg.SubscriberCount() != 0 {
+		t.Errorf("expected 0 subscribers, got %d", reg.SubscriberCount())
+	}
+	if reg.DirRefCount("/nonexistent/dir") != 0 {
+		t.Errorf("expected 0 ref count, got %d", reg.DirRefCount("/nonexistent/dir"))
+	}
+
+	tmpDir := t.TempDir()
+	f1 := filepath.Join(tmpDir, "file1.txt")
+	f2 := filepath.Join(tmpDir, "file2.txt")
+	_ = os.WriteFile(f1, []byte("hello"), 0600)
+	_ = os.WriteFile(f2, []byte("world"), 0600)
+
+	sub1, err := reg.Subscribe(f1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub1.Close()
+
+	sub2, err := reg.Subscribe(f2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub2.Close()
+
+	// Another subscriber on f1
+	sub1b, err := reg.Subscribe(f1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub1b.Close()
+
+	if reg.WatchedDirCount() != 1 {
+		t.Errorf("expected 1 watched dir, got %d", reg.WatchedDirCount())
+	}
+	if reg.SubscriberCount() != 3 {
+		t.Errorf("expected 3 subscribers, got %d", reg.SubscriberCount())
+	}
+
+	// Test dispatch for relative path fallback
+	reg.dispatchEvent(filepath.Base(f1))
+	select {
+	case <-sub1.Events():
+	case <-time.After(100 * time.Millisecond):
+		t.Errorf("expected sub1 to receive event on base name dispatch")
+	}
+	select {
+	case <-sub1b.Events():
+	case <-time.After(100 * time.Millisecond):
+		t.Errorf("expected sub1b to receive event on base name dispatch")
+	}
+
+	// Sub2 should not receive event for f1
+	select {
+	case <-sub2.Events():
+		t.Errorf("sub2 should not receive event for f1")
+	default:
+	}
+
+	// Close registry and verify Subscribe returns ErrRegistryClosed
+	_ = reg.Close()
+	_, err = reg.Subscribe(f1)
+	if !errors.Is(err, ErrRegistryClosed) {
+		t.Errorf("expected ErrRegistryClosed, got %v", err)
+	}
+}
+
+func TestWatcherRegistryDefaultAndReset(t *testing.T) {
+	ResetDefaultWatcherRegistry()
+	reg1, err := DefaultWatcherRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg2, err := DefaultWatcherRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reg1 != reg2 {
+		t.Errorf("expected DefaultWatcherRegistry to return same instance")
+	}
+	ResetDefaultWatcherRegistry()
+	// Reset again when already nil
+	ResetDefaultWatcherRegistry()
+}
+
+func TestWatcherRegistryFallbackRealFilesystem(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("skipping directory permission test when running as root")
+	}
+
+	tmpDir := t.TempDir()
+	restrictedDir := filepath.Join(tmpDir, "restricted")
+	if err := os.Mkdir(restrictedDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	fileA := filepath.Join(restrictedDir, "subagent-1.jsonl")
+	fileB := filepath.Join(restrictedDir, "subagent-2.jsonl")
+	if err := os.WriteFile(fileA, []byte("init a\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fileB, []byte("init b\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// 0311: write + execute, no read permission -> directory watching fails, file watching succeeds
+	if err := os.Chmod(restrictedDir, 0311); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chmod(restrictedDir, 0700) }()
+
+	reg, err := NewWatcherRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = reg.Close() }()
+
+	subA, err := reg.Subscribe(fileA)
+	if err != nil {
+		t.Fatalf("Subscribe fileA error: %v", err)
+	}
+	defer subA.Close()
+
+	// Verify cleanDir is NOT stored in r.dirs
+	if reg.WatchedDirCount() != 0 {
+		t.Errorf("expected WatchedDirCount = 0 when dir watch fails, got %d", reg.WatchedDirCount())
+	}
+	if reg.DirRefCount(restrictedDir) != 0 {
+		t.Errorf("expected DirRefCount = 0 for restrictedDir, got %d", reg.DirRefCount(restrictedDir))
+	}
+
+	subB, err := reg.Subscribe(fileB)
+	if err != nil {
+		t.Fatalf("Subscribe fileB error: %v", err)
+	}
+	defer subB.Close()
+
+	// Both files must be individually watched in fsnotify
+	watchList := reg.WatchList()
+	if len(watchList) != 2 {
+		t.Errorf("expected 2 file watches in WatchList, got %d: %v", len(watchList), watchList)
+	}
+}
+
+type mockWatcher struct {
+	mu        sync.Mutex
+	watchlist map[string]struct{}
+	addErr    func(path string) error
+	events    chan fsnotify.Event
+	errors    chan error
+	closed    bool
+}
+
+func newMockWatcher(addErr func(path string) error) *mockWatcher {
+	return &mockWatcher{
+		watchlist: make(map[string]struct{}),
+		addErr:    addErr,
+		events:    make(chan fsnotify.Event, 10),
+		errors:    make(chan error, 10),
+	}
+}
+
+func (m *mockWatcher) Add(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.addErr != nil {
+		if err := m.addErr(name); err != nil {
+			return err
+		}
+	}
+	m.watchlist[name] = struct{}{}
+	return nil
+}
+
+func (m *mockWatcher) Remove(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.watchlist, name)
+	return nil
+}
+
+func (m *mockWatcher) Close() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.closed {
+		m.closed = true
+		close(m.events)
+		close(m.errors)
+	}
+	return nil
+}
+
+func (m *mockWatcher) WatchList() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	paths := make([]string, 0, len(m.watchlist))
+	for p := range m.watchlist {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+func TestWatcherRegistryFallbackBehavior(t *testing.T) {
+	tmpDir := t.TempDir()
+	dir := filepath.Join(tmpDir, "subagents")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	file1 := filepath.Join(dir, "subagent-1.jsonl")
+	file2 := filepath.Join(dir, "subagent-2.jsonl")
+	if err := os.WriteFile(file1, []byte("line1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file2, []byte("line2\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Mock watcher where directory Add fails, but file Add succeeds
+	mock := newMockWatcher(func(path string) error {
+		if path == dir {
+			return errors.New("directory watching not supported or permission denied")
+		}
+		return nil
+	})
+
+	reg := newWatcherRegistry(mock, mock.events, mock.errors)
+	defer func() { _ = reg.Close() }()
+
+	// 1. Subscribe to file1
+	sub1, err := reg.Subscribe(file1)
+	if err != nil {
+		t.Fatalf("unexpected error subscribing to file1: %v", err)
+	}
+
+	// Verify cleanDir is NOT stored in r.dirs
+	if reg.WatchedDirCount() != 0 {
+		t.Errorf("expected WatchedDirCount = 0, got %d", reg.WatchedDirCount())
+	}
+	if reg.DirRefCount(dir) != 0 {
+		t.Errorf("expected DirRefCount = 0, got %d", reg.DirRefCount(dir))
+	}
+
+	// Verify file1 is tracked in fallback files
+	if reg.FallbackFileCount() != 1 {
+		t.Errorf("expected FallbackFileCount = 1, got %d", reg.FallbackFileCount())
+	}
+	if reg.FileRefCount(file1) != 1 {
+		t.Errorf("expected FileRefCount(file1) = 1, got %d", reg.FileRefCount(file1))
+	}
+	wl := reg.WatchList()
+	if len(wl) != 1 || wl[0] != file1 {
+		t.Errorf("expected WatchList = [%s], got %v", file1, wl)
+	}
+
+	// 2. Subscribe to file2 in the SAME directory
+	// Must NOT assume directory is watched; must attach its own file watch to r.watcher
+	sub2, err := reg.Subscribe(file2)
+	if err != nil {
+		t.Fatalf("unexpected error subscribing to file2: %v", err)
+	}
+
+	// Verify cleanDir is STILL NOT stored in r.dirs
+	if reg.WatchedDirCount() != 0 {
+		t.Errorf("expected WatchedDirCount = 0 after sub2, got %d", reg.WatchedDirCount())
+	}
+	if reg.DirRefCount(dir) != 0 {
+		t.Errorf("expected DirRefCount = 0 after sub2, got %d", reg.DirRefCount(dir))
+	}
+
+	// Verify both files are tracked in fallback files
+	if reg.FallbackFileCount() != 2 {
+		t.Errorf("expected FallbackFileCount = 2, got %d", reg.FallbackFileCount())
+	}
+	if reg.FileRefCount(file2) != 1 {
+		t.Errorf("expected FileRefCount(file2) = 1, got %d", reg.FileRefCount(file2))
+	}
+	wl = reg.WatchList()
+	if len(wl) != 2 {
+		t.Errorf("expected 2 watches in WatchList, got %d: %v", len(wl), wl)
+	}
+
+	// 3. Second subscription to file1
+	sub1b, err := reg.Subscribe(file1)
+	if err != nil {
+		t.Fatalf("unexpected error subscribing to file1 again: %v", err)
+	}
+	if reg.FileRefCount(file1) != 2 {
+		t.Errorf("expected FileRefCount(file1) = 2, got %d", reg.FileRefCount(file1))
+	}
+	if reg.SubscriberCount() != 3 {
+		t.Errorf("expected SubscriberCount = 3, got %d", reg.SubscriberCount())
+	}
+
+	// 4. Test event dispatch for file1
+	mock.events <- fsnotify.Event{Name: file1, Op: fsnotify.Write}
+	select {
+	case <-sub1.Events():
+	case <-time.After(100 * time.Millisecond):
+		t.Errorf("sub1 did not receive event for file1")
+	}
+	select {
+	case <-sub1b.Events():
+	case <-time.After(100 * time.Millisecond):
+		t.Errorf("sub1b did not receive event for file1")
+	}
+	select {
+	case <-sub2.Events():
+		t.Errorf("sub2 should not have received event for file1")
+	default:
+	}
+
+	// 5. Test event dispatch for file2
+	mock.events <- fsnotify.Event{Name: file2, Op: fsnotify.Write}
+	select {
+	case <-sub2.Events():
+	case <-time.After(100 * time.Millisecond):
+		t.Errorf("sub2 did not receive event for file2")
+	}
+	select {
+	case <-sub1.Events():
+		t.Errorf("sub1 should not have received event for file2")
+	default:
+	}
+
+	// 6. Unsubscribe sub1
+	sub1.Close()
+	if reg.FileRefCount(file1) != 1 {
+		t.Errorf("expected FileRefCount(file1) = 1 after sub1.Close(), got %d", reg.FileRefCount(file1))
+	}
+	if len(reg.WatchList()) != 2 {
+		t.Errorf("expected 2 watches remaining in WatchList, got %d", len(reg.WatchList()))
+	}
+
+	// 7. Unsubscribe sub1b
+	sub1b.Close()
+	if reg.FileRefCount(file1) != 0 {
+		t.Errorf("expected FileRefCount(file1) = 0 after sub1b.Close(), got %d", reg.FileRefCount(file1))
+	}
+	wl = reg.WatchList()
+	if len(wl) != 1 || wl[0] != file2 {
+		t.Errorf("expected WatchList = [%s], got %v", file2, wl)
+	}
+
+	// 8. Unsubscribe sub2
+	sub2.Close()
+	if reg.FileRefCount(file2) != 0 {
+		t.Errorf("expected FileRefCount(file2) = 0 after sub2.Close(), got %d", reg.FileRefCount(file2))
+	}
+	if reg.FallbackFileCount() != 0 {
+		t.Errorf("expected FallbackFileCount = 0 after all closed, got %d", reg.FallbackFileCount())
+	}
+	if len(reg.WatchList()) != 0 {
+		t.Errorf("expected WatchList to be empty, got %v", reg.WatchList())
+	}
+
+	// 9. Verify error when both dir and file watch fail
+	mockBothFail := newMockWatcher(func(path string) error {
+		return errors.New("cannot watch")
+	})
+	regBothFail := newWatcherRegistry(mockBothFail, mockBothFail.events, mockBothFail.errors)
+	defer func() { _ = regBothFail.Close() }()
+
+	_, err = regBothFail.Subscribe(file1)
+	if err == nil {
+		t.Fatalf("expected error when both dir and file watch fail")
+	}
+
+	// 10. Nil registry checks for fallback methods
+	var nilReg *WatcherRegistry
+	if nilReg.FallbackFileCount() != 0 {
+		t.Errorf("expected 0 for nilReg.FallbackFileCount()")
+	}
+	if nilReg.FileRefCount(file1) != 0 {
+		t.Errorf("expected 0 for nilReg.FileRefCount()")
+	}
+	if nilReg.WatchedDirCount() != 0 {
+		t.Errorf("expected 0 for nilReg.WatchedDirCount()")
+	}
+	if nilReg.DirRefCount(dir) != 0 {
+		t.Errorf("expected 0 for nilReg.DirRefCount()")
+	}
+	if nilReg.SubscriberCount() != 0 {
+		t.Errorf("expected 0 for nilReg.SubscriberCount()")
+	}
+}
 

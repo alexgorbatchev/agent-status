@@ -9,12 +9,11 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
-
-	"github.com/fsnotify/fsnotify"
 )
 
-var tailerPollInterval = 1 * time.Second
+var tailerPollInterval = 10 * time.Second
 
 type LineHandler func(line []byte) error
 
@@ -26,9 +25,10 @@ type Tailer struct {
 	onLine   LineHandler
 	onOffset LineOffsetHandler
 
-	watcher         *fsnotify.Watcher
+	registry        *WatcherRegistry
 	stopCh          chan struct{}
 	once            sync.Once
+	wakeCount       int64
 	mu              sync.Mutex
 	readMu          sync.Mutex
 	offset          int64
@@ -42,61 +42,65 @@ type Tailer struct {
 }
 
 // NewTailer creates a tailer using the classic LineHandler (auto-commits read offsets to cursor store).
-func NewTailer(filePath string, store *CursorStore, onLine LineHandler) (*Tailer, error) {
+func NewTailer(filePath string, store *CursorStore, onLine LineHandler, opts ...TailerOption) (*Tailer, error) {
 	absPath, err := filepath.Abs(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("resolving absolute path for %q: %w", filePath, err)
 	}
 
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		return nil, fmt.Errorf("creating fsnotify watcher: %w", err)
-	}
-
-	return &Tailer{
+	t := &Tailer{
 		filePath:   absPath,
 		store:      store,
 		onLine:     onLine,
-		watcher:    watcher,
 		stopCh:     make(chan struct{}),
 		autoCommit: true,
-	}, nil
+	}
+	for _, opt := range opts {
+		opt(t)
+	}
+	if t.registry == nil {
+		reg, err := DefaultWatcherRegistry()
+		if err != nil {
+			return nil, fmt.Errorf("getting default watcher registry: %w", err)
+		}
+		t.registry = reg
+	}
+	return t, nil
 }
 
 // NewTailerWithOffsetHandler creates a tailer using LineOffsetHandler with explicit ACK-committed delivery.
-func NewTailerWithOffsetHandler(filePath string, store *CursorStore, onOffset LineOffsetHandler) (*Tailer, error) {
+func NewTailerWithOffsetHandler(filePath string, store *CursorStore, onOffset LineOffsetHandler, opts ...TailerOption) (*Tailer, error) {
 	absPath, err := filepath.Abs(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("resolving absolute path for %q: %w", filePath, err)
 	}
 
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		return nil, fmt.Errorf("creating fsnotify watcher: %w", err)
-	}
-
-	return &Tailer{
+	t := &Tailer{
 		filePath:   absPath,
 		store:      store,
 		onOffset:   onOffset,
-		watcher:    watcher,
 		stopCh:     make(chan struct{}),
 		autoCommit: false,
-	}, nil
+	}
+	for _, opt := range opts {
+		opt(t)
+	}
+	if t.registry == nil {
+		reg, err := DefaultWatcherRegistry()
+		if err != nil {
+			return nil, fmt.Errorf("getting default watcher registry: %w", err)
+		}
+		t.registry = reg
+	}
+	return t, nil
 }
 
 func (t *Tailer) Start(ctx context.Context) error {
-	defer func() {
-		_ = t.watcher.Close()
-	}()
-
-	dir := filepath.Dir(t.filePath)
-	if err := t.watcher.Add(dir); err != nil {
-		// If watching dir fails, try watching file directly
-		if fErr := t.watcher.Add(t.filePath); fErr != nil {
-			return fmt.Errorf("watching file path: %w", fErr)
-		}
+	sub, err := t.registry.Subscribe(t.filePath)
+	if err != nil {
+		return err
 	}
+	defer sub.Close()
 
 	// Initial read
 	_ = t.readAvailable()
@@ -110,20 +114,11 @@ func (t *Tailer) Start(ctx context.Context) error {
 			return ctx.Err()
 		case <-t.stopCh:
 			return nil
-		case event, ok := <-t.watcher.Events:
-			if !ok {
-				return nil
-			}
-			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
-				cleanEventPath := filepath.Clean(event.Name)
-				if cleanEventPath == t.filePath || filepath.Base(cleanEventPath) == filepath.Base(t.filePath) {
-					_ = t.readAvailable()
-				}
-			}
-		case _, ok := <-t.watcher.Errors:
-			if !ok {
-				return nil
-			}
+		case <-sub.Done():
+			return nil
+		case <-sub.Events():
+			atomic.AddInt64(&t.wakeCount, 1)
+			_ = t.readAvailable()
 		case <-ticker.C:
 			_ = t.readAvailable()
 		}
@@ -134,6 +129,11 @@ func (t *Tailer) Stop() {
 	t.once.Do(func() {
 		close(t.stopCh)
 	})
+}
+
+// WakeCount returns the number of times this tailer was woken up by a watcher event.
+func (t *Tailer) WakeCount() int64 {
+	return atomic.LoadInt64(&t.wakeCount)
 }
 
 // CurrentOffset returns the in-memory read position of the tailer.

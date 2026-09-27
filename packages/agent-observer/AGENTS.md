@@ -18,6 +18,7 @@ Local observer daemon (`air-observer`) that scans harness sessions, tails transc
 - Cursor store prunes entries for deleted files and entries older than the retention window on daemon startup and periodically via background pruner.
 - Shipper implements bounded dispatch with tailer backpressure (`NewTailerWithOffsetHandler`) and sequence-keyed ACK callbacks; reads pause when disconnected or buffer is full.
 - Shipper resets exponential backoff only upon receiving an ACK from the ingester or after 5s of sustained error-free streaming, rather than immediately on the hello frame.
+- Tailers share directory fsnotify watches via a reference-counted `WatcherRegistry` (`internal/tailer/watcher.go`), dispatching file-change events selectively to the owning tailer to avoid descriptor leaks and O(N^2) wakeup stampedes in multi-subagent sessions.
 - Structured logging uses `packages/agent-common/logging` with snake_case actions and dual-mode (`AGENT=1`) output.
 
 ## Local gotchas
