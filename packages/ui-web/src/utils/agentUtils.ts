@@ -30,14 +30,46 @@ export function getIdleFreshness(updatedAt: number, now: number = Date.now()): I
   if (!updatedAt || updatedAt <= 0 || Number.isNaN(updatedAt)) {
     return "stale";
   }
-  const diffMs = now - updatedAt;
+  const diffMs = Math.max(0, now - updatedAt);
   if (diffMs < FIFTEEN_MINUTES_MS) {
     return "fresh";
   }
-  if (diffMs < TWO_HOURS_MS) {
+  if (diffMs <= TWO_HOURS_MS) {
     return "standard";
   }
   return "stale";
+}
+
+export function isAgentStaleIdle(
+  activity: IAgentActivity,
+  now: number = Date.now(),
+  acknowledgedCompletion: boolean = false,
+): boolean {
+  if (activity.lifecycle !== "RUNNING" || activity.activity !== "IDLE") {
+    return false;
+  }
+  const effectiveHasUnseenCompletion =
+    Boolean(activity.hasUnseenCompletion ?? activity.has_unseen_completion) && !acknowledgedCompletion;
+  if (effectiveHasUnseenCompletion) {
+    return false;
+  }
+  return getIdleFreshness(activity.updatedAt, now) === "stale";
+}
+
+export function getAgentIdleFreshness(
+  activity: IAgentActivity,
+  now: number = Date.now(),
+  acknowledgedCompletion: boolean = false,
+): IdleFreshness {
+  if (activity.lifecycle !== "RUNNING" || activity.activity !== "IDLE") {
+    return "fresh";
+  }
+  const effectiveHasUnseenCompletion =
+    Boolean(activity.hasUnseenCompletion ?? activity.has_unseen_completion) && !acknowledgedCompletion;
+  if (effectiveHasUnseenCompletion) {
+    return "fresh";
+  }
+  return getIdleFreshness(activity.updatedAt, now);
 }
 
 export function getToolExecutionDuration(activity: IAgentActivity, now: number): number | null {

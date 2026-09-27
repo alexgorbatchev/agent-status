@@ -67,13 +67,41 @@ func GetIdleFreshness(updatedAt int64, nowMs int64) IdleFreshness {
 		return FreshnessStale
 	}
 	diffMs := nowMs - updatedAt
+	if diffMs < 0 {
+		diffMs = 0
+	}
 	if diffMs < idleFreshThresholdMs {
 		return FreshnessFresh
 	}
-	if diffMs < idleStaleThresholdMs {
+	if diffMs <= idleStaleThresholdMs {
 		return FreshnessStandard
 	}
 	return FreshnessStale
+}
+
+// IsAgentStaleIdle reports whether an agent is in the stale (dormant) idle tier and eligible for dimming.
+// Only active RUNNING sessions in IDLE state without unacknowledged completion are eligible.
+func IsAgentStaleIdle(agent types.IAgentState, nowMs int64) bool {
+	if agent.Activity.Lifecycle != types.LifecycleRunning || agent.Activity.Activity != types.ActivityIdle {
+		return false
+	}
+	if agent.Activity.HasUnseenCompletion != nil && *agent.Activity.HasUnseenCompletion {
+		return false
+	}
+	return GetIdleFreshness(agent.Activity.UpdatedAt, nowMs) == FreshnessStale
+}
+
+// GetAgentIdleFreshness returns the freshness tier for an agent session.
+// Only active RUNNING sessions in IDLE state without unacknowledged completion are eligible for idle freshness tiering.
+// Non-eligible sessions always return FreshnessFresh.
+func GetAgentIdleFreshness(agent types.IAgentState, nowMs int64) IdleFreshness {
+	if agent.Activity.Lifecycle != types.LifecycleRunning || agent.Activity.Activity != types.ActivityIdle {
+		return FreshnessFresh
+	}
+	if agent.Activity.HasUnseenCompletion != nil && *agent.Activity.HasUnseenCompletion {
+		return FreshnessFresh
+	}
+	return GetIdleFreshness(agent.Activity.UpdatedAt, nowMs)
 }
 
 // FormatTokens formats an integer token count with commas, e.g. 14520 -> "14,520 tokens".
@@ -166,18 +194,28 @@ func agentSortRank(agent types.IAgentState) int {
 	return 0
 }
 
-func sortFleetAgents(agents []types.IAgentState) {
+func sortFleetAgents(agents []types.IAgentState, nowMs int64) {
 	sort.SliceStable(agents, func(i, j int) bool {
 		rankI := agentSortRank(agents[i])
 		rankJ := agentSortRank(agents[j])
 		if rankI != rankJ {
 			return rankI < rankJ
 		}
+		if rankI == 1 { // idle category
+			staleI := IsAgentStaleIdle(agents[i], nowMs)
+			staleJ := IsAgentStaleIdle(agents[j], nowMs)
+			if staleI != staleJ {
+				// warm idle cards appear before stale dormant idle cards
+				return !staleI && staleJ
+			}
+			// maintain stable relative order within warm and within stale partitions
+			return false
+		}
 		return agents[i].Activity.UpdatedAt > agents[j].Activity.UpdatedAt
 	})
 }
 
-func groupAgentsForFleet(agents []types.IAgentState) []*fleetProjectGroup {
+func groupAgentsForFleet(agents []types.IAgentState, nowMs int64) []*fleetProjectGroup {
 	var projectGroups []*fleetProjectGroup
 	projectMap := make(map[string]*fleetProjectGroup)
 
@@ -242,9 +280,9 @@ func groupAgentsForFleet(agents []types.IAgentState) []*fleetProjectGroup {
 	}
 
 	for _, grp := range projectGroups {
-		sortFleetAgents(grp.rootAgents)
+		sortFleetAgents(grp.rootAgents, nowMs)
 		for _, wt := range grp.worktrees {
-			sortFleetAgents(wt.agents)
+			sortFleetAgents(wt.agents, nowMs)
 		}
 	}
 
@@ -295,7 +333,7 @@ func RenderFleetViewAt(w io.Writer, agents []types.IAgentState, agentMode bool, 
 		agents []types.IAgentState
 	}
 
-	projectGroups := groupAgentsForFleet(agents)
+	projectGroups := groupAgentsForFleet(agents, nowMs)
 	for grpIndex, grp := range projectGroups {
 		if grpIndex > 0 {
 			_, _ = fmt.Fprintln(w)
@@ -381,7 +419,7 @@ func renderFleetAgentLine(w io.Writer, agent types.IAgentState, grpName string, 
 	statusStr := FormatActivityStatus(agent.Activity.Lifecycle, agent.Activity.Activity, agent.Activity.HasUnseenCompletion)
 	line := fmt.Sprintf("%s%s %s (%s)", childIndent, harnessBadge, title, statusStr)
 	line = TruncateVisual(line, width, "...")
-	isStaleIdle := agent.Activity.Lifecycle == types.LifecycleRunning && agent.Activity.Activity == types.ActivityIdle && GetIdleFreshness(agent.Activity.UpdatedAt, nowMs) == FreshnessStale && (agent.Activity.HasUnseenCompletion == nil || !*agent.Activity.HasUnseenCompletion)
+	isStaleIdle := IsAgentStaleIdle(agent, nowMs)
 	if isStaleIdle {
 		formatted := strings.ReplaceAll(line, AnsiReset, AnsiReset+AnsiDim)
 		_, _ = fmt.Fprintf(w, "%s%s%s\n", AnsiDim, formatted, AnsiReset)
@@ -713,7 +751,7 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 	}
 
 	// Calculate idle freshness: if session is IDLE and age > 2h (stale), dim output with ANSI Dim
-	isStaleIdle := agent.Activity.Activity == types.ActivityIdle && GetIdleFreshness(agent.Activity.UpdatedAt, nowMs) == FreshnessStale && (agent.Activity.HasUnseenCompletion == nil || !*agent.Activity.HasUnseenCompletion)
+	isStaleIdle := IsAgentStaleIdle(agent, nowMs)
 
 	printLine := func(line string) {
 		if line == "" {

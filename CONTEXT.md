@@ -53,8 +53,12 @@ What an Agent's Usage is worth in money, calculated the same way for every Agent
 _Avoid_: presenting zero where the answer is unknown, and mixing a harness-reported figure into a fleet total alongside calculated ones.
 
 **Stale**:
-Said of an Environment that has stopped reporting. Its Agents are not known to have changed — they are simply no longer observed, and the dashboard says so rather than continuing to present their last known state as current.
-_Avoid_: "offline" or "down" (the machine may be fine and the Agents still working), and applying Stale to an Agent — only an Environment goes Stale.
+Said of an Environment that has stopped reporting. Its Agents are not known to have changed — they are simply no longer observed, and the dashboard says so rather than continuing to present their last known state as current. While Environments have an offline/stale status, Agent sessions have a separate visual idle freshness tiering model (fresh < 15m, standard 15m–2h, dormant/stale idle > 2h).
+_Avoid_: "offline" or "down" (the machine may be fine and the Agents still working), and confusing Environment staleness with an Agent's visual idle freshness tiering.
+
+**Idle Freshness**:
+A visual freshness tiering model for active Running Agents in Idle state without unacknowledged completion. Tiers reflect elapsed time since last activity: fresh (< 15m), standard (15m–2h), and dormant/stale idle (> 2h, visually dimmed and partitioned below warm idle sessions). Exited and non-idle Agents are never tiered or dimmed as stale idle. Distinct from an Environment going Stale.
+_Avoid_: applying idle freshness tiers or dimming to Exited or non-idle Agents, and confusing dormant Agent idle tiering with an Environment's Stale reporting status.
 
 **Project**:
 The codebase an Agent is working on, identified by where that codebase lives upstream rather than by where it happens to sit on any one machine. The same Project is one Project across every machine, every clone, and every Worktree.

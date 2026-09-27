@@ -16,10 +16,24 @@ import {
   isSessionStalled,
   trimProjectTitlePrefix,
   getIdleFreshness,
+  isAgentStaleIdle,
+  getAgentIdleFreshness,
+  type IdleFreshness,
   formatRateLimitCallout,
 } from "../agentUtils";
 import { factory_createAgent, fixture_testEnvironment, fixture_testStaleEnvironment } from "./fixtures";
-import type { IAgentState } from "../../types";
+import type { ActivityState, IAgentActivity, IAgentState, LifecycleState } from "../../types";
+
+interface IIdleFreshnessFixture {
+  name: string;
+  lifecycle: LifecycleState;
+  activity: ActivityState;
+  hasUnseenCompletion: boolean;
+  nowMs: number;
+  updatedAt: number;
+  expectedTier: IdleFreshness;
+  expectedStaleIdle: boolean;
+}
 
 interface IProjectPrefixFixture {
   name: string;
@@ -637,6 +651,7 @@ describe("agentUtils", () => {
   describe("getIdleFreshness", () => {
     it("returns 'fresh' when duration is less than 15 minutes", () => {
       const now = 10_000_000;
+      expect(getIdleFreshness(now + 5_000, now)).toBe("fresh");
       expect(getIdleFreshness(now - 0, now)).toBe("fresh");
       expect(getIdleFreshness(now - 60_000, now)).toBe("fresh");
       expect(getIdleFreshness(now - (14 * 60 * 1000 + 59 * 1000), now)).toBe("fresh");
@@ -649,11 +664,12 @@ describe("agentUtils", () => {
       expect(getIdleFreshness(now - 30 * 60 * 1000, now)).toBe("standard");
       expect(getIdleFreshness(now - 60 * 60 * 1000, now)).toBe("standard");
       expect(getIdleFreshness(now - (2 * 60 * 60 * 1000 - 1), now)).toBe("standard");
+      expect(getIdleFreshness(now - 2 * 60 * 60 * 1000, now)).toBe("standard");
     });
 
-    it("returns 'stale' when duration is at or exceeds 2 hours", () => {
+    it("returns 'stale' when duration exceeds 2 hours", () => {
       const now = 10_000_000;
-      expect(getIdleFreshness(now - 2 * 60 * 60 * 1000, now)).toBe("stale");
+      expect(getIdleFreshness(now - (2 * 60 * 60 * 1000 + 1), now)).toBe("stale");
       expect(getIdleFreshness(now - 3 * 60 * 60 * 1000, now)).toBe("stale");
       expect(getIdleFreshness(now - 72 * 60 * 60 * 1000, now)).toBe("stale");
     });
@@ -674,6 +690,134 @@ describe("agentUtils", () => {
       const threeHoursAgo = Date.now() - 3 * 60 * 60 * 1000;
       expect(getIdleFreshness(threeHoursAgo)).toBe("stale");
     });
+  });
+
+  describe("isAgentStaleIdle", () => {
+    it("returns true only for RUNNING IDLE agents without unseen completion and age > 2h", () => {
+      const now = 20_000_000;
+      const staleActivity: IAgentActivity = {
+        ...factory_createAgent().activity,
+        lifecycle: "RUNNING",
+        activity: "IDLE",
+        updatedAt: now - 3 * 3600 * 1000,
+      };
+      expect(isAgentStaleIdle(staleActivity, now)).toBe(true);
+
+      const warmActivity: IAgentActivity = {
+        ...staleActivity,
+        updatedAt: now - 5 * 60 * 1000,
+      };
+      expect(isAgentStaleIdle(warmActivity, now)).toBe(false);
+
+      const standardActivity: IAgentActivity = {
+        ...staleActivity,
+        updatedAt: now - 2 * 3600 * 1000,
+      };
+      expect(isAgentStaleIdle(standardActivity, now)).toBe(false);
+
+      const unseenActivity: IAgentActivity = {
+        ...staleActivity,
+        hasUnseenCompletion: true,
+      };
+      expect(isAgentStaleIdle(unseenActivity, now)).toBe(false);
+      expect(isAgentStaleIdle(unseenActivity, now, true)).toBe(true);
+
+      const busyActivity: IAgentActivity = {
+        ...staleActivity,
+        activity: "BUSY",
+      };
+      expect(isAgentStaleIdle(busyActivity, now)).toBe(false);
+
+      const exitedActivity: IAgentActivity = {
+        ...staleActivity,
+        lifecycle: "EXITED",
+      };
+      expect(isAgentStaleIdle(exitedActivity, now)).toBe(false);
+    });
+
+    it("treats has_unseen_completion: true as unacknowledged completion and prevents stale idle classification even if updatedAt > 2h", () => {
+      const now = 20_000_000;
+      const snakeCaseUnseenActivity: IAgentActivity = {
+        ...factory_createAgent().activity,
+        lifecycle: "RUNNING",
+        activity: "IDLE",
+        updatedAt: now - 3 * 3600 * 1000,
+        has_unseen_completion: true,
+      };
+      expect(isAgentStaleIdle(snakeCaseUnseenActivity, now)).toBe(false);
+      expect(isAgentStaleIdle(snakeCaseUnseenActivity, now, true)).toBe(true);
+    });
+  });
+
+  describe("getAgentIdleFreshness", () => {
+    it("returns 'fresh' for non-eligible sessions and proper tier for eligible sessions", () => {
+      const now = 20_000_000;
+      const eligibleFresh: IAgentActivity = {
+        ...factory_createAgent().activity,
+        lifecycle: "RUNNING",
+        activity: "IDLE",
+        updatedAt: now - 5 * 60 * 1000,
+      };
+      expect(getAgentIdleFreshness(eligibleFresh, now)).toBe("fresh");
+
+      const eligibleStandard: IAgentActivity = {
+        ...eligibleFresh,
+        updatedAt: now - 60 * 60 * 1000,
+      };
+      expect(getAgentIdleFreshness(eligibleStandard, now)).toBe("standard");
+
+      const eligibleStale: IAgentActivity = {
+        ...eligibleFresh,
+        updatedAt: now - 3 * 3600 * 1000,
+      };
+      expect(getAgentIdleFreshness(eligibleStale, now)).toBe("stale");
+
+      const unseenActivity: IAgentActivity = {
+        ...eligibleStale,
+        hasUnseenCompletion: true,
+      };
+      expect(getAgentIdleFreshness(unseenActivity, now)).toBe("fresh");
+      expect(getAgentIdleFreshness(unseenActivity, now, true)).toBe("stale");
+
+      const exitedActivity: IAgentActivity = {
+        ...eligibleStale,
+        lifecycle: "EXITED",
+      };
+      expect(getAgentIdleFreshness(exitedActivity, now)).toBe("fresh");
+    });
+
+    it("treats has_unseen_completion: true as unacknowledged completion preventing stale tier", () => {
+      const now = 20_000_000;
+      const snakeCaseUnseenActivity: IAgentActivity = {
+        ...factory_createAgent().activity,
+        lifecycle: "RUNNING",
+        activity: "IDLE",
+        updatedAt: now - 3 * 3600 * 1000,
+        has_unseen_completion: true,
+      };
+      expect(getAgentIdleFreshness(snakeCaseUnseenActivity, now)).toBe("fresh");
+      expect(getAgentIdleFreshness(snakeCaseUnseenActivity, now, true)).toBe("stale");
+    });
+  });
+
+  describe("idle freshness shared fixtures", () => {
+    const fixturePath = resolve(__dirname, "../../../../agent-common/testdata/idle-freshness-fixtures.json");
+    const fixtures: IIdleFreshnessFixture[] = JSON.parse(readFileSync(fixturePath, "utf-8"));
+
+    for (const fixture of fixtures) {
+      it(fixture.name, () => {
+        const activity: IAgentActivity = {
+          ...factory_createAgent().activity,
+          lifecycle: fixture.lifecycle,
+          activity: fixture.activity,
+          hasUnseenCompletion: fixture.hasUnseenCompletion,
+          updatedAt: fixture.updatedAt,
+        };
+
+        expect(getAgentIdleFreshness(activity, fixture.nowMs)).toBe(fixture.expectedTier);
+        expect(isAgentStaleIdle(activity, fixture.nowMs)).toBe(fixture.expectedStaleIdle);
+      });
+    }
   });
 
   describe("formatRateLimitCallout", () => {

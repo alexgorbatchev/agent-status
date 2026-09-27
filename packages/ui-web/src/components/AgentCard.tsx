@@ -27,7 +27,7 @@ import {
   formatDuration,
   isSessionStalled,
   trimProjectTitlePrefix,
-  getIdleFreshness,
+  getAgentIdleFreshness,
   type IdleFreshness,
 } from "../utils/agentUtils";
 import { focusAgent } from "../services/api";
@@ -115,10 +115,7 @@ export function AgentCard({
   const silenceMinutes = Math.floor(silenceMs / 60000);
   const silenceDuration = `${silenceMinutes}m`;
 
-  const freshness: IdleFreshness =
-    activity.lifecycle === "RUNNING" && activity.activity === "IDLE" && !effectiveHasUnseenCompletion
-      ? getIdleFreshness(activity.updatedAt, now)
-      : "fresh";
+  const freshness: IdleFreshness = getAgentIdleFreshness(activity, now, acknowledged);
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.target !== event.currentTarget) {

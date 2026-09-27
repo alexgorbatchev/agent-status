@@ -5,6 +5,7 @@ import type {
   IProjectGroupItem,
   IProjectTreeGroup,
 } from "../types";
+import { isAgentStaleIdle } from "./agentUtils";
 
 export type AgentCategory = "busy" | "idle" | "finished";
 
@@ -20,7 +21,10 @@ export function getAgentCategory(agent: IAgentState): AgentCategory {
   return "busy";
 }
 
-export function groupAgentsByCategory(agents: IAgentState[]): Record<AgentCategory, IAgentState[]> {
+export function groupAgentsByCategory(
+  agents: IAgentState[],
+  now: number = Date.now(),
+): Record<AgentCategory, IAgentState[]> {
   const groups: Record<AgentCategory, IAgentState[]> = {
     busy: [],
     idle: [],
@@ -33,7 +37,18 @@ export function groupAgentsByCategory(agents: IAgentState[]): Record<AgentCatego
   }
 
   groups.busy.sort((a, b) => b.activity.updatedAt - a.activity.updatedAt);
-  groups.idle.sort((a, b) => b.activity.updatedAt - a.activity.updatedAt);
+
+  const warmIdle: IAgentState[] = [];
+  const staleIdle: IAgentState[] = [];
+  for (const agent of groups.idle) {
+    if (isAgentStaleIdle(agent.activity, now)) {
+      staleIdle.push(agent);
+    } else {
+      warmIdle.push(agent);
+    }
+  }
+  groups.idle = [...warmIdle, ...staleIdle];
+
   groups.finished.sort((a, b) => b.activity.updatedAt - a.activity.updatedAt);
 
   return groups;

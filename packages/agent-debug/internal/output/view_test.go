@@ -1223,10 +1223,12 @@ func TestGetIdleFreshness(t *testing.T) {
 	}{
 		{"fresh recent", nowMs - 5*60*1000, FreshnessFresh},
 		{"fresh boundary", nowMs - (15*60*1000 - 1), FreshnessFresh},
+		{"fresh future clock skew", nowMs + 5000, FreshnessFresh},
 		{"standard at 15m", nowMs - 15*60*1000, FreshnessStandard},
 		{"standard mid", nowMs - 60*60*1000, FreshnessStandard},
 		{"standard boundary", nowMs - (2*60*60*1000 - 1), FreshnessStandard},
-		{"stale at 2h", nowMs - 2*60*60*1000, FreshnessStale},
+		{"standard at 2h exactly", nowMs - 2*60*60*1000, FreshnessStandard},
+		{"stale just above 2h", nowMs - (2*60*60*1000 + 1), FreshnessStale},
 		{"stale older", nowMs - 5*60*60*1000, FreshnessStale},
 		{"stale zero", 0, FreshnessStale},
 		{"stale negative", -100, FreshnessStale},
@@ -1307,6 +1309,29 @@ func TestRenderAgentView_HumanMode_BusyNotDimmed(t *testing.T) {
 
 	if strings.Contains(out, AnsiDim) {
 		t.Errorf("expected no AnsiDim in human mode view for busy session even if age > 2h, got:\n%s", out)
+	}
+}
+
+func TestRenderAgentView_HumanMode_ExitedStaleNotDimmed(t *testing.T) {
+	agent := types.IAgentState{
+		Harness: types.HarnessClaudeCode,
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleExited,
+			Activity:  types.ActivityIdle,
+			Title:     "Exited dormant session",
+			Action:    "Idle",
+			UpdatedAt: 1000000,
+		},
+	}
+
+	var buf bytes.Buffer
+	// 3 hours later
+	nowMs := int64(1000000 + 3*60*60*1000)
+	RenderAgentViewAt(&buf, agent, false, nowMs)
+	out := buf.String()
+
+	if strings.Contains(out, AnsiDim) {
+		t.Errorf("expected no AnsiDim in human mode card view for exited session even if age > 2h, got:\n%s", out)
 	}
 }
 
@@ -1900,13 +1925,96 @@ func TestRenderFleetView_HumanMode_SortingWithinBranch(t *testing.T) {
 	idxIdleOlder := strings.Index(clean, "Idle older task")
 	idxExited := strings.Index(clean, "Exited task")
 
-	// In the 3 canonical categories (busy: 0, idle: 1, finished: 2) sorted by UpdatedAt DESC:
+	// In the 3 canonical categories (busy: 0, idle: 1, finished: 2):
 	// - Category "busy": Waiting task (updatedAt 4000) < Busy task (updatedAt 2000)
-	// - Category "idle": Idle newer task (updatedAt 3000) < Idle older task (updatedAt 1000)
+	// - Category "idle": warm idle tasks preserve stable relative input order: Idle older task < Idle newer task
 	// - Category "finished": Exited task (updatedAt 5000)
-	if idxWaiting >= idxBusy || idxBusy >= idxIdleNewer || idxIdleNewer >= idxIdleOlder || idxIdleOlder >= idxExited {
-		t.Errorf("expected sorting: waiting (busy category, newer) < busy (busy category, older) < idle-newer < idle-older < exited; got indices waiting=%d busy=%d idleNewer=%d idleOlder=%d exited=%d\nOutput:\n%s",
-			idxWaiting, idxBusy, idxIdleNewer, idxIdleOlder, idxExited, clean)
+	if idxWaiting >= idxBusy || idxBusy >= idxIdleOlder || idxIdleOlder >= idxIdleNewer || idxIdleNewer >= idxExited {
+		t.Errorf("expected sorting: waiting (busy category, newer) < busy (busy category, older) < idle-older < idle-newer < exited; got indices waiting=%d busy=%d idleOlder=%d idleNewer=%d exited=%d\nOutput:\n%s",
+			idxWaiting, idxBusy, idxIdleOlder, idxIdleNewer, idxExited, clean)
+	}
+}
+
+func TestRenderFleetView_HumanMode_IdleStableOrderAndStalePartition(t *testing.T) {
+	nowMs := int64(20_000_000)
+	tVal := true
+	agents := []types.IAgentState{
+		{
+			ID:      "a-idle-stale-1",
+			Harness: types.HarnessClaudeCode,
+			Project: types.IProjectInfo{ID: "p1", Name: "proj"},
+			Activity: types.IAgentActivity{
+				Lifecycle: types.LifecycleRunning,
+				Activity:  types.ActivityIdle,
+				Title:     "Stale idle task 1",
+				UpdatedAt: nowMs - 3*3600*1000,
+			},
+		},
+		{
+			ID:      "a-idle-warm-1",
+			Harness: types.HarnessClaudeCode,
+			Project: types.IProjectInfo{ID: "p1", Name: "proj"},
+			Activity: types.IAgentActivity{
+				Lifecycle: types.LifecycleRunning,
+				Activity:  types.ActivityIdle,
+				Title:     "Warm idle task 1",
+				UpdatedAt: nowMs - 10*60*1000,
+			},
+		},
+		{
+			ID:      "a-idle-unseen",
+			Harness: types.HarnessClaudeCode,
+			Project: types.IProjectInfo{ID: "p1", Name: "proj"},
+			Activity: types.IAgentActivity{
+				Lifecycle:           types.LifecycleRunning,
+				Activity:            types.ActivityIdle,
+				Title:               "Unseen completion task",
+				HasUnseenCompletion: &tVal,
+				UpdatedAt:           nowMs - 4*3600*1000,
+			},
+		},
+		{
+			ID:      "a-idle-warm-2",
+			Harness: types.HarnessClaudeCode,
+			Project: types.IProjectInfo{ID: "p1", Name: "proj"},
+			Activity: types.IAgentActivity{
+				Lifecycle: types.LifecycleRunning,
+				Activity:  types.ActivityIdle,
+				Title:     "Warm idle task 2",
+				UpdatedAt: nowMs - 5*60*1000,
+			},
+		},
+		{
+			ID:      "a-idle-stale-2",
+			Harness: types.HarnessClaudeCode,
+			Project: types.IProjectInfo{ID: "p1", Name: "proj"},
+			Activity: types.IAgentActivity{
+				Lifecycle: types.LifecycleRunning,
+				Activity:  types.ActivityIdle,
+				Title:     "Stale idle task 2",
+				UpdatedAt: nowMs - 5*3600*1000,
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderFleetViewAt(&buf, agents, false, nowMs)
+	clean := StripANSI(buf.String())
+
+	idxWarm1 := strings.Index(clean, "Warm idle task 1")
+	idxUnseen := strings.Index(clean, "Unseen completion task")
+	idxWarm2 := strings.Index(clean, "Warm idle task 2")
+	idxStale1 := strings.Index(clean, "Stale idle task 1")
+	idxStale2 := strings.Index(clean, "Stale idle task 2")
+
+	if idxWarm1 == -1 || idxUnseen == -1 || idxWarm2 == -1 || idxStale1 == -1 || idxStale2 == -1 {
+		t.Fatalf("expected all tasks in output, got:\n%s", clean)
+	}
+
+	// Warm section (Warm 1, Unseen, Warm 2) preserves stable order and appears before Stale section (Stale 1, Stale 2)
+	if idxWarm1 >= idxUnseen || idxUnseen >= idxWarm2 || idxWarm2 >= idxStale1 || idxStale1 >= idxStale2 {
+		t.Errorf("expected stable partition: warm1 < unseen < warm2 < stale1 < stale2; got warm1=%d unseen=%d warm2=%d stale1=%d stale2=%d\nOutput:\n%s",
+			idxWarm1, idxUnseen, idxWarm2, idxStale1, idxStale2, clean)
 	}
 }
 
@@ -2312,6 +2420,53 @@ func TestRenderFleetView_HumanMode_ExitedStaleNotDimmed(t *testing.T) {
 
 	if strings.Contains(out, AnsiDim) {
 		t.Errorf("expected no AnsiDim in fleet view for exited session, got:\n%s", out)
+	}
+}
+
+type idleFreshnessFixture struct {
+	Name                string `json:"name"`
+	Lifecycle           string `json:"lifecycle"`
+	Activity            string `json:"activity"`
+	HasUnseenCompletion bool   `json:"hasUnseenCompletion"`
+	NowMs               int64  `json:"nowMs"`
+	UpdatedAt           int64  `json:"updatedAt"`
+	ExpectedTier        string `json:"expectedTier"`
+	ExpectedStaleIdle   bool   `json:"expectedStaleIdle"`
+}
+
+func TestIdleFreshness_SharedFixtures(t *testing.T) {
+	fixtureData, err := os.ReadFile("../../../../packages/agent-common/testdata/idle-freshness-fixtures.json")
+	if err != nil {
+		t.Fatalf("failed to read idle freshness fixtures: %v", err)
+	}
+
+	var fixtures []idleFreshnessFixture
+	if err := json.Unmarshal(fixtureData, &fixtures); err != nil {
+		t.Fatalf("failed to parse idle freshness fixtures: %v", err)
+	}
+
+	for _, f := range fixtures {
+		t.Run(f.Name, func(t *testing.T) {
+			hasUnseen := f.HasUnseenCompletion
+			agent := types.IAgentState{
+				Activity: types.IAgentActivity{
+					Lifecycle:           types.LifecycleState(f.Lifecycle),
+					Activity:            types.ActivityState(f.Activity),
+					HasUnseenCompletion: &hasUnseen,
+					UpdatedAt:           f.UpdatedAt,
+				},
+			}
+
+			tier := GetAgentIdleFreshness(agent, f.NowMs)
+			if string(tier) != f.ExpectedTier {
+				t.Errorf("GetAgentIdleFreshness() = %s, want %s", tier, f.ExpectedTier)
+			}
+
+			isStale := IsAgentStaleIdle(agent, f.NowMs)
+			if isStale != f.ExpectedStaleIdle {
+				t.Errorf("IsAgentStaleIdle() = %v, want %v", isStale, f.ExpectedStaleIdle)
+			}
+		})
 	}
 }
 

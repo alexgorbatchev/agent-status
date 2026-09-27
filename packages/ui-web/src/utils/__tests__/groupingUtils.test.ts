@@ -67,7 +67,7 @@ describe("groupingUtils", () => {
       expect(result).toEqual({ busy: [], idle: [], finished: [] });
     });
 
-    it("sorts all 3 categories (busy, idle, finished) descending by updatedAt", () => {
+    it("sorts busy and finished categories descending by updatedAt while preserving stable partition for idle", () => {
       const busy1 = factory_createAgent({
         id: "busy-1",
         activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "BUSY", updatedAt: 1000 },
@@ -93,28 +93,132 @@ describe("groupingUtils", () => {
         activity: { ...factory_createAgent().activity, lifecycle: "EXITED", activity: "IDLE", updatedAt: 6000 },
       });
 
-      const result = groupAgentsByCategory([busy1, idle1, finished1, busy2, idle2, finished2]);
+      const now = 10000;
+      const result = groupAgentsByCategory([busy1, idle1, finished1, busy2, idle2, finished2], now);
       expect(result.busy.map((a) => a.id)).toEqual(["busy-2", "busy-1"]);
-      expect(result.idle.map((a) => a.id)).toEqual(["idle-2", "idle-1"]);
+      // Idle cards preserve stable input order rather than recency reordering
+      expect(result.idle.map((a) => a.id)).toEqual(["idle-1", "idle-2"]);
       expect(result.finished.map((a) => a.id)).toEqual(["finished-2", "finished-1"]);
     });
 
-    it("sorts idle agents descending by updatedAt so fresher idle agents appear above stale idle agents", () => {
-      const staleIdle = factory_createAgent({
-        id: "idle-stale",
-        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "IDLE", updatedAt: 1000 },
+    it("preserves stable relative order of warm idle cards and does not reorder by small updatedAt differences", () => {
+      const now = 10000;
+      const idleOlder = factory_createAgent({
+        id: "idle-older",
+        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "IDLE", updatedAt: now - 60000 },
       });
-      const freshIdle = factory_createAgent({
-        id: "idle-fresh",
-        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "IDLE", updatedAt: 9000 },
-      });
-      const midIdle = factory_createAgent({
-        id: "idle-mid",
-        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "IDLE", updatedAt: 5000 },
+      const idleNewer = factory_createAgent({
+        id: "idle-newer",
+        activity: { ...factory_createAgent().activity, lifecycle: "RUNNING", activity: "IDLE", updatedAt: now - 10000 },
       });
 
-      const result = groupAgentsByCategory([staleIdle, freshIdle, midIdle]);
-      expect(result.idle.map((a) => a.id)).toEqual(["idle-fresh", "idle-mid", "idle-stale"]);
+      const result = groupAgentsByCategory([idleOlder, idleNewer], now);
+      expect(result.idle.map((a) => a.id)).toEqual(["idle-older", "idle-newer"]);
+    });
+
+    it("sinks stale dormant idle cards to the bottom of the idle group while keeping warm idle cards in stable order", () => {
+      const now = 20_000_000;
+      const stale1 = factory_createAgent({
+        id: "idle-stale-1",
+        activity: {
+          ...factory_createAgent().activity,
+          lifecycle: "RUNNING",
+          activity: "IDLE",
+          updatedAt: now - 3 * 3600 * 1000,
+        },
+      });
+      const warm1 = factory_createAgent({
+        id: "idle-warm-1",
+        activity: {
+          ...factory_createAgent().activity,
+          lifecycle: "RUNNING",
+          activity: "IDLE",
+          updatedAt: now - 5 * 60 * 1000,
+        },
+      });
+      const warm2 = factory_createAgent({
+        id: "idle-warm-2",
+        activity: {
+          ...factory_createAgent().activity,
+          lifecycle: "RUNNING",
+          activity: "IDLE",
+          updatedAt: now - 30 * 60 * 1000,
+        },
+      });
+      const stale2 = factory_createAgent({
+        id: "idle-stale-2",
+        activity: {
+          ...factory_createAgent().activity,
+          lifecycle: "RUNNING",
+          activity: "IDLE",
+          updatedAt: now - 4 * 3600 * 1000,
+        },
+      });
+
+      const result = groupAgentsByCategory([stale1, warm1, warm2, stale2], now);
+      expect(result.idle.map((a) => a.id)).toEqual(["idle-warm-1", "idle-warm-2", "idle-stale-1", "idle-stale-2"]);
+    });
+
+    it("keeps idle cards with unacknowledged completion in the top warm section even if age > 2h", () => {
+      const now = 20_000_000;
+      const staleIdle = factory_createAgent({
+        id: "idle-stale",
+        activity: {
+          ...factory_createAgent().activity,
+          lifecycle: "RUNNING",
+          activity: "IDLE",
+          updatedAt: now - 3 * 3600 * 1000,
+        },
+      });
+      const unseenCompletion = factory_createAgent({
+        id: "idle-unseen",
+        activity: {
+          ...factory_createAgent().activity,
+          lifecycle: "RUNNING",
+          activity: "IDLE",
+          hasUnseenCompletion: true,
+          updatedAt: now - 3 * 3600 * 1000,
+        },
+      });
+      const warmIdle = factory_createAgent({
+        id: "idle-warm",
+        activity: {
+          ...factory_createAgent().activity,
+          lifecycle: "RUNNING",
+          activity: "IDLE",
+          updatedAt: now - 10 * 60 * 1000,
+        },
+      });
+
+      const result = groupAgentsByCategory([staleIdle, unseenCompletion, warmIdle], now);
+      // unseenCompletion is warm, so unseenCompletion and warmIdle stay in warm section in stable order, while staleIdle sinks
+      expect(result.idle.map((a) => a.id)).toEqual(["idle-unseen", "idle-warm", "idle-stale"]);
+    });
+
+    it("places exited sessions in finished group and never partitions them into stale idle", () => {
+      const now = 20_000_000;
+      const exited = factory_createAgent({
+        id: "exited-old",
+        activity: {
+          ...factory_createAgent().activity,
+          lifecycle: "EXITED",
+          activity: "IDLE",
+          updatedAt: now - 5 * 3600 * 1000,
+        },
+      });
+      const warmIdle = factory_createAgent({
+        id: "idle-warm",
+        activity: {
+          ...factory_createAgent().activity,
+          lifecycle: "RUNNING",
+          activity: "IDLE",
+          updatedAt: now - 10 * 60 * 1000,
+        },
+      });
+
+      const result = groupAgentsByCategory([exited, warmIdle], now);
+      expect(result.idle.map((a) => a.id)).toEqual(["idle-warm"]);
+      expect(result.finished.map((a) => a.id)).toEqual(["exited-old"]);
     });
   });
 

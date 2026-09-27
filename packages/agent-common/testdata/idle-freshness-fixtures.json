@@ -1,0 +1,142 @@
+[
+  {
+    "name": "fresh recent idle session under 15m",
+    "lifecycle": "RUNNING",
+    "activity": "IDLE",
+    "hasUnseenCompletion": false,
+    "nowMs": 20000000,
+    "updatedAt": 19700000,
+    "expectedTier": "fresh",
+    "expectedStaleIdle": false
+  },
+  {
+    "name": "fresh idle session with future timestamp due to clock drift",
+    "lifecycle": "RUNNING",
+    "activity": "IDLE",
+    "hasUnseenCompletion": false,
+    "nowMs": 20000000,
+    "updatedAt": 20005000,
+    "expectedTier": "fresh",
+    "expectedStaleIdle": false
+  },
+  {
+    "name": "fresh boundary just below 15m",
+    "lifecycle": "RUNNING",
+    "activity": "IDLE",
+    "hasUnseenCompletion": false,
+    "nowMs": 20000000,
+    "updatedAt": 19100001,
+    "expectedTier": "fresh",
+    "expectedStaleIdle": false
+  },
+  {
+    "name": "standard boundary at exactly 15m",
+    "lifecycle": "RUNNING",
+    "activity": "IDLE",
+    "hasUnseenCompletion": false,
+    "nowMs": 20000000,
+    "updatedAt": 19100000,
+    "expectedTier": "standard",
+    "expectedStaleIdle": false
+  },
+  {
+    "name": "standard idle session 1h",
+    "lifecycle": "RUNNING",
+    "activity": "IDLE",
+    "hasUnseenCompletion": false,
+    "nowMs": 20000000,
+    "updatedAt": 16400000,
+    "expectedTier": "standard",
+    "expectedStaleIdle": false
+  },
+  {
+    "name": "standard boundary at exactly 2h",
+    "lifecycle": "RUNNING",
+    "activity": "IDLE",
+    "hasUnseenCompletion": false,
+    "nowMs": 20000000,
+    "updatedAt": 12800000,
+    "expectedTier": "standard",
+    "expectedStaleIdle": false
+  },
+  {
+    "name": "stale dormant idle session just above 2h",
+    "lifecycle": "RUNNING",
+    "activity": "IDLE",
+    "hasUnseenCompletion": false,
+    "nowMs": 20000000,
+    "updatedAt": 12799999,
+    "expectedTier": "stale",
+    "expectedStaleIdle": true
+  },
+  {
+    "name": "stale dormant idle session 3h",
+    "lifecycle": "RUNNING",
+    "activity": "IDLE",
+    "hasUnseenCompletion": false,
+    "nowMs": 20000000,
+    "updatedAt": 9200000,
+    "expectedTier": "stale",
+    "expectedStaleIdle": true
+  },
+  {
+    "name": "idle session with zero updatedAt is stale",
+    "lifecycle": "RUNNING",
+    "activity": "IDLE",
+    "hasUnseenCompletion": false,
+    "nowMs": 20000000,
+    "updatedAt": 0,
+    "expectedTier": "stale",
+    "expectedStaleIdle": true
+  },
+  {
+    "name": "idle session with negative updatedAt is stale",
+    "lifecycle": "RUNNING",
+    "activity": "IDLE",
+    "hasUnseenCompletion": false,
+    "nowMs": 20000000,
+    "updatedAt": -1000,
+    "expectedTier": "stale",
+    "expectedStaleIdle": true
+  },
+  {
+    "name": "running idle with unacknowledged completion is not eligible for stale tiering even after 3h",
+    "lifecycle": "RUNNING",
+    "activity": "IDLE",
+    "hasUnseenCompletion": true,
+    "nowMs": 20000000,
+    "updatedAt": 9200000,
+    "expectedTier": "fresh",
+    "expectedStaleIdle": false
+  },
+  {
+    "name": "running busy session is not eligible for stale tiering even after 3h",
+    "lifecycle": "RUNNING",
+    "activity": "BUSY",
+    "hasUnseenCompletion": false,
+    "nowMs": 20000000,
+    "updatedAt": 9200000,
+    "expectedTier": "fresh",
+    "expectedStaleIdle": false
+  },
+  {
+    "name": "running waiting_question session is not eligible for stale tiering even after 3h",
+    "lifecycle": "RUNNING",
+    "activity": "WAITING_QUESTION",
+    "hasUnseenCompletion": false,
+    "nowMs": 20000000,
+    "updatedAt": 9200000,
+    "expectedTier": "fresh",
+    "expectedStaleIdle": false
+  },
+  {
+    "name": "exited session is not eligible for stale tiering even after 3h",
+    "lifecycle": "EXITED",
+    "activity": "IDLE",
+    "hasUnseenCompletion": false,
+    "nowMs": 20000000,
+    "updatedAt": 9200000,
+    "expectedTier": "fresh",
+    "expectedStaleIdle": false
+  }
+]
