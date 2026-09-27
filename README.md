@@ -105,7 +105,7 @@ Sample Output:
 | `--claude-projects-dir <path>`       | (none) | `~/.claude/projects`                       | Custom directory for Claude Code project transcripts |
 | `--pi-sessions-dir <path>`           | (none) | `~/.pi/agent/sessions`                     | Custom directory for Pi session logs                 |
 | `--log-level <level>`                | (none) | `info`                                     | Log level (`debug`, `info`, `warn`, `error`)         |
-| `--version`                          | `-V`   | `false`                                    | Print version information and exit                   |
+| `--version`                          | `-v`   | `false`                                    | Print version information and exit                   |
 | `--help`                             | `-h`   | `false`                                    | Print command line help                              |
 
 ### `air-ingester`
@@ -121,7 +121,7 @@ Sample Output:
 | `--litellm-key <key>`       | (none) | `""`                                          | API key for OpenAI-compatible or LiteLLM proxy  |
 | `--summarizer-model <name>` | (none) | `""`                                          | Model identifier used for action summarization  |
 | `--log-level <level>`       | (none) | `info`                                        | Log level (`debug`, `info`, `warn`, `error`)    |
-| `--version`                 | `-V`   | `false`                                       | Print version information and exit              |
+| `--version`                 | `-v`   | `false`                                       | Print version information and exit              |
 | `--help`                    | `-h`   | `false`                                       | Print command line help                         |
 
 ### `air-server`
@@ -134,7 +134,7 @@ Sample Output:
 | `--cors-origin <origins>` | (none) | `http://localhost:3000`                       | Allowed CORS origins (comma-separated or repeated) |
 | `--token <token>`         | (none) | `""`                                          | Bearer authentication token                        |
 | `--log-level <level>`     | (none) | `info`                                        | Log level (`debug`, `info`, `warn`, `error`)       |
-| `--version`               | `-V`   | `false`                                       | Print version information and exit                 |
+| `--version`               | `-v`   | `false`                                       | Print version information and exit                 |
 | `--help`                  | `-h`   | `false`                                       | Print command line help                            |
 
 ### `air-debug` / `just debug`
