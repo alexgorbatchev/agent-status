@@ -1,9 +1,12 @@
 package scanner
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestSessionTracker_SaveAndLoad(t *testing.T) {
@@ -106,3 +109,124 @@ func TestSessionTracker_DefaultPath(t *testing.T) {
 		t.Fatalf("expected non-nil tracker")
 	}
 }
+
+func TestSessionTracker_SaveNoOpWhenUnmodified(t *testing.T) {
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "sessions.json")
+
+	st, err := NewSessionTracker(filePath)
+	if err != nil {
+		t.Fatalf("NewSessionTracker failed: %v", err)
+	}
+
+	if st.IsDirty() {
+		t.Errorf("newly created session tracker should not be dirty")
+	}
+
+	sess := TrackedSession{
+		SessionID:      "sess-1",
+		Harness:        "claude-code",
+		PID:            1001,
+		CWD:            "/tmp/work",
+		HarnessVersion: "1.0.0",
+		StartedAt:      1000,
+		IsActive:       true,
+	}
+	st.Set("sess-1", sess)
+
+	if !st.IsDirty() {
+		t.Errorf("session tracker should be dirty after Set()")
+	}
+
+	if err := st.Save(); err != nil {
+		t.Fatalf("initial Save failed: %v", err)
+	}
+
+	if st.IsDirty() {
+		t.Errorf("session tracker should not be dirty after successful Save()")
+	}
+
+	fi1, err := os.Stat(filePath)
+	if err != nil {
+		t.Fatalf("stat failed: %v", err)
+	}
+
+	// Sleep slightly so that any unexpected file rewrite would change mtime
+	time.Sleep(20 * time.Millisecond)
+
+	// Calling Save multiple times without modifying sessions must be a no-op
+	for i := 0; i < 3; i++ {
+		if err := st.Save(); err != nil {
+			t.Fatalf("subsequent Save failed: %v", err)
+		}
+	}
+
+	fi2, err := os.Stat(filePath)
+	if err != nil {
+		t.Fatalf("stat failed: %v", err)
+	}
+
+	if fi2.ModTime() != fi1.ModTime() {
+		t.Errorf("expected file mtime to remain unchanged on clean Save(), got %v want %v", fi2.ModTime(), fi1.ModTime())
+	}
+
+	// Setting identical session must not mark tracker dirty
+	time.Sleep(20 * time.Millisecond)
+	st.Set("sess-1", sess)
+	if err := st.Save(); err != nil {
+		t.Fatalf("Save after setting identical session failed: %v", err)
+	}
+	fi3, err := os.Stat(filePath)
+	if err != nil {
+		t.Fatalf("stat failed: %v", err)
+	}
+	if fi3.ModTime() != fi1.ModTime() {
+		t.Errorf("expected file mtime unchanged after setting identical session, got %v want %v", fi3.ModTime(), fi1.ModTime())
+	}
+
+	// Verify compact JSON serialization (no indentations)
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("reading sessions file: %v", err)
+	}
+	if bytes.Contains(content, []byte("\n  ")) {
+		t.Errorf("expected compact JSON without indentation, got:\n%s", string(content))
+	}
+}
+
+func TestSessionTracker_SaveCleansTempFileOnRenameError(t *testing.T) {
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "sessions.json")
+
+	st, err := NewSessionTracker(filePath)
+	if err != nil {
+		t.Fatalf("NewSessionTracker failed: %v", err)
+	}
+
+	st.Set("sess-1", TrackedSession{
+		SessionID: "sess-1",
+		IsActive:  true,
+	})
+
+	// Create a directory at filePath so that os.Rename(tmpFile, filePath) fails with EISDIR
+	if err := os.Mkdir(filePath, 0755); err != nil {
+		t.Fatalf("Mkdir failed: %v", err)
+	}
+
+	err = st.Save()
+	if err == nil {
+		t.Fatal("expected Save() to fail when target filePath is a directory")
+	}
+
+	// Verify no orphaned .tmp.* files remain in tmpDir
+	entries, err := os.ReadDir(tmpDir)
+	if err != nil {
+		t.Fatalf("ReadDir failed: %v", err)
+	}
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".tmp") {
+			t.Errorf("found leaked temp file %q in cache directory after rename failure", entry.Name())
+		}
+	}
+}
+

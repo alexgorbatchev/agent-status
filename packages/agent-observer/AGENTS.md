@@ -14,7 +14,9 @@ Local observer daemon (`air-observer`) that scans harness sessions, tails transc
 - Scanner routines live in `internal/scanner/` and git workspace resolution in `internal/git/`.
 - Transcript activity timestamps are derived using `ExtractLastActiveTimestamp` (`internal/scanner/tail_timestamp.go`), which reads the tail of transcript files (up to 256KB) scanning backwards for valid JSON lines carrying recognizable timestamps, falling back to file modification time (`ModTime()`) when no timestamp is found.
 - Pi scanner (`internal/scanner/pi.go`) maintains an in-memory cache of session file metadata (`size`, `modTime`, `header`, `lastActive`, `dev`, `ino`) across scan ticks, reusing cached headers and tail timestamps for unchanged files and pruning entries for deleted or vanished sessions.
-- File tailing commits persistent byte offsets via `internal/tailer/cursor.go` only after frame batches are acknowledged by `air-ingester` (cursor-committed delivery).
+- File tailing commits persistent byte offsets in memory via `internal/tailer/cursor.go` upon acknowledgement from `air-ingester` (cursor-committed delivery) and flushes them to disk at a bounded rate via a background flusher (debounced periodic flush, default 2s) and on daemon shutdown, avoiding synchronous atomic file rewrites on every committed line.
+- Session tracker (`internal/scanner/session_tracker.go`) writes state to disk only when tracked sessions change (`dirty` flag), eliminating redundant file writes on unchanged scan ticks.
+- Hot-path persistence files (cursor store and session tracker) serialize using compact `json.Marshal` rather than indented JSON.
 - Cursor store prunes entries for deleted files and entries older than the retention window on daemon startup and periodically via background pruner.
 - Shipper implements bounded dispatch with tailer backpressure (`NewTailerWithOffsetHandler`) and sequence-keyed ACK callbacks; reads pause when disconnected or buffer is full.
 - Shipper resets exponential backoff only upon receiving an ACK from the ingester or after 5s of sustained error-free streaming, rather than immediately on the hello frame.

@@ -21,6 +21,7 @@ type SessionTracker struct {
 	mu       sync.Mutex
 	filePath string
 	sessions map[string]TrackedSession
+	dirty    bool
 }
 
 func DefaultSessionStatePath() string {
@@ -66,25 +67,43 @@ func (st *SessionTracker) GetAll() map[string]TrackedSession {
 func (st *SessionTracker) Set(sessionID string, s TrackedSession) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
+	if existing, ok := st.sessions[sessionID]; ok && existing == s {
+		return
+	}
 	st.sessions[sessionID] = s
+	st.dirty = true
 }
 
 func (st *SessionTracker) Delete(sessionID string) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	delete(st.sessions, sessionID)
+	if _, ok := st.sessions[sessionID]; ok {
+		delete(st.sessions, sessionID)
+		st.dirty = true
+	}
+}
+
+// IsDirty returns true if there are unsaved modifications in the session tracker.
+func (st *SessionTracker) IsDirty() bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return st.dirty
 }
 
 func (st *SessionTracker) Save() error {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
+	if !st.dirty {
+		return nil
+	}
+
 	dir := filepath.Dir(st.filePath)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
 
-	data, err := json.MarshalIndent(st.sessions, "", "  ")
+	data, err := json.Marshal(st.sessions)
 	if err != nil {
 		return err
 	}
@@ -94,5 +113,11 @@ func (st *SessionTracker) Save() error {
 		return err
 	}
 
-	return os.Rename(tmpFile, st.filePath)
+	if err := os.Rename(tmpFile, st.filePath); err != nil {
+		_ = os.Remove(tmpFile)
+		return err
+	}
+
+	st.dirty = false
+	return nil
 }

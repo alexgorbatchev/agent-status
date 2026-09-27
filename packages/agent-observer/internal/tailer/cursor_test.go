@@ -5,9 +5,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -82,6 +84,19 @@ func TestCursorStoreSaveError(t *testing.T) {
 	}
 	if err := badStoreDir.Save(); err == nil {
 		t.Errorf("expected error when saving over an existing directory")
+	}
+
+	// Target directory is read-only -> WriteFile fails
+	roDir := filepath.Join(tmpDir, "readonly")
+	if err := os.Mkdir(roDir, 0555); err == nil {
+		roStore := &CursorStore{
+			filePath: filepath.Join(roDir, "cursors.json"),
+			cursors:  make(map[string]*Cursor),
+		}
+		if err := roStore.Save(); err == nil || !strings.Contains(err.Error(), "writing cursor temp file") {
+			t.Errorf("expected 'writing cursor temp file' error, got %v", err)
+		}
+		_ = os.Chmod(roDir, 0755)
 	}
 }
 
@@ -880,5 +895,289 @@ func TestCursorStorePruneCorruptedNilCursorFromJSON(t *testing.T) {
 	}
 }
 
+func TestCursorStoreDirtyTrackingAndFlush(t *testing.T) {
+	tmpDir := t.TempDir()
+	cursorPath := filepath.Join(tmpDir, "cursors.json")
 
+	store, err := NewCursorStore(cursorPath)
+	if err != nil {
+		t.Fatalf("NewCursorStore failed: %v", err)
+	}
 
+	if store.IsDirty() {
+		t.Errorf("newly created store should not be dirty")
+	}
+	if store.SaveCount() != 0 {
+		t.Errorf("save count should be 0 initially, got %d", store.SaveCount())
+	}
+
+	// Flush when not dirty is a no-op
+	if err := store.Flush(); err != nil {
+		t.Fatalf("Flush when not dirty failed: %v", err)
+	}
+	if store.SaveCount() != 0 {
+		t.Errorf("Flush when not dirty should not save, got %d", store.SaveCount())
+	}
+
+	// Set cursor -> dirty
+	c := &Cursor{
+		Key:        "dev:ino1",
+		Path:       "/tmp/test.jsonl",
+		Offset:     100,
+		Size:       200,
+		Inode:      123,
+		Device:     456,
+		PrefixHash: "hash1",
+		UpdatedAt:  1000,
+	}
+	store.Set(c)
+	if !store.IsDirty() {
+		t.Errorf("store should be dirty after Set")
+	}
+
+	// Flush -> saves, clears dirty
+	if err := store.Flush(); err != nil {
+		t.Fatalf("Flush failed: %v", err)
+	}
+	if store.SaveCount() != 1 {
+		t.Errorf("expected save count 1 after Flush, got %d", store.SaveCount())
+	}
+	if store.IsDirty() {
+		t.Errorf("store should not be dirty after Flush")
+	}
+
+	// Setting identical cursor does not mark dirty
+	store.Set(c)
+	if store.IsDirty() {
+		t.Errorf("setting identical cursor should not mark dirty")
+	}
+
+	// Delete non-existent key does not mark dirty
+	store.Delete("nonexistent")
+	if store.IsDirty() {
+		t.Errorf("deleting nonexistent key should not mark dirty")
+	}
+
+	// Delete existing key marks dirty
+	store.Delete("dev:ino1")
+	if !store.IsDirty() {
+		t.Errorf("deleting existing key should mark dirty")
+	}
+	if err := store.Flush(); err != nil {
+		t.Fatalf("Flush after Delete failed: %v", err)
+	}
+	if store.SaveCount() != 2 {
+		t.Errorf("expected save count 2 after Delete flush, got %d", store.SaveCount())
+	}
+
+	// Compact JSON verification
+	data, err := os.ReadFile(cursorPath)
+	if err != nil {
+		t.Fatalf("reading cursor file: %v", err)
+	}
+	if bytes.Contains(data, []byte("\n  ")) {
+		t.Errorf("expected compact JSON, got:\n%s", string(data))
+	}
+}
+
+func TestCursorStoreStartAutoFlush(t *testing.T) {
+	tmpDir := t.TempDir()
+	cursorPath := filepath.Join(tmpDir, "cursors.json")
+
+	store, err := NewCursorStore(cursorPath)
+	if err != nil {
+		t.Fatalf("NewCursorStore failed: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store.StartAutoFlush(ctx, 25*time.Millisecond)
+
+	// No modifications -> no flushes
+	time.Sleep(60 * time.Millisecond)
+	if store.SaveCount() != 0 {
+		t.Errorf("expected 0 saves with no changes, got %d", store.SaveCount())
+	}
+
+	// Make modification
+	store.Set(&Cursor{
+		Key:       "dev:ino2",
+		Path:      "/tmp/file.jsonl",
+		Offset:    500,
+		UpdatedAt: 2000,
+	})
+
+	time.Sleep(60 * time.Millisecond)
+	if store.SaveCount() != 1 {
+		t.Errorf("expected 1 save after auto-flush interval, got %d", store.SaveCount())
+	}
+	if store.IsDirty() {
+		t.Errorf("expected clean store after auto-flush")
+	}
+
+	// Cancel context stops flusher
+	cancel()
+	time.Sleep(20 * time.Millisecond)
+
+	store.Set(&Cursor{
+		Key:       "dev:ino2",
+		Path:      "/tmp/file.jsonl",
+		Offset:    900,
+		UpdatedAt: 3000,
+	})
+
+	time.Sleep(60 * time.Millisecond)
+	// Since auto flusher was stopped, SaveCount should still be 1
+	if store.SaveCount() != 1 {
+		t.Errorf("expected auto flusher to stop after ctx cancellation, got %d saves", store.SaveCount())
+	}
+}
+
+func TestCursorStoreSaveConcurrentMutationPreservesDirty(t *testing.T) {
+	tmpDir := t.TempDir()
+	cursorPath := filepath.Join(tmpDir, "cursors.json")
+
+	store, err := NewCursorStore(cursorPath)
+	if err != nil {
+		t.Fatalf("NewCursorStore failed: %v", err)
+	}
+
+	c1 := &Cursor{
+		Key:       "key1",
+		Path:      "/tmp/key1.jsonl",
+		Offset:    100,
+		UpdatedAt: 1000,
+	}
+	store.Set(c1)
+	if !store.IsDirty() {
+		t.Fatalf("expected store to be dirty after initial Set")
+	}
+
+	c2 := &Cursor{
+		Key:       "key2",
+		Path:      "/tmp/key2.jsonl",
+		Offset:    200,
+		UpdatedAt: 2000,
+	}
+
+	hookRan := false
+	store.beforeSaveCommitHook = func() {
+		hookRan = true
+		// While Save() file I/O has occurred, another mutation arrives
+		store.Set(c2)
+	}
+
+	if err := store.Save(); err != nil {
+		t.Fatalf("Save() failed: %v", err)
+	}
+	if !hookRan {
+		t.Fatalf("expected beforeSaveCommitHook to run")
+	}
+
+	// Verify dirty is preserved because mutation occurred during Save()
+	if !store.IsDirty() {
+		t.Errorf("expected store to remain dirty when mutation arrived during Save()")
+	}
+
+	// Verify file on disk only has c1, not c2 yet
+	diskData, err := os.ReadFile(cursorPath)
+	if err != nil {
+		t.Fatalf("failed reading cursor file: %v", err)
+	}
+	var diskCursors map[string]*Cursor
+	if err := json.Unmarshal(diskData, &diskCursors); err != nil {
+		t.Fatalf("failed unmarshaling disk cursors: %v", err)
+	}
+	if _, ok := diskCursors["key2"]; ok {
+		t.Errorf("expected disk file after first Save() NOT to contain key2")
+	}
+
+	// Next Flush() must save updated state and clear dirty
+	store.beforeSaveCommitHook = nil
+	if err := store.Flush(); err != nil {
+		t.Fatalf("Flush() failed: %v", err)
+	}
+
+	if store.IsDirty() {
+		t.Errorf("expected store to not be dirty after Flush()")
+	}
+
+	diskData2, err := os.ReadFile(cursorPath)
+	if err != nil {
+		t.Fatalf("failed reading cursor file: %v", err)
+	}
+	var diskCursors2 map[string]*Cursor
+	if err := json.Unmarshal(diskData2, &diskCursors2); err != nil {
+		t.Fatalf("failed unmarshaling disk cursors: %v", err)
+	}
+	if diskCursors2["key1"] == nil || diskCursors2["key1"].Offset != 100 {
+		t.Errorf("expected disk file to contain key1 with offset 100")
+	}
+	if diskCursors2["key2"] == nil || diskCursors2["key2"].Offset != 200 {
+		t.Errorf("expected disk file to contain key2 with offset 200")
+	}
+}
+
+func TestCursorStoreStartAutoFlush_OnError(t *testing.T) {
+	tmpDir := t.TempDir()
+	dirPath := filepath.Join(tmpDir, "blocked_dir")
+	cursorPath := filepath.Join(dirPath, "cursors.json")
+
+	store, err := NewCursorStore(cursorPath)
+	if err != nil {
+		t.Fatalf("NewCursorStore failed: %v", err)
+	}
+
+	// Create a regular file where the directory should be, causing Save() to fail on MkdirAll
+	if err := os.WriteFile(dirPath, []byte("blocker"), 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	store.Set(&Cursor{
+		Key:    "key1",
+		Offset: 100,
+	})
+
+	errCh := make(chan error, 5)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store.StartAutoFlush(ctx, 15*time.Millisecond, func(err error) {
+		errCh <- err
+	})
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Errorf("expected non-nil error in onError callback")
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for onError callback in StartAutoFlush")
+	}
+}
+
+func TestCursorStoreStartAutoFlush_NonPositiveIntervalDefaults(t *testing.T) {
+	for _, interval := range []time.Duration{0, -1, -1 * time.Second} {
+		t.Run(fmt.Sprintf("interval=%v", interval), func(t *testing.T) {
+			tmpDir := t.TempDir()
+			cursorPath := filepath.Join(tmpDir, "cursors.json")
+			store, err := NewCursorStore(cursorPath)
+			if err != nil {
+				t.Fatalf("NewCursorStore failed: %v", err)
+			}
+
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			store.StartAutoFlush(ctx, interval)
+
+			// Allow background goroutine to spawn and ticker to initialize without panicking
+			time.Sleep(50 * time.Millisecond)
+
+			if store.SaveCount() != 0 {
+				t.Errorf("expected 0 saves initially, got %d", store.SaveCount())
+			}
+		})
+	}
+}

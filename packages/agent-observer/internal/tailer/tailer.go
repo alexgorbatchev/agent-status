@@ -150,7 +150,7 @@ func (t *Tailer) CommittedOffset() int64 {
 	return t.committedOffset
 }
 
-// Commit updates the cursor store to the confirmed offset and persists it to disk.
+// Commit updates the cursor store to the confirmed offset.
 func (t *Tailer) Commit(offset int64) error {
 	t.mu.Lock()
 	if offset <= t.committedOffset {
@@ -184,7 +184,6 @@ func (t *Tailer) Commit(offset int64) error {
 			PrefixHash: prefixHash,
 			UpdatedAt:  time.Now().UnixMilli(),
 		})
-		return store.Save()
 	}
 	return nil
 }
@@ -315,7 +314,6 @@ func (t *Tailer) readAvailable() error {
 				PrefixHash: prefixHash,
 				UpdatedAt:  time.Now().UnixMilli(),
 			})
-			_ = store.Save()
 		}
 	}
 

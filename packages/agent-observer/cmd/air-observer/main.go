@@ -32,6 +32,7 @@ type observerOptions struct {
 	cursorPath          string
 	cursorRetention     time.Duration
 	cursorPruneInterval time.Duration
+	cursorFlushInterval time.Duration
 	sessionStatePath    string
 	claudeSessionsDir   string
 	claudeProjectsDir   string
@@ -49,6 +50,7 @@ func newRootCmd() (*cobra.Command, *observerOptions) {
 		scanInterval:        2 * time.Second,
 		cursorRetention:     24 * time.Hour,
 		cursorPruneInterval: 1 * time.Hour,
+		cursorFlushInterval: 2 * time.Second,
 		logLevel:            "info",
 	}
 
@@ -71,6 +73,11 @@ func newRootCmd() (*cobra.Command, *observerOptions) {
 			opts.cursorPruneInterval = d
 		}
 	}
+	if envFlush := os.Getenv("AIR_CURSOR_FLUSH_INTERVAL"); envFlush != "" {
+		if d, err := time.ParseDuration(envFlush); err == nil {
+			opts.cursorFlushInterval = d
+		}
+	}
 
 	rootCmd := &cobra.Command{
 		Use:   "air-observer",
@@ -91,6 +98,7 @@ func newRootCmd() (*cobra.Command, *observerOptions) {
 	flags.StringVar(&opts.cursorPath, "cursor-path", "", "Custom path for persistent cursor file")
 	flags.DurationVar(&opts.cursorRetention, "cursor-retention", opts.cursorRetention, "Retention duration for inactive cursor entries (default 24h)")
 	flags.DurationVar(&opts.cursorPruneInterval, "cursor-prune-interval", opts.cursorPruneInterval, "Interval between periodic cursor pruning sweeps (default 1h)")
+	flags.DurationVar(&opts.cursorFlushInterval, "cursor-flush-interval", opts.cursorFlushInterval, "Interval between periodic cursor store flushes (default 2s)")
 	flags.StringVar(&opts.sessionStatePath, "session-state-path", "", "Custom path for persistent session state tracking file")
 	flags.StringVar(&opts.claudeSessionsDir, "claude-sessions-dir", "", "Custom directory for Claude Code sessions")
 	flags.StringVar(&opts.claudeProjectsDir, "claude-projects-dir", "", "Custom directory for Claude Code projects/transcripts")
@@ -205,6 +213,14 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 		cursorPruneInterval = 1 * time.Hour
 	}
 	go startPeriodicCursorPruner(ctx, cursorStore, cursorRetention, cursorPruneInterval)
+
+	cursorFlushInterval := opts.cursorFlushInterval
+	if cursorFlushInterval <= 0 {
+		cursorFlushInterval = 2 * time.Second
+	}
+	cursorStore.StartAutoFlush(ctx, cursorFlushInterval, func(err error) {
+		logging.Warn("cursor_store_flush_error", "err", err)
+	})
 
 	ship := shipper.NewShipper(shipper.Config{
 		IngesterURL: opts.ingesterURL,
@@ -961,4 +977,3 @@ func startPeriodicCursorPruner(ctx context.Context, cs cursorPruner, retention t
 		}
 	}
 }
-

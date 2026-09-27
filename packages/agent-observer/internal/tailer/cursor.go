@@ -1,6 +1,7 @@
 package tailer
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -25,10 +26,14 @@ type Cursor struct {
 }
 
 type CursorStore struct {
-	mu       sync.RWMutex
-	saveMu   sync.Mutex
-	filePath string
-	cursors  map[string]*Cursor
+	mu                   sync.RWMutex
+	saveMu               sync.Mutex
+	filePath             string
+	cursors              map[string]*Cursor
+	dirty                bool
+	mutationGen          uint64
+	saveCount            int64
+	beforeSaveCommitHook func()
 }
 
 var userHomeDirFunc = os.UserHomeDir
@@ -104,6 +109,11 @@ func (cs *CursorStore) Set(c *Cursor) {
 	if cCopy.UpdatedAt == 0 {
 		cCopy.UpdatedAt = time.Now().UnixMilli()
 	}
+	existing, ok := cs.cursors[c.Key]
+	if !ok || existing == nil || existing.Offset != cCopy.Offset || existing.Size != cCopy.Size || existing.Inode != cCopy.Inode || existing.Device != cCopy.Device || existing.PrefixHash != cCopy.PrefixHash || existing.Path != cCopy.Path {
+		cs.dirty = true
+		cs.mutationGen++
+	}
 	cs.cursors[c.Key] = &cCopy
 }
 
@@ -111,7 +121,18 @@ func (cs *CursorStore) Set(c *Cursor) {
 func (cs *CursorStore) Delete(key string) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
-	delete(cs.cursors, key)
+	if _, ok := cs.cursors[key]; ok {
+		delete(cs.cursors, key)
+		cs.dirty = true
+		cs.mutationGen++
+	}
+}
+
+// IsDirty returns true if there are unsaved modifications in the cursor store.
+func (cs *CursorStore) IsDirty() bool {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+	return cs.dirty
 }
 
 func defaultFileExists(path string) bool {
@@ -199,15 +220,21 @@ func (cs *CursorStore) PruneWithFileExists(olderThan time.Duration, fileExists f
 			pruned++
 		}
 	}
+	if pruned > 0 {
+		cs.dirty = true
+		cs.mutationGen++
+	}
 	return pruned
 }
 
 func (cs *CursorStore) Save() error {
 	cs.saveMu.Lock()
 	defer cs.saveMu.Unlock()
+	cs.saveCount++
 
 	cs.mu.RLock()
-	data, err := json.MarshalIndent(cs.cursors, "", "  ")
+	snapGen := cs.mutationGen
+	data, err := json.Marshal(cs.cursors)
 	cs.mu.RUnlock()
 	if err != nil {
 		return fmt.Errorf("marshaling cursors: %w", err)
@@ -220,6 +247,7 @@ func (cs *CursorStore) Save() error {
 
 	tmpFile := fmt.Sprintf("%s.tmp.%d", cs.filePath, time.Now().UnixNano())
 	if err := os.WriteFile(tmpFile, data, 0600); err != nil {
+		_ = os.Remove(tmpFile)
 		return fmt.Errorf("writing cursor temp file: %w", err)
 	}
 
@@ -228,7 +256,60 @@ func (cs *CursorStore) Save() error {
 		return fmt.Errorf("renaming cursor file: %w", err)
 	}
 
+	if cs.beforeSaveCommitHook != nil {
+		cs.beforeSaveCommitHook()
+	}
+
+	cs.mu.Lock()
+	if cs.mutationGen == snapGen {
+		cs.dirty = false
+	}
+	cs.mu.Unlock()
+
 	return nil
+}
+
+// Flush persists cursor offsets to disk only if there are unsaved changes.
+func (cs *CursorStore) Flush() error {
+	cs.mu.RLock()
+	dirty := cs.dirty
+	cs.mu.RUnlock()
+	if !dirty {
+		return nil
+	}
+	return cs.Save()
+}
+
+// StartAutoFlush starts a background goroutine that periodically flushes dirty cursors to disk
+// until ctx is cancelled. An optional onError callback can be provided to handle flush errors.
+func (cs *CursorStore) StartAutoFlush(ctx context.Context, interval time.Duration, onError ...func(err error)) {
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	var errHandler func(err error)
+	if len(onError) > 0 && onError[0] != nil {
+		errHandler = onError[0]
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := cs.Flush(); err != nil && errHandler != nil {
+					errHandler(err)
+				}
+			}
+		}
+	}()
+}
+
+func (cs *CursorStore) SaveCount() int64 {
+	cs.saveMu.Lock()
+	defer cs.saveMu.Unlock()
+	return cs.saveCount
 }
 
 func ShouldResetCursor(c *Cursor, currentIno uint64, currentSize int64, currentHash string) bool {

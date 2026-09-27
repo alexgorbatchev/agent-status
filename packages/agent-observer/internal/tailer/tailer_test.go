@@ -1,6 +1,7 @@
 package tailer
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -1327,6 +1328,156 @@ func TestWatcherRegistryFallbackBehavior(t *testing.T) {
 	}
 	if nilReg.SubscriberCount() != 0 {
 		t.Errorf("expected 0 for nilReg.SubscriberCount()")
+	}
+}
+
+func TestTailerCommitDebouncedFlush(t *testing.T) {
+	tmpDir := t.TempDir()
+	cursorPath := filepath.Join(tmpDir, "cursors.json")
+	store, err := NewCursorStore(cursorPath)
+	if err != nil {
+		t.Fatalf("NewCursorStore error: %v", err)
+	}
+
+	targetFile := filepath.Join(tmpDir, "session.jsonl")
+	f, err := os.Create(targetFile)
+	if err != nil {
+		t.Fatalf("create file failed: %v", err)
+	}
+	var totalBytes int64
+	for i := 0; i < 100; i++ {
+		n, _ := fmt.Fprintf(f, `{"type":"event","index":%d}`+"\n", i)
+		totalBytes += int64(n)
+	}
+	_ = f.Close()
+
+	tail, err := NewTailerWithOffsetHandler(targetFile, store, func(line []byte, offset int64) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("NewTailerWithOffsetHandler error: %v", err)
+	}
+
+	if err := tail.readAvailable(); err != nil {
+		t.Fatalf("readAvailable error: %v", err)
+	}
+
+	initialSaves := store.SaveCount()
+	for i := 1; i <= 100; i++ {
+		offset := int64(i) * totalBytes / 100
+		if i == 100 {
+			offset = totalBytes
+		}
+		if err := tail.Commit(offset); err != nil {
+			t.Fatalf("Commit failed: %v", err)
+		}
+	}
+
+	savesDuringCommits := store.SaveCount() - initialSaves
+	if savesDuringCommits == 100 {
+		t.Fatalf("expected committing 100 lines NOT to perform 100 atomic file writes, got %d", savesDuringCommits)
+	}
+	if savesDuringCommits != 0 {
+		t.Errorf("expected 0 atomic file writes during commits before flush, got %d", savesDuringCommits)
+	}
+
+	// Verify in-memory cursor was updated immediately
+	c, ok := store.Get(tail.key)
+	if !ok || c.Offset != totalBytes {
+		t.Fatalf("store.Get(%q) = %+v, want offset %d", tail.key, c, totalBytes)
+	}
+
+	if !store.IsDirty() {
+		t.Errorf("store should be dirty after commits")
+	}
+
+	// Start auto-flush loop and verify debounced flush behavior
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store.StartAutoFlush(ctx, 30*time.Millisecond)
+
+	time.Sleep(80 * time.Millisecond)
+
+	if store.SaveCount() != initialSaves+1 {
+		t.Errorf("expected 1 save after debounced flush tick, got %d", store.SaveCount()-initialSaves)
+	}
+	if store.IsDirty() {
+		t.Errorf("store should not be dirty after successful flush")
+	}
+
+	// Another tick without commits must be a no-op (no redundant file writes)
+	time.Sleep(80 * time.Millisecond)
+	if store.SaveCount() != initialSaves+1 {
+		t.Errorf("expected no additional saves on clean tick, got %d", store.SaveCount()-initialSaves)
+	}
+
+	// Verify compact JSON serialization (no indentations) in cursor file
+	cursorBytes, err := os.ReadFile(cursorPath)
+	if err != nil {
+		t.Fatalf("reading cursor file: %v", err)
+	}
+	if bytes.Contains(cursorBytes, []byte("\n  ")) {
+		t.Errorf("expected compact JSON without indentation, got:\n%s", string(cursorBytes))
+	}
+}
+
+func TestTailerAutoCommitDebouncedFlush(t *testing.T) {
+	tmpDir := t.TempDir()
+	cursorPath := filepath.Join(tmpDir, "cursors.json")
+	store, err := NewCursorStore(cursorPath)
+	if err != nil {
+		t.Fatalf("NewCursorStore error: %v", err)
+	}
+
+	targetFile := filepath.Join(tmpDir, "session.jsonl")
+	f, err := os.Create(targetFile)
+	if err != nil {
+		t.Fatalf("create file failed: %v", err)
+	}
+	lineData := []byte("{\"type\":\"msg\",\"data\":\"hello world\"}\n")
+	_, _ = f.Write(lineData)
+	_ = f.Close()
+
+	tail, err := NewTailer(targetFile, store, func(line []byte) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("NewTailer error: %v", err)
+	}
+
+	// In autoCommit mode, readAvailable updates store in-memory without synchronous save
+	if err := tail.readAvailable(); err != nil {
+		t.Fatalf("readAvailable error: %v", err)
+	}
+
+	if store.SaveCount() != 0 {
+		t.Errorf("expected 0 saves during autoCommit readAvailable, got %d", store.SaveCount())
+	}
+	if !store.IsDirty() {
+		t.Errorf("expected store to be dirty after autoCommit")
+	}
+
+	c, ok := store.Get(tail.key)
+	if !ok || c.Offset != int64(len(lineData)) {
+		t.Fatalf("store.Get(%q) = %+v, want offset %d", tail.key, c, len(lineData))
+	}
+
+	if err := store.Flush(); err != nil {
+		t.Fatalf("Flush error: %v", err)
+	}
+	if store.SaveCount() != 1 {
+		t.Errorf("expected 1 save after Flush, got %d", store.SaveCount())
+	}
+	if store.IsDirty() {
+		t.Errorf("expected store to not be dirty after Flush")
+	}
+
+	// Repeated flush when clean is no-op
+	if err := store.Flush(); err != nil {
+		t.Fatalf("second Flush error: %v", err)
+	}
+	if store.SaveCount() != 1 {
+		t.Errorf("expected still 1 save after second Flush, got %d", store.SaveCount())
 	}
 }
 

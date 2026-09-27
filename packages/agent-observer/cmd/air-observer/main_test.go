@@ -78,6 +78,7 @@ func TestObserverCommandHelp(t *testing.T) {
 		"--cursor-path",
 		"--cursor-retention",
 		"--cursor-prune-interval",
+		"--cursor-flush-interval",
 		"--claude-sessions-dir",
 		"--claude-projects-dir",
 		"--pi-sessions-dir",
@@ -128,6 +129,9 @@ func TestObserverCommandFlagDefaults(t *testing.T) {
 	if opts.cursorPruneInterval != 1*time.Hour {
 		t.Errorf("default cursorPruneInterval = %v, want 1h", opts.cursorPruneInterval)
 	}
+	if opts.cursorFlushInterval != 2*time.Second {
+		t.Errorf("default cursorFlushInterval = %v, want 2s", opts.cursorFlushInterval)
+	}
 	if opts.logLevel != "info" {
 		t.Errorf("default logLevel = %q, want info", opts.logLevel)
 	}
@@ -146,6 +150,7 @@ func TestObserverCommandFlagParsing(t *testing.T) {
 		"--cursor-path", "/tmp/cursors.json",
 		"--cursor-retention", "48h",
 		"--cursor-prune-interval", "30m",
+		"--cursor-flush-interval", "5s",
 		"--claude-sessions-dir", "/tmp/claude/sessions",
 		"--claude-projects-dir", "/tmp/claude/projects",
 		"--pi-sessions-dir", "/tmp/pi/sessions",
@@ -181,6 +186,9 @@ func TestObserverCommandFlagParsing(t *testing.T) {
 	if opts.cursorPruneInterval != 30*time.Minute {
 		t.Errorf("cursorPruneInterval = %v, want 30m", opts.cursorPruneInterval)
 	}
+	if opts.cursorFlushInterval != 5*time.Second {
+		t.Errorf("cursorFlushInterval = %v, want 5s", opts.cursorFlushInterval)
+	}
 	if opts.claudeSessionsDir != "/tmp/claude/sessions" {
 		t.Errorf("claudeSessionsDir = %q, want /tmp/claude/sessions", opts.claudeSessionsDir)
 	}
@@ -212,6 +220,7 @@ func TestObserverCommandEnvFallbacks(t *testing.T) {
 	t.Setenv("AGENT_STATUS_TOKEN", "env-token-xyz")
 	t.Setenv("AIR_CURSOR_RETENTION", "72h")
 	t.Setenv("AIR_CURSOR_PRUNE_INTERVAL", "2h")
+	t.Setenv("AIR_CURSOR_FLUSH_INTERVAL", "10s")
 
 	_, opts := newRootCmd()
 
@@ -226,6 +235,9 @@ func TestObserverCommandEnvFallbacks(t *testing.T) {
 	}
 	if opts.cursorPruneInterval != 2*time.Hour {
 		t.Errorf("cursorPruneInterval from env = %v, want 2h", opts.cursorPruneInterval)
+	}
+	if opts.cursorFlushInterval != 10*time.Second {
+		t.Errorf("cursorFlushInterval from env = %v, want 10s", opts.cursorFlushInterval)
 	}
 }
 
@@ -1650,11 +1662,3 @@ func TestRunCursorPruneSweep(t *testing.T) {
 		}
 	})
 }
-
-
-
-
-
-
-
-
