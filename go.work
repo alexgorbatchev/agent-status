@@ -6,5 +6,4 @@ use (
 	./packages/agent-ingester
 	./packages/agent-observer
 	./packages/agent-server
-	./packages/print-session-cli
 )

@@ -38,7 +38,7 @@ run-debug *args:
 
 # Run print-session CLI utility via go run
 print-session *args:
-    go run ./packages/print-session-cli/cmd/print-session {{args}}
+    go run github.com/alexgorbatchev/agent-print-session-cli/cmd/print-session@latest {{args}}
 
 # Build only dev stack binaries and bundle ui-web (omitting agent-debug)
 build-stack:
@@ -50,12 +50,11 @@ build-stack:
 
 # Build all Go binaries and bundle ui-web
 build-all:
-    @mkdir -p packages/agent-observer/bin packages/agent-ingester/bin packages/agent-server/bin packages/agent-debug/bin packages/print-session-cli/bin
+    @mkdir -p packages/agent-observer/bin packages/agent-ingester/bin packages/agent-server/bin packages/agent-debug/bin
     cd packages/agent-observer && just build
     cd packages/agent-ingester && just build
     cd packages/agent-server && just build
     cd packages/agent-debug && just build
-    cd packages/print-session-cli && just build
     cd packages/ui-web && just build
 
 # Run all test suites across Go and Bun
@@ -65,7 +64,6 @@ test-all:
     cd packages/agent-ingester && just test
     cd packages/agent-server && just test
     cd packages/agent-debug && just test
-    cd packages/print-session-cli && just test
     cd packages/ui-web && just test
 
 # Run Playwright E2E test suite
@@ -91,7 +89,6 @@ lint-all:
     cd packages/agent-ingester && just lint
     cd packages/agent-server && just lint
     cd packages/agent-debug && just lint
-    cd packages/print-session-cli && just lint
     cd packages/ui-web && just lint
     just lint-scripts
 
