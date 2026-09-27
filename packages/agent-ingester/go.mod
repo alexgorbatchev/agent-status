@@ -17,6 +17,7 @@ require (
 	cloud.google.com/go v0.116.0 // indirect
 	cloud.google.com/go/auth v0.9.3 // indirect
 	cloud.google.com/go/compute/metadata v0.5.0 // indirect
+	github.com/alexgorbatchev/agent-status/packages/agent-parser v0.0.0-00010101000000-000000000000 // indirect
 	github.com/anthropics/anthropic-sdk-go v1.26.0 // indirect
 	github.com/ebitengine/purego v0.10.2 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
@@ -53,4 +54,7 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 )
 
-replace github.com/alexgorbatchev/agent-status/packages/agent-common => ../agent-common
+replace (
+	github.com/alexgorbatchev/agent-status/packages/agent-common => ../agent-common
+	github.com/alexgorbatchev/agent-status/packages/agent-parser => ../agent-parser
+)

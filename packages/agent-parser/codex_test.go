@@ -422,8 +422,8 @@ func TestParseCodexLine(t *testing.T) {
 		if evs[0].Data.ModelContextWindow == nil || *evs[0].Data.ModelContextWindow != 128000 {
 			t.Errorf("ModelContextWindow = %v, want 128000", evs[0].Data.ModelContextWindow)
 		}
-		if evs[0].Data.ContextFullness == nil {
-			t.Errorf("expected non-nil ContextFullness")
+		if evs[0].Data.ContextFullness != nil {
+			t.Errorf("expected nil ContextFullness, got %v", *evs[0].Data.ContextFullness)
 		}
 	})
 

@@ -9,8 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/alexgorbatchev/agent-status/packages/agent-common/models"
-	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
 
@@ -537,21 +535,17 @@ func ReconstructSessionEvents(session *OpencodeSession, messages []OpencodeMessa
 		titlePtr = stringPtr(session.Title)
 	}
 	var modelPtr *string
-	var cwPtr *int64
 	if session.Model != "" {
 		modelPtr = stringPtr(session.Model)
-		cw := models.ResolveContextWindow(session.Model)
-		cwPtr = &cw
 	}
 
 	events = append(events, ParsedEvent{
 		EventType: "run_started",
 		Timestamp: session.TimeCreated,
 		CWD:       session.Directory,
-		Data: types.TelemetryFrameData{
-			Title:              titlePtr,
-			Model:              modelPtr,
-			ModelContextWindow: cwPtr,
+		Data: EventData{
+			Title: titlePtr,
+			Model: modelPtr,
 		},
 	})
 
@@ -584,7 +578,7 @@ func ReconstructSessionEvents(session *OpencodeSession, messages []OpencodeMessa
 					EventType: "user_prompt",
 					Timestamp: msg.TimeCreated,
 					CWD:       cwd,
-					Data: types.TelemetryFrameData{
+					Data: EventData{
 						Role:       stringPtr("user"),
 						Content:    stringPtr(userText),
 						LastPrompt: stringPtr(userText),
@@ -613,7 +607,7 @@ func ReconstructSessionEvents(session *OpencodeSession, messages []OpencodeMessa
 							EventType: "thinking",
 							Timestamp: partTs,
 							CWD:       cwd,
-							Data: types.TelemetryFrameData{
+							Data: EventData{
 								Role:    stringPtr("assistant"),
 								Content: stringPtr(p.Data.Text),
 								Model:   stringPtr(msgModel),
@@ -627,7 +621,7 @@ func ReconstructSessionEvents(session *OpencodeSession, messages []OpencodeMessa
 							EventType: "text",
 							Timestamp: partTs,
 							CWD:       cwd,
-							Data: types.TelemetryFrameData{
+							Data: EventData{
 								Role:    stringPtr("assistant"),
 								Content: stringPtr(p.Data.Text),
 								Model:   stringPtr(msgModel),
@@ -656,7 +650,7 @@ func ReconstructSessionEvents(session *OpencodeSession, messages []OpencodeMessa
 							EventType: "tool_use",
 							Timestamp: startTs,
 							CWD:       cwd,
-							Data: types.TelemetryFrameData{
+							Data: EventData{
 								Role:             stringPtr("assistant"),
 								ToolName:         stringPtr(p.Data.Tool),
 								ToolCallID:       stringPtr(p.Data.CallID),
@@ -681,7 +675,7 @@ func ReconstructSessionEvents(session *OpencodeSession, messages []OpencodeMessa
 								EventType: "tool_result",
 								Timestamp: endTs,
 								CWD:       cwd,
-								Data: types.TelemetryFrameData{
+								Data: EventData{
 									Role:       stringPtr("toolResult"),
 									ToolCallID: stringPtr(p.Data.CallID),
 									ToolOutput: stringPtr(toolOutput),
@@ -723,7 +717,7 @@ func ReconstructSessionEvents(session *OpencodeSession, messages []OpencodeMessa
 								EventType: "error",
 								Timestamp: partTs,
 								CWD:       cwd,
-								Data: types.TelemetryFrameData{
+								Data: EventData{
 									Role:              stringPtr("assistant"),
 									Content:           stringPtr(errText),
 									Model:             stringPtr(msgModel),
@@ -739,14 +733,14 @@ func ReconstructSessionEvents(session *OpencodeSession, messages []OpencodeMessa
 			}
 
 			// Assistant turn end
-			var usage *types.ITokenUsage
+			var usage *TokenUsage
 			if msg.Data.Tokens != nil {
 				u := msg.Data.Tokens
 				total := u.Total
 				if total == 0 {
 					total = u.Input + u.Output + u.Cache.Read + u.Cache.Write
 				}
-				usage = &types.ITokenUsage{
+				usage = &TokenUsage{
 					Input:      u.Input,
 					Output:     u.Output,
 					CacheRead:  u.Cache.Read,
@@ -772,30 +766,17 @@ func ReconstructSessionEvents(session *OpencodeSession, messages []OpencodeMessa
 				}
 			}
 
-			var contextWindowPtr *int64
-			var fullnessPtr *float64
-			if msgModel != "" {
-				cw := models.ResolveContextWindow(msgModel)
-				contextWindowPtr = &cw
-				if usage != nil && cw > 0 {
-					fn := models.CalculateContextFullness(usage.Total, cw)
-					fullnessPtr = &fn
-				}
-			}
-
 			if usage != nil || stopReason != nil || msg.Data.Cost != nil {
 				events = append(events, ParsedEvent{
 					EventType: "turn_end",
 					Timestamp: endTs,
 					CWD:       cwd,
-					Data: types.TelemetryFrameData{
-						Role:               stringPtr("assistant"),
-						Model:              stringPtr(msgModel),
-						ModelContextWindow: contextWindowPtr,
-						ContextFullness:    fullnessPtr,
-						StopReason:         stopReason,
-						Usage:              usage,
-						RawHarnessCost:     msg.Data.Cost,
+					Data: EventData{
+						Role:           stringPtr("assistant"),
+						Model:          stringPtr(msgModel),
+						StopReason:     stopReason,
+						Usage:          usage,
+						RawHarnessCost: msg.Data.Cost,
 					},
 				})
 			}
@@ -841,15 +822,14 @@ func ReconstructSessionEvents(session *OpencodeSession, messages []OpencodeMessa
 					EventType: "error",
 					Timestamp: endTs,
 					CWD:       cwd,
-					Data: types.TelemetryFrameData{
-						Role:               stringPtr("assistant"),
-						Content:            stringPtr(errText),
-						Model:              stringPtr(msgModel),
-						ModelContextWindow: contextWindowPtr,
-						IsError:            boolPtr(true),
-						IsRateLimit:        isRLPtr,
-						RetryAfterSeconds:  retryAfterSeconds,
-						RateLimitResetAt:   rateLimitResetAt,
+					Data: EventData{
+						Role:              stringPtr("assistant"),
+						Content:           stringPtr(errText),
+						Model:             stringPtr(msgModel),
+						IsError:           boolPtr(true),
+						IsRateLimit:       isRLPtr,
+						RetryAfterSeconds: retryAfterSeconds,
+						RateLimitResetAt:  rateLimitResetAt,
 					},
 				})
 			}

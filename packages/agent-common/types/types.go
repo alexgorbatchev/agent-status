@@ -1,6 +1,10 @@
 package types
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	parser "github.com/alexgorbatchev/agent-status/packages/agent-parser"
+)
 
 type LifecycleState string
 
@@ -62,14 +66,8 @@ type IProjectInfo struct {
 	CanonicalRoot string `json:"canonicalRoot"`
 }
 
-type ITokenUsage struct {
-	Input      int64 `json:"input"`
-	Output     int64 `json:"output"`
-	CacheRead  int64 `json:"cacheRead"`
-	CacheWrite int64 `json:"cacheWrite"`
-	Reasoning  int64 `json:"reasoning"`
-	Total      int64 `json:"total"`
-}
+type TokenUsage = parser.TokenUsage
+type ITokenUsage = parser.TokenUsage
 
 type ICostInfo struct {
 	Currency    string  `json:"currency"`
@@ -181,48 +179,10 @@ type ProjectGroup struct {
 	ActiveAgentCount int           `json:"activeAgentCount"`
 }
 
-type DiffLine struct {
-	Type          string `json:"type"` // "add" | "del" | "ctx"
-	OldLineNumber *int   `json:"oldLineNumber,omitempty"`
-	NewLineNumber *int   `json:"newLineNumber,omitempty"`
-	Content       string `json:"content"`
-}
-
-type DiffHunk struct {
-	Header string     `json:"header,omitempty"`
-	Lines  []DiffLine `json:"lines"`
-}
-
-type FileModification struct {
-	Action   string     `json:"action"` // "EDIT" | "WRITE"
-	FilePath string     `json:"filePath"`
-	Hunks    []DiffHunk `json:"hunks,omitempty"`
-	Content  *string    `json:"content,omitempty"`
-}
-
-type TelemetryFrameData struct {
-	Role             *string                `json:"role,omitempty"`
-	Content          *string                `json:"content,omitempty"`
-	Title            *string                `json:"title,omitempty"`
-	LastPrompt       *string                `json:"lastPrompt,omitempty"`
-	Model            *string                `json:"model,omitempty"`
-	ModelContextWindow *int64               `json:"modelContextWindow,omitempty"`
-	ContextFullness    *float64             `json:"contextFullness,omitempty"`
-	ToolName         *string                `json:"toolName,omitempty"`
-	ToolCallID       *string                `json:"toolCallId,omitempty"`
-	ToolInput        map[string]interface{} `json:"toolInput,omitempty"`
-	FileModification *FileModification      `json:"fileModification,omitempty"`
-	ToolOutput       *string                `json:"toolOutput,omitempty"`
-	IsError          *bool                  `json:"isError,omitempty"`
-	IsRateLimit      *bool                  `json:"isRateLimit,omitempty"`
-	RateLimitResetAt *int64                 `json:"rateLimitResetAt,omitempty"`
-	RetryAfterSeconds *int64                `json:"retryAfterSeconds,omitempty"`
-	ExitCode         *int                   `json:"exitCode,omitempty"`
-	Question         *string                `json:"question,omitempty"`
-	StopReason       *string                `json:"stopReason,omitempty"`
-	Usage            *ITokenUsage           `json:"usage,omitempty"`
-	RawHarnessCost   *float64               `json:"rawHarnessCost,omitempty"`
-}
+type DiffLine = parser.DiffLine
+type DiffHunk = parser.DiffHunk
+type FileModification = parser.FileModification
+type TelemetryFrameData = parser.EventData
 
 type ITelemetryFrame struct {
 	Version        string             `json:"version"`

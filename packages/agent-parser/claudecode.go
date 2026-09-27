@@ -12,18 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/alexgorbatchev/agent-status/packages/agent-common/models"
-	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 )
-
-type ParsedEvent struct {
-	EventType string                   `json:"eventType"`
-	Timestamp int64                    `json:"timestamp"`
-	CWD       string                   `json:"cwd"`
-	GitBranch string                   `json:"gitBranch"`
-	Data      types.TelemetryFrameData `json:"data"`
-}
 
 type rawContentBlock struct {
 	Type      string                 `json:"type"` // "thinking" | "tool_use" | "text" | "tool_result"
@@ -263,11 +252,8 @@ func makeClaudeCodeRunStartedEvent(raw rawJSONLine, ts int64) ParsedEvent {
 	}
 
 	var modelPtr *string
-	var contextWindowPtr *int64
 	if raw.Message != nil && raw.Message.Model != "" {
 		modelPtr = stringPtr(raw.Message.Model)
-		cw := models.ResolveContextWindow(raw.Message.Model)
-		contextWindowPtr = &cw
 	}
 
 	return ParsedEvent{
@@ -275,10 +261,9 @@ func makeClaudeCodeRunStartedEvent(raw rawJSONLine, ts int64) ParsedEvent {
 		Timestamp: ts,
 		CWD:       raw.CWD,
 		GitBranch: raw.GitBranch,
-		Data: types.TelemetryFrameData{
-			Title:              titlePtr,
-			Model:              modelPtr,
-			ModelContextWindow: contextWindowPtr,
+		Data: EventData{
+			Title: titlePtr,
+			Model: modelPtr,
 		},
 	}
 }
@@ -462,7 +447,7 @@ func parseClaudeCodeLineEvents(
 				Timestamp: ts,
 				CWD:       raw.CWD,
 				GitBranch: raw.GitBranch,
-				Data: types.TelemetryFrameData{
+				Data: EventData{
 					Title: stringPtr(titleVal),
 				},
 			})
@@ -488,7 +473,7 @@ func parseClaudeCodeLineEvents(
 				Timestamp: ts,
 				CWD:       raw.CWD,
 				GitBranch: raw.GitBranch,
-				Data: types.TelemetryFrameData{
+				Data: EventData{
 					Title: stringPtr(titleVal),
 				},
 			})
@@ -505,7 +490,7 @@ func parseClaudeCodeLineEvents(
 				Timestamp: ts,
 				CWD:       raw.CWD,
 				GitBranch: raw.GitBranch,
-				Data: types.TelemetryFrameData{
+				Data: EventData{
 					Title: stringPtr(nameVal),
 				},
 			})
@@ -565,7 +550,7 @@ func parseClaudeCodeLineEvents(
 						Timestamp: ts,
 						CWD:       raw.CWD,
 						GitBranch: raw.GitBranch,
-						Data: types.TelemetryFrameData{
+						Data: EventData{
 							Role:       stringPtr("user"),
 							ToolCallID: toolCallID,
 							ToolOutput: stringPtr(output),
@@ -592,7 +577,7 @@ func parseClaudeCodeLineEvents(
 					Timestamp: ts,
 					CWD:       raw.CWD,
 					GitBranch: raw.GitBranch,
-					Data: types.TelemetryFrameData{
+					Data: EventData{
 						Role:       stringPtr("user"),
 						Content:    stringPtr(fullPrompt),
 						LastPrompt: stringPtr(fullPrompt),
@@ -621,12 +606,6 @@ func parseClaudeCodeLineEvents(
 			}
 		}
 
-		var contextWindowPtr *int64
-		if modelPtr != nil && *modelPtr != "" {
-			cw := models.ResolveContextWindow(*modelPtr)
-			contextWindowPtr = &cw
-		}
-
 		if raw.Message != nil {
 			blocks := parseClaudeContentBlocks(raw.Message.Content)
 			var textParts []string
@@ -645,11 +624,10 @@ func parseClaudeCodeLineEvents(
 							Timestamp: ts,
 							CWD:       raw.CWD,
 							GitBranch: raw.GitBranch,
-							Data: types.TelemetryFrameData{
-								Role:               stringPtr("assistant"),
-								Content:            stringPtr(b.Thinking),
-								Model:              modelPtr,
-								ModelContextWindow: contextWindowPtr,
+							Data: EventData{
+								Role:    stringPtr("assistant"),
+								Content: stringPtr(b.Thinking),
+								Model:   modelPtr,
 							},
 						})
 					}
@@ -682,7 +660,7 @@ func parseClaudeCodeLineEvents(
 							Timestamp: ts,
 							CWD:       raw.CWD,
 							GitBranch: raw.GitBranch,
-							Data: types.TelemetryFrameData{
+							Data: EventData{
 								Role:             stringPtr("assistant"),
 								ToolName:         stringPtr(toolName),
 								ToolCallID:       callID,
@@ -699,14 +677,13 @@ func parseClaudeCodeLineEvents(
 							Timestamp: ts,
 							CWD:       raw.CWD,
 							GitBranch: raw.GitBranch,
-							Data: types.TelemetryFrameData{
-								Role:               stringPtr("assistant"),
-								ToolName:           stringPtr(toolName),
-								ToolCallID:         callID,
-								ToolInput:          b.Input,
-								FileModification:   fileMod,
-								Model:              modelPtr,
-								ModelContextWindow: contextWindowPtr,
+							Data: EventData{
+								Role:             stringPtr("assistant"),
+								ToolName:         stringPtr(toolName),
+								ToolCallID:       callID,
+								ToolInput:        b.Input,
+								FileModification: fileMod,
+								Model:            modelPtr,
 							},
 						})
 					}
@@ -739,7 +716,7 @@ func parseClaudeCodeLineEvents(
 				}
 
 				if !isDuplicateRequest || len(textParts) > 0 {
-					var usage *types.ITokenUsage
+					var usage *TokenUsage
 					if !isDuplicateRequest && raw.Message.Usage != nil {
 						u := raw.Message.Usage
 						reasoning := u.ThinkingTokens
@@ -747,7 +724,7 @@ func parseClaudeCodeLineEvents(
 							reasoning = u.ReasoningTokens
 						}
 						total := u.InputTokens + u.OutputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
-						usage = &types.ITokenUsage{
+						usage = &TokenUsage{
 							Input:      u.InputTokens,
 							Output:     u.OutputTokens,
 							CacheRead:  u.CacheReadInputTokens,
@@ -767,25 +744,17 @@ func parseClaudeCodeLineEvents(
 						contentPtr = stringPtr(strings.Join(textParts, "\n"))
 					}
 
-					var fullnessPtr *float64
-					if contextWindowPtr != nil && *contextWindowPtr > 0 && usage != nil {
-						fn := models.CalculateContextFullness(usage.Total, *contextWindowPtr)
-						fullnessPtr = &fn
-					}
-
 					events = append(events, ParsedEvent{
 						EventType: "turn_end",
 						Timestamp: ts,
 						CWD:       raw.CWD,
 						GitBranch: raw.GitBranch,
-						Data: types.TelemetryFrameData{
-							Role:               stringPtr("assistant"),
-							Model:              modelPtr,
-							ModelContextWindow: contextWindowPtr,
-							ContextFullness:    fullnessPtr,
-							StopReason:         stopReason,
-							Usage:              usage,
-							Content:            contentPtr,
+						Data: EventData{
+							Role:       stringPtr("assistant"),
+							Model:      modelPtr,
+							StopReason: stopReason,
+							Usage:      usage,
+							Content:    contentPtr,
 						},
 					})
 				}
@@ -852,7 +821,7 @@ func parseClaudeCodeLineEvents(
 				Timestamp: ts,
 				CWD:       raw.CWD,
 				GitBranch: raw.GitBranch,
-				Data: types.TelemetryFrameData{
+				Data: EventData{
 					Role:        stringPtr("assistant"),
 					Content:     stringPtr(errText),
 					Model:       modelPtr,

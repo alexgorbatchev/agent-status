@@ -9,9 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-
-	"github.com/alexgorbatchev/agent-status/packages/agent-common/models"
-	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 )
 
 type rawPiContentBlock struct {
@@ -184,21 +181,17 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 			sessionModel = raw.Model_ID
 		}
 		var sessModelPtr *string
-		var sessCwPtr *int64
 		if sessionModel != "" {
 			sessModelPtr = stringPtr(sessionModel)
-			cw := models.ResolveContextWindow(sessionModel)
-			sessCwPtr = &cw
 		}
 
 		events = append(events, ParsedEvent{
 			EventType: "run_started",
 			Timestamp: ts,
 			CWD:       cwd,
-			Data: types.TelemetryFrameData{
-				Title:              stringPtr("Pi Session " + raw.ID),
-				Model:              sessModelPtr,
-				ModelContextWindow: sessCwPtr,
+			Data: EventData{
+				Title: stringPtr("Pi Session " + raw.ID),
+				Model: sessModelPtr,
 			},
 		})
 
@@ -215,7 +208,7 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 				EventType: "title_change",
 				Timestamp: ts,
 				CWD:       cwd,
-				Data: types.TelemetryFrameData{
+				Data: EventData{
 					Title: stringPtr(titleText),
 				},
 			})
@@ -230,14 +223,12 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 			modelName = raw.Model_ID
 		}
 		if modelName != "" {
-			cw := models.ResolveContextWindow(modelName)
 			events = append(events, ParsedEvent{
 				EventType: "model_change",
 				Timestamp: ts,
 				CWD:       cwd,
-				Data: types.TelemetryFrameData{
-					Model:              stringPtr(modelName),
-					ModelContextWindow: &cw,
+				Data: EventData{
+					Model: stringPtr(modelName),
 				},
 			})
 		}
@@ -272,7 +263,7 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 				EventType: "turn_start",
 				Timestamp: ts,
 				CWD:       cwd,
-				Data: types.TelemetryFrameData{
+				Data: EventData{
 					Title:      titlePtr,
 					Role:       stringPtr("user"),
 					Content:    stringPtr(fullPrompt),
@@ -310,7 +301,7 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 				EventType: "tool_result",
 				Timestamp: ts,
 				CWD:       cwd,
-				Data: types.TelemetryFrameData{
+				Data: EventData{
 					Role:       stringPtr("toolResult"),
 					ToolName:   toolName,
 					ToolCallID: toolCallID,
@@ -320,10 +311,9 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 			})
 
 		case "assistant":
-			var contextWindowPtr *int64
+			var modelPtr *string
 			if msg.Model != "" {
-				cw := models.ResolveContextWindow(msg.Model)
-				contextWindowPtr = &cw
+				modelPtr = stringPtr(msg.Model)
 			}
 			blocks := parsePiContentBlocks(msg.Content)
 			var textParts []string
@@ -336,20 +326,14 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 						thought = b.Text
 					}
 					if thought != "" {
-						var cwPtr *int64
-						if msg.Model != "" {
-							cw := models.ResolveContextWindow(msg.Model)
-							cwPtr = &cw
-						}
 						events = append(events, ParsedEvent{
 							EventType: "thinking",
 							Timestamp: ts,
 							CWD:       cwd,
-							Data: types.TelemetryFrameData{
-								Role:               stringPtr("assistant"),
-								Content:            stringPtr(thought),
-								Model:              stringPtr(msg.Model),
-								ModelContextWindow: cwPtr,
+							Data: EventData{
+								Role:    stringPtr("assistant"),
+								Content: stringPtr(thought),
+								Model:   modelPtr,
 							},
 						})
 					}
@@ -402,15 +386,14 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 							EventType: "question_prompt",
 							Timestamp: ts,
 							CWD:       cwd,
-							Data: types.TelemetryFrameData{
+							Data: EventData{
 								Role:             stringPtr("assistant"),
-								ToolName:           stringPtr(toolName),
-								ToolCallID:         callIDPtr,
-								ToolInput:          params,
-								FileModification:   fileMod,
-								Question:           stringPtr(qText),
-								Model:              stringPtr(msg.Model),
-								ModelContextWindow: contextWindowPtr,
+								ToolName:         stringPtr(toolName),
+								ToolCallID:       callIDPtr,
+								ToolInput:        params,
+								FileModification: fileMod,
+								Question:         stringPtr(qText),
+								Model:            modelPtr,
 							},
 						})
 					} else {
@@ -419,14 +402,13 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 							EventType: "tool_call",
 							Timestamp: ts,
 							CWD:       cwd,
-							Data: types.TelemetryFrameData{
-								Role:               stringPtr("assistant"),
-								ToolName:           stringPtr(toolName),
-								ToolCallID:         callIDPtr,
-								ToolInput:          params,
-								FileModification:   fileMod,
-								Model:              stringPtr(msg.Model),
-								ModelContextWindow: contextWindowPtr,
+							Data: EventData{
+								Role:             stringPtr("assistant"),
+								ToolName:         stringPtr(toolName),
+								ToolCallID:       callIDPtr,
+								ToolInput:        params,
+								FileModification: fileMod,
+								Model:            modelPtr,
 							},
 						})
 					}
@@ -434,7 +416,7 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 			}
 
 			// Usage & Turn End
-			var usage *types.ITokenUsage
+			var usage *TokenUsage
 			var harnessCost *float64
 
 			if msg.Usage != nil {
@@ -446,7 +428,7 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 				if total == 0 {
 					total = u.Input + u.Output + u.CacheRead + u.CacheWrite + u.Reasoning
 				}
-				usage = &types.ITokenUsage{
+				usage = &TokenUsage{
 					Input:      u.Input,
 					Output:     u.Output,
 					CacheRead:  u.CacheRead,
@@ -462,18 +444,6 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 				stopReason = stringPtr(msg.StopReason)
 			}
 
-			var modelPtr *string
-			var fullnessPtr *float64
-			if msg.Model != "" {
-				modelPtr = stringPtr(msg.Model)
-				cw := models.ResolveContextWindow(msg.Model)
-				contextWindowPtr = &cw
-				if usage != nil && cw > 0 {
-					fn := models.CalculateContextFullness(usage.Total, cw)
-					fullnessPtr = &fn
-				}
-			}
-
 			var contentPtr *string
 			if len(textParts) > 0 {
 				contentPtr = stringPtr(strings.Join(textParts, "\n"))
@@ -483,15 +453,13 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 				EventType: "turn_end",
 				Timestamp: ts,
 				CWD:       cwd,
-				Data: types.TelemetryFrameData{
-					Role:               stringPtr("assistant"),
-					Content:            contentPtr,
-					Model:              modelPtr,
-					ModelContextWindow: contextWindowPtr,
-					ContextFullness:    fullnessPtr,
-					StopReason:         stopReason,
-					Usage:              usage,
-					RawHarnessCost:     harnessCost,
+				Data: EventData{
+					Role:           stringPtr("assistant"),
+					Content:        contentPtr,
+					Model:          modelPtr,
+					StopReason:     stopReason,
+					Usage:          usage,
+					RawHarnessCost: harnessCost,
 				},
 			})
 
@@ -510,12 +478,11 @@ func ParsePiLine(line []byte, fallbackCWD string) ([]ParsedEvent, error) {
 					EventType: "error",
 					Timestamp: ts,
 					CWD:       cwd,
-					Data: types.TelemetryFrameData{
-						Role:               stringPtr("assistant"),
-						Content:            stringPtr(errText),
-						Model:              modelPtr,
-						ModelContextWindow: contextWindowPtr,
-						IsError:            boolPtr(true),
+					Data: EventData{
+						Role:    stringPtr("assistant"),
+						Content: stringPtr(errText),
+						Model:   modelPtr,
+						IsError: boolPtr(true),
 					},
 				})
 			}

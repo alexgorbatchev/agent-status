@@ -4,29 +4,28 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-
-	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 )
 
 var hunkHeaderRegex = regexp.MustCompile(`@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@`)
 
-// NormalizeFileModification parses harness-specific file operations into a canonical types.FileModification.
-func NormalizeFileModification(toolName string, toolInput map[string]interface{}) *types.FileModification {
+// NormalizeFileModification parses harness-specific file operations into a canonical FileModification.
+func NormalizeFileModification(toolName string, toolInput map[string]interface{}) *FileModification {
 	if toolInput == nil {
 		return nil
 	}
+
 	name := strings.ToLower(strings.TrimSpace(toolName))
 
-	// Extract file path from common keys
-	filePath := extractFilePath(toolInput)
-
-	// Check if this is a patch operation (e.g. Codex apply_patch)
-	patchStr := extractString(toolInput, "patch", "diff", "input")
-	if patchStr != "" && (strings.Contains(patchStr, "@@") || strings.Contains(patchStr, "diff --git")) {
-		return parseUnifiedPatch(patchStr, filePath)
+	// Check for patch or diff payload first (e.g. Codex apply_patch)
+	patchText := extractString(toolInput, "patch", "diff")
+	if patchText != "" {
+		filePath := extractFilePath(toolInput)
+		return parseUnifiedPatch(patchText, filePath)
 	}
 
-	// Check if this is a full file write
+	filePath := extractFilePath(toolInput)
+
+	// Check write tools
 	isWriteTool := name == "write" || name == "filewrite" || name == "write_file" || name == "writefile"
 	hasEdits := hasEditKeys(toolInput)
 
@@ -35,7 +34,7 @@ func NormalizeFileModification(toolName string, toolInput map[string]interface{}
 		if filePath == "" {
 			filePath = "untitled"
 		}
-		return &types.FileModification{
+		return &FileModification{
 			Action:   "WRITE",
 			FilePath: filePath,
 			Content:  &contentStr,
@@ -44,7 +43,7 @@ func NormalizeFileModification(toolName string, toolInput map[string]interface{}
 
 	// Check for edits array (Pi edits or Claude Code MultiEdit)
 	if editsRaw, ok := toolInput["edits"].([]interface{}); ok && len(editsRaw) > 0 {
-		var hunks []types.DiffHunk
+		var hunks []DiffHunk
 		for idx, editItem := range editsRaw {
 			if editMap, ok := editItem.(map[string]interface{}); ok {
 				oldStr := extractString(editMap, "oldText", "old_string", "old_str")
@@ -60,7 +59,7 @@ func NormalizeFileModification(toolName string, toolInput map[string]interface{}
 			if filePath == "" {
 				filePath = "untitled"
 			}
-			return &types.FileModification{
+			return &FileModification{
 				Action:   "EDIT",
 				FilePath: filePath,
 				Hunks:    hunks,
@@ -75,10 +74,10 @@ func NormalizeFileModification(toolName string, toolInput map[string]interface{}
 		if filePath == "" {
 			filePath = "untitled"
 		}
-		return &types.FileModification{
+		return &FileModification{
 			Action:   "EDIT",
 			FilePath: filePath,
-			Hunks:    []types.DiffHunk{buildHunkFromStrings(oldStr, newStr, "")},
+			Hunks:    []DiffHunk{buildHunkFromStrings(oldStr, newStr, "")},
 		}
 	}
 
@@ -120,15 +119,15 @@ func extractString(m map[string]interface{}, keys ...string) string {
 	return ""
 }
 
-func buildHunkFromStrings(oldStr, newStr, header string) types.DiffHunk {
-	var lines []types.DiffLine
+func buildHunkFromStrings(oldStr, newStr, header string) DiffHunk {
+	var lines []DiffLine
 	oldLineNum := 1
 	newLineNum := 1
 
 	if oldStr != "" {
 		for _, line := range splitLines(oldStr) {
 			num := oldLineNum
-			lines = append(lines, types.DiffLine{
+			lines = append(lines, DiffLine{
 				Type:          "del",
 				OldLineNumber: &num,
 				Content:       line,
@@ -140,7 +139,7 @@ func buildHunkFromStrings(oldStr, newStr, header string) types.DiffHunk {
 	if newStr != "" {
 		for _, line := range splitLines(newStr) {
 			num := newLineNum
-			lines = append(lines, types.DiffLine{
+			lines = append(lines, DiffLine{
 				Type:          "add",
 				NewLineNumber: &num,
 				Content:       line,
@@ -149,7 +148,7 @@ func buildHunkFromStrings(oldStr, newStr, header string) types.DiffHunk {
 		}
 	}
 
-	return types.DiffHunk{
+	return DiffHunk{
 		Header: header,
 		Lines:  lines,
 	}
@@ -166,11 +165,11 @@ func splitLines(s string) []string {
 	return lines
 }
 
-func parseUnifiedPatch(patchText string, fallbackPath string) *types.FileModification {
+func parseUnifiedPatch(patchText string, fallbackPath string) *FileModification {
 	lines := splitLines(patchText)
 	filePath := fallbackPath
-	var hunks []types.DiffHunk
-	var currentHunk *types.DiffHunk
+	var hunks []DiffHunk
+	var currentHunk *DiffHunk
 	oldLine := 1
 	newLine := 1
 
@@ -195,9 +194,9 @@ func parseUnifiedPatch(patchText string, fallbackPath string) *types.FileModific
 				hunks = append(hunks, *currentHunk)
 			}
 			header := strings.TrimSpace(rawLine)
-			currentHunk = &types.DiffHunk{
+			currentHunk = &DiffHunk{
 				Header: header,
-				Lines:  []types.DiffLine{},
+				Lines:  []DiffLine{},
 			}
 			matches := hunkHeaderRegex.FindStringSubmatch(rawLine)
 			if len(matches) >= 3 {
@@ -217,7 +216,7 @@ func parseUnifiedPatch(patchText string, fallbackPath string) *types.FileModific
 
 		if strings.HasPrefix(rawLine, "-") {
 			num := oldLine
-			currentHunk.Lines = append(currentHunk.Lines, types.DiffLine{
+			currentHunk.Lines = append(currentHunk.Lines, DiffLine{
 				Type:          "del",
 				OldLineNumber: &num,
 				Content:       rawLine[1:],
@@ -225,7 +224,7 @@ func parseUnifiedPatch(patchText string, fallbackPath string) *types.FileModific
 			oldLine++
 		} else if strings.HasPrefix(rawLine, "+") {
 			num := newLine
-			currentHunk.Lines = append(currentHunk.Lines, types.DiffLine{
+			currentHunk.Lines = append(currentHunk.Lines, DiffLine{
 				Type:          "add",
 				NewLineNumber: &num,
 				Content:       rawLine[1:],
@@ -238,7 +237,7 @@ func parseUnifiedPatch(patchText string, fallbackPath string) *types.FileModific
 			}
 			oNum := oldLine
 			nNum := newLine
-			currentHunk.Lines = append(currentHunk.Lines, types.DiffLine{
+			currentHunk.Lines = append(currentHunk.Lines, DiffLine{
 				Type:          "ctx",
 				OldLineNumber: &oNum,
 				NewLineNumber: &nNum,
@@ -257,7 +256,7 @@ func parseUnifiedPatch(patchText string, fallbackPath string) *types.FileModific
 		filePath = "untitled"
 	}
 
-	return &types.FileModification{
+	return &FileModification{
 		Action:   "EDIT",
 		FilePath: filePath,
 		Hunks:    hunks,

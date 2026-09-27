@@ -16,9 +16,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/alexgorbatchev/agent-status/packages/agent-common/models"
-	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 )
 
 var (
@@ -370,25 +367,18 @@ func parseCodexLineWithState(line []byte, p *CodexParser) ([]ParsedEvent, error)
 		}
 
 		var modelPtr *string
-		var contextWindowPtr *int64
 		if meta.Model != "" {
 			modelPtr = stringPtr(meta.Model)
-			cw := models.ResolveContextWindow(meta.Model)
-			contextWindowPtr = &cw
 			if p != nil {
 				p.mu.Lock()
 				p.currentModel = meta.Model
-				p.contextWindow = cw
 				p.mu.Unlock()
 			}
 		} else if meta.ModelProvider != "" {
 			modelPtr = stringPtr(meta.ModelProvider)
-			cw := models.ResolveContextWindow(meta.ModelProvider)
-			contextWindowPtr = &cw
 			if p != nil {
 				p.mu.Lock()
 				p.currentModel = meta.ModelProvider
-				p.contextWindow = cw
 				p.mu.Unlock()
 			}
 		}
@@ -398,10 +388,9 @@ func parseCodexLineWithState(line []byte, p *CodexParser) ([]ParsedEvent, error)
 			Timestamp: ts,
 			CWD:       meta.CWD,
 			GitBranch: gitBranch,
-			Data: types.TelemetryFrameData{
-				Title:              stringPtr(title),
-				Model:              modelPtr,
-				ModelContextWindow: contextWindowPtr,
+			Data: EventData{
+				Title: stringPtr(title),
+				Model: modelPtr,
 			},
 		})
 
@@ -412,20 +401,17 @@ func parseCodexLineWithState(line []byte, p *CodexParser) ([]ParsedEvent, error)
 		}
 
 		if ctx.Model != "" {
-			cw := models.ResolveContextWindow(ctx.Model)
 			if p != nil {
 				p.mu.Lock()
 				p.currentModel = ctx.Model
-				p.contextWindow = cw
 				p.mu.Unlock()
 			}
 			events = append(events, ParsedEvent{
 				EventType: "model_change",
 				Timestamp: ts,
 				CWD:       ctx.CWD,
-				Data: types.TelemetryFrameData{
-					Model:              stringPtr(ctx.Model),
-					ModelContextWindow: &cw,
+				Data: EventData{
+					Model: stringPtr(ctx.Model),
 				},
 			})
 		}
@@ -448,7 +434,7 @@ func parseCodexLineWithState(line []byte, p *CodexParser) ([]ParsedEvent, error)
 				events = append(events, ParsedEvent{
 					EventType: "turn_start",
 					Timestamp: ts,
-					Data: types.TelemetryFrameData{
+					Data: EventData{
 						Role:       stringPtr("user"),
 						Content:    stringPtr(cleanPrompt),
 						LastPrompt: stringPtr(cleanPrompt),
@@ -462,7 +448,7 @@ func parseCodexLineWithState(line []byte, p *CodexParser) ([]ParsedEvent, error)
 				events = append(events, ParsedEvent{
 					EventType: "agent_message",
 					Timestamp: ts,
-					Data: types.TelemetryFrameData{
+					Data: EventData{
 						Role:    stringPtr("assistant"),
 						Content: stringPtr(evt.Message),
 					},
@@ -484,7 +470,7 @@ func parseCodexLineWithState(line []byte, p *CodexParser) ([]ParsedEvent, error)
 				events = append(events, ParsedEvent{
 					EventType: "thinking",
 					Timestamp: ts,
-					Data: types.TelemetryFrameData{
+					Data: EventData{
 						Role:    stringPtr("assistant"),
 						Content: stringPtr(reasoningText),
 					},
@@ -511,7 +497,7 @@ func parseCodexLineWithState(line []byte, p *CodexParser) ([]ParsedEvent, error)
 					freshInput = 0
 				}
 
-				usage := &types.ITokenUsage{
+				usage := &TokenUsage{
 					Input:      freshInput,
 					Output:     chosen.CompletionTokens,
 					CacheRead:  chosen.CachedPromptTokens,
@@ -533,16 +519,15 @@ func parseCodexLineWithState(line []byte, p *CodexParser) ([]ParsedEvent, error)
 				if cw == 0 {
 					cw = activeCw
 				}
-				if cw == 0 && activeModel != "" {
-					cw = models.ResolveContextWindow(activeModel)
-				}
 
 				var cwPtr *int64
-				var fullnessPtr *float64
 				if cw > 0 {
 					cwPtr = &cw
-					fn := models.CalculateContextFullness(tot, cw)
-					fullnessPtr = &fn
+					if p != nil {
+						p.mu.Lock()
+						p.contextWindow = cw
+						p.mu.Unlock()
+					}
 				}
 
 				var modelPtr *string
@@ -580,11 +565,10 @@ func parseCodexLineWithState(line []byte, p *CodexParser) ([]ParsedEvent, error)
 				events = append(events, ParsedEvent{
 					EventType: "turn_end",
 					Timestamp: ts,
-					Data: types.TelemetryFrameData{
+					Data: EventData{
 						Role:               stringPtr("assistant"),
 						Model:              modelPtr,
 						ModelContextWindow: cwPtr,
-						ContextFullness:    fullnessPtr,
 						Usage:              usage,
 						RateLimitResetAt:   resetAtPtr,
 						RetryAfterSeconds:  retrySecPtr,
@@ -599,7 +583,7 @@ func parseCodexLineWithState(line []byte, p *CodexParser) ([]ParsedEvent, error)
 			events = append(events, ParsedEvent{
 				EventType: "turn_start",
 				Timestamp: ts,
-				Data: types.TelemetryFrameData{
+				Data: EventData{
 					Role: stringPtr("assistant"),
 				},
 			})
@@ -615,7 +599,7 @@ func parseCodexLineWithState(line []byte, p *CodexParser) ([]ParsedEvent, error)
 			events = append(events, ParsedEvent{
 				EventType: "turn_end",
 				Timestamp: ts,
-				Data: types.TelemetryFrameData{
+				Data: EventData{
 					Role:    stringPtr("assistant"),
 					Content: contentPtr,
 				},
@@ -760,13 +744,13 @@ func parseCodexLineWithState(line []byte, p *CodexParser) ([]ParsedEvent, error)
 			events = append(events, ParsedEvent{
 				EventType: "error",
 				Timestamp: ts,
-				Data: types.TelemetryFrameData{
-					Role:               stringPtr("assistant"),
-					Content:            stringPtr(evt.Message),
-					IsError:            boolPtr(true),
-					IsRateLimit:        isRL,
-					RateLimitResetAt:   errResetAt,
-					RetryAfterSeconds:  errRetrySec,
+				Data: EventData{
+					Role:              stringPtr("assistant"),
+					Content:           stringPtr(evt.Message),
+					IsError:           boolPtr(true),
+					IsRateLimit:       isRL,
+					RateLimitResetAt:  errResetAt,
+					RetryAfterSeconds: errRetrySec,
 				},
 			})
 		}
@@ -827,7 +811,7 @@ func parseCodexLineWithState(line []byte, p *CodexParser) ([]ParsedEvent, error)
 				events = append(events, ParsedEvent{
 					EventType: "question_prompt",
 					Timestamp: ts,
-					Data: types.TelemetryFrameData{
+					Data: EventData{
 						Role:             stringPtr("assistant"),
 						ToolName:         stringPtr(resp.Name),
 						ToolCallID:       callIDPtr,
@@ -841,7 +825,7 @@ func parseCodexLineWithState(line []byte, p *CodexParser) ([]ParsedEvent, error)
 				events = append(events, ParsedEvent{
 					EventType: "tool_call",
 					Timestamp: ts,
-					Data: types.TelemetryFrameData{
+					Data: EventData{
 						Role:             stringPtr("assistant"),
 						ToolName:         stringPtr(resp.Name),
 						ToolCallID:       callIDPtr,
@@ -863,7 +847,7 @@ func parseCodexLineWithState(line []byte, p *CodexParser) ([]ParsedEvent, error)
 			events = append(events, ParsedEvent{
 				EventType: "tool_result",
 				Timestamp: ts,
-				Data: types.TelemetryFrameData{
+				Data: EventData{
 					Role:       stringPtr("toolResult"),
 					ToolCallID: callIDPtr,
 					ToolOutput: stringPtr(resp.Output),
@@ -884,7 +868,7 @@ func parseCodexLineWithState(line []byte, p *CodexParser) ([]ParsedEvent, error)
 					events = append(events, ParsedEvent{
 						EventType: "turn_start",
 						Timestamp: ts,
-						Data: types.TelemetryFrameData{
+						Data: EventData{
 							Role:       stringPtr("user"),
 							Content:    stringPtr(cleanPrompt),
 							LastPrompt: stringPtr(cleanPrompt),
@@ -896,7 +880,7 @@ func parseCodexLineWithState(line []byte, p *CodexParser) ([]ParsedEvent, error)
 				events = append(events, ParsedEvent{
 					EventType: "agent_message",
 					Timestamp: ts,
-					Data: types.TelemetryFrameData{
+					Data: EventData{
 						Role:    stringPtr("assistant"),
 						Content: stringPtr(contentStr),
 					},
@@ -918,7 +902,7 @@ func parseCodexLineWithState(line []byte, p *CodexParser) ([]ParsedEvent, error)
 				events = append(events, ParsedEvent{
 					EventType: "thinking",
 					Timestamp: ts,
-					Data: types.TelemetryFrameData{
+					Data: EventData{
 						Role:    stringPtr("assistant"),
 						Content: stringPtr(reasoningText),
 					},
@@ -933,7 +917,7 @@ func parseCodexLineWithState(line []byte, p *CodexParser) ([]ParsedEvent, error)
 			events = append(events, ParsedEvent{
 				EventType: "tool_call",
 				Timestamp: ts,
-				Data: types.TelemetryFrameData{
+				Data: EventData{
 					Role:       stringPtr("assistant"),
 					ToolName:   stringPtr("tool_search"),
 					ToolCallID: callIDPtr,
@@ -949,7 +933,7 @@ func parseCodexLineWithState(line []byte, p *CodexParser) ([]ParsedEvent, error)
 			events = append(events, ParsedEvent{
 				EventType: "tool_result",
 				Timestamp: ts,
-				Data: types.TelemetryFrameData{
+				Data: EventData{
 					Role:       stringPtr("toolResult"),
 					ToolCallID: callIDPtr,
 					ToolOutput: stringPtr(resp.Output),

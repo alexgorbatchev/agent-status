@@ -10,6 +10,7 @@ Pure Go parsing routines for extracting structured events from Claude Code, Pi, 
 ## Local conventions
 
 - Match parser behavior against canonical schema specifications in `docs/harness-logs/*.ts`.
+- Parsers decode logs faithfully without external model catalog lookups or synthetic metrics calculations (context window resolution and fullness calculation belong to downstream ingesters; only explicit log fields like Codex `model_context_window` are captured).
 - Go parser types and unmarshaling structs must be kept strictly in sync with the canonical TypeScript definitions in `docs/harness-logs/*.ts`.
 - Parsers must be pure functions without filesystem I/O, network requests, or global state.
 - Pi logs emit error events (`EventType: "error"`, `IsError: true`) when assistant `stopReason` is `"error"`, extracting error text from `errorMessage` (or text content fallback) (`pi.go`). Aborted turns (`stopReason: "aborted"`) indicate cancellation and do not emit error events.
@@ -34,6 +35,7 @@ Pure Go parsing routines for extracting structured events from Claude Code, Pi, 
 
 ## References
 
+- Types: `types.go`
 - Harness log specs: `docs/harness-logs/`
 - Claude parser: `claudecode.go`
 - Pi parser: `pi.go`

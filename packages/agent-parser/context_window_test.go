@@ -2,7 +2,6 @@ package parser_test
 
 import (
 	"fmt"
-	"math"
 	"testing"
 
 	parser "github.com/alexgorbatchev/agent-status/packages/agent-parser"
@@ -12,7 +11,7 @@ func TestContextWindowResolutionAndFullness_ClaudeCode(t *testing.T) {
 	p := parser.NewClaudeCodeParser()
 	sessID := "test-claude-cw"
 
-	// Standard Claude 3.7 Sonnet (200k window)
+	// Standard Claude 3.7 Sonnet
 	lineStandard := fmt.Sprintf(`{
 		"type": "assistant",
 		"requestId": "req_cw_std",
@@ -54,14 +53,12 @@ func TestContextWindowResolutionAndFullness_ClaudeCode(t *testing.T) {
 		t.Fatalf("expected model claude-3-7-sonnet-20250219, got %v", turnEnd.Data.Model)
 	}
 
-	if turnEnd.Data.ModelContextWindow == nil || *turnEnd.Data.ModelContextWindow != 200000 {
-		t.Fatalf("expected ModelContextWindow 200000, got %v", turnEnd.Data.ModelContextWindow)
+	// Parsers decode logs faithfully; Claude logs do not contain context window or fullness.
+	if turnEnd.Data.ModelContextWindow != nil {
+		t.Fatalf("expected nil ModelContextWindow for Claude Code, got %v", *turnEnd.Data.ModelContextWindow)
 	}
-
-	expectedUsed := int64(5000 + 1000 + 40000 + 4000) // 50000
-	expectedFullness := float64(expectedUsed) / 200000.0 // 0.25
-	if turnEnd.Data.ContextFullness == nil || math.Abs(*turnEnd.Data.ContextFullness-expectedFullness) > 1e-6 {
-		t.Fatalf("expected ContextFullness %f, got %v", expectedFullness, turnEnd.Data.ContextFullness)
+	if turnEnd.Data.ContextFullness != nil {
+		t.Fatalf("expected nil ContextFullness for Claude Code, got %v", *turnEnd.Data.ContextFullness)
 	}
 
 	u := turnEnd.Data.Usage
@@ -72,7 +69,7 @@ func TestContextWindowResolutionAndFullness_ClaudeCode(t *testing.T) {
 		t.Fatalf("categorized usage mismatch: %+v", u)
 	}
 
-	// Claude 3.7 Sonnet 1M variant (1,000,000 window)
+	// Claude 3.7 Sonnet 1M variant
 	line1M := fmt.Sprintf(`{
 		"type": "assistant",
 		"requestId": "req_cw_1m",
@@ -108,14 +105,11 @@ func TestContextWindowResolutionAndFullness_ClaudeCode(t *testing.T) {
 		t.Fatalf("expected turn_end for 1M variant")
 	}
 
-	if turnEnd1M.Data.ModelContextWindow == nil || *turnEnd1M.Data.ModelContextWindow != 1000000 {
-		t.Fatalf("expected ModelContextWindow 1000000, got %v", turnEnd1M.Data.ModelContextWindow)
+	if turnEnd1M.Data.ModelContextWindow != nil {
+		t.Fatalf("expected nil ModelContextWindow, got %v", *turnEnd1M.Data.ModelContextWindow)
 	}
-
-	expectedUsed1M := int64(10000 + 2000 + 150000) // 162000
-	expectedFullness1M := float64(expectedUsed1M) / 1000000.0 // 0.162
-	if turnEnd1M.Data.ContextFullness == nil || math.Abs(*turnEnd1M.Data.ContextFullness-expectedFullness1M) > 1e-6 {
-		t.Fatalf("expected ContextFullness %f, got %v", expectedFullness1M, turnEnd1M.Data.ContextFullness)
+	if turnEnd1M.Data.ContextFullness != nil {
+		t.Fatalf("expected nil ContextFullness, got %v", *turnEnd1M.Data.ContextFullness)
 	}
 }
 
@@ -160,18 +154,17 @@ func TestContextWindowResolutionAndFullness_Pi(t *testing.T) {
 		t.Fatalf("expected model 'gemini-2.5-pro', got %v", turnEnd.Data.Model)
 	}
 
-	if turnEnd.Data.ModelContextWindow == nil || *turnEnd.Data.ModelContextWindow != 2000000 {
-		t.Fatalf("expected ModelContextWindow 2000000, got %v", turnEnd.Data.ModelContextWindow)
+	// Pi logs do not contain context window or fullness; parser keeps them nil.
+	if turnEnd.Data.ModelContextWindow != nil {
+		t.Fatalf("expected nil ModelContextWindow for Pi, got %v", *turnEnd.Data.ModelContextWindow)
 	}
-
-	expectedFullness := 260000.0 / 2000000.0 // 0.13
-	if turnEnd.Data.ContextFullness == nil || math.Abs(*turnEnd.Data.ContextFullness-expectedFullness) > 1e-6 {
-		t.Fatalf("expected ContextFullness %f, got %v", expectedFullness, turnEnd.Data.ContextFullness)
+	if turnEnd.Data.ContextFullness != nil {
+		t.Fatalf("expected nil ContextFullness for Pi, got %v", *turnEnd.Data.ContextFullness)
 	}
 }
 
 func TestContextWindowResolutionAndFullness_Codex(t *testing.T) {
-	// 1. turn_context with gpt-4o
+	// 1. turn_context with gpt-4o (does not contain model_context_window)
 	tcLine := `{
 		"type": "turn_context",
 		"payload": {
@@ -187,11 +180,12 @@ func TestContextWindowResolutionAndFullness_Codex(t *testing.T) {
 	if len(evsTC) != 1 || evsTC[0].EventType != "model_change" {
 		t.Fatalf("expected model_change event, got: %+v", evsTC)
 	}
-	if evsTC[0].Data.ModelContextWindow == nil || *evsTC[0].Data.ModelContextWindow != 128000 {
-		t.Fatalf("expected model_change ModelContextWindow 128000, got %v", evsTC[0].Data.ModelContextWindow)
+	// turn_context in Codex does not provide model_context_window
+	if evsTC[0].Data.ModelContextWindow != nil {
+		t.Fatalf("expected nil model_change ModelContextWindow, got %v", *evsTC[0].Data.ModelContextWindow)
 	}
 
-	// 2. token_count event
+	// 2. token_count event with explicit model_context_window in the raw payload
 	tokenLine := `{
 		"type": "event_msg",
 		"payload": {
@@ -229,7 +223,6 @@ func TestContextWindowResolutionAndFullness_Codex(t *testing.T) {
 	if u == nil {
 		t.Fatalf("expected non-nil Usage")
 	}
-
 	// Fresh input must be PromptTokens - CachedPromptTokens = 600 - 100 = 500
 	if u.Input != 500 {
 		t.Errorf("u.Input (fresh input) = %d, want 500", u.Input)
@@ -244,12 +237,13 @@ func TestContextWindowResolutionAndFullness_Codex(t *testing.T) {
 		t.Errorf("u.Total = %d, want 800", u.Total)
 	}
 
+	// Codex explicitly provided model_context_window: 128000
 	if evs[0].Data.ModelContextWindow == nil || *evs[0].Data.ModelContextWindow != 128000 {
 		t.Fatalf("expected ModelContextWindow 128000, got %v", evs[0].Data.ModelContextWindow)
 	}
 
-	expectedFullness := 800.0 / 128000.0
-	if evs[0].Data.ContextFullness == nil || math.Abs(*evs[0].Data.ContextFullness-expectedFullness) > 1e-6 {
-		t.Fatalf("expected ContextFullness %f, got %v", expectedFullness, evs[0].Data.ContextFullness)
+	// Fullness is not in the log and should be nil
+	if evs[0].Data.ContextFullness != nil {
+		t.Fatalf("expected nil ContextFullness, got %v", *evs[0].Data.ContextFullness)
 	}
 }

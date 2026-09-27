@@ -13,6 +13,7 @@ require (
 )
 
 require (
+	github.com/alexgorbatchev/agent-status/packages/agent-parser v0.0.0-00010101000000-000000000000 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/ncruces/go-sqlite3-wasm/v6 v6.2.35304 // indirect
 	github.com/ncruces/julianday v1.0.0 // indirect
@@ -22,4 +23,7 @@ require (
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 )
 
-replace github.com/alexgorbatchev/agent-status/packages/agent-common => ../agent-common
+replace (
+	github.com/alexgorbatchev/agent-status/packages/agent-common => ../agent-common
+	github.com/alexgorbatchev/agent-status/packages/agent-parser => ../agent-parser
+)
