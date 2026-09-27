@@ -530,7 +530,13 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 				if isNew {
 					agentID := fmt.Sprintf("%s:%s:%s", env.ID, types.HarnessClaudeCode, s.SessionID)
 					now := time.Now().UnixMilli()
-					if s.StartedAt > 0 {
+					if s.TranscriptPath != "" {
+						if lastTS, tsErr := scanner.ExtractLastActiveTimestamp(s.TranscriptPath); tsErr == nil && lastTS > 0 && lastTS < now {
+							now = lastTS
+						} else if s.StartedAt > 0 {
+							now = s.StartedAt
+						}
+					} else if s.StartedAt > 0 {
 						now = s.StartedAt
 					}
 					var titlePtr *string
@@ -578,14 +584,9 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 						if isNewSub {
 							agentID := fmt.Sprintf("%s:%s:%s", env.ID, types.HarnessClaudeCode, s.SessionID)
 							subNow := time.Now().UnixMilli()
-							if lastTS, tsErr := scanner.ExtractLastActiveTimestamp(sub.TranscriptPath); tsErr == nil && lastTS > 0 {
-								if lastTS < subNow {
-									subNow = lastTS
-								}
-							} else if fi, statErr := os.Stat(sub.TranscriptPath); statErr == nil {
-								mod := fi.ModTime().UnixMilli()
-								if mod > 0 && mod < subNow {
-									subNow = mod
+							if firstTS, tsErr := scanner.ExtractFirstActiveTimestamp(sub.TranscriptPath); tsErr == nil && firstTS > 0 {
+								if firstTS < subNow {
+									subNow = firstTS
 								}
 							}
 							if s.StartedAt > 0 && subNow < s.StartedAt {
@@ -679,7 +680,9 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 					proj, ws, _ := gitResolver.Resolve(ctx, s.CWD, "")
 					agentID := fmt.Sprintf("%s:%s:%s", env.ID, types.HarnessPi, s.SessionID)
 					now := time.Now().UnixMilli()
-					if s.StartedAt > 0 {
+					if s.LastActive > 0 && s.LastActive < now {
+						now = s.LastActive
+					} else if s.StartedAt > 0 {
 						now = s.StartedAt
 					}
 					_ = ship.EnqueueContext(ctx, types.ITelemetryFrame{
@@ -768,7 +771,9 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 					proj, ws, _ := gitResolver.Resolve(ctx, s.CWD, "")
 					agentID := fmt.Sprintf("%s:%s:%s", env.ID, types.HarnessCodex, s.SessionID)
 					now := time.Now().UnixMilli()
-					if s.StartedAt > 0 {
+					if s.LastActive > 0 && s.LastActive < now {
+						now = s.LastActive
+					} else if s.StartedAt > 0 {
 						now = s.StartedAt
 					}
 					var subID *string

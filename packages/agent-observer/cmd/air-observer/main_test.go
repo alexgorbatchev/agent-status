@@ -954,7 +954,12 @@ func TestObserverClaudeSubagentRunStartedEmission(t *testing.T) {
 	}
 	subagentPath := filepath.Join(subagentsDir, "agent-sub-123.jsonl")
 	expectedSubTS := time.Now().UnixMilli() - 10000
-	subagentData := []byte(fmt.Sprintf("{\"type\":\"assistant\",\"timestamp\":%d,\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"subagent response\"}]}}\n", expectedSubTS))
+	laterSubTS := expectedSubTS + 5000
+	subagentLines := []string{
+		fmt.Sprintf("{\"type\":\"assistant\",\"timestamp\":%d,\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"subagent response\"}]}}", expectedSubTS),
+		fmt.Sprintf("{\"type\":\"assistant\",\"timestamp\":%d,\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"later line\"}]}}", laterSubTS),
+	}
+	subagentData := []byte(strings.Join(subagentLines, "\n") + "\n")
 	if err := os.WriteFile(subagentPath, subagentData, 0644); err != nil {
 		t.Fatalf("writing subagent transcript: %v", err)
 	}
@@ -1046,7 +1051,7 @@ func TestObserverClaudeSubagentRunStartedEmission(t *testing.T) {
 			t.Fatal("expected to find run_started frame for agent-sub-123")
 		}
 		if foundFrame.Timestamp != expectedSubTS {
-			t.Errorf("expected subagent run_started timestamp %d from tail, got %d", expectedSubTS, foundFrame.Timestamp)
+			t.Errorf("expected subagent run_started timestamp %d from first line (not later line %d), got %d", expectedSubTS, laterSubTS, foundFrame.Timestamp)
 		}
 	case <-time.After(2 * time.Second):
 		receivedFramesMu.Lock()
@@ -1111,6 +1116,186 @@ func TestObserverClaudeSubagentRunStartedEmission(t *testing.T) {
 
 	cancel()
 	<-errCh
+}
+
+func TestObserverPiAndCodexDormantSessionTimestamp(t *testing.T) {
+	t.Setenv("AGENT_STATUS_TEST_MOCK_PROC", "1")
+
+	tmpDir := t.TempDir()
+	cursorPath := filepath.Join(tmpDir, "cursors.json")
+	claudeDir := filepath.Join(tmpDir, "claude-sessions")
+	piSessionsDir := filepath.Join(tmpDir, "pi-sessions")
+	codexSessionsDir := filepath.Join(tmpDir, "codex-sessions")
+	opencodeDb := filepath.Join(tmpDir, "opencode.db")
+
+	_ = os.MkdirAll(claudeDir, 0755)
+	_ = os.MkdirAll(piSessionsDir, 0755)
+	_ = os.MkdirAll(codexSessionsDir, 0755)
+
+	now := time.Now().Truncate(time.Millisecond)
+	threeHoursAgo := now.Add(-3 * time.Hour)
+	fourHoursAgo := now.Add(-4 * time.Hour)
+	fiveHoursAgo := now.Add(-5 * time.Hour)
+
+	// 1. Setup dormant Pi session
+	piCWD := filepath.Join(tmpDir, "pi-project")
+	_ = os.MkdirAll(piCWD, 0755)
+	piEncodedCWD := scanner.EncodePiCWD(piCWD)
+	piProjectDir := filepath.Join(piSessionsDir, piEncodedCWD)
+	_ = os.MkdirAll(piProjectDir, 0755)
+
+	piSessionID := "pi-dormant-sess-1"
+	piHeader := map[string]interface{}{
+		"type":      "session",
+		"version":   3,
+		"id":        piSessionID,
+		"timestamp": fiveHoursAgo.Format(time.RFC3339Nano),
+		"cwd":       piCWD,
+	}
+	piHeaderBytes, _ := json.Marshal(piHeader)
+	piTranscriptPath := filepath.Join(piProjectDir, fmt.Sprintf("%d_%s.jsonl", fiveHoursAgo.UnixMilli(), piSessionID))
+	piLines := []string{
+		string(piHeaderBytes),
+		fmt.Sprintf(`{"type":"message","timestamp":%q,"message":{"role":"assistant","content":[{"type":"text","text":"old response"}]}}`, threeHoursAgo.Format(time.RFC3339Nano)),
+		fmt.Sprintf(`{"type":"last-prompt","timestamp":%q,"lastPrompt":"re-attached"}`, now.Format(time.RFC3339Nano)),
+	}
+	if err := os.WriteFile(piTranscriptPath, []byte(strings.Join(piLines, "\n")+"\n"), 0644); err != nil {
+		t.Fatalf("writing pi transcript: %v", err)
+	}
+
+	// 2. Setup dormant Codex session
+	codexCWD := filepath.Join(tmpDir, "codex-project")
+	_ = os.MkdirAll(codexCWD, 0755)
+	codexDateDir := filepath.Join(codexSessionsDir, "2026", "05", "10")
+	_ = os.MkdirAll(codexDateDir, 0755)
+
+	codexSessionID := "codex-dormant-sess-1"
+	codexMeta := map[string]interface{}{
+		"type": "session_meta",
+		"payload": map[string]interface{}{
+			"id":          codexSessionID,
+			"timestamp":   fiveHoursAgo.Format(time.RFC3339Nano),
+			"cwd":         codexCWD,
+			"cli_version": "0.121.0",
+		},
+	}
+	codexMetaBytes, _ := json.Marshal(codexMeta)
+	codexRolloutPath := filepath.Join(codexDateDir, fmt.Sprintf("rollout-%s.jsonl", codexSessionID))
+	codexLines := []string{
+		string(codexMetaBytes),
+		fmt.Sprintf(`{"type":"event_msg","timestamp":%q,"payload":{"type":"agent_message","message":"done task"}}`, fourHoursAgo.Format(time.RFC3339Nano)),
+		fmt.Sprintf(`{"type":"last-prompt","timestamp":%q,"lastPrompt":"re-attached"}`, now.Format(time.RFC3339Nano)),
+	}
+	if err := os.WriteFile(codexRolloutPath, []byte(strings.Join(codexLines, "\n")+"\n"), 0644); err != nil {
+		t.Fatalf("writing codex rollout: %v", err)
+	}
+
+	var receivedFramesMu sync.Mutex
+	var receivedFrames []types.ITelemetryFrame
+	receivedPiStarted := make(chan struct{})
+	receivedCodexStarted := make(chan struct{})
+	var piOnce, codexOnce sync.Once
+
+	mockIngester := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close(websocket.StatusNormalClosure, "done") }()
+		for {
+			_, data, err := conn.Read(r.Context())
+			if err != nil {
+				return
+			}
+			var msg types.IObserverMessage
+			if err := json.Unmarshal(data, &msg); err == nil && msg.Type == "frames" && len(msg.Frames) > 0 {
+				receivedFramesMu.Lock()
+				for _, f := range msg.Frames {
+					receivedFrames = append(receivedFrames, f)
+					if f.EventType == "run_started" && f.Harness == types.HarnessPi && f.SessionID == piSessionID {
+						piOnce.Do(func() { close(receivedPiStarted) })
+					}
+					if f.EventType == "run_started" && f.Harness == types.HarnessCodex && f.SessionID == codexSessionID {
+						codexOnce.Do(func() { close(receivedCodexStarted) })
+					}
+				}
+				receivedFramesMu.Unlock()
+
+				lastSeq := msg.Frames[len(msg.Frames)-1].Seq
+				ack := types.IIngesterMessage{
+					Type: "ack",
+					UpTo: lastSeq,
+				}
+				ackBytes, _ := json.Marshal(ack)
+				_ = conn.Write(r.Context(), websocket.MessageText, ackBytes)
+			}
+		}
+	}))
+	defer mockIngester.Close()
+
+	opts := observerOptions{
+		ingesterURL:       "ws" + strings.TrimPrefix(mockIngester.URL, "http") + "/ws/ingest",
+		cursorPath:        cursorPath,
+		claudeSessionsDir: claudeDir,
+		piSessionsDir:     piSessionsDir,
+		codexSessionsDir:  codexSessionsDir,
+		opencodeDBPath:    opencodeDb,
+		scanInterval:      50 * time.Millisecond,
+		envFlag:           "test-env",
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runObserverContext(ctx, opts)
+	}()
+
+	select {
+	case <-receivedPiStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for Pi run_started")
+	}
+
+	select {
+	case <-receivedCodexStarted:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for Codex run_started")
+	}
+
+	cancel()
+	<-errCh
+
+	receivedFramesMu.Lock()
+	defer receivedFramesMu.Unlock()
+
+	var piFrame *types.ITelemetryFrame
+	var codexFrame *types.ITelemetryFrame
+	for _, f := range receivedFrames {
+		if f.EventType == "run_started" && f.Harness == types.HarnessPi && f.SessionID == piSessionID {
+			frameCopy := f
+			piFrame = &frameCopy
+		}
+		if f.EventType == "run_started" && f.Harness == types.HarnessCodex && f.SessionID == codexSessionID {
+			frameCopy := f
+			codexFrame = &frameCopy
+		}
+	}
+
+	if piFrame == nil {
+		t.Fatal("expected Pi run_started frame")
+	}
+	if piFrame.Timestamp != threeHoursAgo.UnixMilli() {
+		t.Errorf("expected Pi run_started Timestamp %d (3 hours ago), got %d", threeHoursAgo.UnixMilli(), piFrame.Timestamp)
+	}
+
+	if codexFrame == nil {
+		t.Fatal("expected Codex run_started frame")
+	}
+	if codexFrame.Timestamp != fourHoursAgo.UnixMilli() {
+		t.Errorf("expected Codex run_started Timestamp %d (4 hours ago), got %d", fourHoursAgo.UnixMilli(), codexFrame.Timestamp)
+	}
 }
 
 func TestObserver_StartupSessionReconciliation(t *testing.T) {

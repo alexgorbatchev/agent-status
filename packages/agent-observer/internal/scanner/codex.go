@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/alexgorbatchev/agent-parser"
@@ -21,6 +22,7 @@ type CodexSessionDescriptor struct {
 	CWD            string `json:"cwd"`
 	TranscriptPath string `json:"transcriptPath"`
 	StartedAt      int64  `json:"startedAt"`
+	LastActive     int64  `json:"lastActive"`
 	HarnessVersion string `json:"harnessVersion"`
 	IsActive       bool   `json:"isActive"`
 	ParentThreadID string `json:"parentThreadId,omitempty"`
@@ -65,9 +67,20 @@ type CodexSessionHeader struct {
 
 type CodexProcessFinder func(ctx context.Context) ([]CodexProcessInfo, error)
 
+type codexFileCacheEntry struct {
+	size       int64
+	modTime    time.Time
+	header     *CodexSessionHeader
+	lastActive int64
+	dev        uint64
+	ino        uint64
+}
+
 type CodexScanner struct {
 	sessionsDir   string
 	processFinder CodexProcessFinder
+	mu            sync.Mutex
+	cache         map[string]codexFileCacheEntry
 }
 
 func DefaultCodexSessionsDir() string {
@@ -146,10 +159,13 @@ func NewCodexScanner(sessionsDir string, finder CodexProcessFinder) *CodexScanne
 	return &CodexScanner{
 		sessionsDir:   sessionsDir,
 		processFinder: finder,
+		cache:         make(map[string]codexFileCacheEntry),
 	}
 }
 
 func (s *CodexScanner) SetProcessFinder(finder CodexProcessFinder) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.processFinder = finder
 }
 
@@ -240,6 +256,13 @@ func ReadCodexSessionHeader(path string) (*CodexSessionHeader, error) {
 }
 
 func (s *CodexScanner) Scan(ctx context.Context) ([]CodexSessionDescriptor, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.cache == nil {
+		s.cache = make(map[string]codexFileCacheEntry)
+	}
+
 	if s.sessionsDir == "" {
 		return nil, nil
 	}
@@ -251,18 +274,21 @@ func (s *CodexScanner) Scan(ctx context.Context) ([]CodexSessionDescriptor, erro
 
 	if _, err := os.Stat(resolvedDir); err != nil {
 		if os.IsNotExist(err) {
+			s.cache = make(map[string]codexFileCacheEntry)
 			return nil, nil
 		}
 		return nil, fmt.Errorf("accessing codex sessions dir: %w", err)
 	}
 
 	type codexCandidate struct {
-		desc       CodexSessionDescriptor
-		headerTime int64
-		modTime    int64
-		cleanCWD   string
+		desc        CodexSessionDescriptor
+		headerTime  int64
+		fileModTime int64
+		lastActive  int64
+		cleanCWD    string
 	}
 	var candidates []codexCandidate
+	seenFiles := make(map[string]bool)
 
 	err = filepath.WalkDir(resolvedDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -272,24 +298,55 @@ func (s *CodexScanner) Scan(ctx context.Context) ([]CodexSessionDescriptor, erro
 			return nil
 		}
 
-		header, err := ReadCodexSessionHeader(path)
+		seenFiles[path] = true
+
+		info, err := d.Info()
 		if err != nil {
+			delete(s.cache, path)
 			return nil
 		}
 
-		modTime, sErr := ExtractLastActiveTimestamp(path)
-		if sErr != nil {
-			if info, infoErr := d.Info(); infoErr == nil {
-				modTime = info.ModTime().UnixMilli()
+		size := info.Size()
+		fileModTime := info.ModTime().UnixMilli()
+		dev, ino := getFileDevIno(info)
+
+		var header *CodexSessionHeader
+		var lastActive int64
+
+		cached, found := s.cache[path]
+		if found && cached.header != nil && cached.size == size && cached.modTime.Equal(info.ModTime()) && cached.dev == dev && cached.ino == ino {
+			header = cached.header
+			lastActive = cached.lastActive
+		} else {
+			h, err := ReadCodexSessionHeader(path)
+			if err != nil {
+				delete(s.cache, path)
+				return nil
+			}
+			header = h
+
+			la, sErr := ExtractLastActiveTimestamp(path)
+			if sErr != nil {
+				la = fileModTime
+			}
+			lastActive = la
+
+			s.cache[path] = codexFileCacheEntry{
+				size:       size,
+				modTime:    info.ModTime(),
+				header:     header,
+				lastActive: lastActive,
+				dev:        dev,
+				ino:        ino,
 			}
 		}
 
 		headerTime := header.Timestamp
 		if headerTime == 0 {
-			headerTime = modTime
+			headerTime = lastActive
 		}
-		if modTime == 0 {
-			modTime = headerTime
+		if lastActive == 0 {
+			lastActive = headerTime
 		}
 
 		cleanCWD := filepath.Clean(header.CWD)
@@ -299,6 +356,7 @@ func (s *CodexScanner) Scan(ctx context.Context) ([]CodexSessionDescriptor, erro
 			CWD:            cleanCWD,
 			TranscriptPath: path,
 			StartedAt:      headerTime,
+			LastActive:     lastActive,
 			HarnessVersion: header.CLIVersion,
 			IsActive:       false,
 			ParentThreadID: header.ParentThreadID,
@@ -308,10 +366,11 @@ func (s *CodexScanner) Scan(ctx context.Context) ([]CodexSessionDescriptor, erro
 		}
 
 		candidates = append(candidates, codexCandidate{
-			desc:       desc,
-			headerTime: headerTime,
-			modTime:    modTime,
-			cleanCWD:   cleanCWD,
+			desc:        desc,
+			headerTime:  headerTime,
+			fileModTime: fileModTime,
+			lastActive:  lastActive,
+			cleanCWD:    cleanCWD,
 		})
 
 		return nil
@@ -319,6 +378,13 @@ func (s *CodexScanner) Scan(ctx context.Context) ([]CodexSessionDescriptor, erro
 
 	if err != nil {
 		return nil, fmt.Errorf("walking codex sessions dir: %w", err)
+	}
+
+	// Prune cache entries for files that were not seen during the scan.
+	for path := range s.cache {
+		if !seenFiles[path] {
+			delete(s.cache, path)
+		}
 	}
 
 	if len(candidates) == 0 {
@@ -336,10 +402,18 @@ func (s *CodexScanner) Scan(ctx context.Context) ([]CodexSessionDescriptor, erro
 		procsByCWD[cleanCWD] = append(procsByCWD[cleanCWD], proc)
 	}
 
-	// Sort candidates by modification time descending so newest and resumed sessions take precedence.
+	// Sort candidates by most recent activity or modification descending so newest and resumed sessions take precedence.
 	sort.SliceStable(candidates, func(i, j int) bool {
-		if candidates[i].modTime != candidates[j].modTime {
-			return candidates[i].modTime > candidates[j].modTime
+		recI := candidates[i].lastActive
+		if candidates[i].fileModTime > recI {
+			recI = candidates[i].fileModTime
+		}
+		recJ := candidates[j].lastActive
+		if candidates[j].fileModTime > recJ {
+			recJ = candidates[j].fileModTime
+		}
+		if recI != recJ {
+			return recI > recJ
 		}
 		return candidates[i].headerTime > candidates[j].headerTime
 	})
@@ -359,8 +433,12 @@ func (s *CodexScanner) Scan(ctx context.Context) ([]CodexSessionDescriptor, erro
 			}
 
 			diff := cand.headerTime - proc.CreateTime
-			if diff < -5000 && cand.modTime-proc.CreateTime >= -5000 {
-				diff = cand.modTime - proc.CreateTime
+			recentTime := cand.lastActive
+			if cand.fileModTime > recentTime {
+				recentTime = cand.fileModTime
+			}
+			if diff < -5000 && recentTime-proc.CreateTime >= -5000 {
+				diff = recentTime - proc.CreateTime
 			}
 			if diff >= -5000 {
 				absDiff := diff

@@ -21,6 +21,7 @@ type PiSessionDescriptor struct {
 	CWD            string `json:"cwd"`
 	TranscriptPath string `json:"transcriptPath"`
 	StartedAt      int64  `json:"startedAt"`
+	LastActive     int64  `json:"lastActive"`
 	HarnessVersion string `json:"harnessVersion"`
 	IsActive       bool   `json:"isActive"`
 }
@@ -216,10 +217,11 @@ func (s *PiScanner) Scan(ctx context.Context) ([]PiSessionDescriptor, error) {
 	}
 
 	type piCandidate struct {
-		desc       PiSessionDescriptor
-		headerTime int64
-		modTime    int64
-		cleanCWD   string
+		desc        PiSessionDescriptor
+		headerTime  int64
+		fileModTime int64
+		lastActive  int64
+		cleanCWD    string
 	}
 	var candidates []piCandidate
 	seenFiles := make(map[string]bool)
@@ -250,14 +252,14 @@ func (s *PiScanner) Scan(ctx context.Context) ([]PiSessionDescriptor, error) {
 			}
 
 			size := info.Size()
-			modTime := info.ModTime()
+			fileModTime := info.ModTime().UnixMilli()
 			dev, ino := getFileDevIno(info)
 
 			var header *PiHeader
 			var lastActive int64
 
 			cached, found := s.cache[filePath]
-			if found && cached.header != nil && cached.size == size && cached.modTime.Equal(modTime) && cached.dev == dev && cached.ino == ino {
+			if found && cached.header != nil && cached.size == size && cached.modTime.Equal(info.ModTime()) && cached.dev == dev && cached.ino == ino {
 				header = cached.header
 				lastActive = cached.lastActive
 			} else {
@@ -270,13 +272,13 @@ func (s *PiScanner) Scan(ctx context.Context) ([]PiSessionDescriptor, error) {
 
 				la, sErr := ExtractLastActiveTimestamp(filePath)
 				if sErr != nil {
-					la = modTime.UnixMilli()
+					la = fileModTime
 				}
 				lastActive = la
 
 				s.cache[filePath] = piFileCacheEntry{
 					size:       size,
-					modTime:    modTime,
+					modTime:    info.ModTime(),
 					header:     header,
 					lastActive: lastActive,
 					dev:        dev,
@@ -313,15 +315,17 @@ func (s *PiScanner) Scan(ctx context.Context) ([]PiSessionDescriptor, error) {
 				CWD:            cleanCWD,
 				TranscriptPath: filePath,
 				StartedAt:      headerTime,
+				LastActive:     lastActive,
 				HarnessVersion: fmt.Sprintf("v%d", header.Version),
 				IsActive:       false,
 			}
 
 			candidates = append(candidates, piCandidate{
-				desc:       desc,
-				headerTime: headerTime,
-				modTime:    lastActive,
-				cleanCWD:   cleanCWD,
+				desc:        desc,
+				headerTime:  headerTime,
+				fileModTime: fileModTime,
+				lastActive:  lastActive,
+				cleanCWD:    cleanCWD,
 			})
 		}
 	}
@@ -349,10 +353,18 @@ func (s *PiScanner) Scan(ctx context.Context) ([]PiSessionDescriptor, error) {
 		procsByCWD[cleanCWD] = append(procsByCWD[cleanCWD], proc)
 	}
 
-	// Sort candidates by modification time descending so newest and resumed sessions take precedence.
+	// Sort candidates by most recent activity or modification descending so newest and resumed sessions take precedence.
 	sort.SliceStable(candidates, func(i, j int) bool {
-		if candidates[i].modTime != candidates[j].modTime {
-			return candidates[i].modTime > candidates[j].modTime
+		recI := candidates[i].lastActive
+		if candidates[i].fileModTime > recI {
+			recI = candidates[i].fileModTime
+		}
+		recJ := candidates[j].lastActive
+		if candidates[j].fileModTime > recJ {
+			recJ = candidates[j].fileModTime
+		}
+		if recI != recJ {
+			return recI > recJ
 		}
 		return candidates[i].headerTime > candidates[j].headerTime
 	})
@@ -372,10 +384,14 @@ func (s *PiScanner) Scan(ctx context.Context) ([]PiSessionDescriptor, error) {
 			}
 
 			// Check if process started at or before the session was created or modified,
-			// allowing resumed sessions (where headerTime is in the past, but modTime reflects recent activity).
+			// allowing resumed sessions (where headerTime is in the past, but file was modified or had recent activity).
 			diff := cand.headerTime - proc.CreateTime
-			if diff < -5000 && cand.modTime-proc.CreateTime >= -5000 {
-				diff = cand.modTime - proc.CreateTime
+			recentTime := cand.lastActive
+			if cand.fileModTime > recentTime {
+				recentTime = cand.fileModTime
+			}
+			if diff < -5000 && recentTime-proc.CreateTime >= -5000 {
+				diff = recentTime - proc.CreateTime
 			}
 			if diff >= -5000 {
 				absDiff := diff

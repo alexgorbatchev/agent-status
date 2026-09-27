@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -563,6 +565,294 @@ func TestCodexScanner_MultipleSessionsAndResumed(t *testing.T) {
 	}
 	if !resumedDesc.IsActive || resumedDesc.PID != 6002 {
 		t.Errorf("expected resumed session %s to be active with PID 6002, got active=%v PID=%d", resumedID, resumedDesc.IsActive, resumedDesc.PID)
+	}
+	if resumedDesc.LastActive != baseTime.UnixMilli() {
+		t.Errorf("expected resumed session LastActive %d, got %d", baseTime.UnixMilli(), resumedDesc.LastActive)
+	}
+}
+
+func TestCodexScanner_CacheUnchangedSessionFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionsDir := filepath.Join(tmpDir, "sessions")
+	if eval, err := filepath.EvalSymlinks(tmpDir); err == nil {
+		sessionsDir = filepath.Join(eval, "sessions")
+	}
+	dateDir := filepath.Join(sessionsDir, "2026", "09", "21")
+	if err := os.MkdirAll(dateDir, 0755); err != nil {
+		t.Fatalf("failed to create date dir: %v", err)
+	}
+
+	testCWD := "/Users/test/projects/cached-codex-app"
+	origID := "session-original-id-12345"
+	modID := "session-modified-id-12345" // exact same length (26 chars)
+	origTime := time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC)
+
+	origHeader := fmt.Sprintf(`{"type":"session_meta","payload":{"id":%q,"cwd":%q,"cli_version":"0.121.0","timestamp":%q}}`+"\n", origID, testCWD, origTime.Format(time.RFC3339))
+	sessionFilePath := filepath.Join(dateDir, fmt.Sprintf("rollout-%s.jsonl", origID))
+	if err := os.WriteFile(sessionFilePath, []byte(origHeader), 0644); err != nil {
+		t.Fatalf("failed to write initial session file: %v", err)
+	}
+	if err := os.Chtimes(sessionFilePath, origTime, origTime); err != nil {
+		t.Fatalf("failed to set mtime: %v", err)
+	}
+
+	scanner := NewCodexScanner(sessionsDir, nil)
+
+	// 1. First scan - should read file and populate cache
+	sessions, err := scanner.Scan(context.Background())
+	if err != nil {
+		t.Fatalf("first scan error: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 session on first scan, got %d", len(sessions))
+	}
+	if sessions[0].SessionID != origID {
+		t.Fatalf("expected session ID %q, got %q", origID, sessions[0].SessionID)
+	}
+
+	scanner.mu.Lock()
+	cachedEntry, inCache := scanner.cache[sessionFilePath]
+	cacheCount := len(scanner.cache)
+	scanner.mu.Unlock()
+
+	if cacheCount != 1 || !inCache {
+		t.Fatalf("expected 1 cache entry after first scan, got count=%d, inCache=%v", cacheCount, inCache)
+	}
+	if cachedEntry.header == nil || cachedEntry.header.ID != origID {
+		t.Fatalf("expected cached header ID %q, got %v", origID, cachedEntry.header)
+	}
+
+	// 2. Overwrite file content in place keeping exact same byte length and restoring mtime
+	modHeader := fmt.Sprintf(`{"type":"session_meta","payload":{"id":%q,"cwd":%q,"cli_version":"0.121.0","timestamp":%q}}`+"\n", modID, testCWD, origTime.Format(time.RFC3339))
+	if len(modHeader) != len(origHeader) {
+		t.Fatalf("length mismatch: orig=%d, mod=%d", len(origHeader), len(modHeader))
+	}
+	if err := os.WriteFile(sessionFilePath, []byte(modHeader), 0644); err != nil {
+		t.Fatalf("failed to overwrite session file: %v", err)
+	}
+	if err := os.Chtimes(sessionFilePath, origTime, origTime); err != nil {
+		t.Fatalf("failed to restore mtime: %v", err)
+	}
+
+	// Verify stat is identical
+	fi, err := os.Stat(sessionFilePath)
+	if err != nil {
+		t.Fatalf("stat failed: %v", err)
+	}
+	if fi.Size() != cachedEntry.size || !fi.ModTime().Equal(origTime) {
+		t.Fatalf("stat changed unexpectedly: size=%d (want %d), modTime=%v (want %v)", fi.Size(), cachedEntry.size, fi.ModTime(), origTime)
+	}
+
+	// Second scan - file has unchanged size and mtime: MUST reuse cache and NOT re-read
+	sessions2, err := scanner.Scan(context.Background())
+	if err != nil {
+		t.Fatalf("second scan error: %v", err)
+	}
+	if len(sessions2) != 1 {
+		t.Fatalf("expected 1 session on second scan, got %d", len(sessions2))
+	}
+	if sessions2[0].SessionID != origID {
+		t.Errorf("expected cached session ID %q across unchanged scans, but got %q (file was re-read!)", origID, sessions2[0].SessionID)
+	}
+
+	// 3. Unchanged file with chmod 0000 on Unix is served from cache without reopening
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(sessionFilePath, 0000); err != nil {
+			t.Fatalf("chmod 0000 failed: %v", err)
+		}
+		defer func() { _ = os.Chmod(sessionFilePath, 0644) }()
+
+		sessionsChmod, err := scanner.Scan(context.Background())
+		if err != nil {
+			t.Fatalf("scan with chmod 0000 error: %v", err)
+		}
+		if len(sessionsChmod) != 1 || sessionsChmod[0].SessionID != origID {
+			t.Errorf("expected session from cache with chmod 0000, got len=%d", len(sessionsChmod))
+		}
+
+		_ = os.Chmod(sessionFilePath, 0644)
+	}
+
+	// 4. Append to file - invalidates cache, file is re-parsed
+	appendTime := origTime.Add(1 * time.Hour)
+	appendLine := fmt.Sprintf(`{"type":"event_msg","timestamp":%q,"payload":{"type":"agent_message","message":"appended"}}`+"\n", appendTime.Format(time.RFC3339Nano))
+	f, err := os.OpenFile(sessionFilePath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatalf("open for append error: %v", err)
+	}
+	if _, err := f.Write([]byte(appendLine)); err != nil {
+		_ = f.Close()
+		t.Fatalf("append write error: %v", err)
+	}
+	_ = f.Close()
+	if err := os.Chtimes(sessionFilePath, appendTime, appendTime); err != nil {
+		t.Fatalf("failed to update mtime after append: %v", err)
+	}
+
+	sessions3, err := scanner.Scan(context.Background())
+	if err != nil {
+		t.Fatalf("third scan error: %v", err)
+	}
+	if len(sessions3) != 1 {
+		t.Fatalf("expected 1 session on third scan, got %d", len(sessions3))
+	}
+	// After cache invalidation, re-parsed header reflects modID
+	if sessions3[0].SessionID != modID {
+		t.Errorf("expected re-parsed session ID %q after file append, got %q", modID, sessions3[0].SessionID)
+	}
+	if sessions3[0].LastActive != appendTime.UnixMilli() {
+		t.Errorf("expected LastActive %d after append, got %d", appendTime.UnixMilli(), sessions3[0].LastActive)
+	}
+
+	scanner.mu.Lock()
+	cachedEntry3 := scanner.cache[sessionFilePath]
+	scanner.mu.Unlock()
+	if cachedEntry3.header == nil || cachedEntry3.header.ID != modID {
+		t.Errorf("expected cache updated with modID %q, got %v", modID, cachedEntry3.header)
+	}
+
+	// 5. Delete file - evicted from cache on next scan
+	if err := os.Remove(sessionFilePath); err != nil {
+		t.Fatalf("failed to remove session file: %v", err)
+	}
+
+	sessions4, err := scanner.Scan(context.Background())
+	if err != nil {
+		t.Fatalf("fourth scan error: %v", err)
+	}
+	if len(sessions4) != 0 {
+		t.Errorf("expected 0 sessions after file deletion, got %d", len(sessions4))
+	}
+
+	scanner.mu.Lock()
+	_, stillCached := scanner.cache[sessionFilePath]
+	remainingCacheLen := len(scanner.cache)
+	scanner.mu.Unlock()
+
+	if stillCached || remainingCacheLen != 0 {
+		t.Errorf("expected deleted file to be evicted from cache, stillCached=%v, cacheLen=%d", stillCached, remainingCacheLen)
+	}
+
+	// 6. Test invalid header in previously cached file causes cache removal
+	corruptFile := filepath.Join(dateDir, "rollout-corrupt.jsonl")
+	validHeader := fmt.Sprintf(`{"type":"session_meta","payload":{"id":"valid-before-corrupt","cwd":%q,"timestamp":%q}}`+"\n", testCWD, origTime.Format(time.RFC3339))
+	if err := os.WriteFile(corruptFile, []byte(validHeader), 0644); err != nil {
+		t.Fatalf("failed to write valid file: %v", err)
+	}
+	sessionsCorrupt1, err := scanner.Scan(context.Background())
+	if err != nil || len(sessionsCorrupt1) != 1 {
+		t.Fatalf("expected 1 session before corruption, got %d, err=%v", len(sessionsCorrupt1), err)
+	}
+	// Corrupt the file content and change mtime
+	if err := os.WriteFile(corruptFile, []byte("invalid-json\n"), 0644); err != nil {
+		t.Fatalf("failed to corrupt file: %v", err)
+	}
+	sessionsCorrupt2, err := scanner.Scan(context.Background())
+	if err != nil {
+		t.Fatalf("scan after corruption failed: %v", err)
+	}
+	if len(sessionsCorrupt2) != 0 {
+		t.Errorf("expected 0 sessions after corruption, got %d", len(sessionsCorrupt2))
+	}
+	scanner.mu.Lock()
+	_, corruptInCache := scanner.cache[corruptFile]
+	scanner.mu.Unlock()
+	if corruptInCache {
+		t.Errorf("expected corrupt file to be evicted from cache")
+	}
+	_ = os.Remove(corruptFile)
+
+	// 7. Directory removal clears cache entirely
+	recreateFile := filepath.Join(dateDir, "rollout-dummy.jsonl")
+	_ = os.WriteFile(recreateFile, []byte(validHeader), 0644)
+	sessionsPopulated, err := scanner.Scan(context.Background())
+	if err != nil || len(sessionsPopulated) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(sessionsPopulated))
+	}
+	scanner.mu.Lock()
+	populatedLen := len(scanner.cache)
+	scanner.mu.Unlock()
+	if populatedLen != 1 {
+		t.Fatalf("expected cache size 1, got %d", populatedLen)
+	}
+	// Remove entire sessionsDir
+	if err := os.RemoveAll(sessionsDir); err != nil {
+		t.Fatalf("failed to remove sessionsDir: %v", err)
+	}
+	sessionsCleared, err := scanner.Scan(context.Background())
+	if err != nil || len(sessionsCleared) != 0 {
+		t.Fatalf("expected 0 sessions on missing dir, got %d, err=%v", len(sessionsCleared), err)
+	}
+	scanner.mu.Lock()
+	clearedLen := len(scanner.cache)
+	scanner.mu.Unlock()
+	if clearedLen != 0 {
+		t.Errorf("expected cache to be cleared when sessionsDir does not exist, got len=%d", clearedLen)
+	}
+}
+
+func TestCodexScanner_ResumedSessionWithMarkerRecords(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionsDir := filepath.Join(tmpDir, "sessions")
+	dateDir := filepath.Join(sessionsDir, "2026", "06", "10")
+	_ = os.MkdirAll(dateDir, 0755)
+
+	testCWD := "/Users/test/projects/resumed-codex"
+	now := time.Now().Truncate(time.Millisecond)
+	threeHoursAgo := now.Add(-3 * time.Hour)
+	twoHoursAgo := now.Add(-2 * time.Hour)
+
+	sessionID := "cdx-resumed-markers"
+	rolloutPath := filepath.Join(dateDir, fmt.Sprintf("rollout-%s.jsonl", sessionID))
+
+	meta := map[string]interface{}{
+		"type": "session_meta",
+		"payload": map[string]interface{}{
+			"id":          sessionID,
+			"timestamp":   threeHoursAgo.Format(time.RFC3339Nano),
+			"cwd":         testCWD,
+			"cli_version": "0.121.0",
+		},
+	}
+	metaBytes, _ := json.Marshal(meta)
+
+	// Conversational event_msg at 2 hours ago, followed by trailing marker at resume time (now)
+	lines := []string{
+		string(metaBytes),
+		fmt.Sprintf(`{"type":"event_msg","timestamp":%q,"payload":{"type":"agent_message","message":"working"}}`, twoHoursAgo.Format(time.RFC3339Nano)),
+		fmt.Sprintf(`{"type":"last-prompt","timestamp":%q,"lastPrompt":"continue"}`, now.Format(time.RFC3339Nano)),
+		fmt.Sprintf(`{"type":"file-history-delta","timestamp":%q,"trackingPath":"main.go"}`, now.Format(time.RFC3339Nano)),
+	}
+	_ = os.WriteFile(rolloutPath, []byte(strings.Join(lines, "\n")+"\n"), 0644)
+	_ = os.Chtimes(rolloutPath, now, now)
+
+	mockFinder := func(ctx context.Context) ([]CodexProcessInfo, error) {
+		return []CodexProcessInfo{
+			{
+				PID:        8888,
+				CWD:        testCWD,
+				CreateTime: now.UnixMilli(),
+			},
+		}, nil
+	}
+
+	scanner := NewCodexScanner(sessionsDir, mockFinder)
+	sessions, err := scanner.Scan(context.Background())
+	if err != nil {
+		t.Fatalf("scanner.Scan error: %v", err)
+	}
+
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(sessions))
+	}
+
+	s := sessions[0]
+	if !s.IsActive || s.PID != 8888 {
+		t.Errorf("expected resumed session to pair with PID 8888, got active=%v PID=%d", s.IsActive, s.PID)
+	}
+	// Crucial: LastActive must be the conversational event timestamp (2 hours ago), NOT marker timestamp (now)
+	if s.LastActive != twoHoursAgo.UnixMilli() {
+		t.Errorf("expected LastActive %d (conversational), got %d (marker)", twoHoursAgo.UnixMilli(), s.LastActive)
 	}
 }
 

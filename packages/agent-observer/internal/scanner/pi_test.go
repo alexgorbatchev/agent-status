@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -404,6 +405,72 @@ func TestPiScanner_MultipleSessionsAndResumed(t *testing.T) {
 	}
 	if !resumedDesc.IsActive || resumedDesc.PID != 5002 {
 		t.Errorf("expected resumed session %s to be active with PID 5002, got active=%v PID=%d", resumedID, resumedDesc.IsActive, resumedDesc.PID)
+	}
+	if resumedDesc.LastActive != baseTime.UnixMilli() {
+		t.Errorf("expected resumed session LastActive %d, got %d", baseTime.UnixMilli(), resumedDesc.LastActive)
+	}
+}
+
+func TestPiScanner_ResumedSessionWithMarkerRecords(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionsDir := filepath.Join(tmpDir, "sessions")
+	testCWD := "/Users/test/projects/my-resumed-pi"
+	encodedDir := EncodePiCWD(testCWD)
+	projectDir := filepath.Join(sessionsDir, encodedDir)
+	_ = os.MkdirAll(projectDir, 0755)
+
+	now := time.Now().Truncate(time.Millisecond)
+	threeHoursAgo := now.Add(-3 * time.Hour)
+	twoHoursAgo := now.Add(-2 * time.Hour)
+
+	sessionID := "resumed-with-markers"
+	header := PiHeader{
+		Type:      "session",
+		Version:   3,
+		ID:        sessionID,
+		Timestamp: threeHoursAgo.Format(time.RFC3339Nano),
+		CWD:       testCWD,
+	}
+	headerBytes, _ := json.Marshal(header)
+	transcriptPath := filepath.Join(projectDir, fmt.Sprintf("%d_%s.jsonl", threeHoursAgo.UnixMilli(), sessionID))
+
+	// Conversational message at 2 hours ago, followed by trailing marker records written at resume time (now)
+	lines := []string{
+		string(headerBytes),
+		fmt.Sprintf(`{"type":"message","timestamp":%q,"message":{"role":"assistant","content":[{"type":"text","text":"hello"}]}}`, twoHoursAgo.Format(time.RFC3339Nano)),
+		fmt.Sprintf(`{"type":"last-prompt","timestamp":%q,"lastPrompt":"test"}`, now.Format(time.RFC3339Nano)),
+		fmt.Sprintf(`{"type":"queue-operation","timestamp":%q,"operation":"enqueue"}`, now.Format(time.RFC3339Nano)),
+	}
+	_ = os.WriteFile(transcriptPath, []byte(strings.Join(lines, "\n")+"\n"), 0644)
+	_ = os.Chtimes(transcriptPath, now, now)
+
+	mockFinder := func(ctx context.Context) ([]PiProcessInfo, error) {
+		return []PiProcessInfo{
+			{
+				PID:        7777,
+				CWD:        testCWD,
+				CreateTime: now.UnixMilli(),
+			},
+		}, nil
+	}
+
+	scanner := NewPiScanner(sessionsDir, mockFinder)
+	sessions, err := scanner.Scan(context.Background())
+	if err != nil {
+		t.Fatalf("scanner.Scan error: %v", err)
+	}
+
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(sessions))
+	}
+
+	s := sessions[0]
+	if !s.IsActive || s.PID != 7777 {
+		t.Errorf("expected resumed session to pair with PID 7777, got active=%v PID=%d", s.IsActive, s.PID)
+	}
+	// Crucial: LastActive must be the conversational message timestamp (2 hours ago), NOT the marker timestamp (now)
+	if s.LastActive != twoHoursAgo.UnixMilli() {
+		t.Errorf("expected LastActive %d (conversational), got %d (marker)", twoHoursAgo.UnixMilli(), s.LastActive)
 	}
 }
 
