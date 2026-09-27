@@ -2,6 +2,7 @@ package types
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -559,6 +560,94 @@ func TestMessagesAndEventsJSON(t *testing.T) {
 		}
 		if decoded.Type != "agent_upsert" || decoded.Agent == nil || decoded.Agent.Harness != HarnessPi {
 			t.Fatalf("decoded server event mismatch: %+v", decoded)
+		}
+	})
+
+	t.Run("IServerEvent hello handshake event", func(t *testing.T) {
+		evt := IServerEvent{
+			Type: "hello",
+			At:   1700000000000,
+		}
+		data, err := json.Marshal(evt)
+		if err != nil {
+			t.Fatalf("json.Marshal failed: %v", err)
+		}
+		var decoded IServerEvent
+		if err := json.Unmarshal(data, &decoded); err != nil {
+			t.Fatalf("json.Unmarshal failed: %v", err)
+		}
+		if decoded.Type != "hello" || decoded.At != 1700000000000 {
+			t.Fatalf("decoded hello event mismatch: %+v", decoded)
+		}
+	})
+
+	t.Run("IServerEvent snapshot JSON serialization includes empty arrays", func(t *testing.T) {
+		evt := IServerEvent{
+			Type:         "snapshot",
+			At:           1700000000000,
+			Agents:       []IAgentState{},
+			Environments: []IEnvironmentInfo{},
+		}
+		data, err := json.Marshal(evt)
+		if err != nil {
+			t.Fatalf("json.Marshal failed: %v", err)
+		}
+		jsonStr := string(data)
+		if !strings.Contains(jsonStr, `"agents":[]`) {
+			t.Errorf("expected json to contain '\"agents\":[]', got %s", jsonStr)
+		}
+		if !strings.Contains(jsonStr, `"environments":[]`) {
+			t.Errorf("expected json to contain '\"environments\":[]', got %s", jsonStr)
+		}
+
+		evtNil := IServerEvent{
+			Type: "snapshot",
+			At:   1700000000000,
+		}
+		dataNil, err := json.Marshal(evtNil)
+		if err != nil {
+			t.Fatalf("json.Marshal failed: %v", err)
+		}
+		jsonNilStr := string(dataNil)
+		if !strings.Contains(jsonNilStr, `"agents":[]`) {
+			t.Errorf("expected json to contain '\"agents\":[]' for nil Agents, got %s", jsonNilStr)
+		}
+		if !strings.Contains(jsonNilStr, `"environments":[]`) {
+			t.Errorf("expected json to contain '\"environments\":[]' for nil Environments, got %s", jsonNilStr)
+		}
+	})
+
+	t.Run("IServerEvent snapshot JSON unmarshaling", func(t *testing.T) {
+		// Missing agents and environments should default to empty slices
+		raw := `{"type":"snapshot","at":1700000000000}`
+		var evt IServerEvent
+		if err := json.Unmarshal([]byte(raw), &evt); err != nil {
+			t.Fatalf("json.Unmarshal failed: %v", err)
+		}
+		if evt.Agents == nil || len(evt.Agents) != 0 {
+			t.Errorf("expected non-nil empty agents slice, got %+v", evt.Agents)
+		}
+		if evt.Environments == nil || len(evt.Environments) != 0 {
+			t.Errorf("expected non-nil empty environments slice, got %+v", evt.Environments)
+		}
+
+		// Provided agents and environments should be preserved
+		rawWithData := `{"type":"snapshot","at":1700000000000,"agents":[{"id":"a1"}],"environments":[{"id":"e1"}]}`
+		var evtData IServerEvent
+		if err := json.Unmarshal([]byte(rawWithData), &evtData); err != nil {
+			t.Fatalf("json.Unmarshal failed: %v", err)
+		}
+		if len(evtData.Agents) != 1 || evtData.Agents[0].ID != "a1" {
+			t.Errorf("expected 1 agent, got %+v", evtData.Agents)
+		}
+		if len(evtData.Environments) != 1 || evtData.Environments[0].ID != "e1" {
+			t.Errorf("expected 1 env, got %+v", evtData.Environments)
+		}
+
+		// Invalid JSON should return error
+		var evtErr IServerEvent
+		if err := json.Unmarshal([]byte(`{invalid`), &evtErr); err == nil {
+			t.Error("expected error for invalid JSON, got nil")
 		}
 	})
 

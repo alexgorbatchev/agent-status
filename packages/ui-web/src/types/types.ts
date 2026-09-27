@@ -226,7 +226,7 @@ export type IngesterMessage =
   | { type: "error"; code: "unsupported_version" | "unauthorized" | "malformed"; message: string };
 
 export type ServerEvent =
-  | { type: "snapshot"; at: number; agents: IAgentState[]; environments: IEnvironmentInfo[] }
+  | { type: "snapshot"; at: number; agents?: IAgentState[]; environments?: IEnvironmentInfo[] }
   | { type: "agent_upsert"; at: number; agent: IAgentState }
   | { type: "agent_removed"; at: number; agentId: string }
   | { type: "environment_upsert"; at: number; environment: IEnvironmentInfo }

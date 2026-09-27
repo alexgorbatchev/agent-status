@@ -81,6 +81,11 @@ func (p *Publisher) acceptLoop() {
 
 		p.mu.Lock()
 		p.clients[c] = struct{}{}
+		helloMsg, _ := json.Marshal(types.IServerEvent{
+			Type: "hello",
+			At:   time.Now().UnixMilli(),
+		})
+		c.ch <- helloMsg
 		p.mu.Unlock()
 
 		go p.writeLoop(c)

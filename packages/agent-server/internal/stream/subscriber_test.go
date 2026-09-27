@@ -56,6 +56,12 @@ func (m *mockStoreReader) setEnvironments(envs []types.IEnvironmentInfo) {
 	m.envs = envs
 }
 
+func (m *mockStoreReader) setEnvsErr(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.envsErr = err
+}
+
 func TestNewSubscriber_Defaults(t *testing.T) {
 	mockStore := &mockStoreReader{}
 	hub := NewHub()
@@ -130,69 +136,6 @@ func TestSubscriber_ReconcileSnapshot(t *testing.T) {
 		}
 		sub := NewSubscriber(SubscriberConfig{}, mockStore, hub)
 		err := sub.reconcileSnapshot(context.Background())
-		if err == nil {
-			t.Fatalf("expected error, got nil")
-		}
-	})
-}
-
-func TestSubscriber_ResyncAndBroadcast(t *testing.T) {
-	t.Run("success", func(t *testing.T) {
-		hub := NewHub()
-		defer hub.Close()
-
-		ch := hub.SubscribeGlobal()
-
-		mockStore := &mockStoreReader{
-			envs: []types.IEnvironmentInfo{
-				{ID: "env1", Label: "test-env"},
-			},
-			agents: []types.IAgentState{
-				{ID: "agent-1"},
-			},
-		}
-
-		sub := NewSubscriber(SubscriberConfig{}, mockStore, hub)
-		if err := sub.ResyncAndBroadcast(context.Background()); err != nil {
-			t.Fatalf("ResyncAndBroadcast() error = %v", err)
-		}
-
-		select {
-		case event := <-ch:
-			if event.Type != "snapshot" {
-				t.Errorf("event.Type = %q, want 'snapshot'", event.Type)
-			}
-			if len(event.Agents) != 1 || len(event.Environments) != 1 {
-				t.Errorf("unexpected snapshot payload: %+v", event)
-			}
-		case <-time.After(100 * time.Millisecond):
-			t.Fatal("timed out waiting for snapshot event")
-		}
-	})
-
-	t.Run("environments error", func(t *testing.T) {
-		hub := NewHub()
-		defer hub.Close()
-
-		mockStore := &mockStoreReader{
-			envsErr: errors.New("db failure"),
-		}
-		sub := NewSubscriber(SubscriberConfig{}, mockStore, hub)
-		err := sub.ResyncAndBroadcast(context.Background())
-		if err == nil {
-			t.Fatalf("expected error, got nil")
-		}
-	})
-
-	t.Run("agents error", func(t *testing.T) {
-		hub := NewHub()
-		defer hub.Close()
-
-		mockStore := &mockStoreReader{
-			agentsErr: errors.New("agents db failure"),
-		}
-		sub := NewSubscriber(SubscriberConfig{}, mockStore, hub)
-		err := sub.ResyncAndBroadcast(context.Background())
 		if err == nil {
 			t.Fatalf("expected error, got nil")
 		}
@@ -381,9 +324,12 @@ func TestSubscriber_ResyncFailureOnConnect(t *testing.T) {
 
 	hub := NewHub()
 	defer hub.Close()
+	globalCh := hub.SubscribeGlobal()
 
 	mockStore := &mockStoreReader{
 		envsErr: errors.New("db fail"),
+		envs:    []types.IEnvironmentInfo{{ID: "env1"}},
+		agents:  []types.IAgentState{{ID: "agent1"}},
 	}
 
 	sub := NewSubscriber(SubscriberConfig{
@@ -404,7 +350,140 @@ func TestSubscriber_ResyncFailureOnConnect(t *testing.T) {
 		_ = conn.Close()
 	}()
 
-	time.Sleep(50 * time.Millisecond)
+	// 1. Send hello message while store returns error
+	helloMsg, _ := json.Marshal(types.IServerEvent{Type: "hello", At: time.Now().UnixMilli()})
+	_, _ = conn.Write(append(helloMsg, '\n'))
+
+	// Verify no snapshot was broadcast due to resync failure
+	select {
+	case evt := <-globalCh:
+		t.Fatalf("unexpected event received on failed resync: %+v", evt)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// 2. Clear store error so subsequent retry can succeed
+	mockStore.setEnvsErr(nil)
+
+	// 3. Send regular event; subscriber should retry reconcileSnapshot since it wasn't marked reconciled
+	evt := &types.IServerEvent{
+		Type:    "agent_upsert",
+		At:      time.Now().UnixMilli(),
+		Agent:   &types.IAgentState{ID: "agent-retry"},
+	}
+	data, _ := json.Marshal(evt)
+	_, _ = conn.Write(append(data, '\n'))
+
+	// 4. Verify snapshot is now received on retry
+	receivedSnapshot := false
+	receivedUpsert := false
+	deadline := time.After(1 * time.Second)
+	for !receivedSnapshot || !receivedUpsert {
+		select {
+		case e := <-globalCh:
+			if e.Type == "snapshot" {
+				receivedSnapshot = true
+			}
+			if e.Type == "agent_upsert" && e.Agent != nil && e.Agent.ID == "agent-retry" {
+				receivedUpsert = true
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for events; receivedSnapshot=%v, receivedUpsert=%v", receivedSnapshot, receivedUpsert)
+		}
+	}
+}
+
+func TestSubscriber_ResyncFailureOnFallbackEvent(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("/tmp", "subtest")
+	if err != nil {
+		t.Fatalf("creating temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
+	sockPath := filepath.Join(tmpDir, "n.sock")
+
+	listener, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("failed to create test unix socket: %v", err)
+	}
+	defer func() {
+		_ = listener.Close()
+	}()
+
+	hub := NewHub()
+	defer hub.Close()
+	globalCh := hub.SubscribeGlobal()
+
+	mockStore := &mockStoreReader{
+		envsErr: errors.New("db fail"),
+		envs:    []types.IEnvironmentInfo{{ID: "env1"}},
+		agents:  []types.IAgentState{{ID: "agent1"}},
+	}
+
+	sub := NewSubscriber(SubscriberConfig{
+		SocketPath:    sockPath,
+		ReconnectWait: 20 * time.Millisecond,
+	}, mockStore, hub)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go sub.Run(ctx)
+
+	conn, err := listener.Accept()
+	if err != nil {
+		t.Fatalf("failed to accept conn: %v", err)
+	}
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	// 1. Send regular event without hello; fallback resync runs and fails
+	evt1 := &types.IServerEvent{
+		Type:    "agent_upsert",
+		At:      time.Now().UnixMilli(),
+		Agent:   &types.IAgentState{ID: "agent-1"},
+	}
+	data1, _ := json.Marshal(evt1)
+	_, _ = conn.Write(append(data1, '\n'))
+
+	// Event itself should be broadcast, but snapshot should not
+	select {
+	case e := <-globalCh:
+		if e.Type != "agent_upsert" {
+			t.Fatalf("expected agent_upsert, got %q", e.Type)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("timed out waiting for agent_upsert")
+	}
+
+	// 2. Clear store error
+	mockStore.setEnvsErr(nil)
+
+	// 3. Send another event; fallback resync should retry because reconciled was not set on error
+	evt2 := &types.IServerEvent{
+		Type:    "agent_removed",
+		At:      time.Now().UnixMilli(),
+		AgentID: "agent-1",
+	}
+	data2, _ := json.Marshal(evt2)
+	_, _ = conn.Write(append(data2, '\n'))
+
+	// 4. Verify snapshot and agent_removed are received
+	receivedSnapshot := false
+	receivedRemoved := false
+	deadline := time.After(1 * time.Second)
+	for !receivedSnapshot || !receivedRemoved {
+		select {
+		case e := <-globalCh:
+			if e.Type == "snapshot" {
+				receivedSnapshot = true
+			}
+			if e.Type == "agent_removed" && e.AgentID == "agent-1" {
+				receivedRemoved = true
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for events; receivedSnapshot=%v, receivedRemoved=%v", receivedSnapshot, receivedRemoved)
+		}
+	}
 }
 
 func TestDefaultSocketPath(t *testing.T) {
@@ -472,7 +551,18 @@ func TestSubscriber_ReconcileSnapshotOnReconnectionAfterMissedEvents(t *testing.
 		t.Fatalf("failed to accept initial conn: %v", err)
 	}
 
-	// 1. Verify initial snapshot received upon first connection
+	// Verify that merely accepting connection does NOT emit snapshot until connection readiness (hello)
+	select {
+	case evt := <-globalCh:
+		t.Fatalf("unexpected snapshot before hello: %+v", evt)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// Send hello handshake to confirm connection readiness
+	helloMsg, _ := json.Marshal(types.IServerEvent{Type: "hello", At: time.Now().UnixMilli()})
+	_, _ = conn1.Write(append(helloMsg, '\n'))
+
+	// 1. Verify initial snapshot received upon connection readiness
 	select {
 	case evt := <-globalCh:
 		if evt.Type != "snapshot" {
@@ -520,7 +610,17 @@ func TestSubscriber_ReconcileSnapshotOnReconnectionAfterMissedEvents(t *testing.
 	}
 	t.Cleanup(func() { _ = conn2.Close() })
 
-	// 5. Verify that upon reconnection, reconcileSnapshot queries the store and broadcasts the full snapshot
+	// Verify no snapshot before hello on reconnected socket
+	select {
+	case evt := <-globalCh:
+		t.Fatalf("unexpected snapshot before hello on reconnect: %+v", evt)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// Send hello handshake to confirm connection readiness after reconnect
+	_, _ = conn2.Write(append(helloMsg, '\n'))
+
+	// 5. Verify that upon connection readiness, reconcileSnapshot queries the store and broadcasts the full snapshot
 	select {
 	case evt := <-globalCh:
 		if evt.Type != "snapshot" {

@@ -331,6 +331,43 @@ describe("useEventStream Hook", () => {
     expect(latestState.environments[0]?.id).toBe("env-1");
   });
 
+  it("clears existing agents and environments on empty snapshot", async () => {
+    await act(async () => {
+      root.render(jsx(HookHarness, { apiBaseUrl: "http://localhost:4502", onUpdate: handleUpdate }));
+    });
+
+    const esInstance = MockEventSource.instances[0];
+    assert(esInstance !== undefined);
+
+    const initialSnapshot: ServerEvent = {
+      type: "snapshot",
+      at: 1789850000000,
+      agents: [fixture_eventStreamAgent1],
+      environments: [fixture_eventStreamEnvironment1],
+    };
+
+    await act(async () => {
+      esInstance.onmessage?.({ data: JSON.stringify(initialSnapshot) });
+    });
+
+    assert(latestState !== null);
+    expect(latestState.agents.length).toBe(1);
+    expect(latestState.environments.length).toBe(1);
+
+    await act(async () => {
+      esInstance.onmessage?.({
+        data: JSON.stringify({
+          type: "snapshot",
+          at: 1789850001000,
+        }),
+      });
+    });
+
+    assert(latestState !== null);
+    expect(latestState.agents).toEqual([]);
+    expect(latestState.environments).toEqual([]);
+  });
+
   it("updates existing agent in state on agent_upsert event", async () => {
     await act(async () => {
       root.render(jsx(HookHarness, { apiBaseUrl: "http://localhost:4502", onUpdate: handleUpdate }));

@@ -17,8 +17,8 @@ export function useEventStream(apiBaseUrl?: string, token: string = DEFAULT_DEV_
   const handleServerEvent = useCallback((event: ServerEvent) => {
     switch (event.type) {
       case "snapshot":
-        if (event.agents) setAgents(event.agents);
-        if (event.environments) setEnvironments(event.environments);
+        setAgents(event.agents ?? []);
+        setEnvironments(event.environments ?? []);
         break;
 
       case "agent_upsert":

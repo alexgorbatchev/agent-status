@@ -219,7 +219,7 @@ type IIngesterMessage struct {
 }
 
 type IServerEvent struct {
-	Type         string              `json:"type"` // "snapshot" | "agent_upsert" | "agent_removed" | "environment_upsert" | "log_append"
+	Type         string              `json:"type"` // "snapshot" | "agent_upsert" | "agent_removed" | "environment_upsert" | "log_append" | "hello" (internal transport handshake event)
 	At           int64               `json:"at"`
 	Agent        *IAgentState        `json:"agent,omitempty"`
 	Agents       []IAgentState       `json:"agents,omitempty"`
@@ -227,4 +227,47 @@ type IServerEvent struct {
 	Environment  *IEnvironmentInfo   `json:"environment,omitempty"`
 	Environments []IEnvironmentInfo  `json:"environments,omitempty"`
 	Event        *ITelemetryFrame    `json:"event,omitempty"`
+}
+
+func (e IServerEvent) MarshalJSON() ([]byte, error) {
+	if e.Type == "snapshot" {
+		agents := e.Agents
+		if agents == nil {
+			agents = []IAgentState{}
+		}
+		envs := e.Environments
+		if envs == nil {
+			envs = []IEnvironmentInfo{}
+		}
+		type Alias IServerEvent
+		return json.Marshal(&struct {
+			Alias
+			Agents       []IAgentState      `json:"agents"`
+			Environments []IEnvironmentInfo `json:"environments"`
+		}{
+			Alias:        Alias(e),
+			Agents:       agents,
+			Environments: envs,
+		})
+	}
+	type Alias IServerEvent
+	return json.Marshal(Alias(e))
+}
+
+func (e *IServerEvent) UnmarshalJSON(data []byte) error {
+	type Alias IServerEvent
+	var aux Alias
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*e = IServerEvent(aux)
+	if e.Type == "snapshot" {
+		if e.Agents == nil {
+			e.Agents = []IAgentState{}
+		}
+		if e.Environments == nil {
+			e.Environments = []IEnvironmentInfo{}
+		}
+	}
+	return nil
 }

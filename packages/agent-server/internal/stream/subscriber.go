@@ -79,12 +79,6 @@ func (s *Subscriber) reconcileSnapshot(ctx context.Context) error {
 	return nil
 }
 
-// ResyncAndBroadcast queries SQLite to build a full snapshot of all active environments and agents,
-// then broadcasts it to the hub. It delegates to reconcileSnapshot.
-func (s *Subscriber) ResyncAndBroadcast(ctx context.Context) error {
-	return s.reconcileSnapshot(ctx)
-}
-
 // Run starts the subscriber loop, connecting to the unix domain socket with automatic reconnect.
 // It exits when ctx is canceled.
 func (s *Subscriber) Run(ctx context.Context) {
@@ -108,10 +102,6 @@ func (s *Subscriber) Run(ctx context.Context) {
 		}
 
 		s.logger.InfoContext(ctx, "notify_socket_connected")
-		if err := s.reconcileSnapshot(ctx); err != nil {
-			s.logger.ErrorContext(ctx, "notify_snapshot_resync_failed", "err", err)
-		}
-
 		s.readLoop(ctx, conn)
 
 		select {
@@ -138,6 +128,7 @@ func (s *Subscriber) readLoop(ctx context.Context, conn net.Conn) {
 	buf := make([]byte, 64*1024)
 	scanner.Buffer(buf, 16*1024*1024)
 
+	reconciled := false
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		if len(line) == 0 {
@@ -148,6 +139,24 @@ func (s *Subscriber) readLoop(ctx context.Context, conn net.Conn) {
 		if err := json.Unmarshal(line, &event); err != nil {
 			s.logger.WarnContext(ctx, "notify_event_malformed", "err", err, "line", string(line))
 			continue
+		}
+
+		if event.Type == "hello" {
+			s.logger.InfoContext(ctx, "notify_socket_ready")
+			if err := s.reconcileSnapshot(ctx); err != nil {
+				s.logger.ErrorContext(ctx, "notify_snapshot_resync_failed", "err", err)
+			} else {
+				reconciled = true
+			}
+			continue
+		}
+
+		if !reconciled {
+			if err := s.reconcileSnapshot(ctx); err != nil {
+				s.logger.ErrorContext(ctx, "notify_snapshot_resync_failed", "err", err)
+			} else {
+				reconciled = true
+			}
 		}
 
 		s.hub.Broadcast(&event)

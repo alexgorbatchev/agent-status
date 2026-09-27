@@ -2,6 +2,7 @@ package stream
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -300,6 +301,18 @@ func TestHub_BroadcastSnapshot(t *testing.T) {
 			}
 			if evt.Environments == nil || len(evt.Environments) != 0 {
 				t.Errorf("expected non-nil empty environments slice, got %+v", evt.Environments)
+			}
+
+			data, err := json.Marshal(evt)
+			if err != nil {
+				t.Fatalf("json.Marshal failed: %v", err)
+			}
+			jsonStr := string(data)
+			if !strings.Contains(jsonStr, `"agents":[]`) {
+				t.Errorf("expected serialized json to contain '\"agents\":[]', got %s", jsonStr)
+			}
+			if !strings.Contains(jsonStr, `"environments":[]`) {
+				t.Errorf("expected serialized json to contain '\"environments\":[]', got %s", jsonStr)
 			}
 		case <-time.After(100 * time.Millisecond):
 			t.Fatal("timed out waiting for snapshot event")

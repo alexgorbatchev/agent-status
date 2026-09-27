@@ -113,6 +113,33 @@ func TestPublisher_BroadcastToClients(t *testing.T) {
 	r1 := bufio.NewReader(conn1)
 	r2 := bufio.NewReader(conn2)
 
+	// Verify both clients receive initial hello frame upon registration
+	_ = conn1.SetReadDeadline(time.Now().Add(2 * time.Second))
+	helloLine1, err := r1.ReadBytes('\n')
+	if err != nil {
+		t.Fatalf("client 1 failed to read hello: %v", err)
+	}
+	var hello1Evt types.IServerEvent
+	if err := json.Unmarshal(helloLine1, &hello1Evt); err != nil {
+		t.Fatalf("client 1 hello unmarshal error: %v", err)
+	}
+	if hello1Evt.Type != "hello" {
+		t.Errorf("client 1 expected hello event, got %q", hello1Evt.Type)
+	}
+
+	_ = conn2.SetReadDeadline(time.Now().Add(2 * time.Second))
+	helloLine2, err := r2.ReadBytes('\n')
+	if err != nil {
+		t.Fatalf("client 2 failed to read hello: %v", err)
+	}
+	var hello2Evt types.IServerEvent
+	if err := json.Unmarshal(helloLine2, &hello2Evt); err != nil {
+		t.Fatalf("client 2 hello unmarshal error: %v", err)
+	}
+	if hello2Evt.Type != "hello" {
+		t.Errorf("client 2 expected hello event, got %q", hello2Evt.Type)
+	}
+
 	event := types.IServerEvent{
 		Type: "test_event",
 		At:   1234567890,
