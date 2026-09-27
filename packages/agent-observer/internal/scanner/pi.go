@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/shirou/gopsutil/v4/process"
@@ -40,9 +41,20 @@ type PiHeader struct {
 
 type PiProcessFinder func(ctx context.Context) ([]PiProcessInfo, error)
 
+type piFileCacheEntry struct {
+	size       int64
+	modTime    time.Time
+	header     *PiHeader
+	lastActive int64
+	dev        uint64
+	ino        uint64
+}
+
 type PiScanner struct {
 	sessionsDir   string
 	processFinder PiProcessFinder
+	mu            sync.Mutex
+	cache         map[string]piFileCacheEntry
 }
 
 func DefaultPiSessionsDir() string {
@@ -132,6 +144,7 @@ func NewPiScanner(sessionsDir string, finder PiProcessFinder) *PiScanner {
 	return &PiScanner{
 		sessionsDir:   sessionsDir,
 		processFinder: finder,
+		cache:         make(map[string]piFileCacheEntry),
 	}
 }
 
@@ -170,6 +183,13 @@ func ReadPiSessionHeader(path string) (*PiHeader, error) {
 // Scan enumerates Pi sessions under sessionsDir, finds running Pi processes,
 // and pairs processes to their corresponding session files.
 func (s *PiScanner) Scan(ctx context.Context) ([]PiSessionDescriptor, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.cache == nil {
+		s.cache = make(map[string]piFileCacheEntry)
+	}
+
 	if s.sessionsDir == "" {
 		return nil, nil
 	}
@@ -177,6 +197,7 @@ func (s *PiScanner) Scan(ctx context.Context) ([]PiSessionDescriptor, error) {
 	entries, err := os.ReadDir(s.sessionsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
+			s.cache = make(map[string]piFileCacheEntry)
 			return nil, nil
 		}
 		return nil, fmt.Errorf("reading pi sessions dir: %w", err)
@@ -201,6 +222,7 @@ func (s *PiScanner) Scan(ctx context.Context) ([]PiSessionDescriptor, error) {
 		cleanCWD   string
 	}
 	var candidates []piCandidate
+	seenFiles := make(map[string]bool)
 
 	for _, entry := range entries {
 		if !entry.IsDir() {
@@ -219,15 +241,46 @@ func (s *PiScanner) Scan(ctx context.Context) ([]PiSessionDescriptor, error) {
 			}
 
 			filePath := filepath.Join(subDir, f.Name())
-			header, err := ReadPiSessionHeader(filePath)
+			seenFiles[filePath] = true
+
+			info, err := f.Info()
 			if err != nil {
+				delete(s.cache, filePath)
 				continue
 			}
 
-			modTime, sErr := ExtractLastActiveTimestamp(filePath)
-			if sErr != nil {
-				if info, infoErr := f.Info(); infoErr == nil {
-					modTime = info.ModTime().UnixMilli()
+			size := info.Size()
+			modTime := info.ModTime()
+			dev, ino := getFileDevIno(info)
+
+			var header *PiHeader
+			var lastActive int64
+
+			cached, found := s.cache[filePath]
+			if found && cached.header != nil && cached.size == size && cached.modTime.Equal(modTime) && cached.dev == dev && cached.ino == ino {
+				header = cached.header
+				lastActive = cached.lastActive
+			} else {
+				h, err := ReadPiSessionHeader(filePath)
+				if err != nil {
+					delete(s.cache, filePath)
+					continue
+				}
+				header = h
+
+				la, sErr := ExtractLastActiveTimestamp(filePath)
+				if sErr != nil {
+					la = modTime.UnixMilli()
+				}
+				lastActive = la
+
+				s.cache[filePath] = piFileCacheEntry{
+					size:       size,
+					modTime:    modTime,
+					header:     header,
+					lastActive: lastActive,
+					dev:        dev,
+					ino:        ino,
 				}
 			}
 
@@ -247,10 +300,10 @@ func (s *PiScanner) Scan(ctx context.Context) ([]PiSessionDescriptor, error) {
 				}
 			}
 			if headerTime == 0 {
-				headerTime = modTime
+				headerTime = lastActive
 			}
-			if modTime == 0 {
-				modTime = headerTime
+			if lastActive == 0 {
+				lastActive = headerTime
 			}
 
 			cleanCWD := filepath.Clean(header.CWD)
@@ -267,9 +320,16 @@ func (s *PiScanner) Scan(ctx context.Context) ([]PiSessionDescriptor, error) {
 			candidates = append(candidates, piCandidate{
 				desc:       desc,
 				headerTime: headerTime,
-				modTime:    modTime,
+				modTime:    lastActive,
 				cleanCWD:   cleanCWD,
 			})
+		}
+	}
+
+	// Prune cache entries for files that were not seen during the scan.
+	for path := range s.cache {
+		if !seenFiles[path] {
+			delete(s.cache, path)
 		}
 	}
 
