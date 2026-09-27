@@ -85,11 +85,9 @@ type agentWorker struct {
 }
 
 const (
-	DefaultIdleGracePeriod    = 2500 * time.Millisecond
-	DefaultTurnEndGraceWindow = DefaultIdleGracePeriod
-	DefaultTurnEndGrace       = DefaultIdleGracePeriod
-	DefaultDebounceWindow     = 10 * time.Second
-	DefaultTurnFloor          = 20 * time.Second
+	DefaultIdleGracePeriod        = 5 * time.Second
+	DefaultDebounceWindow         = 10 * time.Second
+	DefaultTurnFloor              = 20 * time.Second
 	DefaultTurnSilenceTimeout     = 30 * time.Minute
 	DefaultRateLimitSilenceBuffer = 2 * time.Minute
 	DefaultSubagentDwell          = 30 * time.Second
@@ -161,16 +159,6 @@ func (c *Classifier) SetIdleGracePeriod(d time.Duration) {
 	c.idleGracePeriod = d
 }
 
-// SetTurnEndGraceWindow sets the debounce window before transitioning from BUSY to IDLE on turn_end.
-func (c *Classifier) SetTurnEndGraceWindow(d time.Duration) {
-	c.SetIdleGracePeriod(d)
-}
-
-// SetTurnEndGrace sets the debounce window before transitioning from BUSY to IDLE on turn_end.
-func (c *Classifier) SetTurnEndGrace(d time.Duration) {
-	c.SetIdleGracePeriod(d)
-}
-
 // SilenceTimerDuration returns the configured duration of an active silence timer on the agent, or 0 if none.
 func (c *Classifier) SilenceTimerDuration(agentID string) time.Duration {
 	c.mu.Lock()
@@ -222,16 +210,11 @@ func (c *Classifier) rateLimitSilenceDurationLocked(resetAt *int64, retrySec *in
 	return baseTimeout
 }
 
-// TurnEndGraceWindow returns the turn-end grace window duration.
-func (c *Classifier) TurnEndGraceWindow() time.Duration {
+// IdleGracePeriod returns the idle grace period duration.
+func (c *Classifier) IdleGracePeriod() time.Duration {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.idleGracePeriod
-}
-
-// Stop gracefully stops all per-agent async workers and cancels pending timers.
-func (c *Classifier) Stop() error {
-	return c.Close()
 }
 
 // SetTurnFloor sets the thinking latency floor during which an agent remains latched to BUSY (Thinking).
@@ -308,6 +291,16 @@ func (c *Classifier) cancelIdleTimerLocked(agentID string) {
 		t.Stop()
 		delete(c.idleTimers, agentID)
 	}
+}
+
+func (c *Classifier) scheduleIdleTransitionLocked(agentID string, scheduledGen uint64, delay time.Duration) {
+	if c.closed {
+		return
+	}
+	c.cancelIdleTimerLocked(agentID)
+	c.idleTimers[agentID] = time.AfterFunc(delay, func() {
+		c.handleIdleTransition(agentID, scheduledGen)
+	})
 }
 
 func (c *Classifier) cancelSilenceTimerLocked(agentID string) {
@@ -629,14 +622,11 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		if isAfterHide {
 			isActiveEvent := frame.EventType == "run_started" ||
 				frame.EventType == "turn_start" ||
-				frame.EventType == "user_prompt" ||
 				frame.EventType == "tool_call" ||
-				frame.EventType == "tool_use" ||
 				frame.EventType == "tool_result" ||
 				frame.EventType == "thinking" ||
-				frame.EventType == "text" ||
-				frame.EventType == "agent_message" ||
 				frame.EventType == "question_prompt" ||
+				frame.EventType == "waiting_question" ||
 				frame.EventType == "error"
 			if isActiveEvent {
 				agent.IsHidden = false
@@ -801,8 +791,10 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 
 	c.mu.Lock()
 	actx.saveGeneration++
-	if !isSubagent {
+	if !isSubagent && isRootStateEvent(frame.EventType) {
 		actx.rootGeneration++
+	}
+	if !isSubagent {
 		agent.Activity.Activity = actx.rootActivity
 		agent.Activity.Action = actx.rootAction
 		agent.Activity.Question = actx.rootQuestion
@@ -905,7 +897,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			delete(c.agentCtx, agent.ID)
 			c.mu.Unlock()
 
-		case "question_prompt":
+		case "question_prompt", "waiting_question":
 			c.mu.Lock()
 			c.cancelIdleTimerLocked(agent.ID)
 			c.cancelSilenceTimerLocked(agent.ID)
@@ -969,7 +961,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			agent.Activity.ActiveToolStartedAt = nil
 			pendingJob = c.updateSummarization(agent, false)
 
-		case "tool_call", "tool_use":
+		case "tool_call":
 			c.mu.Lock()
 			c.cancelIdleTimerLocked(agent.ID)
 			actx.inFlightTool = true
@@ -1025,7 +1017,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				}
 			}
 
-		case "turn_start", "user_prompt":
+		case "turn_start":
 			c.mu.Lock()
 			c.cancelIdleTimerLocked(agent.ID)
 			c.cancelTrailingTimerLocked(agent.ID)
@@ -1051,22 +1043,6 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			agent.Activity.Action = "Thinking"
 			p := types.PhasePlanning
 			agent.Activity.Phase = &p
-
-		case "text", "agent_message":
-			c.mu.Lock()
-			c.cancelIdleTimerLocked(agent.ID)
-			c.scheduleSilenceTimerLocked(agent.ID, actx.rootGeneration)
-			c.mu.Unlock()
-			agent.Activity.Activity = types.ActivityBusy
-			agent.Activity.HasUnseenCompletion = nil
-			agent.Activity.LastError = nil
-			agent.Activity.RateLimitResetAt = nil
-			agent.Activity.RetryAfterSeconds = nil
-			if frame.Data.Content != nil && strings.TrimSpace(*frame.Data.Content) != "" {
-				c.mu.Lock()
-				actx.lastAssistantResponse = strings.TrimSpace(*frame.Data.Content)
-				c.mu.Unlock()
-			}
 
 		case "thinking":
 			c.mu.Lock()
@@ -1230,12 +1206,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 							agent.Activity.RetryAfterSeconds = nil
 						}
 						c.mu.Lock()
-						c.cancelIdleTimerLocked(agent.ID)
-						targetAgentID := agent.ID
-						scheduledGen := actx.rootGeneration
-						c.idleTimers[targetAgentID] = time.AfterFunc(gracePeriod, func() {
-							c.handleIdleTransition(targetAgentID, scheduledGen)
-						})
+						c.scheduleIdleTransitionLocked(agent.ID, actx.rootGeneration, gracePeriod)
 						c.mu.Unlock()
 						pendingJob = c.updateSummarization(agent, false)
 					}
@@ -1279,7 +1250,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			}
 
 			switch frame.EventType {
-			case "tool_call", "tool_use":
+			case "tool_call":
 				sub.completedAt = nil
 				sub.status = types.SubagentRunning
 				c.cancelSubagentTimerLocked(agent.ID, subID)
@@ -1357,17 +1328,10 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 					sub.question = &q
 				}
 				sub.activeTool = nil
-			case "turn_start", "user_prompt":
+			case "turn_start":
 				sub.activity = types.ActivityBusy
 				sub.activeTool = nil
 				sub.lastError = nil
-				sub.rateLimitResetAt = nil
-				sub.retryAfterSeconds = nil
-				sub.completedAt = nil
-				sub.status = types.SubagentRunning
-				c.cancelSubagentTimerLocked(agent.ID, subID)
-			case "text", "agent_message":
-				sub.activity = types.ActivityBusy
 				sub.rateLimitResetAt = nil
 				sub.retryAfterSeconds = nil
 				sub.completedAt = nil
@@ -1833,7 +1797,12 @@ func (c *Classifier) handleIdleTransition(agentID string, scheduledGen uint64) {
 
 	c.mu.Lock()
 	actx, ok = c.agentCtx[agentID]
-	if !ok || actx != targetActx || actx.rootGeneration != scheduledGen || actx.saveGeneration != scheduledSaveGen || actx.rootActivity != types.ActivityBusy {
+	if !ok || actx != targetActx || actx.rootGeneration != scheduledGen || actx.rootActivity != types.ActivityBusy {
+		c.mu.Unlock()
+		return
+	}
+	if actx.saveGeneration != scheduledSaveGen {
+		c.scheduleIdleTransitionLocked(agentID, actx.rootGeneration, 100*time.Millisecond)
 		c.mu.Unlock()
 		return
 	}
@@ -1848,7 +1817,13 @@ func (c *Classifier) handleIdleTransition(agentID string, scheduledGen uint64) {
 
 	c.mu.Lock()
 	actx, ok = c.agentCtx[agentID]
-	if !ok || actx != targetActx || actx.rootGeneration != scheduledGen || actx.saveGeneration != scheduledSaveGen || actx.rootActivity != types.ActivityBusy {
+	if !ok || actx != targetActx || actx.rootGeneration != scheduledGen || actx.rootActivity != types.ActivityBusy {
+		c.mu.Unlock()
+		persistMu.Unlock()
+		return
+	}
+	if actx.saveGeneration != scheduledSaveGen {
+		c.scheduleIdleTransitionLocked(agentID, actx.rootGeneration, 100*time.Millisecond)
 		c.mu.Unlock()
 		persistMu.Unlock()
 		return
@@ -2279,6 +2254,17 @@ func isRateLimitFrame(data types.TelemetryFrameData) bool {
 		return true
 	}
 	return false
+}
+
+// isRootStateEvent reports whether an event type drives root state machine transitions.
+// Conversational text/messages and metadata events do not alter classifier activity states.
+func isRootStateEvent(eventType string) bool {
+	switch eventType {
+	case "run_started", "run_exited", "turn_start", "thinking", "tool_call", "tool_result", "turn_end", "question_prompt", "waiting_question", "error":
+		return true
+	default:
+		return false
+	}
 }
 
 // truncateRunes truncates string s to at most maxRunes, preserving valid UTF-8 on rune boundaries.

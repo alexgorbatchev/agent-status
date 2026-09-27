@@ -25,9 +25,7 @@ func TestLoad_Defaults(t *testing.T) {
 		"AIR_SUMMARIZER_MODEL",
 		"AIR_LOG_DIR",
 		"AIR_LOG_FILE",
-		"AIR_TURN_END_GRACE",
-		"AIR_TURN_END_GRACE_MS",
-		"AIR_TURN_END_GRACE_WINDOW",
+		"AIR_IDLE_GRACE_PERIOD",
 	}
 	for _, k := range envKeys {
 		t.Setenv(k, "")
@@ -67,11 +65,8 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.LogLevel != "info" {
 		t.Errorf("got LogLevel %q, want info", cfg.LogLevel)
 	}
-	if cfg.TurnEndGraceWindow != 2500*time.Millisecond {
-		t.Errorf("got TurnEndGraceWindow %v, want 2500ms", cfg.TurnEndGraceWindow)
-	}
-	if cfg.TurnEndGrace != 2500*time.Millisecond {
-		t.Errorf("got TurnEndGrace %v, want 2500ms", cfg.TurnEndGrace)
+	if cfg.IdleGracePeriod != 5*time.Second {
+		t.Errorf("got IdleGracePeriod %v, want 5s", cfg.IdleGracePeriod)
 	}
 }
 
@@ -281,12 +276,42 @@ func TestLoad_Precedence_APIKey(t *testing.T) {
 	}
 }
 
-func TestLoad_TurnEndGrace(t *testing.T) {
+func TestConfig_Validate(t *testing.T) {
+	t.Run("valid positive duration", func(t *testing.T) {
+		cfg := &Config{IdleGracePeriod: 5 * time.Second}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("unexpected error for positive duration: %v", err)
+		}
+	})
+
+	t.Run("valid zero duration disabled", func(t *testing.T) {
+		cfg := &Config{IdleGracePeriod: 0}
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("unexpected error for zero duration: %v", err)
+		}
+	})
+
+	t.Run("rejects negative duration", func(t *testing.T) {
+		cfg := &Config{IdleGracePeriod: -1 * time.Second}
+		if err := cfg.Validate(); err == nil {
+			t.Error("expected error for negative duration, got nil")
+		}
+	})
+
+	t.Run("rejects negative millisecond duration", func(t *testing.T) {
+		cfg := &Config{IdleGracePeriod: -5 * time.Millisecond}
+		if err := cfg.Validate(); err == nil {
+			t.Error("expected error for negative millisecond duration, got nil")
+		}
+	})
+}
+
+func TestLoad_IdleGracePeriod(t *testing.T) {
 	tests := []struct {
 		name      string
 		envGrace  string
-		envMS     string
 		wantGrace time.Duration
+		wantErr   bool
 	}{
 		{
 			name:      "duration string 1500ms",
@@ -304,45 +329,48 @@ func TestLoad_TurnEndGrace(t *testing.T) {
 			wantGrace: 0,
 		},
 		{
-			name:      "integer string milliseconds 3000",
-			envGrace:  "3000",
-			wantGrace: 3000 * time.Millisecond,
-		},
-		{
-			name:      "integer string milliseconds 0 disabled",
-			envGrace:  "0",
-			wantGrace: 0,
-		},
-		{
-			name:      "fallback to AIR_TURN_END_GRACE_MS",
-			envGrace:  "",
-			envMS:     "1200",
-			wantGrace: 1200 * time.Millisecond,
-		},
-		{
-			name:      "invalid duration falls back to default 2500ms",
+			name:      "invalid duration falls back to default 5s",
 			envGrace:  "invalid-duration",
-			wantGrace: 2500 * time.Millisecond,
+			wantGrace: 5 * time.Second,
 		},
 		{
-			name:      "unspecified falls back to default 2500ms",
+			name:      "integer string milliseconds falls back to default 5s",
+			envGrace:  "3000",
+			wantGrace: 5 * time.Second,
+		},
+		{
+			name:      "unspecified falls back to default 5s",
 			envGrace:  "",
-			wantGrace: 2500 * time.Millisecond,
+			wantGrace: 5 * time.Second,
+		},
+		{
+			name:      "negative duration string falls back to default 5s",
+			envGrace:  "-1s",
+			wantGrace: 5 * time.Second,
+			wantErr:   false,
+		},
+		{
+			name:      "negative duration string -500ms falls back to default 5s",
+			envGrace:  "-500ms",
+			wantGrace: 5 * time.Second,
+			wantErr:   false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv("AIR_TURN_END_GRACE", tt.envGrace)
-			t.Setenv("AIR_TURN_END_GRACE_MS", tt.envMS)
-			t.Setenv("AIR_TURN_END_GRACE_WINDOW", "")
+			t.Setenv("AIR_IDLE_GRACE_PERIOD", tt.envGrace)
 
 			cfg := Load()
-			if cfg.TurnEndGraceWindow != tt.wantGrace {
-				t.Errorf("got TurnEndGraceWindow %v, want %v", cfg.TurnEndGraceWindow, tt.wantGrace)
+			if cfg.IdleGracePeriod != tt.wantGrace {
+				t.Errorf("got IdleGracePeriod %v, want %v", cfg.IdleGracePeriod, tt.wantGrace)
 			}
-			if cfg.TurnEndGrace != tt.wantGrace {
-				t.Errorf("got TurnEndGrace %v, want %v", cfg.TurnEndGrace, tt.wantGrace)
+			err := cfg.Validate()
+			if tt.wantErr && err == nil {
+				t.Errorf("expected Validate error for env %q, got nil", tt.envGrace)
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("unexpected Validate error for env %q: %v", tt.envGrace, err)
 			}
 		})
 	}

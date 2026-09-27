@@ -6445,6 +6445,386 @@ func TestClassifier_HandleIdleTransition_SubagentFrameDuringSummarizeHookDoesNot
 	}
 }
 
+func TestClassifier_HandleIdleTransition_SubagentFrameDuringSummarize_ReschedulesAndTransitionsToIdle(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, _ := newTestClassifier(t, sum)
+	c.syncMode = false
+	c.SetIdleGracePeriod(10 * time.Second)
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{
+		ID:       "env-race-resched",
+		Label:    "workstation",
+		Hostname: "workstation",
+		Platform: "darwin",
+		User:     "engineer",
+	}
+	ws := types.IWorkspaceInfo{
+		Branch: "main",
+		CWD:    "/path/to/repo",
+	}
+	proj := types.IProjectInfo{
+		ID:            "repo",
+		Name:          "repo",
+		CanonicalRoot: "/path/to/repo",
+	}
+	agentID := "env-race-resched:claude-code:sess-resched-1"
+
+	baseFrame := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-resched-1",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+	}
+
+	// 1. Root run_started
+	f1 := baseFrame
+	f1.Seq = 1
+	f1.Timestamp = 1000
+	f1.EventType = "run_started"
+	if _, err := c.ProcessFrame(f1); err != nil {
+		t.Fatalf("ProcessFrame failed: %v", err)
+	}
+
+	// 2. Root turn_start
+	f2 := baseFrame
+	f2.Seq = 2
+	f2.Timestamp = 1010
+	f2.EventType = "turn_start"
+	if _, err := c.ProcessFrame(f2); err != nil {
+		t.Fatalf("ProcessFrame failed: %v", err)
+	}
+
+	// 3. Root turn_end (sets ActivityBusy and arms grace window)
+	f3 := baseFrame
+	f3.Seq = 3
+	f3.Timestamp = 1020
+	f3.EventType = "turn_end"
+	stopReason := "end_turn"
+	f3.Data = types.TelemetryFrameData{
+		StopReason: &stopReason,
+	}
+	if _, err := c.ProcessFrame(f3); err != nil {
+		t.Fatalf("ProcessFrame failed: %v", err)
+	}
+
+	c.mu.Lock()
+	actx := c.agentCtx[agentID]
+	if actx == nil {
+		c.mu.Unlock()
+		t.Fatalf("expected agentContext to exist")
+	}
+	scheduledGen := actx.rootGeneration
+	c.mu.Unlock()
+
+	// 4. Hook: inject a completed subagent frame during beforeIdleSummarizeHook
+	hookCalled := false
+	subagentID := "sub-race-resched-1"
+	c.beforeIdleSummarizeHook = func(id string) {
+		c.beforeIdleSummarizeHook = nil
+		hookCalled = true
+		fSub := baseFrame
+		fSub.Seq = 4
+		fSub.Timestamp = 1050
+		fSub.SubagentID = &subagentID
+		fSub.EventType = "run_exited"
+		if _, err := c.ProcessFrame(fSub); err != nil {
+			t.Fatalf("ProcessFrame for subagent frame failed: %v", err)
+		}
+	}
+
+	// 5. Trigger handleIdleTransition with scheduled generation
+	c.handleIdleTransition(agentID, scheduledGen)
+
+	if !hookCalled {
+		t.Fatalf("expected beforeIdleSummarizeHook to be called")
+	}
+
+	// 6. Verify that an idle transition timer WAS rescheduled
+	c.mu.Lock()
+	timer := c.idleTimers[agentID]
+	c.mu.Unlock()
+	if timer == nil {
+		t.Fatalf("expected idle transition timer to be rescheduled under c.idleTimers, got nil")
+	}
+
+	// 7. Wait for the rescheduled 100ms timer to fire and complete the transition
+	var finalActivity types.ActivityState
+	var unseenComp *bool
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		c.mu.Lock()
+		actxCurr := c.agentCtx[agentID]
+		if actxCurr != nil && actxCurr.rootActivity == types.ActivityIdle {
+			finalActivity = actxCurr.rootActivity
+			unseenComp = actxCurr.hasUnseenCompletion
+			c.mu.Unlock()
+			break
+		}
+		c.mu.Unlock()
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if finalActivity != types.ActivityIdle {
+		t.Fatalf("expected agent to transition to ActivityIdle via rescheduled check, but stayed %v", finalActivity)
+	}
+	if unseenComp == nil || !*unseenComp {
+		t.Errorf("expected HasUnseenCompletion to be true, got %v", unseenComp)
+	}
+
+	// Verify store state
+	loaded, err := c.store.GetAgent(agentID)
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if loaded.Activity.Activity != types.ActivityIdle {
+		t.Errorf("expected store Activity %v, got %v", types.ActivityIdle, loaded.Activity.Activity)
+	}
+}
+
+func TestClassifier_HandleIdleTransition_SubagentFrameDuringSave_ReschedulesAndTransitionsToIdle(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, _ := newTestClassifier(t, sum)
+	c.syncMode = false
+	c.SetIdleGracePeriod(10 * time.Second)
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{
+		ID:       "env-race-resched-save",
+		Label:    "workstation",
+		Hostname: "workstation",
+		Platform: "darwin",
+		User:     "engineer",
+	}
+	ws := types.IWorkspaceInfo{
+		Branch: "main",
+		CWD:    "/path/to/repo",
+	}
+	proj := types.IProjectInfo{
+		ID:            "repo",
+		Name:          "repo",
+		CanonicalRoot: "/path/to/repo",
+	}
+	agentID := "env-race-resched-save:claude-code:sess-resched-save-1"
+
+	baseFrame := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-resched-save-1",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+	}
+
+	// 1. Root run_started
+	f1 := baseFrame
+	f1.Seq = 1
+	f1.Timestamp = 1000
+	f1.EventType = "run_started"
+	if _, err := c.ProcessFrame(f1); err != nil {
+		t.Fatalf("ProcessFrame failed: %v", err)
+	}
+
+	// 2. Root turn_start
+	f2 := baseFrame
+	f2.Seq = 2
+	f2.Timestamp = 1010
+	f2.EventType = "turn_start"
+	if _, err := c.ProcessFrame(f2); err != nil {
+		t.Fatalf("ProcessFrame failed: %v", err)
+	}
+
+	// 3. Root turn_end (sets ActivityBusy and arms grace window)
+	f3 := baseFrame
+	f3.Seq = 3
+	f3.Timestamp = 1020
+	f3.EventType = "turn_end"
+	stopReason := "end_turn"
+	f3.Data = types.TelemetryFrameData{
+		StopReason: &stopReason,
+	}
+	if _, err := c.ProcessFrame(f3); err != nil {
+		t.Fatalf("ProcessFrame failed: %v", err)
+	}
+
+	c.mu.Lock()
+	actx := c.agentCtx[agentID]
+	if actx == nil {
+		c.mu.Unlock()
+		t.Fatalf("expected agentContext to exist")
+	}
+	scheduledGen := actx.rootGeneration
+	c.mu.Unlock()
+
+	// 4. Hook: inject a completed subagent frame during beforeIdleSaveHook
+	hookCalled := false
+	subagentID := "sub-race-resched-save-1"
+	c.beforeIdleSaveHook = func(id string) {
+		c.beforeIdleSaveHook = nil
+		hookCalled = true
+		fSub := baseFrame
+		fSub.Seq = 4
+		fSub.Timestamp = 1050
+		fSub.SubagentID = &subagentID
+		fSub.EventType = "run_exited"
+		if _, err := c.ProcessFrame(fSub); err != nil {
+			t.Fatalf("ProcessFrame for subagent frame failed: %v", err)
+		}
+	}
+
+	// 5. Trigger handleIdleTransition with scheduled generation
+	c.handleIdleTransition(agentID, scheduledGen)
+
+	if !hookCalled {
+		t.Fatalf("expected beforeIdleSaveHook to be called")
+	}
+
+	// 6. Verify that an idle transition timer WAS rescheduled
+	c.mu.Lock()
+	timer := c.idleTimers[agentID]
+	c.mu.Unlock()
+	if timer == nil {
+		t.Fatalf("expected idle transition timer to be rescheduled under c.idleTimers, got nil")
+	}
+
+	// 7. Wait for the rescheduled 100ms timer to fire and complete the transition
+	var finalActivity types.ActivityState
+	var unseenComp *bool
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		c.mu.Lock()
+		actxCurr := c.agentCtx[agentID]
+		if actxCurr != nil && actxCurr.rootActivity == types.ActivityIdle {
+			finalActivity = actxCurr.rootActivity
+			unseenComp = actxCurr.hasUnseenCompletion
+			c.mu.Unlock()
+			break
+		}
+		c.mu.Unlock()
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if finalActivity != types.ActivityIdle {
+		t.Fatalf("expected agent to transition to ActivityIdle via rescheduled check, but stayed %v", finalActivity)
+	}
+	if unseenComp == nil || !*unseenComp {
+		t.Errorf("expected HasUnseenCompletion to be true, got %v", unseenComp)
+	}
+
+	// Verify store state
+	loaded, err := c.store.GetAgent(agentID)
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if loaded.Activity.Activity != types.ActivityIdle {
+		t.Errorf("expected store Activity %v, got %v", types.ActivityIdle, loaded.Activity.Activity)
+	}
+}
+
+func TestClassifier_ProcessFrame_RootWaitingQuestion(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, _ := newTestClassifier(t, sum)
+	defer func() { _ = c.Close() }()
+
+	proj := types.IProjectInfo{
+		ID:            "proj-1",
+		Name:          "repo",
+		CanonicalRoot: "/repo",
+	}
+	ws := types.IWorkspaceInfo{
+		Branch: "main",
+		CWD:    "/repo",
+	}
+	env := types.IEnvironmentInfo{
+		ID:       "env-1",
+		Hostname: "my-macbook",
+		Label:    "my-macbook",
+		Platform: "darwin",
+	}
+
+	agentID := "env-1:pi:sess-root-waiting-q"
+	baseFrame := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-root-waiting-q",
+		Harness:     types.HarnessPi,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   1000,
+	}
+
+	// 1. Session start
+	fStart := baseFrame
+	fStart.Seq = 1
+	fStart.EventType = "run_started"
+	if _, err := c.ProcessFrame(fStart); err != nil {
+		t.Fatalf("ProcessFrame(run_started) failed: %v", err)
+	}
+
+	// 2. waiting_question event arrives on root
+	qText := "Do you want to deploy to production?"
+	fWaitingQ := baseFrame
+	fWaitingQ.Seq = 2
+	fWaitingQ.EventType = "waiting_question"
+	fWaitingQ.Data = types.TelemetryFrameData{
+		Question: &qText,
+	}
+	agent, err := c.ProcessFrame(fWaitingQ)
+	if err != nil {
+		t.Fatalf("ProcessFrame(waiting_question) failed: %v", err)
+	}
+
+	if agent.Activity.Activity != types.ActivityWaitingQuestion {
+		t.Fatalf("expected Activity %v, got %v", types.ActivityWaitingQuestion, agent.Activity.Activity)
+	}
+	if agent.Activity.Question == nil || *agent.Activity.Question != qText {
+		t.Fatalf("expected Question %q, got %v", qText, agent.Activity.Question)
+	}
+
+	// 3. Verify in SQLite store
+	loaded, err := c.store.GetAgent(agentID)
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if loaded.Activity.Activity != types.ActivityWaitingQuestion {
+		t.Fatalf("expected store Activity %v, got %v", types.ActivityWaitingQuestion, loaded.Activity.Activity)
+	}
+	if loaded.Activity.Question == nil || *loaded.Activity.Question != qText {
+		t.Fatalf("expected store Question %q, got %v", qText, loaded.Activity.Question)
+	}
+
+	// 4. Verify in-memory agentContext
+	c.mu.Lock()
+	actx := c.agentCtx[agentID]
+	c.mu.Unlock()
+	if actx == nil {
+		t.Fatalf("expected agentContext to exist")
+	}
+	if actx.rootActivity != types.ActivityWaitingQuestion {
+		t.Fatalf("expected actx.rootActivity %v, got %v", types.ActivityWaitingQuestion, actx.rootActivity)
+	}
+	if actx.rootQuestion == nil || *actx.rootQuestion != qText {
+		t.Fatalf("expected actx.rootQuestion %q, got %v", qText, actx.rootQuestion)
+	}
+}
+
 func TestClassifier_HandleSilenceTransition_DoesNotOverwriteNewerFrameState(t *testing.T) {
 	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
 	if err != nil {
@@ -7959,8 +8339,8 @@ func TestClassifier_TurnEndGraceWindow_Defaults(t *testing.T) {
 	c := New(s, p, sum)
 	defer func() { _ = c.Close() }()
 
-	if c.TurnEndGraceWindow() != 2500*time.Millisecond {
-		t.Errorf("expected default TurnEndGraceWindow to be 2500ms, got %v", c.TurnEndGraceWindow())
+	if c.IdleGracePeriod() != 5*time.Second {
+		t.Errorf("expected default IdleGracePeriod to be 5s, got %v", c.IdleGracePeriod())
 	}
 }
 
@@ -7971,7 +8351,7 @@ func TestClassifier_TurnEndGraceWindow_SubSecondGapsKeepBusy(t *testing.T) {
 	}
 
 	c, s := newTestClassifier(t, sum)
-	c.SetTurnEndGraceWindow(500 * time.Millisecond)
+	c.SetIdleGracePeriod(500 * time.Millisecond)
 	defer func() { _ = c.Close() }()
 
 	agentID := "env-test:claude:sess-subsecond"
@@ -8060,7 +8440,7 @@ func TestClassifier_TurnEndGraceWindow_GapsExceedingGraceTransitionToIdle(t *tes
 
 	c, s := newTestClassifier(t, sum)
 	grace := 60 * time.Millisecond
-	c.SetTurnEndGraceWindow(grace)
+	c.SetIdleGracePeriod(grace)
 	defer func() { _ = c.Close() }()
 
 	agentID := "env-test:claude:sess-exceed"
@@ -8121,7 +8501,7 @@ func TestClassifier_TurnEndGraceWindow_AttentionStatesBypassGraceWindow(t *testi
 	}
 
 	c, _ := newTestClassifier(t, sum)
-	c.SetTurnEndGraceWindow(2500 * time.Millisecond)
+	c.SetIdleGracePeriod(2500 * time.Millisecond)
 	defer func() { _ = c.Close() }()
 
 	agentID := "env-test:claude:sess-attention"
@@ -8280,27 +8660,11 @@ func TestClassifier_TurnEndGraceWindow_IncomingBusyEventsCancelPendingIdleTimers
 			},
 		},
 		{
-			name:      "tool_use",
-			eventType: "tool_use",
-			setupData: func() types.TelemetryFrameData {
-				tn := "Bash"
-				return types.TelemetryFrameData{ToolName: &tn}
-			},
-		},
-		{
-			name:      "user_prompt",
-			eventType: "user_prompt",
+			name:      "turn_start",
+			eventType: "turn_start",
 			setupData: func() types.TelemetryFrameData {
 				p := "Continue next step"
 				return types.TelemetryFrameData{Content: &p}
-			},
-		},
-		{
-			name:      "text",
-			eventType: "text",
-			setupData: func() types.TelemetryFrameData {
-				txt := "I have completed the first step and am now continuing..."
-				return types.TelemetryFrameData{Content: &txt}
 			},
 		},
 	}
@@ -8314,7 +8678,7 @@ func TestClassifier_TurnEndGraceWindow_IncomingBusyEventsCancelPendingIdleTimers
 
 			c, s := newTestClassifier(t, sum)
 			grace := 80 * time.Millisecond
-			c.SetTurnEndGraceWindow(grace)
+			c.SetIdleGracePeriod(grace)
 			defer func() { _ = c.Close() }()
 
 			agentID := fmt.Sprintf("env-test:claude:sess-busy-%s", tc.name)
@@ -8396,7 +8760,7 @@ func TestClassifier_TurnEndGraceWindow_StopAndCloseCleansTimers(t *testing.T) {
 	}
 
 	c, _ := newTestClassifier(t, sum)
-	c.SetTurnEndGraceWindow(500 * time.Millisecond)
+	c.SetIdleGracePeriod(500 * time.Millisecond)
 
 	agentID := "env-test:claude:sess-stop-clean"
 	base := types.ITelemetryFrame{
@@ -8439,16 +8803,267 @@ func TestClassifier_TurnEndGraceWindow_StopAndCloseCleansTimers(t *testing.T) {
 		t.Fatalf("expected 1 idleTimer scheduled, got %d", timerCount)
 	}
 
-	// Calling Stop() cleans up all timers
-	if err := c.Stop(); err != nil {
-		t.Fatalf("Stop() failed: %v", err)
+	// Calling Close() cleans up all timers
+	if err := c.Close(); err != nil {
+		t.Fatalf("Close() failed: %v", err)
 	}
 
 	c.mu.Lock()
 	timerCountAfter := len(c.idleTimers)
 	c.mu.Unlock()
 	if timerCountAfter != 0 {
-		t.Errorf("expected 0 idleTimers after Stop(), got %d", timerCountAfter)
+		t.Errorf("expected 0 idleTimers after Close(), got %d", timerCountAfter)
+	}
+}
+
+func TestClassifier_TrailingAgentMessageAfterTurnEndDoesNotLatchBusy(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+
+	c, s := newTestClassifier(t, sum)
+	grace := 80 * time.Millisecond
+	c.SetIdleGracePeriod(grace)
+	defer func() { _ = c.Close() }()
+
+	agentID := "env-test:codex:sess-trailing-agent-msg"
+	base := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       "env-test",
+		Environment: types.IEnvironmentInfo{ID: "env-test", Platform: "linux"},
+		AgentID:     agentID,
+		SessionID:   "sess-trailing-agent-msg",
+		PID:         401,
+		Harness:     types.HarnessCodex,
+		Timestamp:   1000,
+	}
+
+	// 1. run_started
+	f1 := base
+	f1.Seq = 1
+	f1.EventType = "run_started"
+	if _, err := c.ProcessFrame(f1); err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+
+	// 2. turn_start
+	prompt := "Build project"
+	f2 := base
+	f2.Seq = 2
+	f2.Timestamp = 1010
+	f2.EventType = "turn_start"
+	f2.Data = types.TelemetryFrameData{Content: &prompt}
+	if _, err := c.ProcessFrame(f2); err != nil {
+		t.Fatalf("turn_start failed: %v", err)
+	}
+
+	// 3. tool_call
+	toolName := "exec"
+	f3 := base
+	f3.Seq = 3
+	f3.Timestamp = 1020
+	f3.EventType = "tool_call"
+	f3.Data = types.TelemetryFrameData{ToolName: &toolName}
+	if _, err := c.ProcessFrame(f3); err != nil {
+		t.Fatalf("tool_call failed: %v", err)
+	}
+
+	// 4. tool_result
+	f4 := base
+	f4.Seq = 4
+	f4.Timestamp = 1030
+	f4.EventType = "tool_result"
+	if _, err := c.ProcessFrame(f4); err != nil {
+		t.Fatalf("tool_result failed: %v", err)
+	}
+
+	// 5. turn_end (enters grace window, BUSY)
+	stopReason := "end_turn"
+	f5 := base
+	f5.Seq = 5
+	f5.Timestamp = 1040
+	f5.EventType = "turn_end"
+	f5.Data = types.TelemetryFrameData{StopReason: &stopReason}
+	ag, err := c.ProcessFrame(f5)
+	if err != nil {
+		t.Fatalf("turn_end failed: %v", err)
+	}
+	if ag.Activity.Activity != types.ActivityBusy {
+		t.Fatalf("expected BUSY immediately following turn_end in grace window, got %v", ag.Activity.Activity)
+	}
+
+	// 6. Trailing agent_message arrives (emitted by Codex response_item or event_msg after turn_end)
+	// without active in-flight tools. It must NOT cancel the idle timer or latch BUSY.
+	msg := "Build complete successfully"
+	f6 := base
+	f6.Seq = 6
+	f6.Timestamp = 1050
+	f6.EventType = "agent_message"
+	f6.Data = types.TelemetryFrameData{Content: &msg}
+	if _, err := c.ProcessFrame(f6); err != nil {
+		t.Fatalf("agent_message failed: %v", err)
+	}
+
+	// 7. Wait for idle grace period to elapse (120ms > 80ms)
+	time.Sleep(120 * time.Millisecond)
+
+	reloaded, err := s.GetAgent(agentID)
+	if err != nil {
+		t.Fatalf("getting agent failed: %v", err)
+	}
+	if reloaded.Activity.Activity != types.ActivityIdle {
+		t.Fatalf("expected agent to transition to IDLE after grace window elapsed, but trailing agent_message latched it in %v", reloaded.Activity.Activity)
+	}
+
+	// 8. If an agent_message arrives when the agent is already IDLE (without in-flight tools),
+	// it must NOT transition or latch the agent into BUSY.
+	f7 := base
+	f7.Seq = 7
+	f7.Timestamp = 1200
+	f7.EventType = "agent_message"
+	msg2 := "Follow-up notes"
+	f7.Data = types.TelemetryFrameData{Content: &msg2}
+	agAfter, err := c.ProcessFrame(f7)
+	if err != nil {
+		t.Fatalf("subsequent agent_message failed: %v", err)
+	}
+	if agAfter.Activity.Activity != types.ActivityIdle {
+		t.Fatalf("expected agent to remain IDLE upon receiving agent_message without in-flight tools, got %v", agAfter.Activity.Activity)
+	}
+}
+
+func TestClassifier_ConversationalEventsDoNotAlterClassifierActivity(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+
+	c, s := newTestClassifier(t, sum)
+	grace := 80 * time.Millisecond
+	c.SetIdleGracePeriod(grace)
+	defer func() { _ = c.Close() }()
+
+	agentID := "env-test:claude:sess-msg-convo"
+	base := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       "env-test",
+		Environment: types.IEnvironmentInfo{ID: "env-test", Platform: "linux"},
+		AgentID:     agentID,
+		SessionID:   "sess-msg-convo",
+		PID:         501,
+		Harness:     types.HarnessClaudeCode,
+		Timestamp:   1000,
+	}
+
+	// 1. run_started -> agent is IDLE
+	f1 := base
+	f1.Seq = 1
+	f1.EventType = "run_started"
+	ag, err := c.ProcessFrame(f1)
+	if err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+	if ag.Activity.Activity != types.ActivityIdle {
+		t.Fatalf("expected IDLE after run_started, got %v", ag.Activity.Activity)
+	}
+
+	// 2. Hide agent; text and agent_message MUST NOT unhide the agent
+	tHide := int64(1005)
+	if _, err := s.SetAgentVisibility(agentID, true, &tHide); err != nil {
+		t.Fatalf("SetAgentVisibility failed: %v", err)
+	}
+
+	textMsg := "Analyzing code structure..."
+	fText := base
+	fText.Seq = 2
+	fText.Timestamp = 1010
+	fText.EventType = "text"
+	fText.Data = types.TelemetryFrameData{Content: &textMsg}
+	ag, err = c.ProcessFrame(fText)
+	if err != nil {
+		t.Fatalf("text frame failed: %v", err)
+	}
+	if !ag.IsHidden {
+		t.Fatalf("expected agent to remain hidden upon receiving out-of-scope text frame, got unhidden")
+	}
+
+	agentMsg := "Completed analysis notes."
+	fMsg := base
+	fMsg.Seq = 3
+	fMsg.Timestamp = 1020
+	fMsg.EventType = "agent_message"
+	fMsg.Data = types.TelemetryFrameData{Content: &agentMsg}
+	ag, err = c.ProcessFrame(fMsg)
+	if err != nil {
+		t.Fatalf("agent_message frame failed: %v", err)
+	}
+	if !ag.IsHidden {
+		t.Fatalf("expected agent to remain hidden upon receiving out-of-scope agent_message frame, got unhidden")
+	}
+
+	// Unhide explicitly for subsequent assertions
+	if _, err := s.SetAgentVisibility(agentID, false, nil); err != nil {
+		t.Fatalf("SetAgentVisibility unhide failed: %v", err)
+	}
+
+	// 3. While IDLE, text and agent_message do NOT transition agent to BUSY
+	if ag.Activity.Activity != types.ActivityIdle {
+		t.Fatalf("expected agent to remain IDLE, got %v", ag.Activity.Activity)
+	}
+	if c.SilenceTimerDuration(agentID) != 0 {
+		t.Fatalf("expected no silence timer scheduled for conversational events while IDLE")
+	}
+
+	// 4. turn_start transitions agent to BUSY
+	prompt := "Refactor classifier"
+	f4 := base
+	f4.Seq = 4
+	f4.Timestamp = 1030
+	f4.EventType = "turn_start"
+	f4.Data = types.TelemetryFrameData{Content: &prompt}
+	ag, err = c.ProcessFrame(f4)
+	if err != nil {
+		t.Fatalf("turn_start failed: %v", err)
+	}
+	if ag.Activity.Activity != types.ActivityBusy {
+		t.Fatalf("expected BUSY after turn_start, got %v", ag.Activity.Activity)
+	}
+
+	// 5. turn_end schedules idle grace period
+	stopReason := "end_turn"
+	f5 := base
+	f5.Seq = 5
+	f5.Timestamp = 1040
+	f5.EventType = "turn_end"
+	f5.Data = types.TelemetryFrameData{StopReason: &stopReason}
+	ag, err = c.ProcessFrame(f5)
+	if err != nil {
+		t.Fatalf("turn_end failed: %v", err)
+	}
+	if ag.Activity.Activity != types.ActivityBusy {
+		t.Fatalf("expected BUSY during grace window, got %v", ag.Activity.Activity)
+	}
+
+	// 6. Trailing text frame arrives during grace window; must NOT cancel grace timer or latch BUSY
+	f6 := base
+	f6.Seq = 6
+	f6.Timestamp = 1050
+	f6.EventType = "text"
+	f6.Data = types.TelemetryFrameData{Content: &textMsg}
+	if _, err := c.ProcessFrame(f6); err != nil {
+		t.Fatalf("text frame during grace window failed: %v", err)
+	}
+
+	// 7. Wait for idle grace period to elapse
+	time.Sleep(120 * time.Millisecond)
+
+	reloaded, err := s.GetAgent(agentID)
+	if err != nil {
+		t.Fatalf("getting agent failed: %v", err)
+	}
+	if reloaded.Activity.Activity != types.ActivityIdle {
+		t.Fatalf("expected agent to transition to IDLE after grace window elapsed, but got %v", reloaded.Activity.Activity)
 	}
 }
 
@@ -8603,11 +9218,11 @@ func TestClassifier_HasUnseenCompletion_TurnCompletionAndTransitions(t *testing.
 	f7b := baseFrame
 	f7b.Seq = 8
 	f7b.Timestamp = 7500
-	f7b.EventType = "user_prompt"
+	f7b.EventType = "turn_start"
 	f7b.Data = types.TelemetryFrameData{Content: &userAns}
 	_, err = c.ProcessFrame(f7b)
 	if err != nil {
-		t.Fatalf("user_prompt failed: %v", err)
+		t.Fatalf("turn_start failed: %v", err)
 	}
 
 	// 8. Turn end to IDLE -> HasUnseenCompletion true
@@ -9024,12 +9639,12 @@ func TestClassifier_RateLimitedActivity(t *testing.T) {
 		fRoot.SessionID = "session-root-rl"
 		fRoot.Seq = 1
 		fRoot.Timestamp = 1000
-		fRoot.EventType = "user_prompt"
+		fRoot.EventType = "turn_start"
 		prompt := "do task"
 		fRoot.Data = types.TelemetryFrameData{Content: &prompt}
 		_, err := c.ProcessFrame(fRoot)
 		if err != nil {
-			t.Fatalf("user_prompt failed: %v", err)
+			t.Fatalf("turn_start failed: %v", err)
 		}
 
 		subID := "sub-1"
@@ -9164,7 +9779,7 @@ func TestClassifier_RateLimitedActivity(t *testing.T) {
 		}
 	})
 
-	t.Run("stale rate limit metadata cleared on text and thinking transitions", func(t *testing.T) {
+	t.Run("stale rate limit metadata cleared on turn_start and thinking transitions", func(t *testing.T) {
 		c := newTestClassifier()
 		f := baseFrame
 		f.AgentID = "agent-stale-rl"
@@ -9187,7 +9802,7 @@ func TestClassifier_RateLimitedActivity(t *testing.T) {
 			t.Fatalf("expected ActivityRateLimited, got %v", agent.Activity.Activity)
 		}
 
-		// Send text frame -> should transition to BUSY and clear rate limit metadata
+		// Conversational text does not drive state machine transitions and does not alter rate limit state
 		fText := baseFrame
 		fText.AgentID = "agent-stale-rl"
 		fText.SessionID = "sess-stale-rl"
@@ -9200,18 +9815,35 @@ func TestClassifier_RateLimitedActivity(t *testing.T) {
 		if err != nil {
 			t.Fatalf("text frame failed: %v", err)
 		}
-		if agentText.Activity.Activity != types.ActivityBusy {
-			t.Errorf("expected ActivityBusy, got %v", agentText.Activity.Activity)
+		if agentText.Activity.Activity != types.ActivityRateLimited {
+			t.Errorf("expected ActivityRateLimited to remain unaltered by text, got %v", agentText.Activity.Activity)
 		}
-		if agentText.Activity.RateLimitResetAt != nil {
-			t.Errorf("expected nil RateLimitResetAt after text, got %v", agentText.Activity.RateLimitResetAt)
+
+		// Send turn_start frame -> should transition to BUSY and clear rate limit metadata
+		fTurn := baseFrame
+		fTurn.AgentID = "agent-stale-rl"
+		fTurn.SessionID = "sess-stale-rl"
+		fTurn.Seq = 3
+		fTurn.Timestamp = 2500
+		fTurn.EventType = "turn_start"
+		p := "proceed with next step"
+		fTurn.Data = types.TelemetryFrameData{Content: &p}
+		agentTurn, err := c.ProcessFrame(fTurn)
+		if err != nil {
+			t.Fatalf("turn_start frame failed: %v", err)
 		}
-		if agentText.Activity.RetryAfterSeconds != nil {
-			t.Errorf("expected nil RetryAfterSeconds after text, got %v", agentText.Activity.RetryAfterSeconds)
+		if agentTurn.Activity.Activity != types.ActivityBusy {
+			t.Errorf("expected ActivityBusy, got %v", agentTurn.Activity.Activity)
+		}
+		if agentTurn.Activity.RateLimitResetAt != nil {
+			t.Errorf("expected nil RateLimitResetAt after turn_start, got %v", agentTurn.Activity.RateLimitResetAt)
+		}
+		if agentTurn.Activity.RetryAfterSeconds != nil {
+			t.Errorf("expected nil RetryAfterSeconds after turn_start, got %v", agentTurn.Activity.RetryAfterSeconds)
 		}
 
 		// Rate limit again
-		f.Seq = 3
+		f.Seq = 4
 		f.Timestamp = 3000
 		_, err = c.ProcessFrame(f)
 		if err != nil {
@@ -9222,7 +9854,7 @@ func TestClassifier_RateLimitedActivity(t *testing.T) {
 		fThink := baseFrame
 		fThink.AgentID = "agent-stale-rl"
 		fThink.SessionID = "sess-stale-rl"
-		fThink.Seq = 4
+		fThink.Seq = 5
 		fThink.Timestamp = 4000
 		fThink.EventType = "thinking"
 		thk := "thinking about plan"

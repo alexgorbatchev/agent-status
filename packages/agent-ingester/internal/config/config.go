@@ -1,54 +1,58 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
+
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
+	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/classifier"
 )
 
 type Config struct {
-	Addr               string
-	BearerToken        string
-	DBPath             string
-	NotifySock         string
-	NoSummarize        bool
-	NoSummarizeByFlag  bool
-	NoSummarizeByEnv   bool
-	NoSummarizeSource  string
-	LiteLLMBaseURL     string
-	LiteLLMAPIKey      string
-	GeminiAPIKey       string
-	AnthropicAPIKey    string
-	SummarizerModel    string
-	LogLevel           string
-	LogDir             string
-	LogFile            string
-	TurnEndGraceWindow time.Duration
-	TurnEndGrace       time.Duration
+	Addr              string
+	BearerToken       string
+	DBPath            string
+	NotifySock        string
+	NoSummarize       bool
+	NoSummarizeByFlag bool
+	NoSummarizeByEnv  bool
+	NoSummarizeSource string
+	LiteLLMBaseURL    string
+	LiteLLMAPIKey     string
+	GeminiAPIKey      string
+	AnthropicAPIKey   string
+	SummarizerModel   string
+	LogLevel          string
+	LogDir            string
+	LogFile           string
+	IdleGracePeriod   time.Duration
 }
 
-func parseTurnEndGrace() time.Duration {
-	defaultGrace := 2500 * time.Millisecond
-	raw := os.Getenv("AIR_TURN_END_GRACE")
-	if raw == "" {
-		raw = os.Getenv("AIR_TURN_END_GRACE_WINDOW")
+func parseIdleGracePeriod() time.Duration {
+	v := os.Getenv("AIR_IDLE_GRACE_PERIOD")
+	if v == "" {
+		return classifier.DefaultIdleGracePeriod
 	}
-	if raw != "" {
-		if d, err := time.ParseDuration(raw); err == nil {
-			return d
-		}
-		if ms, err := strconv.ParseInt(raw, 10, 64); err == nil {
-			return time.Duration(ms) * time.Millisecond
-		}
-		return defaultGrace
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		logging.Error("invalid_idle_grace_period", "raw", v, "err", err, "default", classifier.DefaultIdleGracePeriod)
+		return classifier.DefaultIdleGracePeriod
 	}
-	if msStr := os.Getenv("AIR_TURN_END_GRACE_MS"); msStr != "" {
-		if ms, err := strconv.ParseInt(msStr, 10, 64); err == nil {
-			return time.Duration(ms) * time.Millisecond
-		}
+	if d < 0 {
+		logging.Error("invalid_idle_grace_period", "value", v, "err", "duration cannot be negative")
+		return classifier.DefaultIdleGracePeriod
 	}
-	return defaultGrace
+	return d
+}
+
+// Validate checks the configuration for invalid values.
+func (c *Config) Validate() error {
+	if c.IdleGracePeriod < 0 {
+		return fmt.Errorf("idle grace period must be non-negative: %v", c.IdleGracePeriod)
+	}
+	return nil
 }
 
 func Load() *Config {
@@ -94,7 +98,7 @@ func Load() *Config {
 		noSummarizeSource = "env"
 	}
 
-	turnEndGrace := parseTurnEndGrace()
+	idleGrace := parseIdleGracePeriod()
 
 	return &Config{
 		Addr:              addr,
@@ -113,7 +117,6 @@ func Load() *Config {
 		LogLevel:          "info",
 		LogDir:            os.Getenv("AIR_LOG_DIR"),
 		LogFile:           os.Getenv("AIR_LOG_FILE"),
-		TurnEndGraceWindow: turnEndGrace,
-		TurnEndGrace:       turnEndGrace,
+		IdleGracePeriod:   idleGrace,
 	}
 }

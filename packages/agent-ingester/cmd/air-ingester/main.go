@@ -32,6 +32,13 @@ func newRootCmd(cfg *config.Config) *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:   "air-ingester",
 		Short: "Agent Status Central Telemetry Ingestion Daemon",
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			if err := cfg.Validate(); err != nil {
+				logging.Error("config_validation_failed", "err", err)
+				return fmt.Errorf("invalid configuration: %w", err)
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
@@ -53,6 +60,7 @@ func newRootCmd(cfg *config.Config) *cobra.Command {
 	rootCmd.Flags().StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "Log level (debug, info, warn, error)")
 	rootCmd.Flags().StringVar(&cfg.LogDir, "log-dir", cfg.LogDir, "Directory for rotating log files on disk (default: $XDG_STATE_HOME/agent-status/logs)")
 	rootCmd.Flags().StringVar(&cfg.LogFile, "log-file", cfg.LogFile, "Custom path for rotating log file on disk")
+	rootCmd.Flags().DurationVar(&cfg.IdleGracePeriod, "idle-grace-period", cfg.IdleGracePeriod, "Grace period before transitioning from BUSY to IDLE on turn end")
 
 	cobrahelptree.Setup(rootCmd)
 
@@ -88,6 +96,11 @@ func runServer(ctx context.Context, cmd *cobra.Command, cfg *config.Config, read
 	}()
 
 	logging.Info("server_starting", "addr", cfg.Addr, "db", cfg.DBPath, "notifySock", cfg.NotifySock, "noSummarize", cfg.NoSummarize)
+
+	if err := cfg.Validate(); err != nil {
+		logging.Error("config_validation_failed", "err", err)
+		return fmt.Errorf("invalid configuration: %w", err)
+	}
 
 	syncNoSummarizeSource(cmd, cfg)
 
@@ -131,7 +144,7 @@ func runServer(ctx context.Context, cmd *cobra.Command, cfg *config.Config, read
 	}()
 
 	cls := classifier.New(st, priceEngine, sumEngine)
-	cls.SetTurnEndGraceWindow(cfg.TurnEndGraceWindow)
+	cls.SetIdleGracePeriod(cfg.IdleGracePeriod)
 	defer func() {
 		_ = cls.Close()
 	}()

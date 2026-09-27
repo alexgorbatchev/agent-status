@@ -31,6 +31,7 @@ Offline replay and validation CLI tool for agent session transcripts through the
 - Render hierarchical tree-view help screens with `cobra-help-tree`.
 - Dual-mode output: formatted tables and trees when `AGENT=0`, compact token-conservative key-value lines when `AGENT=1`.
 - Act strictly as an external driver; zero debug flags or conditional forks in production daemons.
+- Offline session replay disables the ingestion classifier idle grace period (`SetIdleGracePeriod(0)`) to evaluate event sequences without simulated wall-clock debounce delays.
 - Terminal width and alignment rely on `runewidth` cell calculations via `VisualWidth` (`runewidth.StringWidth(StripANSI(s))`) and rune-safe truncation via `TruncateVisual` to account for wide Unicode characters and zero-width ANSI escape sequences.
 - Default runewidth condition is pinned via `runewidth.DefaultCondition.EastAsianWidth = false` to guarantee deterministic single-cell width across all environments and locales (#112).
 - Tables enforce ASCII tablewriter configuration (`tw.StyleASCII`, `tw.Off` EastAsian), and tree structures use ASCII-only structural glyphs (`v`, `|-`, `+-`) to avoid ambiguous width misalignment (#112).

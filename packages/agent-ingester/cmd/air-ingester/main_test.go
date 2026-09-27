@@ -173,6 +173,83 @@ func TestIngesterDefaultConfig(t *testing.T) {
 	if flag.DefValue != "false" {
 		t.Errorf("expected --no-summarize default value to be 'false', got %q", flag.DefValue)
 	}
+
+	idleFlag := cmd.Flags().Lookup("idle-grace-period")
+	if idleFlag == nil {
+		t.Fatal("missing --idle-grace-period flag")
+	}
+	if idleFlag.DefValue != "5s" {
+		t.Errorf("expected --idle-grace-period default value to be '5s', got %q", idleFlag.DefValue)
+	}
+}
+
+func TestIngesterIdleGracePeriodFlag(t *testing.T) {
+	t.Run("parse valid duration flag", func(t *testing.T) {
+		cfg := &config.Config{
+			IdleGracePeriod: 5 * time.Second,
+		}
+		cmd := newRootCmd(cfg)
+		if err := cmd.ParseFlags([]string{"--idle-grace-period", "2500ms"}); err != nil {
+			t.Fatalf("ParseFlags failed: %v", err)
+		}
+		if cfg.IdleGracePeriod != 2500*time.Millisecond {
+			t.Errorf("got IdleGracePeriod %v, want 2500ms", cfg.IdleGracePeriod)
+		}
+	})
+
+	t.Run("parse zero duration flag disables debounce", func(t *testing.T) {
+		cfg := &config.Config{
+			IdleGracePeriod: 5 * time.Second,
+		}
+		cmd := newRootCmd(cfg)
+		if err := cmd.ParseFlags([]string{"--idle-grace-period=0s"}); err != nil {
+			t.Fatalf("ParseFlags failed: %v", err)
+		}
+		if cfg.IdleGracePeriod != 0 {
+			t.Errorf("got IdleGracePeriod %v, want 0", cfg.IdleGracePeriod)
+		}
+	})
+
+	t.Run("rejects negative duration via command validation", func(t *testing.T) {
+		cfg := &config.Config{
+			IdleGracePeriod: 5 * time.Second,
+		}
+		cmd := newRootCmd(cfg)
+		cmd.SetArgs([]string{"--idle-grace-period", "-3s"})
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatal("expected error executing command with negative idle-grace-period, got nil")
+		}
+		if !strings.Contains(err.Error(), "idle grace period must be non-negative") {
+			t.Errorf("expected error message to mention non-negative, got %v", err)
+		}
+	})
+
+	t.Run("falls back to default duration via invalid negative environment variable", func(t *testing.T) {
+		t.Setenv("AIR_IDLE_GRACE_PERIOD", "-4s")
+		cfg := config.Load()
+		if cfg.IdleGracePeriod != 5*time.Second {
+			t.Fatalf("expected IdleGracePeriod to fall back to default 5s, got %v", cfg.IdleGracePeriod)
+		}
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("expected Validate to succeed, got %v", err)
+		}
+	})
+}
+
+func TestRunServer_ConfigValidationRejectsNegativeDuration(t *testing.T) {
+	cfg := &config.Config{
+		IdleGracePeriod: -2 * time.Second,
+	}
+	cmd := newRootCmd(cfg)
+	ctx := context.Background()
+	err := runServer(ctx, cmd, cfg)
+	if err == nil {
+		t.Fatal("expected runServer to reject negative duration, got nil")
+	}
+	if !strings.Contains(err.Error(), "idle grace period must be non-negative") {
+		t.Errorf("expected error to mention non-negative, got %v", err)
+	}
 }
 
 func TestSyncNoSummarizeSource(t *testing.T) {

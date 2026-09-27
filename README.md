@@ -121,6 +121,7 @@ Sample Output:
 | `--litellm-key <key>`       | (none) | `""`                                          | API key for OpenAI-compatible or LiteLLM proxy  |
 | `--summarizer-model <name>` | (none) | `""`                                          | Model identifier used for action summarization  |
 | `--log-level <level>`       | (none) | `info`                                        | Log level (`debug`, `info`, `warn`, `error`)    |
+| `--idle-grace-period <dur>` | (none) | `5s`                                          | Grace period before transitioning from BUSY to IDLE on turn end |
 | `--version`                 | `-v`   | `false`                                       | Print version information and exit              |
 | `--help`                    | `-h`   | `false`                                       | Print command line help                         |
 
@@ -168,9 +169,10 @@ The table below lists environment variables read by the system, in precedence an
 | `OPENAI_API_KEY`       | (none)                                           | Fallback API authentication key when LiteLLM keys are unset                              |
 | `GEMINI_API_KEY`       | (none)                                           | API key for Google Gemini action summarization provider                                  |
 | `ANTHROPIC_API_KEY`    | (none)                                           | API key for Anthropic Claude action summarization provider                               |
-| `AIR_SUMMARIZER_MODEL` | Provider default                                 | Custom model identifier override for action summarization                                |
-| `AIR_NO_SUMMARIZE`     | `0`                                              | Set to `1` to disable LLM action summarization and use deterministic fallback heuristics |
-| `AIR_LOG_DIR`          | `~/.local/state/agent-status/logs`               | Directory path for rotating daemon disk logs                                             |
+| `AIR_SUMMARIZER_MODEL`  | Provider default                                 | Custom model identifier override for action summarization                                |
+| `AIR_NO_SUMMARIZE`      | `0`                                              | Set to `1` to disable LLM action summarization and use deterministic fallback heuristics |
+| `AIR_IDLE_GRACE_PERIOD` | `5s`                                             | Grace period to debounce BUSY -> IDLE transitions after turn end                         |
+| `AIR_LOG_DIR`           | `~/.local/state/agent-status/logs`               | Directory path for rotating daemon disk logs                                             |
 | `AIR_LOG_FILE`         | (none)                                           | Explicit file path override for daemon disk logging                                      |
 
 # License
