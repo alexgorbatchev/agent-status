@@ -42,6 +42,7 @@ type observerOptions struct {
 	logLevel            string
 	logDir              string
 	logFile             string
+	procSnapshotProvider scanner.ProcessSnapshotProvider
 }
 
 func newRootCmd() (*cobra.Command, *observerOptions) {
@@ -267,6 +268,11 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 	}
 	opencodeScanner := scanner.NewOpencodeScanner(opencodePath, nil)
 
+	procSnapshotProvider := opts.procSnapshotProvider
+	if procSnapshotProvider == nil {
+		procSnapshotProvider = scanner.NewLiveProcessSnapshotProvider()
+	}
+
 	type activeTail struct {
 		tailer *tailer.Tailer
 		cancel context.CancelFunc
@@ -477,6 +483,12 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 	}
 
 	scanAll := func() {
+		tickProvider := scanner.NewTickProcessSnapshotProvider(procSnapshotProvider)
+		ccScanner.SetProcessSnapshotProvider(tickProvider)
+		piScanner.SetProcessSnapshotProvider(tickProvider)
+		codexScanner.SetProcessSnapshotProvider(tickProvider)
+		opencodeScanner.SetProcessSnapshotProvider(tickProvider)
+
 		// 1. Scan Claude Code
 		ccSessions, err := ccScanner.Scan()
 		newCCMap := make(map[string]claudeSessionInfo)

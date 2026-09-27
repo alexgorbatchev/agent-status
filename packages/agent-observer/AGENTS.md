@@ -21,6 +21,7 @@ Local observer daemon (`air-observer`) that scans harness sessions, tails transc
 - Shipper implements bounded dispatch with tailer backpressure (`NewTailerWithOffsetHandler`) and sequence-keyed ACK callbacks; reads pause when disconnected or buffer is full.
 - Shipper resets exponential backoff only upon receiving an ACK from the ingester or after 5s of sustained error-free streaming, rather than immediately on the hello frame.
 - Tailers share directory fsnotify watches via a reference-counted `WatcherRegistry` (`internal/tailer/watcher.go`), dispatching file-change events selectively to the owning tailer to avoid descriptor leaks and O(N^2) wakeup stampedes in multi-subagent sessions.
+- Process enumeration is captured at most once per scan tick using a shared `ProcessSnapshot` (`internal/scanner/process_snapshot.go`) storing lightweight scalar metadata (`PID`, `Name`, `CreateTime`, `Alive`) rather than full process handles; on Darwin, bulk kernel querying uses `unix.SysctlKinfoProcSlice("kern.proc.all")` in a single syscall, cheap name filtering excludes non-agent processes before cmdline/cwd inspection, and Claude Code probes candidate PIDs (`unix.Kill(pid, 0)`) to skip snapshot enumeration entirely when all on-disk sessions belong to dead processes. Process finding is skipped in scanners when there are no candidate session files to pair.
 - Structured logging uses `packages/agent-common/logging` with snake_case actions and dual-mode (`AGENT=1`) output.
 
 ## Local gotchas

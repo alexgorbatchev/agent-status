@@ -565,3 +565,53 @@ func TestCodexScanner_MultipleSessionsAndResumed(t *testing.T) {
 		t.Errorf("expected resumed session %s to be active with PID 6002, got active=%v PID=%d", resumedID, resumedDesc.IsActive, resumedDesc.PID)
 	}
 }
+
+func TestCodexScanner_SkipsProcessFinderWhenNoCandidateSessions(t *testing.T) {
+	tmpDir := t.TempDir()
+	emptySessionsDir := filepath.Join(tmpDir, "empty_sessions")
+	if err := os.MkdirAll(emptySessionsDir, 0755); err != nil {
+		t.Fatalf("failed to create empty sessions dir: %v", err)
+	}
+
+	finderCalled := 0
+	mockFinder := func(ctx context.Context) ([]CodexProcessInfo, error) {
+		finderCalled++
+		return nil, nil
+	}
+
+	scanner := NewCodexScanner(emptySessionsDir, mockFinder)
+	sessions, err := scanner.Scan(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error from Scan: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Errorf("expected 0 sessions, got %d", len(sessions))
+	}
+	if finderCalled != 0 {
+		t.Errorf("expected process finder NOT to be called when sessions dir has 0 candidate files, but it was called %d times", finderCalled)
+	}
+}
+
+func TestCodexScanner_SetProcessFinderAndProvider(t *testing.T) {
+	scanner := NewCodexScanner("/dummy", nil)
+
+	customFinder := func(ctx context.Context) ([]CodexProcessInfo, error) {
+		return []CodexProcessInfo{{PID: 234}}, nil
+	}
+	scanner.SetProcessFinder(customFinder)
+	procs, err := scanner.processFinder(context.Background())
+	if err != nil || len(procs) != 1 || procs[0].PID != 234 {
+		t.Errorf("SetProcessFinder failed: %v, %v", procs, err)
+	}
+
+	snapProvider := ProcessSnapshotProviderFunc(func(ctx context.Context) (ProcessSnapshot, error) {
+		return &testDummySnapshot{alivePID: 102}, nil
+	})
+	scanner.SetProcessSnapshotProvider(snapProvider)
+	procs, err = scanner.processFinder(context.Background())
+	if err != nil || len(procs) != 1 || procs[0].PID != 102 {
+		t.Errorf("SetProcessSnapshotProvider failed: %v, %v", procs, err)
+	}
+}
+
+

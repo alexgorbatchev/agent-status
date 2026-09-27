@@ -25,7 +25,16 @@ type OpencodeProcessInfo = internalscanner.OpencodeProcessInfo
 type OpencodeProcessFinder = internalscanner.OpencodeProcessFinder
 type OpencodeScanner = internalscanner.OpencodeScanner
 
+type ProcessSnapshot = internalscanner.ProcessSnapshot
+type ProcessSnapshotProvider = internalscanner.ProcessSnapshotProvider
+type ProcessSnapshotProviderFunc = internalscanner.ProcessSnapshotProviderFunc
+type TickProcessSnapshotProvider = internalscanner.TickProcessSnapshotProvider
+type LiveProcessSnapshot = internalscanner.LiveProcessSnapshot
+type LiveProcessSnapshotProvider = internalscanner.LiveProcessSnapshotProvider
+type ProcessMeta = internalscanner.ProcessMeta
+
 var (
+
 	DefaultClaudeSessionDirs = internalscanner.DefaultClaudeSessionDirs
 	NewClaudeCodeScanner    = internalscanner.NewClaudeCodeScanner
 
@@ -42,4 +51,11 @@ var (
 	DefaultOpencodeDBPath     = internalscanner.DefaultOpencodeDBPath
 	LiveOpencodeProcessFinder = internalscanner.LiveOpencodeProcessFinder
 	NewOpencodeScanner        = internalscanner.NewOpencodeScanner
+
+	NewTickProcessSnapshotProvider = internalscanner.NewTickProcessSnapshotProvider
+	NewLiveProcessSnapshotProvider = internalscanner.NewLiveProcessSnapshotProvider
+	CaptureProcessSnapshot         = internalscanner.CaptureProcessSnapshot
+	SnapshotPiProcessFinder        = internalscanner.SnapshotPiProcessFinder
+	SnapshotCodexProcessFinder     = internalscanner.SnapshotCodexProcessFinder
+	SnapshotOpencodeProcessFinder  = internalscanner.SnapshotOpencodeProcessFinder
 )

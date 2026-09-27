@@ -1,7 +1,9 @@
 package scanner
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -351,6 +353,176 @@ func TestProcessHelpers(t *testing.T) {
 			t.Errorf("GetProcessCWD(-1) expected error")
 		}
 	})
+}
+
+func TestClaudeCodeScanner_WithSnapshotProvider(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionsDir := filepath.Join(tmpDir, "claude-sessions")
+	if err := os.MkdirAll(sessionsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	currentPID := os.Getpid()
+	now := time.Now().UnixMilli()
+
+	validDesc := SessionDescriptor{
+		PID:            currentPID,
+		SessionID:      "sess-snap-valid",
+		CWD:            tmpDir,
+		Status:         "active",
+		TranscriptPath: filepath.Join(tmpDir, "transcript.jsonl"),
+		StartedAt:      now,
+	}
+	vBytes, _ := json.Marshal(validDesc)
+	_ = os.WriteFile(filepath.Join(sessionsDir, "valid.json"), vBytes, 0600)
+
+	deadDesc := SessionDescriptor{
+		PID:            999999,
+		SessionID:      "sess-snap-dead",
+		CWD:            tmpDir,
+		Status:         "active",
+		TranscriptPath: filepath.Join(tmpDir, "transcript.jsonl"),
+		StartedAt:      now,
+	}
+	dBytes, _ := json.Marshal(deadDesc)
+	_ = os.WriteFile(filepath.Join(sessionsDir, "dead.json"), dBytes, 0600)
+
+	driftDesc := SessionDescriptor{
+		PID:            currentPID,
+		SessionID:      "sess-snap-drift",
+		CWD:            tmpDir,
+		Status:         "active",
+		TranscriptPath: filepath.Join(tmpDir, "transcript.jsonl"),
+		StartedAt:      now + 200000,
+	}
+	drBytes, _ := json.Marshal(driftDesc)
+	_ = os.WriteFile(filepath.Join(sessionsDir, "drift.json"), drBytes, 0600)
+
+	mockSnap := &LiveProcessSnapshot{
+		processes: map[int]ProcessMeta{
+			currentPID: {
+				PID:        currentPID,
+				Name:       "node",
+				CreateTime: now,
+				Alive:      true,
+			},
+		},
+	}
+
+	provider := ProcessSnapshotProviderFunc(func(ctx context.Context) (ProcessSnapshot, error) {
+		return mockSnap, nil
+	})
+
+	scanner := NewClaudeCodeScanner([]string{sessionsDir})
+	scanner.SetProcessSnapshotProvider(provider)
+
+	sessions, err := scanner.Scan()
+	if err != nil {
+		t.Fatalf("scanner.Scan error: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 valid session, got %d", len(sessions))
+	}
+	if sessions[0].SessionID != "sess-snap-valid" {
+		t.Errorf("expected sess-snap-valid, got %s", sessions[0].SessionID)
+	}
+
+	// Test with provider returning nil / error fallback
+	errProvider := ProcessSnapshotProviderFunc(func(ctx context.Context) (ProcessSnapshot, error) {
+		return nil, errors.New("err")
+	})
+	scanner.SetProcessSnapshotProvider(errProvider)
+	sessionsFallback, err := scanner.Scan()
+	if err != nil {
+		t.Fatalf("scanner.Scan fallback error: %v", err)
+	}
+	if len(sessionsFallback) != 1 {
+		t.Errorf("expected 1 session from fallback, got %d", len(sessionsFallback))
+	}
+}
+
+func TestClaudeCodeScanner_DefersProcessSnapshotOnDeadSessions(t *testing.T) {
+	tmpDir := t.TempDir()
+	sessionsDir := filepath.Join(tmpDir, "claude-sessions")
+	if err := os.MkdirAll(sessionsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	deadPID := 99999999
+	deadDesc := SessionDescriptor{
+		PID:            deadPID,
+		SessionID:      "sess-dead-only",
+		CWD:            tmpDir,
+		Status:         "active",
+		TranscriptPath: filepath.Join(tmpDir, "transcript.jsonl"),
+		StartedAt:      time.Now().UnixMilli(),
+	}
+	dBytes, _ := json.Marshal(deadDesc)
+	if err := os.WriteFile(filepath.Join(sessionsDir, "dead.json"), dBytes, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := 0
+	provider := ProcessSnapshotProviderFunc(func(ctx context.Context) (ProcessSnapshot, error) {
+		calls++
+		return &LiveProcessSnapshot{}, nil
+	})
+
+	scanner := NewClaudeCodeScanner([]string{sessionsDir})
+	scanner.SetProcessSnapshotProvider(provider)
+
+	sessions, err := scanner.Scan()
+	if err != nil {
+		t.Fatalf("scanner.Scan error: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Errorf("expected 0 sessions from dead descriptor, got %d", len(sessions))
+	}
+	if calls != 0 {
+		t.Errorf("expected snapshot provider calls = 0 when all sessions are dead, got %d", calls)
+	}
+
+	// Now add a live process candidate (current test runner process)
+	currentPID := os.Getpid()
+	liveDesc := SessionDescriptor{
+		PID:            currentPID,
+		SessionID:      "sess-live-added",
+		CWD:            tmpDir,
+		Status:         "active",
+		TranscriptPath: filepath.Join(tmpDir, "transcript.jsonl"),
+		StartedAt:      time.Now().UnixMilli(),
+	}
+	lBytes, _ := json.Marshal(liveDesc)
+	if err := os.WriteFile(filepath.Join(sessionsDir, "live.json"), lBytes, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	liveSnap := &LiveProcessSnapshot{
+		processes: map[int]ProcessMeta{
+			currentPID: {
+				PID:        currentPID,
+				Name:       "test-proc",
+				CreateTime: liveDesc.StartedAt,
+				Alive:      true,
+			},
+		},
+	}
+	liveProvider := ProcessSnapshotProviderFunc(func(ctx context.Context) (ProcessSnapshot, error) {
+		calls++
+		return liveSnap, nil
+	})
+	scanner.SetProcessSnapshotProvider(liveProvider)
+
+	sessions, err = scanner.Scan()
+	if err != nil {
+		t.Fatalf("scanner.Scan error: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Errorf("expected 1 session from live candidate, got %d", len(sessions))
+	}
+	if calls != 1 {
+		t.Errorf("expected snapshot provider calls = 1 when live candidate is present, got %d", calls)
+	}
 }
 
 func TestClaudeCodeDescriptor_NameAndNameSource(t *testing.T) {

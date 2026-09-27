@@ -149,6 +149,16 @@ func NewCodexScanner(sessionsDir string, finder CodexProcessFinder) *CodexScanne
 	}
 }
 
+func (s *CodexScanner) SetProcessFinder(finder CodexProcessFinder) {
+	s.processFinder = finder
+}
+
+func (s *CodexScanner) SetProcessSnapshotProvider(provider ProcessSnapshotProvider) {
+	if provider != nil {
+		s.processFinder = SnapshotCodexProcessFinder(provider)
+	}
+}
+
 func parseRFC3339Time(s string) int64 {
 	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
 		return t.UnixMilli()
@@ -246,17 +256,6 @@ func (s *CodexScanner) Scan(ctx context.Context) ([]CodexSessionDescriptor, erro
 		return nil, fmt.Errorf("accessing codex sessions dir: %w", err)
 	}
 
-	var activeProcs []CodexProcessInfo
-	if s.processFinder != nil {
-		activeProcs, _ = s.processFinder(ctx)
-	}
-
-	procsByCWD := make(map[string][]CodexProcessInfo)
-	for _, proc := range activeProcs {
-		cleanCWD := filepath.Clean(proc.CWD)
-		procsByCWD[cleanCWD] = append(procsByCWD[cleanCWD], proc)
-	}
-
 	type codexCandidate struct {
 		desc       CodexSessionDescriptor
 		headerTime int64
@@ -320,6 +319,21 @@ func (s *CodexScanner) Scan(ctx context.Context) ([]CodexSessionDescriptor, erro
 
 	if err != nil {
 		return nil, fmt.Errorf("walking codex sessions dir: %w", err)
+	}
+
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+
+	var activeProcs []CodexProcessInfo
+	if s.processFinder != nil {
+		activeProcs, _ = s.processFinder(ctx)
+	}
+
+	procsByCWD := make(map[string][]CodexProcessInfo)
+	for _, proc := range activeProcs {
+		cleanCWD := filepath.Clean(proc.CWD)
+		procsByCWD[cleanCWD] = append(procsByCWD[cleanCWD], proc)
 	}
 
 	// Sort candidates by modification time descending so newest and resumed sessions take precedence.

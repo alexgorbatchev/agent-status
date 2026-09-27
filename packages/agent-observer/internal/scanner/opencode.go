@@ -117,6 +117,16 @@ func NewOpencodeScanner(dbPath string, finder OpencodeProcessFinder) *OpencodeSc
 	}
 }
 
+func (s *OpencodeScanner) SetProcessFinder(finder OpencodeProcessFinder) {
+	s.processFinder = finder
+}
+
+func (s *OpencodeScanner) SetProcessSnapshotProvider(provider ProcessSnapshotProvider) {
+	if provider != nil {
+		s.processFinder = SnapshotOpencodeProcessFinder(provider)
+	}
+}
+
 func (s *OpencodeScanner) Scan(ctx context.Context) ([]OpencodeSessionDescriptor, error) {
 	if s.dbPath == "" {
 		return nil, nil
@@ -144,8 +154,20 @@ func (s *OpencodeScanner) Scan(ctx context.Context) ([]OpencodeSessionDescriptor
 		return nil, fmt.Errorf("getting opencode sessions: %w", err)
 	}
 
+	if len(sessions) == 0 {
+		return nil, nil
+	}
+
+	hasCandidates := false
+	for _, sess := range sessions {
+		if !sess.IsArchived {
+			hasCandidates = true
+			break
+		}
+	}
+
 	var activeProcs []OpencodeProcessInfo
-	if s.processFinder != nil {
+	if hasCandidates && s.processFinder != nil {
 		activeProcs, _ = s.processFinder(ctx)
 	}
 

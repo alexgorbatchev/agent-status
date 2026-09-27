@@ -659,3 +659,53 @@ func TestPiScanner_CacheUnchangedSessionFiles(t *testing.T) {
 		t.Errorf("expected cache to be cleared when sessionsDir does not exist, got len=%d", clearedLen)
 	}
 }
+
+func TestPiScanner_SkipsProcessFinderWhenNoCandidateSessions(t *testing.T) {
+	tmpDir := t.TempDir()
+	emptySessionsDir := filepath.Join(tmpDir, "empty_sessions")
+	if err := os.MkdirAll(emptySessionsDir, 0755); err != nil {
+		t.Fatalf("failed to create empty sessions dir: %v", err)
+	}
+
+	finderCalled := 0
+	mockFinder := func(ctx context.Context) ([]PiProcessInfo, error) {
+		finderCalled++
+		return nil, nil
+	}
+
+	scanner := NewPiScanner(emptySessionsDir, mockFinder)
+	sessions, err := scanner.Scan(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error from Scan: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Errorf("expected 0 sessions, got %d", len(sessions))
+	}
+	if finderCalled != 0 {
+		t.Errorf("expected process finder NOT to be called when sessions dir has 0 candidate files, but it was called %d times", finderCalled)
+	}
+}
+
+func TestPiScanner_SetProcessFinderAndProvider(t *testing.T) {
+	scanner := NewPiScanner("/dummy", nil)
+
+	customFinder := func(ctx context.Context) ([]PiProcessInfo, error) {
+		return []PiProcessInfo{{PID: 123}}, nil
+	}
+	scanner.SetProcessFinder(customFinder)
+	procs, err := scanner.processFinder(context.Background())
+	if err != nil || len(procs) != 1 || procs[0].PID != 123 {
+		t.Errorf("SetProcessFinder failed: %v, %v", procs, err)
+	}
+
+	snapProvider := ProcessSnapshotProviderFunc(func(ctx context.Context) (ProcessSnapshot, error) {
+		return &testDummySnapshot{alivePID: 101}, nil
+	})
+	scanner.SetProcessSnapshotProvider(snapProvider)
+	procs, err = scanner.processFinder(context.Background())
+	if err != nil || len(procs) != 1 || procs[0].PID != 101 {
+		t.Errorf("SetProcessSnapshotProvider failed: %v, %v", procs, err)
+	}
+}
+
+

@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -25,8 +26,15 @@ type SubagentTranscript struct {
 	TranscriptPath string `json:"transcriptPath"`
 }
 
+var isPIDAliveProbe = isPIDAlive
+
 type ClaudeCodeScanner struct {
-	sessionDirs []string
+	sessionDirs      []string
+	snapshotProvider ProcessSnapshotProvider
+}
+
+func (s *ClaudeCodeScanner) SetProcessSnapshotProvider(provider ProcessSnapshotProvider) {
+	s.snapshotProvider = provider
 }
 
 func DefaultClaudeSessionDirs() []string {
@@ -55,8 +63,7 @@ func NewClaudeCodeScanner(dirs []string) *ClaudeCodeScanner {
 }
 
 func (s *ClaudeCodeScanner) Scan() ([]SessionDescriptor, error) {
-	var results []SessionDescriptor
-	seenPIDs := make(map[int]bool)
+	var candidates []SessionDescriptor
 
 	for _, rawDir := range s.sessionDirs {
 		dir, err := filepath.EvalSymlinks(rawDir)
@@ -89,27 +96,70 @@ func (s *ClaudeCodeScanner) Scan() ([]SessionDescriptor, error) {
 				continue
 			}
 
-			if desc.PID <= 0 || seenPIDs[desc.PID] {
+			if desc.PID <= 0 {
 				continue
 			}
 
-			if os.Getenv("AGENT_STATUS_TEST_MOCK_PROC") != "1" {
+			candidates = append(candidates, desc)
+		}
+	}
+
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+
+	hasAliveCandidate := false
+	if os.Getenv("AGENT_STATUS_TEST_MOCK_PROC") == "1" {
+		hasAliveCandidate = true
+	} else {
+		for _, desc := range candidates {
+			if isPIDAliveProbe(desc.PID) {
+				hasAliveCandidate = true
+				break
+			}
+		}
+	}
+
+	if !hasAliveCandidate {
+		return nil, nil
+	}
+
+	var snap ProcessSnapshot
+	if s.snapshotProvider != nil && os.Getenv("AGENT_STATUS_TEST_MOCK_PROC") != "1" {
+		snap, _ = s.snapshotProvider.GetSnapshot(context.Background())
+	}
+
+	seenPIDs := make(map[int]bool)
+	var results []SessionDescriptor
+	for _, desc := range candidates {
+		if seenPIDs[desc.PID] {
+			continue
+		}
+
+		if os.Getenv("AGENT_STATUS_TEST_MOCK_PROC") != "1" {
+			if snap != nil {
+				if !snap.IsProcessAlive(desc.PID) {
+					continue
+				}
+				if desc.StartedAt > 0 && !snap.VerifyProcessMatch(desc.PID, desc.StartedAt) {
+					continue
+				}
+			} else {
 				if !IsProcessAlive(desc.PID) {
 					continue
 				}
-
 				if desc.StartedAt > 0 && !VerifyProcessMatch(desc.PID, desc.StartedAt) {
 					continue
 				}
 			}
-
-			if desc.TranscriptPath == "" && desc.SessionID != "" {
-				desc.TranscriptPath = locateTranscript(desc.SessionID, desc.CWD)
-			}
-
-			seenPIDs[desc.PID] = true
-			results = append(results, desc)
 		}
+
+		if desc.TranscriptPath == "" && desc.SessionID != "" {
+			desc.TranscriptPath = locateTranscript(desc.SessionID, desc.CWD)
+		}
+
+		seenPIDs[desc.PID] = true
+		results = append(results, desc)
 	}
 
 	return results, nil

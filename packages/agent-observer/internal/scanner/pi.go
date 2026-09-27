@@ -148,6 +148,18 @@ func NewPiScanner(sessionsDir string, finder PiProcessFinder) *PiScanner {
 	}
 }
 
+func (s *PiScanner) SetProcessFinder(finder PiProcessFinder) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.processFinder = finder
+}
+
+func (s *PiScanner) SetProcessSnapshotProvider(provider ProcessSnapshotProvider) {
+	if provider != nil {
+		s.SetProcessFinder(SnapshotPiProcessFinder(provider))
+	}
+}
+
 // ReadPiSessionHeader reads the first JSON line of a Pi session file.
 func ReadPiSessionHeader(path string) (*PiHeader, error) {
 	f, err := os.Open(path)
@@ -201,18 +213,6 @@ func (s *PiScanner) Scan(ctx context.Context) ([]PiSessionDescriptor, error) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("reading pi sessions dir: %w", err)
-	}
-
-	var activeProcs []PiProcessInfo
-	if s.processFinder != nil {
-		activeProcs, _ = s.processFinder(ctx)
-	}
-
-	// Map procs by CWD
-	procsByCWD := make(map[string][]PiProcessInfo)
-	for _, proc := range activeProcs {
-		cleanCWD := filepath.Clean(proc.CWD)
-		procsByCWD[cleanCWD] = append(procsByCWD[cleanCWD], proc)
 	}
 
 	type piCandidate struct {
@@ -331,6 +331,22 @@ func (s *PiScanner) Scan(ctx context.Context) ([]PiSessionDescriptor, error) {
 		if !seenFiles[path] {
 			delete(s.cache, path)
 		}
+	}
+
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+
+	var activeProcs []PiProcessInfo
+	if s.processFinder != nil {
+		activeProcs, _ = s.processFinder(ctx)
+	}
+
+	// Map procs by CWD
+	procsByCWD := make(map[string][]PiProcessInfo)
+	for _, proc := range activeProcs {
+		cleanCWD := filepath.Clean(proc.CWD)
+		procsByCWD[cleanCWD] = append(procsByCWD[cleanCWD], proc)
 	}
 
 	// Sort candidates by modification time descending so newest and resumed sessions take precedence.

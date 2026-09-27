@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	_ "github.com/ncruces/go-sqlite3/driver"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
@@ -1662,3 +1665,365 @@ func TestRunCursorPruneSweep(t *testing.T) {
 		}
 	})
 }
+
+type mockProcessSnapshot struct {
+	alivePID int
+	cwd      string
+}
+
+func (m *mockProcessSnapshot) IsProcessAlive(pid int) bool {
+	return pid == m.alivePID
+}
+
+func (m *mockProcessSnapshot) VerifyProcessMatch(pid int, expectedStartTime int64) bool {
+	return pid == m.alivePID
+}
+
+func (m *mockProcessSnapshot) PiProcesses() []scanner.PiProcessInfo {
+	return []scanner.PiProcessInfo{
+		{PID: m.alivePID, CWD: m.cwd, CreateTime: time.Now().UnixMilli()},
+	}
+}
+
+func (m *mockProcessSnapshot) CodexProcesses() []scanner.CodexProcessInfo {
+	return []scanner.CodexProcessInfo{
+		{PID: m.alivePID, CWD: m.cwd, CreateTime: time.Now().UnixMilli()},
+	}
+}
+
+func (m *mockProcessSnapshot) OpencodeProcesses() []scanner.OpencodeProcessInfo {
+	return []scanner.OpencodeProcessInfo{
+		{PID: m.alivePID, CWD: m.cwd, CreateTime: time.Now().UnixMilli()},
+	}
+}
+
+func (m *mockProcessSnapshot) Process(pid int) (scanner.ProcessMeta, bool) {
+	if pid == m.alivePID {
+		return scanner.ProcessMeta{PID: pid, Alive: true}, true
+	}
+	return scanner.ProcessMeta{}, false
+}
+
+type countingSnapshotProvider struct {
+	mu       sync.Mutex
+	calls    int
+	snapshot scanner.ProcessSnapshot
+}
+
+func (p *countingSnapshotProvider) GetSnapshot(ctx context.Context) (scanner.ProcessSnapshot, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.calls++
+	return p.snapshot, nil
+}
+
+func TestObserver_ScanAllSharesProcessSnapshot(t *testing.T) {
+	tmpDir := t.TempDir()
+	cursorPath := filepath.Join(tmpDir, "cursors.json")
+	claudeDir := filepath.Join(tmpDir, "claude-sessions")
+	piDir := filepath.Join(tmpDir, "pi-sessions")
+	codexDir := filepath.Join(tmpDir, "codex-sessions")
+	opencodeDb := filepath.Join(tmpDir, "opencode.db")
+
+	_ = os.MkdirAll(claudeDir, 0755)
+	_ = os.MkdirAll(piDir, 0755)
+	_ = os.MkdirAll(codexDir, 0755)
+
+	testCWD := filepath.Join(tmpDir, "test-repo")
+	_ = os.MkdirAll(testCWD, 0755)
+
+	// 1. Claude Code session
+	claudeTranscript := filepath.Join(tmpDir, "claude-test.jsonl")
+	_ = os.WriteFile(claudeTranscript, []byte(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}`+"\n"), 0644)
+	claudeMeta := fmt.Sprintf(`{"pid":4242,"sessionId":"claude-1","cwd":%q,"transcriptPath":%q}`, testCWD, claudeTranscript)
+	_ = os.WriteFile(filepath.Join(claudeDir, "session-1.json"), []byte(claudeMeta), 0644)
+
+	// 2. Pi session
+	piProjectDir := filepath.Join(piDir, scanner.EncodePiCWD(testCWD))
+	_ = os.MkdirAll(piProjectDir, 0755)
+	piTranscript := filepath.Join(piProjectDir, fmt.Sprintf("%d_pi-1.jsonl", time.Now().UnixMilli()))
+	piLine := fmt.Sprintf(`{"type":"session","version":3,"id":"pi-1","timestamp":%d,"cwd":%q}`+"\n", time.Now().UnixMilli(), testCWD)
+	_ = os.WriteFile(piTranscript, []byte(piLine), 0644)
+
+	// 3. Codex session
+	codexDateDir := filepath.Join(codexDir, "2026", "09", "27")
+	_ = os.MkdirAll(codexDateDir, 0755)
+	codexTranscript := filepath.Join(codexDateDir, "rollout-codex-1.jsonl")
+	codexLine := fmt.Sprintf(`{"type":"session_meta","payload":{"id":"codex-1","timestamp":%q,"cwd":%q,"cli_version":"1.0"}}`+"\n", time.Now().Format(time.RFC3339), testCWD)
+	_ = os.WriteFile(codexTranscript, []byte(codexLine), 0644)
+
+	// 4. OpenCode session
+	db, err := sql.Open("sqlite3", "file:"+opencodeDb+"?mode=rwc")
+	if err != nil {
+		t.Fatalf("creating test opencode db: %v", err)
+	}
+	schema := `
+		CREATE TABLE IF NOT EXISTS session (
+			id TEXT PRIMARY KEY,
+			project_id TEXT,
+			parent_id TEXT,
+			slug TEXT,
+			directory TEXT NOT NULL,
+			title TEXT,
+			version TEXT,
+			agent TEXT,
+			model TEXT,
+			cost REAL,
+			tokens_input INTEGER,
+			tokens_output INTEGER,
+			tokens_reasoning INTEGER,
+			tokens_cache_read INTEGER,
+			tokens_cache_write INTEGER,
+			time_created INTEGER NOT NULL,
+			time_updated INTEGER NOT NULL,
+			time_archived INTEGER,
+			metadata TEXT
+		);
+	`
+	if _, err := db.Exec(schema); err != nil {
+		t.Fatalf("executing schema: %v", err)
+	}
+	now := time.Now().UnixMilli()
+	insertQuery := `
+		INSERT INTO session (
+			id, project_id, parent_id, slug, directory, title,
+			version, agent, model, cost, tokens_input, tokens_output,
+			tokens_reasoning, tokens_cache_read, tokens_cache_write,
+			time_created, time_updated, time_archived, metadata
+		) VALUES
+		('oc_1', 'proj_1', NULL, 'oc-1', ?, 'Active', '1.0.0', 'default', '{}', 0.0, 0, 0, 0, 0, 0, ?, ?, NULL, '{}');
+	`
+	_, _ = db.Exec(insertQuery, testCWD, now-1000, now)
+	_ = db.Close()
+
+	mockProvider := &countingSnapshotProvider{
+		snapshot: &mockProcessSnapshot{
+			alivePID: 4242,
+			cwd:      testCWD,
+		},
+	}
+
+	mockIngester := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close(websocket.StatusNormalClosure, "done") }()
+		for {
+			_, data, err := conn.Read(r.Context())
+			if err != nil {
+				return
+			}
+			var msg types.IObserverMessage
+			if err := json.Unmarshal(data, &msg); err == nil && msg.Type == "frames" && len(msg.Frames) > 0 {
+				lastSeq := msg.Frames[len(msg.Frames)-1].Seq
+				ack := types.IIngesterMessage{
+					Type: "ack",
+					UpTo: lastSeq,
+				}
+				ackBytes, _ := json.Marshal(ack)
+				_ = conn.Write(r.Context(), websocket.MessageText, ackBytes)
+			}
+		}
+	}))
+	defer mockIngester.Close()
+
+	opts := observerOptions{
+		ingesterURL:          "ws" + strings.TrimPrefix(mockIngester.URL, "http") + "/ws/ingest",
+		cursorPath:           cursorPath,
+		claudeSessionsDir:    claudeDir,
+		piSessionsDir:        piDir,
+		codexSessionsDir:     codexDir,
+		opencodeDBPath:       opencodeDb,
+		procSnapshotProvider: mockProvider,
+		scanInterval:         10 * time.Second, // Long interval so only initial scan runs
+		envFlag:              "test-env",
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runObserverContext(ctx, opts)
+	}()
+
+	// Allow initial scan to run
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	<-errCh
+
+	mockProvider.mu.Lock()
+	calls := mockProvider.calls
+	mockProvider.mu.Unlock()
+
+	// All 4 scanners (Claude Code, Pi, Codex, OpenCode) ran in the initial scanAll tick.
+	// They must share the single snapshot, so the provider should be invoked at most once!
+	if calls != 1 {
+		t.Errorf("expected process snapshot provider to be called exactly 1 time per scan tick across all scanners, but was called %d times", calls)
+	}
+}
+
+func TestObserver_ScanAllSkipsProcessSnapshotWhenNoSessions(t *testing.T) {
+	tmpDir := t.TempDir()
+	cursorPath := filepath.Join(tmpDir, "cursors.json")
+	claudeDir := filepath.Join(tmpDir, "claude-sessions")
+	piDir := filepath.Join(tmpDir, "pi-sessions")
+	codexDir := filepath.Join(tmpDir, "codex-sessions")
+	opencodeDb := filepath.Join(tmpDir, "opencode.db")
+
+	_ = os.MkdirAll(claudeDir, 0755)
+	_ = os.MkdirAll(piDir, 0755)
+	_ = os.MkdirAll(codexDir, 0755)
+
+	db, err := sql.Open("sqlite3", "file:"+opencodeDb+"?mode=rwc")
+	if err != nil {
+		t.Fatalf("creating test opencode db: %v", err)
+	}
+	schema := `
+		CREATE TABLE IF NOT EXISTS session (
+			id TEXT PRIMARY KEY,
+			project_id TEXT,
+			parent_id TEXT,
+			slug TEXT,
+			directory TEXT NOT NULL,
+			title TEXT,
+			version TEXT,
+			agent TEXT,
+			model TEXT,
+			cost REAL,
+			tokens_input INTEGER,
+			tokens_output INTEGER,
+			tokens_reasoning INTEGER,
+			tokens_cache_read INTEGER,
+			tokens_cache_write INTEGER,
+			time_created INTEGER NOT NULL,
+			time_updated INTEGER NOT NULL,
+			time_archived INTEGER,
+			metadata TEXT
+		);
+	`
+	if _, err := db.Exec(schema); err != nil {
+		t.Fatalf("executing schema: %v", err)
+	}
+	_ = db.Close()
+
+	mockProvider := &countingSnapshotProvider{
+		snapshot: &mockProcessSnapshot{
+			alivePID: 4242,
+		},
+	}
+
+	opts := observerOptions{
+		cursorPath:           cursorPath,
+		claudeSessionsDir:    claudeDir,
+		piSessionsDir:        piDir,
+		codexSessionsDir:     codexDir,
+		opencodeDBPath:       opencodeDb,
+		procSnapshotProvider: mockProvider,
+		scanInterval:         10 * time.Second,
+		envFlag:              "test-env",
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runObserverContext(ctx, opts)
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	<-errCh
+
+	mockProvider.mu.Lock()
+	calls := mockProvider.calls
+	mockProvider.mu.Unlock()
+
+	if calls != 0 {
+		t.Errorf("expected process snapshot provider NOT to be called when all sessions dirs are empty, but was called %d times", calls)
+	}
+}
+
+func TestObserver_ScanAllSkipsProcessSnapshotWhenAllSessionsDead(t *testing.T) {
+	tmpDir := t.TempDir()
+	cursorPath := filepath.Join(tmpDir, "cursors.json")
+	claudeDir := filepath.Join(tmpDir, "claude-sessions")
+	piDir := filepath.Join(tmpDir, "pi-sessions")
+	codexDir := filepath.Join(tmpDir, "codex-sessions")
+	opencodeDb := filepath.Join(tmpDir, "opencode.db")
+
+	_ = os.MkdirAll(claudeDir, 0755)
+	_ = os.MkdirAll(piDir, 0755)
+	_ = os.MkdirAll(codexDir, 0755)
+
+	// Create a dead session descriptor in claudeDir
+	deadDesc := `{"pid": 99999999, "sessionId": "sess-dead", "cwd": "/tmp", "startedAt": 1000}`
+	_ = os.WriteFile(filepath.Join(claudeDir, "session.json"), []byte(deadDesc), 0600)
+
+	db, err := sql.Open("sqlite3", "file:"+opencodeDb+"?mode=rwc")
+	if err != nil {
+		t.Fatalf("creating test opencode db: %v", err)
+	}
+	schema := `
+		CREATE TABLE IF NOT EXISTS session (
+			id TEXT PRIMARY KEY,
+			project_id TEXT,
+			parent_id TEXT,
+			slug TEXT,
+			directory TEXT NOT NULL,
+			title TEXT,
+			version TEXT,
+			agent TEXT,
+			model TEXT,
+			cost REAL,
+			tokens_input INTEGER,
+			tokens_output INTEGER,
+			tokens_reasoning INTEGER,
+			tokens_cache_read INTEGER,
+			tokens_cache_write INTEGER,
+			time_created INTEGER NOT NULL,
+			time_updated INTEGER NOT NULL,
+			time_archived INTEGER,
+			metadata TEXT
+		);
+	`
+	if _, err := db.Exec(schema); err != nil {
+		t.Fatalf("executing schema: %v", err)
+	}
+	_ = db.Close()
+
+	mockProvider := &countingSnapshotProvider{
+		snapshot: &mockProcessSnapshot{
+			alivePID: 4242,
+		},
+	}
+
+	opts := observerOptions{
+		cursorPath:           cursorPath,
+		claudeSessionsDir:    claudeDir,
+		piSessionsDir:        piDir,
+		codexSessionsDir:     codexDir,
+		opencodeDBPath:       opencodeDb,
+		procSnapshotProvider: mockProvider,
+		scanInterval:         10 * time.Second,
+		envFlag:              "test-env",
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runObserverContext(ctx, opts)
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	<-errCh
+
+	mockProvider.mu.Lock()
+	calls := mockProvider.calls
+	mockProvider.mu.Unlock()
+
+	if calls != 0 {
+		t.Errorf("expected process snapshot provider NOT to be called when all sessions belong to dead processes, but was called %d times", calls)
+	}
+}
+
+

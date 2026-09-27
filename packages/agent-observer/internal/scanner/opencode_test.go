@@ -343,3 +343,85 @@ func TestOpencodeScanner_MultipleSessionsAndResumed(t *testing.T) {
 		t.Errorf("expected resumed session ses_resumed to be active with PID 7002, got active=%v PID=%d", resumedDesc.IsActive, resumedDesc.PID)
 	}
 }
+
+func TestOpencodeScanner_SkipsProcessFinderWhenNoCandidateSessions(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "opencode.db")
+	createTestOpencodeDB(t, dbPath)
+
+	finderCalled := 0
+	mockFinder := func(ctx context.Context) ([]OpencodeProcessInfo, error) {
+		finderCalled++
+		return nil, nil
+	}
+
+	scanner := NewOpencodeScanner(dbPath, mockFinder)
+	sessions, err := scanner.Scan(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error from Scan: %v", err)
+	}
+	if len(sessions) != 0 {
+		t.Errorf("expected 0 sessions, got %d", len(sessions))
+	}
+	if finderCalled != 0 {
+		t.Errorf("expected process finder NOT to be called when DB has 0 sessions, but it was called %d times", finderCalled)
+	}
+
+	// Also test when all sessions in DB are archived
+	db, err := sql.Open("sqlite3", "file:"+dbPath+"?mode=rwc")
+	if err != nil {
+		t.Fatalf("opening sqlite db: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	now := time.Now().UnixMilli()
+	insertQuery := `
+		INSERT INTO session (
+			id, project_id, parent_id, slug, directory, title,
+			version, agent, model, cost, tokens_input, tokens_output,
+			tokens_reasoning, tokens_cache_read, tokens_cache_write,
+			time_created, time_updated, time_archived, metadata
+		) VALUES
+		('archived_1', 'proj_1', NULL, 'archived-1', '/test', 'Archived', '1.0.0', 'default', '{}', 0.0, 0, 0, 0, 0, 0, ?, ?, ?, '{}');
+	`
+	_, err = db.Exec(insertQuery, now-1000, now, now)
+	if err != nil {
+		t.Fatalf("inserting archived session: %v", err)
+	}
+
+	finderCalled = 0
+	sessions, err = scanner.Scan(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error from Scan: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Errorf("expected 1 session, got %d", len(sessions))
+	}
+	if finderCalled != 0 {
+		t.Errorf("expected process finder NOT to be called when all sessions are archived, but it was called %d times", finderCalled)
+	}
+}
+
+func TestOpencodeScanner_SetProcessFinderAndProvider(t *testing.T) {
+	scanner := NewOpencodeScanner("/dummy", nil)
+
+	customFinder := func(ctx context.Context) ([]OpencodeProcessInfo, error) {
+		return []OpencodeProcessInfo{{PID: 345}}, nil
+	}
+	scanner.SetProcessFinder(customFinder)
+	procs, err := scanner.processFinder(context.Background())
+	if err != nil || len(procs) != 1 || procs[0].PID != 345 {
+		t.Errorf("SetProcessFinder failed: %v, %v", procs, err)
+	}
+
+	snapProvider := ProcessSnapshotProviderFunc(func(ctx context.Context) (ProcessSnapshot, error) {
+		return &testDummySnapshot{alivePID: 103}, nil
+	})
+	scanner.SetProcessSnapshotProvider(snapProvider)
+	procs, err = scanner.processFinder(context.Background())
+	if err != nil || len(procs) != 1 || procs[0].PID != 103 {
+		t.Errorf("SetProcessSnapshotProvider failed: %v, %v", procs, err)
+	}
+}
+
+
