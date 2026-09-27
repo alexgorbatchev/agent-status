@@ -92,8 +92,7 @@ export function AgentCard({
 
   const formattedCost = activity.cost ? `$${activity.cost.total.toFixed(4)}` : "—";
   const rawTitle = activity.title || "Untitled Agent Session";
-  const resolvedProjectName = projectName || agent.project?.name || agent.project?.id;
-  const title = trimProjectTitlePrefix(rawTitle, resolvedProjectName);
+  const title = projectName ? trimProjectTitlePrefix(rawTitle, projectName) : rawTitle;
   const isIdleAction = !activity.action || activity.action.trim().toLowerCase() === "idle";
   const action = !isIdleAction
     ? activity.action

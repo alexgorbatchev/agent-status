@@ -180,25 +180,23 @@ func SanitizeTranscriptText(s string) string {
 }
 
 func extractProjectCandidates(projectName string) []string {
-	trimmed := strings.TrimSpace(projectName)
-	if trimmed == "" {
+	projectName = strings.TrimSpace(projectName)
+	if projectName == "" {
 		return nil
 	}
-	candidates := []string{trimmed}
+	candidates := []string{projectName}
 
-	normalized := strings.TrimRight(trimmed, "/\\")
-	lastSlash := strings.LastIndexAny(normalized, "/\\")
-	var basename string
+	trimmed := strings.TrimRight(projectName, "/\\")
+	lastSlash := strings.LastIndexAny(trimmed, "/\\")
+	base := trimmed
 	if lastSlash != -1 {
-		basename = normalized[lastSlash+1:]
-	} else {
-		basename = normalized
+		base = trimmed[lastSlash+1:]
 	}
-	if strings.HasSuffix(strings.ToLower(basename), ".git") {
-		basename = basename[:len(basename)-4]
+	if strings.HasSuffix(strings.ToLower(base), ".git") {
+		base = base[:len(base)-4]
 	}
-	if basename != "" && basename != trimmed {
-		candidates = append(candidates, basename)
+	if base != "" && base != projectName {
+		candidates = append(candidates, base)
 	}
 
 	sort.Slice(candidates, func(i, j int) bool {
@@ -206,6 +204,11 @@ func extractProjectCandidates(projectName string) []string {
 	})
 	return candidates
 }
+
+var (
+	bracketedSepRegex    = regexp.MustCompile(`^(?:[\s\p{Zs}]*[:·|][\s\p{Zs}]+|[\s\p{Zs}]+[-–—/]+[\s\p{Zs}]+|[\s\p{Zs}]+)`)
+	nonBracketedSepRegex = regexp.MustCompile(`^(?:[\s\p{Zs}]*[:·|][\s\p{Zs}]+|[\s\p{Zs}]+[-–—/]+[\s\p{Zs}]+)`)
+)
 
 // TrimProjectPrefix removes redundant project name prefixes from session titles
 // when displayed under a project header or within a project context.
@@ -219,36 +222,41 @@ func TrimProjectPrefix(title, projectName string) string {
 		return title
 	}
 
-	for _, candidate := range candidates {
-		escaped := regexp.QuoteMeta(candidate)
+	stripped := strings.TrimLeftFunc(title, unicode.IsSpace)
 
-		// Pattern 1: Bracketed project prefix e.g. "[agent-status]" or "[agent-status]:"
-		bracketedPattern := `(?i)^\s*\[\s*` + escaped + `\s*\]\s*(?:[:·|–—]|-+)?\s*`
-		if re, err := regexp.Compile(bracketedPattern); err == nil {
-			loc := re.FindStringIndex(title)
-			if loc != nil && loc[0] == 0 {
-				remainder := strings.TrimSpace(title[loc[1]:])
-				substantive := strings.TrimFunc(remainder, func(r rune) bool {
-					return r == ':' || r == '·' || r == '|' || r == '-' || r == '–' || r == '—' || r == ']' || unicode.IsSpace(r)
-				})
-				if len(substantive) > 0 {
-					return remainder
+	for _, candidate := range candidates {
+		// Pattern 1: Bracketed project prefix e.g. "[agent-status]" followed by separator or whitespace
+		if strings.HasPrefix(stripped, "[") {
+			afterOpen := strings.TrimLeftFunc(stripped[1:], unicode.IsSpace)
+			if strings.HasPrefix(afterOpen, candidate) {
+				afterCandidate := strings.TrimLeftFunc(afterOpen[len(candidate):], unicode.IsSpace)
+				if strings.HasPrefix(afterCandidate, "]") {
+					afterClose := afterCandidate[1:]
+					loc := bracketedSepRegex.FindStringIndex(afterClose)
+					if loc != nil && loc[0] == 0 {
+						remainder := strings.TrimSpace(afterClose[loc[1]:])
+						substantive := strings.TrimFunc(remainder, func(r rune) bool {
+							return r == ':' || r == '·' || r == '|' || r == '/' || r == '-' || r == '–' || r == '—' || unicode.IsSpace(r)
+						})
+						if len(substantive) > 0 && !strings.HasPrefix(remainder, "]") {
+							return remainder
+						}
+						return title
+					}
 				}
-				return title
 			}
 		}
 
-		// Pattern 2: Non-bracketed project prefix followed by separator
-		// Separators: ':', '·', '|', ']', or '-' (with whitespace boundary to avoid matching kebab-case words)
-		nonBracketedPattern := `(?i)^\s*` + escaped + `(?:\s*[:·|–—\]]\s*|\s+[-–—]+\s*|\s*[-–—]+\s+)`
-		if re, err := regexp.Compile(nonBracketedPattern); err == nil {
-			loc := re.FindStringIndex(title)
+		// Pattern 2: Non-bracketed project prefix followed by separator requiring whitespace
+		if strings.HasPrefix(stripped, candidate) {
+			afterCandidate := stripped[len(candidate):]
+			loc := nonBracketedSepRegex.FindStringIndex(afterCandidate)
 			if loc != nil && loc[0] == 0 {
-				remainder := strings.TrimSpace(title[loc[1]:])
+				remainder := strings.TrimSpace(afterCandidate[loc[1]:])
 				substantive := strings.TrimFunc(remainder, func(r rune) bool {
-					return r == ':' || r == '·' || r == '|' || r == '-' || r == '–' || r == '—' || r == ']' || unicode.IsSpace(r)
+					return r == ':' || r == '·' || r == '|' || r == '/' || r == '-' || r == '–' || r == '—' || unicode.IsSpace(r)
 				})
-				if len(substantive) > 0 {
+				if len(substantive) > 0 && !strings.HasPrefix(remainder, "]") {
 					return remainder
 				}
 				return title

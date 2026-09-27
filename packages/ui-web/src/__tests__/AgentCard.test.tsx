@@ -667,7 +667,7 @@ describe("AgentCard Component", () => {
       }
     });
 
-    it("strips redundant project prefix from session title in card display", () => {
+    it("preserves project title prefix in card display when projectName prop is omitted (e.g. Environment view)", () => {
       const agent = factory_agentState({
         project: {
           id: "github.com/alexgorbatchev/agent-status",
@@ -682,11 +682,29 @@ describe("AgentCard Component", () => {
 
       const html = renderToStaticMarkup(<AgentCard agent={agent} />);
       expect(html).toContain('data-testid="AgentCard--title"');
+      expect(html).toContain("agent-status: Add test coverage for title trimming");
+    });
+
+    it("strips redundant project prefix when projectName prop is explicitly provided (e.g. Project view)", () => {
+      const agent = factory_agentState({
+        project: {
+          id: "github.com/alexgorbatchev/agent-status",
+          name: "agent-status",
+          canonicalRoot: "/repo",
+        },
+        activity: {
+          ...fixture_agentStateRunning.activity,
+          title: "agent-status: Add test coverage for title trimming",
+        },
+      });
+
+      const html = renderToStaticMarkup(<AgentCard agent={agent} projectName="agent-status" />);
+      expect(html).toContain('data-testid="AgentCard--title"');
       expect(html).toContain("Add test coverage for title trimming");
       expect(html).not.toContain("agent-status: Add test coverage for title trimming");
     });
 
-    it("strips bracketed project prefix from session title in card display", () => {
+    it("strips bracketed project prefix when projectName prop is explicitly provided", () => {
       const agent = factory_agentState({
         project: {
           id: "github.com/alexgorbatchev/agent-status",
@@ -699,7 +717,7 @@ describe("AgentCard Component", () => {
         },
       });
 
-      const html = renderToStaticMarkup(<AgentCard agent={agent} />);
+      const html = renderToStaticMarkup(<AgentCard agent={agent} projectName="agent-status" />);
       expect(html).toContain("Implement OAuth tokens");
       expect(html).not.toContain("[agent-status] Implement OAuth tokens");
     });

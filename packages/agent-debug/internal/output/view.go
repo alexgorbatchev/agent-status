@@ -450,11 +450,6 @@ func renderAgentViewAgentMode(w io.Writer, agent types.IAgentState, nowMs int64)
 	if title == "" {
 		title = "Untitled Agent Session"
 	}
-	projectName := SanitizeTranscriptText(agent.Project.Name)
-	if projectName == "" {
-		projectName = SanitizeTranscriptText(agent.Project.ID)
-	}
-	title = TrimProjectPrefix(title, projectName)
 	action := SanitizeTranscriptText(agent.Activity.Action)
 	if action == "" {
 		if agent.Activity.ActiveTool != nil && *agent.Activity.ActiveTool != "" {
@@ -585,11 +580,6 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 	if title == "" {
 		title = "Untitled Agent Session"
 	}
-	projectName := SanitizeTranscriptText(agent.Project.Name)
-	if projectName == "" {
-		projectName = SanitizeTranscriptText(agent.Project.ID)
-	}
-	title = TrimProjectPrefix(title, projectName)
 	title = strings.ReplaceAll(title, "\n", " ")
 	title = TruncateVisual(title, width, "...")
 	action := SanitizeTranscriptText(agent.Activity.Action)

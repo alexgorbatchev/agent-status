@@ -32,7 +32,7 @@ Web frontend dashboard for agent-status built with React 19, Tailwind CSS v4, Lu
 - CLI parity and color gating: follow `air-debug session view` color gating conventions where color output respects `NO_COLOR` and terminal detection (`go-isatty`) (#106).
 - Unacknowledged completion state: When `hasUnseenCompletion` is true, cards display a green `(Completed)` status badge and completion callout with an acknowledge action to dismiss the completion state.
 - Idle freshness tiers classify idle sessions as `fresh` (<15m), `standard` (15m–2h), or `stale` (>2h, visually dimmed via opacity styling unless unacknowledged completion is active, #109).
-- Redundant project prefixes in card titles are stripped with `trimProjectTitlePrefix` (`src/utils/trimProjectTitlePrefix.ts`) when displayed in project group context.
+- Redundant project prefixes in card titles are stripped with `trimProjectTitlePrefix` (`src/utils/agentUtils.ts`) strictly when displayed in project group context (`ProjectGroup` providing `projectName`); single cards or environment views without project headers preserve full titles. Matching requires exact case and whitespace-bounded separators (colons, slashes, hyphens, brackets) sharing test vectors with `packages/agent-common/testdata/project-prefix-fixtures.json`.
 - Rate-limiting is rendered with a dedicated `RATE_LIMITED` status badge and callout detailing remaining wait time or reset timestamp (`rateLimitResetAt`, `retryAfterSeconds`).
 - Enforce strict TypeScript: no `any`, no type assertions (`as Type`), explicit return types on public functions.
 

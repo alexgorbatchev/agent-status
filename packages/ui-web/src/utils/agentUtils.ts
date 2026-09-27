@@ -236,26 +236,25 @@ export function trimProjectTitlePrefix(title: string, projectName?: string): str
   for (const candidate of candidates) {
     const escaped = escapeRegExp(candidate);
 
-    // Pattern 1: Bracketed project prefix e.g. "[agent-status]" or "[agent-status]:"
-    const bracketedRegex = new RegExp(`^\\s*\\[\\s*${escaped}\\s*\\]\\s*(?:[:·|–—]|-+)?\\s*`, "i");
+    // Pattern 1: Bracketed project prefix e.g. "[agent-status]" followed by separator or whitespace
+    const bracketedRegex = new RegExp(`^\\s*\\[\\s*${escaped}\\s*\\](?:\\s*[:·|]\\s+|\\s+[-–—/]+\\s+|\\s+)`);
     const bracketedMatch = title.match(bracketedRegex);
     if (bracketedMatch) {
       const remainder = title.slice(bracketedMatch[0].length).trim();
-      const substantive = remainder.replace(/^[:·|–—\-\s]+/, "").trim();
-      if (substantive.length > 0) {
+      const substantive = remainder.replace(/^[:·|/–—\-\s]+/, "").trim();
+      if (substantive.length > 0 && !remainder.startsWith("]")) {
         return remainder;
       }
       return title;
     }
 
-    // Pattern 2: Non-bracketed project prefix followed by separator
-    // Separators: ':', '·', '|', ']', or '-' (with whitespace boundary to avoid matching kebab-case words)
-    const nonBracketedRegex = new RegExp(`^\\s*${escaped}(?:\\s*[:·|–—\\]]\\s*|\\s+[-–—]+\\s*|\\s*[-–—]+\\s+)`, "i");
+    // Pattern 2: Non-bracketed project prefix followed by separator requiring whitespace
+    const nonBracketedRegex = new RegExp(`^\\s*${escaped}(?:\\s*[:·|]\\s+|\\s+[-–—/]+\\s+)`);
     const nonBracketedMatch = title.match(nonBracketedRegex);
     if (nonBracketedMatch) {
       const remainder = title.slice(nonBracketedMatch[0].length).trim();
-      const substantive = remainder.replace(/^[:·|–—\-\s]+/, "").trim();
-      if (substantive.length > 0) {
+      const substantive = remainder.replace(/^[:·|/–—\-\s]+/, "").trim();
+      if (substantive.length > 0 && !remainder.startsWith("]")) {
         return remainder;
       }
       return title;

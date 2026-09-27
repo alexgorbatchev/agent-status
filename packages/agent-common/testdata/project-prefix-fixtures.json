@@ -1,0 +1,296 @@
+[
+  {
+    "name": "colon separator with trailing space",
+    "title": "agent-status: add test coverage",
+    "projectName": "agent-status",
+    "expected": "add test coverage"
+  },
+  {
+    "name": "colon separator with leading and trailing space",
+    "title": "agent-status : add test coverage",
+    "projectName": "agent-status",
+    "expected": "add test coverage"
+  },
+  {
+    "name": "colon separator without space is not stripped",
+    "title": "agent-status:add test coverage",
+    "projectName": "agent-status",
+    "expected": "agent-status:add test coverage"
+  },
+  {
+    "name": "dash separator with spaces",
+    "title": "agent-status - fix issue 101",
+    "projectName": "agent-status",
+    "expected": "fix issue 101"
+  },
+  {
+    "name": "double-dash separator with spaces",
+    "title": "agent-status -- fix issue 101",
+    "projectName": "agent-status",
+    "expected": "fix issue 101"
+  },
+  {
+    "name": "en-dash separator with spaces",
+    "title": "agent-status – fix issue 101",
+    "projectName": "agent-status",
+    "expected": "fix issue 101"
+  },
+  {
+    "name": "em-dash separator with spaces",
+    "title": "agent-status — fix issue 101",
+    "projectName": "agent-status",
+    "expected": "fix issue 101"
+  },
+  {
+    "name": "flag attached hyphen is not stripped",
+    "title": "agent-status -fix",
+    "projectName": "agent-status",
+    "expected": "agent-status -fix"
+  },
+  {
+    "name": "flag attached double hyphen is not stripped",
+    "title": "agent-status --fix",
+    "projectName": "agent-status",
+    "expected": "agent-status --fix"
+  },
+  {
+    "name": "attached hyphen before space is not stripped",
+    "title": "agent-status- fix",
+    "projectName": "agent-status",
+    "expected": "agent-status- fix"
+  },
+  {
+    "name": "middle dot separator with spaces",
+    "title": "agent-status · fix issue 101",
+    "projectName": "agent-status",
+    "expected": "fix issue 101"
+  },
+  {
+    "name": "middle dot separator without spaces is not stripped",
+    "title": "agent-status·fix issue 101",
+    "projectName": "agent-status",
+    "expected": "agent-status·fix issue 101"
+  },
+  {
+    "name": "pipe separator with spaces",
+    "title": "agent-status | fix issue 101",
+    "projectName": "agent-status",
+    "expected": "fix issue 101"
+  },
+  {
+    "name": "pipe separator without space is not stripped",
+    "title": "agent-status|fix issue 101",
+    "projectName": "agent-status",
+    "expected": "agent-status|fix issue 101"
+  },
+  {
+    "name": "slash separator with spaces",
+    "title": "agent-status / fix issue 101",
+    "projectName": "agent-status",
+    "expected": "fix issue 101"
+  },
+  {
+    "name": "slash without spaces like branch or path is not stripped",
+    "title": "agent-status/fix",
+    "projectName": "agent-status",
+    "expected": "agent-status/fix"
+  },
+  {
+    "name": "bracketed prefix with trailing space",
+    "title": "[agent-status] implement oauth flow",
+    "projectName": "agent-status",
+    "expected": "implement oauth flow"
+  },
+  {
+    "name": "bracketed prefix with colon",
+    "title": "[agent-status]: implement oauth flow",
+    "projectName": "agent-status",
+    "expected": "implement oauth flow"
+  },
+  {
+    "name": "bracketed prefix with dash",
+    "title": "[agent-status] - implement oauth flow",
+    "projectName": "agent-status",
+    "expected": "implement oauth flow"
+  },
+  {
+    "name": "bracketed prefix with double closing bracket must not leave unclosed bracket",
+    "title": "[agent-status]] fix",
+    "projectName": "agent-status",
+    "expected": "[agent-status]] fix"
+  },
+  {
+    "name": "bracketed prefix without space is not stripped",
+    "title": "[agent-status]fix",
+    "projectName": "agent-status",
+    "expected": "[agent-status]fix"
+  },
+  {
+    "name": "exact case match required for title mixed case",
+    "title": "Agent-Status: fix",
+    "projectName": "agent-status",
+    "expected": "Agent-Status: fix"
+  },
+  {
+    "name": "exact case match required for title upper case",
+    "title": "AGENT-STATUS: fix",
+    "projectName": "agent-status",
+    "expected": "AGENT-STATUS: fix"
+  },
+  {
+    "name": "exact case match required for project upper case",
+    "title": "agent-status · fix",
+    "projectName": "AGENT-STATUS",
+    "expected": "agent-status · fix"
+  },
+  {
+    "name": "exact case match succeeded when both match upper case",
+    "title": "AGENT-STATUS: fix",
+    "projectName": "AGENT-STATUS",
+    "expected": "fix"
+  },
+  {
+    "name": "exact case match required for bracketed upper case",
+    "title": "[AGENT-STATUS] fix",
+    "projectName": "agent-status",
+    "expected": "[AGENT-STATUS] fix"
+  },
+  {
+    "name": "exact case match required for bracketed mixed case",
+    "title": "[Agent-Status] fix",
+    "projectName": "agent-status",
+    "expected": "[Agent-Status] fix"
+  },
+  {
+    "name": "repo basename from github url",
+    "title": "agent-status: add test coverage",
+    "projectName": "github.com/alexgorbatchev/agent-status",
+    "expected": "add test coverage"
+  },
+  {
+    "name": "repo basename from git clone url",
+    "title": "agent-status: add test coverage",
+    "projectName": "https://github.com/alexgorbatchev/agent-status.git",
+    "expected": "add test coverage"
+  },
+  {
+    "name": "repo basename from repo.git with trailing slash",
+    "title": "repo: add test coverage",
+    "projectName": "repo.git/",
+    "expected": "add test coverage"
+  },
+  {
+    "name": "repo basename from bare agent-status.git",
+    "title": "agent-status: add test coverage",
+    "projectName": "agent-status.git",
+    "expected": "add test coverage"
+  },
+  {
+    "name": "repo basename from local directory path",
+    "title": "agent-status · fix bug",
+    "projectName": "/home/alex/repos/agent-status",
+    "expected": "fix bug"
+  },
+  {
+    "name": "preserves tail when tail equals project name",
+    "title": "agent-status: agent-status",
+    "projectName": "agent-status",
+    "expected": "agent-status"
+  },
+  {
+    "name": "preserves bracketed tail when tail equals project name",
+    "title": "[agent-status] [agent-status]",
+    "projectName": "agent-status",
+    "expected": "[agent-status]"
+  },
+  {
+    "name": "preserves title when title equals project name without separator",
+    "title": "agent-status",
+    "projectName": "agent-status",
+    "expected": "agent-status"
+  },
+  {
+    "name": "preserves title when only separator remains",
+    "title": "agent-status: ",
+    "projectName": "agent-status",
+    "expected": "agent-status: "
+  },
+  {
+    "name": "preserves title when only bracketed name",
+    "title": "[agent-status]",
+    "projectName": "agent-status",
+    "expected": "[agent-status]"
+  },
+  {
+    "name": "preserves title when only punctuation follows separator",
+    "title": "agent-status: - ",
+    "projectName": "agent-status",
+    "expected": "agent-status: - "
+  },
+  {
+    "name": "unmatched project untouched",
+    "title": "billing · trace duplicate charges",
+    "projectName": "agent-status",
+    "expected": "billing · trace duplicate charges"
+  },
+  {
+    "name": "unmatched bracketed project untouched",
+    "title": "[billing] trace duplicate charges",
+    "projectName": "agent-status",
+    "expected": "[billing] trace duplicate charges"
+  },
+  {
+    "name": "word prefix not stripped",
+    "title": "agent-status-service: add tests",
+    "projectName": "agent-status",
+    "expected": "agent-status-service: add tests"
+  },
+  {
+    "name": "partial word not stripped",
+    "title": "agent: add tests",
+    "projectName": "agent-status",
+    "expected": "agent: add tests"
+  },
+  {
+    "name": "empty title",
+    "title": "",
+    "projectName": "agent-status",
+    "expected": ""
+  },
+  {
+    "name": "empty project name",
+    "title": "agent-status: add tests",
+    "projectName": "",
+    "expected": "agent-status: add tests"
+  },
+  {
+    "name": "non-breaking space before colon separator",
+    "title": "agent-status\u00A0: add tests",
+    "projectName": "agent-status",
+    "expected": "add tests"
+  },
+  {
+    "name": "non-breaking space after colon separator",
+    "title": "agent-status:\u00A0add tests",
+    "projectName": "agent-status",
+    "expected": "add tests"
+  },
+  {
+    "name": "non-breaking space around dash separator",
+    "title": "agent-status\u00A0-\u00A0add tests",
+    "projectName": "agent-status",
+    "expected": "add tests"
+  },
+  {
+    "name": "bracketed prefix with non-breaking space",
+    "title": "[agent-status]\u00A0add tests",
+    "projectName": "agent-status",
+    "expected": "add tests"
+  },
+  {
+    "name": "bracketed prefix with colon and non-breaking space",
+    "title": "[agent-status]:\u00A0add tests",
+    "projectName": "agent-status",
+    "expected": "add tests"
+  }
+]

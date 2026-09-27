@@ -463,7 +463,7 @@ func TestRenderAgentView_HumanMode_AnsiColorWidthAlignment(t *testing.T) {
 	}
 }
 
-func TestRenderAgentView_HumanMode_TrimsProjectPrefix(t *testing.T) {
+func TestRenderAgentView_HumanMode_PreservesProjectPrefix(t *testing.T) {
 	agent := types.IAgentState{
 		ID:        "env-1:claude-code:ses-prefix-1",
 		SessionID: "ses-prefix-1",
@@ -498,15 +498,12 @@ func TestRenderAgentView_HumanMode_TrimsProjectPrefix(t *testing.T) {
 	RenderAgentViewAt(&buf, agent, false, 1000)
 	out := buf.String()
 
-	if !strings.Contains(out, "Refactor database layer") {
-		t.Errorf("expected trimmed title %q in output, got:\n%s", "Refactor database layer", out)
-	}
-	if strings.Contains(out, "agent-status: Refactor database layer") {
-		t.Errorf("expected redundant project prefix to be stripped from output, got:\n%s", out)
+	if !strings.Contains(out, "agent-status: Refactor database layer") {
+		t.Errorf("expected full title with project prefix preserved in single card human view, got:\n%s", out)
 	}
 }
 
-func TestRenderAgentView_AgentMode_TrimsProjectPrefix(t *testing.T) {
+func TestRenderAgentView_AgentMode_PreservesProjectPrefix(t *testing.T) {
 	agent := types.IAgentState{
 		ID:        "env-1:claude-code:ses-prefix-2",
 		SessionID: "ses-prefix-2",
@@ -541,11 +538,51 @@ func TestRenderAgentView_AgentMode_TrimsProjectPrefix(t *testing.T) {
 	RenderAgentView(&buf, agent, true)
 	out := buf.String()
 
-	if !strings.Contains(out, `title:"Run scanner audit"`) {
-		t.Errorf("expected trimmed title %q in agent mode output, got:\n%s", `title:"Run scanner audit"`, out)
+	if !strings.Contains(out, `title:"[agent-status] Run scanner audit"`) {
+		t.Errorf("expected full title with project prefix preserved in single card agent mode, got:\n%s", out)
 	}
-	if strings.Contains(out, `title:"[agent-status] Run scanner audit"`) {
-		t.Errorf("expected redundant project prefix to be stripped from agent mode output, got:\n%s", out)
+}
+
+func TestRenderFleetView_TrimsProjectPrefixUnderProjectHeader(t *testing.T) {
+	agent := types.IAgentState{
+		ID:        "env-1:claude-code:ses-prefix-fleet",
+		SessionID: "ses-prefix-fleet",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:    "env-1",
+			Label: "local-dev",
+		},
+		Project: types.IProjectInfo{
+			ID:   "github.com/alexgorbatchev/agent-status",
+			Name: "agent-status",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "main",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle: types.LifecycleRunning,
+			Activity:  types.ActivityBusy,
+			Title:     "agent-status: Refactor database layer",
+			Action:    "Editing store.go",
+			Cost: &types.ICostInfo{
+				Currency: "USD",
+				Total:    0.01,
+			},
+			Usage: types.ITokenUsage{
+				Total: 100,
+			},
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderFleetViewAt(&buf, []types.IAgentState{agent}, false, 1000)
+	out := StripANSI(buf.String())
+
+	if !strings.Contains(out, "Refactor database layer") {
+		t.Errorf("expected trimmed title %q in fleet view under project header, got:\n%s", "Refactor database layer", out)
+	}
+	if strings.Contains(out, "agent-status: Refactor database layer") {
+		t.Errorf("expected project prefix to be trimmed under project header in fleet view, got:\n%s", out)
 	}
 }
 
