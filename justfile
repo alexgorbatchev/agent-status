@@ -92,7 +92,7 @@ lint-scripts:
 
 # Lint all packages (Go vet + golangci-lint, Bun typecheck + linter)
 lint-all:
-    @out="$(gofmt -l .)"; if [ -n "$out" ]; then echo "Unformatted Go files:"; echo "$out"; exit 1; fi
+    @out="$(gofmt -l packages/)"; if [ -n "$out" ]; then echo "Unformatted Go files:"; echo "$out"; exit 1; fi
     cd packages/agent-common && just lint
     cd packages/agent-observer && just lint
     cd packages/agent-ingester && just lint
