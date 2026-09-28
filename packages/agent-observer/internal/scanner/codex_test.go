@@ -903,5 +903,3 @@ func TestCodexScanner_SetProcessFinderAndProvider(t *testing.T) {
 		t.Errorf("SetProcessSnapshotProvider failed: %v, %v", procs, err)
 	}
 }
-
-

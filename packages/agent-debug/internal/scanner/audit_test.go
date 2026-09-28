@@ -644,13 +644,13 @@ func TestScannerAudit_MultipleClaudeSessionsSamePID(t *testing.T) {
 func TestScannerAudit_EmptyJSONOutput(t *testing.T) {
 	ctx := context.Background()
 	auditor := &scanner.Auditor{
-		PiProcsFinder:        func(ctx context.Context) ([]scanner.ProcessInfo, error) { return nil, nil },
-		PiSessionsFinder:     func(ctx context.Context) ([]scanner.SessionInfo, error) { return nil, nil },
-		ClaudeProcsFinder:    func(ctx context.Context) ([]scanner.ProcessInfo, error) { return nil, nil },
-		ClaudeSessionsFinder: func(ctx context.Context) ([]scanner.SessionInfo, error) { return nil, nil },
-		CodexProcsFinder:     func(ctx context.Context) ([]scanner.ProcessInfo, error) { return nil, nil },
-		CodexSessionsFinder:  func(ctx context.Context) ([]scanner.SessionInfo, error) { return nil, nil },
-		OpencodeProcsFinder:  func(ctx context.Context) ([]scanner.ProcessInfo, error) { return nil, nil },
+		PiProcsFinder:          func(ctx context.Context) ([]scanner.ProcessInfo, error) { return nil, nil },
+		PiSessionsFinder:       func(ctx context.Context) ([]scanner.SessionInfo, error) { return nil, nil },
+		ClaudeProcsFinder:      func(ctx context.Context) ([]scanner.ProcessInfo, error) { return nil, nil },
+		ClaudeSessionsFinder:   func(ctx context.Context) ([]scanner.SessionInfo, error) { return nil, nil },
+		CodexProcsFinder:       func(ctx context.Context) ([]scanner.ProcessInfo, error) { return nil, nil },
+		CodexSessionsFinder:    func(ctx context.Context) ([]scanner.SessionInfo, error) { return nil, nil },
+		OpencodeProcsFinder:    func(ctx context.Context) ([]scanner.ProcessInfo, error) { return nil, nil },
 		OpencodeSessionsFinder: func(ctx context.Context) ([]scanner.SessionInfo, error) { return nil, nil },
 	}
 

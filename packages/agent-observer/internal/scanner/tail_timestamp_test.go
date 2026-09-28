@@ -845,7 +845,7 @@ func TestExtractLastActiveTimestamp(t *testing.T) {
 
 		// Write 8.5MB of data without a newline
 		hugeChunk := bytes.Repeat([]byte("X"), 512*1024) // 512KB
-		for i := 0; i < 17; i++ {                       // 17 * 512KB = 8.5MB
+		for i := 0; i < 17; i++ {                        // 17 * 512KB = 8.5MB
 			if _, err := f.Write(hugeChunk); err != nil {
 				_ = f.Close()
 				t.Fatalf("write huge chunk: %v", err)

@@ -493,4 +493,3 @@ func TestInspect_CompletionMetadata(t *testing.T) {
 		t.Errorf("ListAgents got CompletedAt %v, want %d", found.Activity.CompletedAt, completedAt)
 	}
 }
-

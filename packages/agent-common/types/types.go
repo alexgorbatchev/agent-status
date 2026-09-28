@@ -219,14 +219,14 @@ type IIngesterMessage struct {
 }
 
 type IServerEvent struct {
-	Type         string              `json:"type"` // "snapshot" | "agent_upsert" | "agent_removed" | "environment_upsert" | "log_append" | "hello" (internal transport handshake event)
-	At           int64               `json:"at"`
-	Agent        *IAgentState        `json:"agent,omitempty"`
-	Agents       []IAgentState       `json:"agents,omitempty"`
-	AgentID      string              `json:"agentId,omitempty"`
-	Environment  *IEnvironmentInfo   `json:"environment,omitempty"`
-	Environments []IEnvironmentInfo  `json:"environments,omitempty"`
-	Event        *ITelemetryFrame    `json:"event,omitempty"`
+	Type         string             `json:"type"` // "snapshot" | "agent_upsert" | "agent_removed" | "environment_upsert" | "log_append" | "hello" (internal transport handshake event)
+	At           int64              `json:"at"`
+	Agent        *IAgentState       `json:"agent,omitempty"`
+	Agents       []IAgentState      `json:"agents,omitempty"`
+	AgentID      string             `json:"agentId,omitempty"`
+	Environment  *IEnvironmentInfo  `json:"environment,omitempty"`
+	Environments []IEnvironmentInfo `json:"environments,omitempty"`
+	Event        *ITelemetryFrame   `json:"event,omitempty"`
 }
 
 func (e IServerEvent) MarshalJSON() ([]byte, error) {

@@ -5,7 +5,8 @@ Central telemetry ingestion daemon (`air-ingester`) that receives agent events, 
 ## Commands
 - Dev: `just run`
 - Build: `just build`
-- Test: `just test`
+- Test: `just test` (enforces >= 90% statement coverage gate via `scripts/check-coverage.sh`)
+- Check coverage: `just check-coverage` (repo root task checking all Go packages)
 - Lint: `just lint`
 
 ## Local conventions
@@ -41,7 +42,7 @@ Central telemetry ingestion daemon (`air-ingester`) that receives agent events, 
 - Subagent dwell timer synchronization and testing: `afterSubagentDwellHook` provides deterministic synchronization in tests when subagent dwell timers fire and persist updated state; in `handleSubagentDwellExpired`, timer expirations arriving slightly earlier than `startedAt + dwellMs` due to clock jitter (<= 1ms difference) proceed with eviction, while larger differences reschedule the timer rather than dropping it silently, and async test frames anchor timestamps (`fSubEnd.Timestamp = fSubStart.Timestamp + 1`) to prevent scheduling pauses between test statements from exceeding dwell thresholds before turn completion frames are processed (`internal/classifier/classifier.go`, `internal/classifier/classifier_test.go`, #120).
 
 ## Boundaries
-- Always (code-based projects only): any time code is changed such that results from running that code are changed, a test file must be changed as well; 90% code coverage is required (scripts/ folder is excluded from this rule)
+- Always (code-based projects only): any time code is changed such that results from running that code are changed, a test file must be changed as well; 90% statement coverage is required and enforced on `just test` via `scripts/check-coverage.sh` (scripts/ folder is excluded from this rule)
 - Ask first: adding database schema migrations or changing activity classification logic
 - Never: block WebSocket ingestion handlers on synchronous LLM summarizer calls
 - Never: publish releases automatically without explicit user authorization

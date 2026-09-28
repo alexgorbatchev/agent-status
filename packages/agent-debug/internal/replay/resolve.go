@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-parser"
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 )
 
 // ResolvedTarget holds the resolved file path, harness type, and optional session ID.

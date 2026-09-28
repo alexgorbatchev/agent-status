@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alexgorbatchev/agent-status/packages/agent-server/internal/store"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
+	"github.com/alexgorbatchev/agent-status/packages/agent-server/internal/store"
 )
 
 type mockStoreReader struct {
@@ -155,7 +155,7 @@ func TestSubscriber_SocketStreamAndReconnect(t *testing.T) {
 	globalCh := hub.SubscribeGlobal()
 
 	mockStore := &mockStoreReader{
-		envs: []types.IEnvironmentInfo{{ID: "env1"}},
+		envs:   []types.IEnvironmentInfo{{ID: "env1"}},
 		agents: []types.IAgentState{{ID: "agent1"}},
 	}
 
@@ -190,9 +190,9 @@ func TestSubscriber_SocketStreamAndReconnect(t *testing.T) {
 	_, _ = conn1.Write([]byte("{malformed json\n"))
 	// Write valid JSON event
 	evt1 := &types.IServerEvent{
-		Type:    "agent_upsert",
-		At:      time.Now().UnixMilli(),
-		Agent:   &types.IAgentState{ID: "streamed-agent-1"},
+		Type:  "agent_upsert",
+		At:    time.Now().UnixMilli(),
+		Agent: &types.IAgentState{ID: "streamed-agent-1"},
 	}
 	data1, _ := json.Marshal(evt1)
 	_, _ = conn1.Write(append(data1, '\n'))
@@ -366,9 +366,9 @@ func TestSubscriber_ResyncFailureOnConnect(t *testing.T) {
 
 	// 3. Send regular event; subscriber should retry reconcileSnapshot since it wasn't marked reconciled
 	evt := &types.IServerEvent{
-		Type:    "agent_upsert",
-		At:      time.Now().UnixMilli(),
-		Agent:   &types.IAgentState{ID: "agent-retry"},
+		Type:  "agent_upsert",
+		At:    time.Now().UnixMilli(),
+		Agent: &types.IAgentState{ID: "agent-retry"},
 	}
 	data, _ := json.Marshal(evt)
 	_, _ = conn.Write(append(data, '\n'))
@@ -438,9 +438,9 @@ func TestSubscriber_ResyncFailureOnFallbackEvent(t *testing.T) {
 
 	// 1. Send regular event without hello; fallback resync runs and fails
 	evt1 := &types.IServerEvent{
-		Type:    "agent_upsert",
-		At:      time.Now().UnixMilli(),
-		Agent:   &types.IAgentState{ID: "agent-1"},
+		Type:  "agent_upsert",
+		At:    time.Now().UnixMilli(),
+		Agent: &types.IAgentState{ID: "agent-1"},
 	}
 	data1, _ := json.Marshal(evt1)
 	_, _ = conn.Write(append(data1, '\n'))
@@ -646,4 +646,3 @@ func TestSubscriber_ReconcileSnapshotOnReconnectionAfterMissedEvents(t *testing.
 		t.Fatal("timed out waiting for snapshot event on reconnection after missed events")
 	}
 }
-

@@ -472,4 +472,3 @@ func TestHub_BroadcastSnapshot(t *testing.T) {
 		}
 	})
 }
-

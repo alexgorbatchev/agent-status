@@ -10,8 +10,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-parser"
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 )
 
 // ReplayEvent annotates a parsed telemetry event with source lineage and subagent context.

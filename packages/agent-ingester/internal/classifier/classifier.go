@@ -96,26 +96,26 @@ const (
 )
 
 type Classifier struct {
-	store              *store.Store
-	pricing            *pricing.Engine
-	summarizer         *summarizer.Summarizer
-	agentCtx           map[string]*agentContext
-	workers            map[string]*agentWorker
-	idleTimers         map[string]*time.Timer
-	trailingTimers     map[string]*time.Timer
+	store                 *store.Store
+	pricing               *pricing.Engine
+	summarizer            *summarizer.Summarizer
+	agentCtx              map[string]*agentContext
+	workers               map[string]*agentWorker
+	idleTimers            map[string]*time.Timer
+	trailingTimers        map[string]*time.Timer
 	silenceTimers         map[string]*time.Timer
 	silenceTimerDurations map[string]time.Duration
 	subagentTimers        map[string]*time.Timer
-	idleGracePeriod    time.Duration
-	debounceWindow     time.Duration
-	turnFloor          time.Duration
-	turnSilenceTimeout time.Duration
-	subagentDwell      time.Duration
-	onUpdate           func(agent *types.IAgentState)
-	mu                 sync.Mutex
-	wg                 sync.WaitGroup
-	closed             bool
-	syncMode           bool
+	idleGracePeriod       time.Duration
+	debounceWindow        time.Duration
+	turnFloor             time.Duration
+	turnSilenceTimeout    time.Duration
+	subagentDwell         time.Duration
+	onUpdate              func(agent *types.IAgentState)
+	mu                    sync.Mutex
+	wg                    sync.WaitGroup
+	closed                bool
+	syncMode              bool
 
 	beforeIdleSummarizeHook func(agentID string)
 	beforeIdleSaveHook      func(agentID string)
@@ -129,21 +129,21 @@ func New(s *store.Store, p *pricing.Engine, sum *summarizer.Summarizer) *Classif
 		debounce = sum.DebounceWindow()
 	}
 	return &Classifier{
-		store:               s,
-		pricing:             p,
-		summarizer:          sum,
-		agentCtx:            make(map[string]*agentContext),
-		workers:             make(map[string]*agentWorker),
-		idleTimers:          make(map[string]*time.Timer),
-		trailingTimers:      make(map[string]*time.Timer),
+		store:                 s,
+		pricing:               p,
+		summarizer:            sum,
+		agentCtx:              make(map[string]*agentContext),
+		workers:               make(map[string]*agentWorker),
+		idleTimers:            make(map[string]*time.Timer),
+		trailingTimers:        make(map[string]*time.Timer),
 		silenceTimers:         make(map[string]*time.Timer),
 		silenceTimerDurations: make(map[string]time.Duration),
 		subagentTimers:        make(map[string]*time.Timer),
-		idleGracePeriod:     DefaultIdleGracePeriod,
-		debounceWindow:      debounce,
-		turnFloor:           DefaultTurnFloor,
-		turnSilenceTimeout:  DefaultTurnSilenceTimeout,
-		subagentDwell:       DefaultSubagentDwell,
+		idleGracePeriod:       DefaultIdleGracePeriod,
+		debounceWindow:        debounce,
+		turnFloor:             DefaultTurnFloor,
+		turnSilenceTimeout:    DefaultTurnSilenceTimeout,
+		subagentDwell:         DefaultSubagentDwell,
 	}
 }
 
@@ -2407,4 +2407,3 @@ func truncateRunes(s string, maxRunes int) string {
 	}
 	return s
 }
-

@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-parser"
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
 

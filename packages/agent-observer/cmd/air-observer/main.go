@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/alexgorbatchev/agent-parser"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/config"
@@ -16,7 +17,6 @@ import (
 	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/scanner"
 	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/shipper"
 	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/tailer"
-	"github.com/alexgorbatchev/agent-parser"
 	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree"
 	_ "github.com/ncruces/go-sqlite3/driver"
 	"github.com/spf13/cobra"
@@ -25,23 +25,23 @@ import (
 var version = "dev"
 
 type observerOptions struct {
-	ingesterURL         string
-	token               string
-	envFlag             string
-	scanInterval        time.Duration
-	cursorPath          string
-	cursorRetention     time.Duration
-	cursorPruneInterval time.Duration
-	cursorFlushInterval time.Duration
-	sessionStatePath    string
-	claudeSessionsDir   string
-	claudeProjectsDir   string
-	piSessionsDir       string
-	codexSessionsDir    string
-	opencodeDBPath      string
-	logLevel            string
-	logDir              string
-	logFile             string
+	ingesterURL          string
+	token                string
+	envFlag              string
+	scanInterval         time.Duration
+	cursorPath           string
+	cursorRetention      time.Duration
+	cursorPruneInterval  time.Duration
+	cursorFlushInterval  time.Duration
+	sessionStatePath     string
+	claudeSessionsDir    string
+	claudeProjectsDir    string
+	piSessionsDir        string
+	codexSessionsDir     string
+	opencodeDBPath       string
+	logLevel             string
+	logDir               string
+	logFile              string
 	procSnapshotProvider scanner.ProcessSnapshotProvider
 }
 

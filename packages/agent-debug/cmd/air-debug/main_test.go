@@ -1096,4 +1096,3 @@ func TestCLI_SessionFleet(t *testing.T) {
 		}
 	})
 }
-

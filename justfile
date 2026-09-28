@@ -66,6 +66,14 @@ test-all:
     cd packages/agent-debug && just test
     cd packages/ui-web && just test
 
+# Verify statement coverage meets >= 90% threshold across all Go packages
+check-coverage:
+    cd packages/agent-common && just test
+    cd packages/agent-observer && just test
+    cd packages/agent-ingester && just test
+    cd packages/agent-server && just test
+    cd packages/agent-debug && just test
+
 # Run Playwright E2E test suite
 test-e2e:
     cd packages/ui-web && just test-e2e
@@ -84,6 +92,7 @@ lint-scripts:
 
 # Lint all packages (Go vet + golangci-lint, Bun typecheck + linter)
 lint-all:
+    @out="$(gofmt -l .)"; if [ -n "$out" ]; then echo "Unformatted Go files:"; echo "$out"; exit 1; fi
     cd packages/agent-common && just lint
     cd packages/agent-observer && just lint
     cd packages/agent-ingester && just lint

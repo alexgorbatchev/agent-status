@@ -16,6 +16,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - Print session transcript: `just print-session [claude|pi] [print|summary|handoff] <session-id>`
 - Build all: `just build-all`
 - Test all: `just test-all`
+- Check coverage: `just check-coverage` (enforces >= 90% statement coverage across all Go packages via `scripts/check-coverage.sh`)
 - Lint all: `just lint-all`
 - Run Playwright E2E: `just test-e2e`
 - Start Storybook: `just storybook-web`
@@ -45,7 +46,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - Always: design dashboard UX, activity summarization, and telemetry pipelines for long-running agent sessions rather than sub-second realtime mirroring (LLM inference latency of 1–3s and ~10s debounced summarization cadences are primary and intended; prioritize semantic stability, high-level intent, and stall detection over micro-second state churn)
 - Always: when designing or modifying UI presentation cards, update `air-debug session view` first as the canonical reference specification, and ensure frontend implementations sync to that output (#50, #51)
 - Always: use structured logging via `packages/agent-common/logging` with concise snake_case actions (e.g. `action=hello_received`, no prose, no emojis) and support dual-mode output via `AGENT=1` (prefer human names over opaque IDs in human mode)
-- Always (code-based projects only): any time code is changed such that results from running that code are changed, a test file must be changed as well; 90% code coverage is required (scripts/ folder is excluded from this rule)
+- Always (code-based projects only): any time code is changed such that results from running that code are changed, a test file must be changed as well; 90% statement coverage is required and enforced on `just test` and `just check-coverage` via `scripts/check-coverage.sh` (scripts/ folder is excluded from this rule)
 - Always: run `just test-all` and `just lint-all` before committing changes
 - Ask first: adding database migrations in `packages/agent-ingester/internal/store/migrations.go` or modifying shared types in `packages/agent-common/types/types.go`
 - Never: run the full dev stack (`just start` or `scripts/dev-stack.ts start`) in a synchronous tool call; it runs in the foreground and never exits

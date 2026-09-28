@@ -6,7 +6,8 @@ Central REST API and Server-Sent Events (SSE) daemon (`air-server`) providing qu
 
 - Dev: `just run`
 - Build: `just build`
-- Test: `just test`
+- Test: `just test` (enforces >= 90% statement coverage gate via `scripts/check-coverage.sh`)
+- Check coverage: `just check-coverage` (repo root task checking all Go packages)
 - Lint: `just lint`
 
 ## Local conventions
@@ -23,7 +24,7 @@ Central REST API and Server-Sent Events (SSE) daemon (`air-server`) providing qu
 
 ## Boundaries
 
-- Always (code-based projects only): any time code is changed such that results from running that code are changed, a test file must be changed as well; 90% code coverage is required (scripts/ folder is excluded from this rule)
+- Always (code-based projects only): any time code is changed such that results from running that code are changed, a test file must be changed as well; 90% statement coverage is required and enforced on `just test` via `scripts/check-coverage.sh` (scripts/ folder is excluded from this rule)
 - Ask first: modifying REST routes under `/api/v1/*` or changing SSE payload format
 - Never: open the SQLite database in read-write mode from `air-server`
 - Never: publish releases automatically without explicit user authorization

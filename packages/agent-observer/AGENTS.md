@@ -6,7 +6,8 @@ Local observer daemon (`air-observer`) that scans harness sessions, tails transc
 
 - Dev: `go run ./cmd/air-observer`
 - Build: `just build`
-- Test: `just test`
+- Test: `just test` (enforces >= 90% statement coverage gate via `scripts/check-coverage.sh`)
+- Check coverage: `just check-coverage` (repo root task checking all Go packages)
 - Lint: `just lint`
 
 ## Local conventions
@@ -32,7 +33,7 @@ Local observer daemon (`air-observer`) that scans harness sessions, tails transc
 
 ## Boundaries
 
-- Always (code-based projects only): any time code is changed such that results from running that code are changed, a test file must be changed as well; 90% code coverage is required (scripts/ folder is excluded from this rule)
+- Always (code-based projects only): any time code is changed such that results from running that code are changed, a test file must be changed as well; 90% statement coverage is required and enforced on `just test` via `scripts/check-coverage.sh` (scripts/ folder is excluded from this rule)
 - Ask first: modifying cursor storage structure or WebSocket wire protocol
 - Never: lock, mutate, or delete active agent session log files
 - Never: publish releases automatically without explicit user authorization

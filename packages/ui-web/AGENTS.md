@@ -9,6 +9,7 @@ Web frontend dashboard for agent-status built with React 19, Tailwind CSS v4, Lu
 - Build: `just build`
 - Test: `just test`
 - Test E2E: `just test-e2e`
+- Check Go coverage (repo root): `just check-coverage` (verifies >= 90% statement coverage across Go packages)
 - Lint: `just lint`
 - Guidance: `bun x typescript-ai-policy guidance`
 

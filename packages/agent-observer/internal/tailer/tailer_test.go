@@ -1480,4 +1480,3 @@ func TestTailerAutoCommitDebouncedFlush(t *testing.T) {
 		t.Errorf("expected still 1 save after second Flush, got %d", store.SaveCount())
 	}
 }
-

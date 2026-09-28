@@ -6,15 +6,15 @@ import (
 )
 
 type Config struct {
-	Addr          string
-	DBPath        string
-	SocketPath    string
-	IngesterURL   string
-	AuthToken     string
-	CORSOrigins   []string
-	LogLevel      string
-	LogDir        string
-	LogFile       string
+	Addr        string
+	DBPath      string
+	SocketPath  string
+	IngesterURL string
+	AuthToken   string
+	CORSOrigins []string
+	LogLevel    string
+	LogDir      string
+	LogFile     string
 }
 
 func DefaultDBPath() string {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,10 +14,11 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/go-chi/chi/v5"
 
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-server/internal/store"
 	"github.com/alexgorbatchev/agent-status/packages/agent-server/internal/stream"
-	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 )
 
 type mockStore struct {
@@ -1400,4 +1402,208 @@ func TestHandlers_FocusAgentProxy(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected status 400 for empty id, got %d", w.Code)
 	}
+}
+
+type errTestReader struct{}
+
+func (errTestReader) Read(p []byte) (n int, err error) {
+	return 0, errors.New("read error")
+}
+
+type nonFlusherResponseWriter struct {
+	http.ResponseWriter
+}
+
+func TestHandlers_AdditionalCoverage(t *testing.T) {
+	srv, mock, _ := setupTestServer(t)
+
+	// 1. handleGetAgentByID with empty id
+	req := httptest.NewRequest("GET", "/api/v1/agents/", nil)
+	w := httptest.NewRecorder()
+	srv.handleGetAgentByID(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for empty id in handleGetAgentByID, got %d", w.Code)
+	}
+
+	// 2. handlePatchAgent with empty id
+	req = httptest.NewRequest("PATCH", "/api/v1/agents/", strings.NewReader(`{"isHidden":true}`))
+	w = httptest.NewRecorder()
+	srv.handlePatchAgent(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for empty id in handlePatchAgent, got %d", w.Code)
+	}
+
+	// 3. handlePatchAgent with read error on body
+	req = httptest.NewRequest("PATCH", "/api/v1/agents/agent-1", errTestReader{})
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "agent-1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	w = httptest.NewRecorder()
+	srv.handlePatchAgent(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for body read error in handlePatchAgent, got %d", w.Code)
+	}
+
+	// 4. Ingester URL unreachable address and auth forwarding
+	unreachableListener, err := net.Listen("tcp", "127.0.0.1:0")
+	var unreachableURL string
+	if err == nil {
+		unreachableURL = "http://" + unreachableListener.Addr().String()
+		_ = unreachableListener.Close()
+	} else {
+		unreachableURL = "http://127.0.0.1:0"
+	}
+
+	unreachableIngesterSrv := NewServer(ServerConfig{
+		Store:       mock,
+		Hub:         srv.hub,
+		IngesterURL: unreachableURL,
+		AuthToken:   "",
+	})
+
+	req = httptest.NewRequest("PATCH", "/api/v1/agents/agent-1", strings.NewReader(`{"isHidden":true}`))
+	req.Header.Set("Authorization", "Bearer custom-token")
+	rctx = chi.NewRouteContext()
+	rctx.URLParams.Add("id", "agent-1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	w = httptest.NewRecorder()
+	unreachableIngesterSrv.handlePatchAgent(w, req)
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502 Bad Gateway for unreachable default ingester, got %d", w.Code)
+	}
+
+	// 5. handlePatchAgent with invalid proxy target URL
+	badURLSrv := NewServer(ServerConfig{
+		Store:       mock,
+		Hub:         srv.hub,
+		IngesterURL: "http://[::1]:namedport",
+		AuthToken:   "token",
+	})
+	req = httptest.NewRequest("PATCH", "/api/v1/agents/agent-1", strings.NewReader(`{"isHidden":true}`))
+	rctx = chi.NewRouteContext()
+	rctx.URLParams.Add("id", "agent-1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	w = httptest.NewRecorder()
+	badURLSrv.handlePatchAgent(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 for invalid request URL in patch, got %d", w.Code)
+	}
+
+	// 6. handleFocusAgent with unreachable ingester URL and auth forwarding
+	req = httptest.NewRequest("POST", "/api/v1/agents/agent-1/focus", nil)
+	req.Header.Set("Authorization", "Bearer custom-token")
+	rctx = chi.NewRouteContext()
+	rctx.URLParams.Add("id", "agent-1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	w = httptest.NewRecorder()
+	unreachableIngesterSrv.handleFocusAgent(w, req)
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502 for default ingester in focus, got %d", w.Code)
+	}
+
+	// 7. handleFocusAgent with invalid proxy target URL
+	req = httptest.NewRequest("POST", "/api/v1/agents/agent-1/focus", nil)
+	rctx = chi.NewRouteContext()
+	rctx.URLParams.Add("id", "agent-1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	w = httptest.NewRecorder()
+	badURLSrv.handleFocusAgent(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 for invalid request URL in focus, got %d", w.Code)
+	}
+
+	// 8. handleGetAgentLogs with empty id
+	req = httptest.NewRequest("GET", "/api/v1/agents//logs", nil)
+	w = httptest.NewRecorder()
+	srv.handleGetAgentLogs(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for empty id in handleGetAgentLogs, got %d", w.Code)
+	}
+
+	// 9. handleGetAgentLogs with store error
+	mock.logsErr = errors.New("logs query failed")
+	req = httptest.NewRequest("GET", "/api/v1/agents/agent-1/logs", nil)
+	rctx = chi.NewRouteContext()
+	rctx.URLParams.Add("id", "agent-1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	w = httptest.NewRecorder()
+	srv.handleGetAgentLogs(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 for logs store error, got %d", w.Code)
+	}
+	mock.logsErr = nil
+
+	// 10. handleEventsSSE with non-Flusher ResponseWriter
+	req = httptest.NewRequest("GET", "/api/v1/events", nil)
+	w = httptest.NewRecorder()
+	srv.handleEventsSSE(nonFlusherResponseWriter{w}, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 for non-flusher in handleEventsSSE, got %d", w.Code)
+	}
+
+	// 11. handleEventsSSE with store environments error
+	mock.environmentsErr = errors.New("env store error")
+	req = httptest.NewRequest("GET", "/api/v1/events", nil)
+	w = httptest.NewRecorder()
+	srv.handleEventsSSE(w, req)
+	mock.environmentsErr = nil
+
+	// 12. handleEventsSSE with store agents error
+	mock.agentsErr = errors.New("agents store error")
+	req = httptest.NewRequest("GET", "/api/v1/events", nil)
+	w = httptest.NewRecorder()
+	srv.handleEventsSSE(w, req)
+	mock.agentsErr = nil
+
+	// 13. handleEventsSSE with closed hub event channel
+	testHub := stream.NewHub()
+	sseSrv := NewServer(ServerConfig{
+		Store: mock,
+		Hub:   testHub,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req = httptest.NewRequest("GET", "/api/v1/events", nil).WithContext(ctx)
+	w = httptest.NewRecorder()
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		testHub.Close()
+	}()
+	sseSrv.handleEventsSSE(w, req)
+
+	// 14. handleEventsWS with bad handshake (non-websocket request)
+	req = httptest.NewRequest("GET", "/api/v1/events/ws", nil)
+	w = httptest.NewRecorder()
+	srv.handleEventsWS(w, req)
+	if w.Code != http.StatusUpgradeRequired && w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 426 or 400 for plain HTTP in handleEventsWS, got %d", w.Code)
+	}
+
+	// 15. handleAgentLiveTailSSE with non-Flusher ResponseWriter
+	req = httptest.NewRequest("GET", "/api/v1/agents/agent-1/tail", nil)
+	rctx = chi.NewRouteContext()
+	rctx.URLParams.Add("id", "agent-1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	w = httptest.NewRecorder()
+	srv.handleAgentLiveTailSSE(nonFlusherResponseWriter{w}, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 for non-flusher in handleAgentLiveTailSSE, got %d", w.Code)
+	}
+
+	// 16. handleAgentLiveTailSSE with closed frames channel
+	liveTailHub := stream.NewHub()
+	liveTailSrv := NewServer(ServerConfig{
+		Store: mock,
+		Hub:   liveTailHub,
+	})
+	req = httptest.NewRequest("GET", "/api/v1/agents/agent-1/tail", nil)
+	rctx = chi.NewRouteContext()
+	rctx.URLParams.Add("id", "agent-1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	w = httptest.NewRecorder()
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		liveTailHub.Close()
+	}()
+	liveTailSrv.handleAgentLiveTailSSE(w, req)
 }

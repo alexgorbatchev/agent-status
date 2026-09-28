@@ -33,9 +33,9 @@ func TestStore_ContextWindowAndFullness_Persistence(t *testing.T) {
 	fullness := 0.275
 
 	agent := &types.IAgentState{
-		ID:        "env-cw-1:claude-code:sess-cw-1",
-		SessionID: "sess-cw-1",
-		Harness:   types.HarnessClaudeCode,
+		ID:          "env-cw-1:claude-code:sess-cw-1",
+		SessionID:   "sess-cw-1",
+		Harness:     types.HarnessClaudeCode,
 		Environment: *env,
 		Project: types.IProjectInfo{
 			ID:            "proj-1",

@@ -181,12 +181,12 @@ func GetTelemetryEvents(ctx context.Context, dbPath string, sessionID string, op
 	var results []EventRecord
 	for rows.Next() {
 		var (
-			id, ts                    int64
-			agentID, eventType        string
-			subID                     sql.NullString
-			dataJSON                  string
-			sessID, harness           string
-			pid                       sql.NullInt64
+			id, ts             int64
+			agentID, eventType string
+			subID              sql.NullString
+			dataJSON           string
+			sessID, harness    string
+			pid                sql.NullInt64
 		)
 
 		if err := rows.Scan(&id, &agentID, &subID, &eventType, &ts, &dataJSON, &sessID, &harness, &pid); err != nil {

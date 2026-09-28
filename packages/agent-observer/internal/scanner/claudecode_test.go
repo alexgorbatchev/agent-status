@@ -538,4 +538,3 @@ func TestClaudeCodeDescriptor_NameAndNameSource(t *testing.T) {
 		t.Errorf("NameSource = %q, want 'custom'", desc.NameSource)
 	}
 }
-

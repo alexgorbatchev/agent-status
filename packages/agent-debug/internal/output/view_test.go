@@ -2125,7 +2125,6 @@ func TestRenderFleetView_AgentMode_NoDuplicateWorktree(t *testing.T) {
 	}
 }
 
-
 func TestRenderAgentView_HumanMode_CardLinesBoundedToTerminalWidth(t *testing.T) {
 	longTitle := strings.Repeat("Very long title with lots of words explaining the task in full detail ", 6)
 	longAction := strings.Repeat("Executing very long tool with multiple arguments and paths that exceed width ", 4)

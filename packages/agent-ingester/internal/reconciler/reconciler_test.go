@@ -427,7 +427,6 @@ func (m *mockStore) GetAgent(id string) (*types.IAgentState, error) {
 	return nil, nil
 }
 
-
 func TestReconciler_EndCurrentRunError(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "end_err_test.db")
 	st, err := store.Open(dbPath)
@@ -467,8 +466,6 @@ func TestReconciler_EndCurrentRunError(t *testing.T) {
 		t.Errorf("expected 0 reconciled when EndCurrentRun fails, got %d", count)
 	}
 }
-
-
 
 func TestReconciler_ExplicitEnvID(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "env_test.db")
@@ -793,6 +790,3 @@ func TestReconciler_ListThenLoadExitedRace(t *testing.T) {
 		t.Errorf("expected 0 broadcast events, got %d", len(broadcaster.getEvents()))
 	}
 }
-
-
-

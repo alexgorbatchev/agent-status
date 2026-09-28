@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alexgorbatchev/agent-parser"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/db"
 	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/output"
 	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/replay"
 	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/scanner"
-	"github.com/alexgorbatchev/agent-parser"
 	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree"
 	"github.com/spf13/cobra"
 )
@@ -21,15 +21,15 @@ import (
 var version = "dev"
 
 type replayFlags struct {
-	sessionID   string
-	cwd         string
-	diff        bool
-	untilLine   int
-	untilEvent  string
-	stopOnError bool
-	jsonOut     bool
-	exportDB    string
-	summarize   bool
+	sessionID       string
+	cwd             string
+	diff            bool
+	untilLine       int
+	untilEvent      string
+	stopOnError     bool
+	jsonOut         bool
+	exportDB        string
+	summarize       bool
 	envFlag         string
 	harnessFlag     string
 	strictLifecycle bool
@@ -128,15 +128,15 @@ func newRootCmd() *cobra.Command {
 			}
 
 			opts := replay.ReplayOptions{
-				FilePath:    resolved.FilePath,
-				Harness:     resolved.Harness,
-				SessionID:   sessID,
-				CWD:         rFlags.cwd,
-				EnvLabel:    rFlags.envFlag,
-				Diff:        rFlags.diff,
-				UntilLine:   rFlags.untilLine,
-				UntilEvent:  rFlags.untilEvent,
-				StopOnError: rFlags.stopOnError,
+				FilePath:        resolved.FilePath,
+				Harness:         resolved.Harness,
+				SessionID:       sessID,
+				CWD:             rFlags.cwd,
+				EnvLabel:        rFlags.envFlag,
+				Diff:            rFlags.diff,
+				UntilLine:       rFlags.untilLine,
+				UntilEvent:      rFlags.untilEvent,
+				StopOnError:     rFlags.stopOnError,
 				ExportDB:        rFlags.exportDB,
 				Summarize:       rFlags.summarize,
 				AgentMode:       output.IsAgentMode(),
@@ -226,11 +226,11 @@ func newRootCmd() *cobra.Command {
 			}
 
 			opts := replay.ReplayOptions{
-				FilePath:    resolved.FilePath,
-				Harness:     resolved.Harness,
-				SessionID:   sessID,
-				CWD:         vFlags.cwd,
-				EnvLabel:    vFlags.envFlag,
+				FilePath:        resolved.FilePath,
+				Harness:         resolved.Harness,
+				SessionID:       sessID,
+				CWD:             vFlags.cwd,
+				EnvLabel:        vFlags.envFlag,
 				StopOnError:     false,
 				AgentMode:       output.IsAgentMode(),
 				StrictLifecycle: vFlags.strictLifecycle,

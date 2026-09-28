@@ -4220,8 +4220,8 @@ func TestClassifier_FileModification_SetsActiveTarget(t *testing.T) {
 
 	now := int64(1000)
 	baseFrame := types.ITelemetryFrame{
-		Version:   "1.0",
-		EnvID:     "env-filemod",
+		Version: "1.0",
+		EnvID:   "env-filemod",
 		Environment: types.IEnvironmentInfo{
 			ID:       "env-filemod",
 			Platform: "darwin",
@@ -11595,8 +11595,8 @@ func TestClassifier_SubagentFrame_PreservesAuthoritativeInMemoryCompletion(t *te
 
 	agentID := "env-1:claude-code:sess-sub-authoritative"
 	baseFrame := types.ITelemetryFrame{
-		Version:   "1.0",
-		EnvID:     "env-1",
+		Version: "1.0",
+		EnvID:   "env-1",
 		Environment: types.IEnvironmentInfo{
 			ID:       "env-1",
 			Platform: "darwin",
@@ -11694,8 +11694,8 @@ func TestClassifier_HandleIdleTransition_PreservesFrameTimestamp(t *testing.T) {
 
 	agentID := "env-1:claude-code:sess-idle-ts"
 	baseFrame := types.ITelemetryFrame{
-		Version:   "1.0",
-		EnvID:     "env-1",
+		Version: "1.0",
+		EnvID:   "env-1",
 		Environment: types.IEnvironmentInfo{
 			ID:       "env-1",
 			Platform: "darwin",
@@ -11824,13 +11824,3 @@ func TestClassifier_ProcessSummaryJob_StoreFallbackLockSeparationAndSymmetricSyn
 		t.Errorf("expected CompletedAt = 3000 from store fallback, got %v", loaded.Activity.CompletedAt)
 	}
 }
-
-
-
-
-
-
-
-
-
-

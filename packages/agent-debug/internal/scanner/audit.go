@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	observerscanner "github.com/alexgorbatchev/agent-status/packages/agent-observer/scanner"
 	"github.com/alexgorbatchev/agent-parser"
+	observerscanner "github.com/alexgorbatchev/agent-status/packages/agent-observer/scanner"
 	"github.com/shirou/gopsutil/v4/process"
 )
 
@@ -82,15 +82,15 @@ type Auditor struct {
 
 func NewAuditor() *Auditor {
 	return &Auditor{
-		NowFunc:              time.Now,
-		PiProcsFinder:        livePiProcs,
-		PiSessionsFinder:        LivePiSessions,
-		ClaudeProcsFinder:       liveClaudeProcs,
-		ClaudeSessionsFinder:    LiveClaudeSessions,
-		CodexProcsFinder:        liveCodexProcs,
-		CodexSessionsFinder:     LiveCodexSessions,
-		OpencodeProcsFinder:     liveOpencodeProcs,
-		OpencodeSessionsFinder:  LiveOpencodeSessions,
+		NowFunc:                time.Now,
+		PiProcsFinder:          livePiProcs,
+		PiSessionsFinder:       LivePiSessions,
+		ClaudeProcsFinder:      liveClaudeProcs,
+		ClaudeSessionsFinder:   LiveClaudeSessions,
+		CodexProcsFinder:       liveCodexProcs,
+		CodexSessionsFinder:    LiveCodexSessions,
+		OpencodeProcsFinder:    liveOpencodeProcs,
+		OpencodeSessionsFinder: LiveOpencodeSessions,
 	}
 }
 
@@ -690,5 +690,3 @@ func EnrichProcessInfo(ctx context.Context, pid int, info *ProcessInfo) {
 		info.CPUPercent = cpu
 	}
 }
-
-

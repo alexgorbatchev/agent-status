@@ -17,12 +17,13 @@ build:
     @mkdir -p bin
     go build -o bin/air-server ./cmd/air-server
 
-# Run all unit tests with race detector
-test:
-    go test -race ./...
+# Run all unit tests with race detector and verify >= 90% coverage
+test *args:
+    ../../scripts/check-coverage.sh -race {{ if args == "" { "./..." } else { args } }}
 
 # Check module hygiene and run vet + linter
 lint:
+    @out="$(gofmt -l .)"; if [ -n "$out" ]; then echo "Unformatted Go files:"; echo "$out"; exit 1; fi
     go mod tidy -diff
     go vet ./...
     golangci-lint run

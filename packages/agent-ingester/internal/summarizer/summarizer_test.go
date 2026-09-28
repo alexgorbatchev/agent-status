@@ -662,8 +662,8 @@ func TestBuildUserPrompt_SpecializedStrategies(t *testing.T) {
 
 	t.Run("Strategy 3: Tool Only with Recent Tools", func(t *testing.T) {
 		input := SummaryInput{
-			LastPrompt: "Run test suite",
-			ActiveTool: ptrString("Bash"),
+			LastPrompt:   "Run test suite",
+			ActiveTool:   ptrString("Bash"),
 			ActiveTarget: ptrString("go test ./..."),
 			ActiveToolInput: map[string]interface{}{
 				"command": "go test ./...",
@@ -1535,5 +1535,3 @@ func TestSummarizer_ProviderInitErrors(t *testing.T) {
 		t.Errorf("expected injected gemini error, got: %v", injectedErrors["gemini"])
 	}
 }
-
-

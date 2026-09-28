@@ -166,34 +166,34 @@ func TestLoad_LiteLLMKeyAlias(t *testing.T) {
 
 func TestLoad_Precedence_BaseURL(t *testing.T) {
 	tests := []struct {
-		name          string
+		name           string
 		liteLLMBaseURL string
 		openaiBaseURL  string
-		want          string
+		want           string
 	}{
 		{
-			name:          "both set prefers LITELLM_BASE_URL",
+			name:           "both set prefers LITELLM_BASE_URL",
 			liteLLMBaseURL: "https://litellm.example.com/v1",
 			openaiBaseURL:  "https://openai.example.com/v1",
-			want:          "https://litellm.example.com/v1",
+			want:           "https://litellm.example.com/v1",
 		},
 		{
-			name:          "only OPENAI_BASE_URL set",
+			name:           "only OPENAI_BASE_URL set",
 			liteLLMBaseURL: "",
 			openaiBaseURL:  "https://openai.example.com/v1",
-			want:          "https://openai.example.com/v1",
+			want:           "https://openai.example.com/v1",
 		},
 		{
-			name:          "only LITELLM_BASE_URL set",
+			name:           "only LITELLM_BASE_URL set",
 			liteLLMBaseURL: "https://litellm.example.com/v1",
 			openaiBaseURL:  "",
-			want:          "https://litellm.example.com/v1",
+			want:           "https://litellm.example.com/v1",
 		},
 		{
-			name:          "neither set",
+			name:           "neither set",
 			liteLLMBaseURL: "",
 			openaiBaseURL:  "",
-			want:          "",
+			want:           "",
 		},
 	}
 
@@ -212,53 +212,53 @@ func TestLoad_Precedence_BaseURL(t *testing.T) {
 
 func TestLoad_Precedence_APIKey(t *testing.T) {
 	tests := []struct {
-		name         string
+		name          string
 		litellmAPIKey string
-		litellmKey   string
-		openaiAPIKey string
-		want         string
+		litellmKey    string
+		openaiAPIKey  string
+		want          string
 	}{
 		{
-			name:         "all three set prefers LITELLM_API_KEY",
+			name:          "all three set prefers LITELLM_API_KEY",
 			litellmAPIKey: "key-litellm-api",
-			litellmKey:   "key-litellm-alias",
-			openaiAPIKey: "key-openai-fallback",
-			want:         "key-litellm-api",
+			litellmKey:    "key-litellm-alias",
+			openaiAPIKey:  "key-openai-fallback",
+			want:          "key-litellm-api",
 		},
 		{
-			name:         "LITELLM_API_KEY empty prefers LITELLM_KEY over OPENAI_API_KEY",
+			name:          "LITELLM_API_KEY empty prefers LITELLM_KEY over OPENAI_API_KEY",
 			litellmAPIKey: "",
-			litellmKey:   "key-litellm-alias",
-			openaiAPIKey: "key-openai-fallback",
-			want:         "key-litellm-alias",
+			litellmKey:    "key-litellm-alias",
+			openaiAPIKey:  "key-openai-fallback",
+			want:          "key-litellm-alias",
 		},
 		{
-			name:         "only OPENAI_API_KEY set",
+			name:          "only OPENAI_API_KEY set",
 			litellmAPIKey: "",
-			litellmKey:   "",
-			openaiAPIKey: "key-openai-fallback",
-			want:         "key-openai-fallback",
+			litellmKey:    "",
+			openaiAPIKey:  "key-openai-fallback",
+			want:          "key-openai-fallback",
 		},
 		{
-			name:         "only LITELLM_KEY set",
+			name:          "only LITELLM_KEY set",
 			litellmAPIKey: "",
-			litellmKey:   "key-litellm-alias",
-			openaiAPIKey: "",
-			want:         "key-litellm-alias",
+			litellmKey:    "key-litellm-alias",
+			openaiAPIKey:  "",
+			want:          "key-litellm-alias",
 		},
 		{
-			name:         "only LITELLM_API_KEY set",
+			name:          "only LITELLM_API_KEY set",
 			litellmAPIKey: "key-litellm-api",
-			litellmKey:   "",
-			openaiAPIKey: "",
-			want:         "key-litellm-api",
+			litellmKey:    "",
+			openaiAPIKey:  "",
+			want:          "key-litellm-api",
 		},
 		{
-			name:         "none set",
+			name:          "none set",
 			litellmAPIKey: "",
-			litellmKey:   "",
-			openaiAPIKey: "",
-			want:         "",
+			litellmKey:    "",
+			openaiAPIKey:  "",
+			want:          "",
 		},
 	}
 
@@ -375,5 +375,3 @@ func TestLoad_IdleGracePeriod(t *testing.T) {
 		})
 	}
 }
-
-

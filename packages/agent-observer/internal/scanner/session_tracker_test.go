@@ -229,4 +229,3 @@ func TestSessionTracker_SaveCleansTempFileOnRenameError(t *testing.T) {
 		}
 	}
 }
-

@@ -1289,10 +1289,10 @@ func TestAgentStateAndRuns(t *testing.T) {
 
 	subID := "sub-99"
 	frame := types.ITelemetryFrame{
-		AgentID:     agent.ID,
-		SubagentID:  &subID,
-		EventType:   "tool_call",
-		Timestamp:   now,
+		AgentID:    agent.ID,
+		SubagentID: &subID,
+		EventType:  "tool_call",
+		Timestamp:  now,
 		Data: types.TelemetryFrameData{
 			ToolName: &tool,
 		},
@@ -1355,9 +1355,9 @@ func TestAgentState_AllHarnessTypes(t *testing.T) {
 	for _, h := range harnesses {
 		t.Run(string(h), func(t *testing.T) {
 			agent := types.IAgentState{
-				ID:        "env-harness-test:" + string(h) + ":sess-1",
-				SessionID: "sess-1",
-				Harness:   h,
+				ID:          "env-harness-test:" + string(h) + ":sess-1",
+				SessionID:   "sess-1",
+				Harness:     h,
 				Environment: env,
 				Project: types.IProjectInfo{
 					ID:            "github.com/alex/test",
@@ -2444,7 +2444,6 @@ func TestStore_RecordTelemetryEvent_SubagentAndCoverage(t *testing.T) {
 		t.Errorf("expected error for unmarshalable Data in RecordTelemetryEvent")
 	}
 
-
 	// Test ActionStale and Cost and Phase and Hidden in SaveAgentState
 	phase := types.PhasePlanning
 	cost := types.ICostInfo{Total: 1.23}
@@ -3503,6 +3502,3 @@ func TestStore_GetAllActiveAgents_Coverage(t *testing.T) {
 		t.Errorf("expected 0 agents, got %d", len(agents))
 	}
 }
-
-
-

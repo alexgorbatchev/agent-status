@@ -18,44 +18,44 @@ import (
 
 // ReplayOptions configures an offline replay run.
 type ReplayOptions struct {
-	FilePath    string
-	Harness     types.HarnessType
-	SessionID   string
-	CWD         string
-	EnvLabel    string
-	Diff        bool
-	UntilLine   int
-	UntilEvent  string
-	StopOnError bool
-	ExportDB    string
-	Summarize   bool
+	FilePath        string
+	Harness         types.HarnessType
+	SessionID       string
+	CWD             string
+	EnvLabel        string
+	Diff            bool
+	UntilLine       int
+	UntilEvent      string
+	StopOnError     bool
+	ExportDB        string
+	Summarize       bool
 	AgentMode       bool
 	StrictLifecycle bool
 	OnDiff          func(diff output.StateDiff)
-	OnStep      func(step int, frame types.ITelemetryFrame)
+	OnStep          func(step int, frame types.ITelemetryFrame)
 }
 
 // ReplayResult contains the terminal state and audit metrics of a replay.
 type ReplayResult struct {
-	Harness         types.HarnessType          `json:"harness"`
-	SessionID       string                     `json:"sessionId"`
-	AgentID         string                     `json:"agentId"`
-	Agent           *types.IAgentState         `json:"agent"`
-	FramesProcessed int                        `json:"framesProcessed"`
-	EventCounts     map[string]int             `json:"eventCounts"`
-	Subagents       []string                   `json:"subagents"`
-	Diffs           []output.StateDiff         `json:"diffs,omitempty"`
-	Verification    *VerificationReport        `json:"verification"`
-	Duration        time.Duration              `json:"duration"`
-	ExportDBPath      string                     `json:"exportDbPath,omitempty"`
-	Errors            []string                   `json:"errors,omitempty"`
-	HasNativeStart    bool                       `json:"hasNativeStart,omitempty"`
-	HasNativeEnd      bool                       `json:"hasNativeEnd,omitempty"`
-	HasSyntheticStart bool                       `json:"hasSyntheticStart,omitempty"`
-	HasSyntheticEnd   bool                       `json:"hasSyntheticEnd,omitempty"`
-	StrictLifecycle   bool                       `json:"strictLifecycle,omitempty"`
-	LastEventTimestamp int64                     `json:"lastEventTimestamp,omitempty"`
-	Comparison        *ComparisonResult          `json:"comparison,omitempty"`
+	Harness            types.HarnessType   `json:"harness"`
+	SessionID          string              `json:"sessionId"`
+	AgentID            string              `json:"agentId"`
+	Agent              *types.IAgentState  `json:"agent"`
+	FramesProcessed    int                 `json:"framesProcessed"`
+	EventCounts        map[string]int      `json:"eventCounts"`
+	Subagents          []string            `json:"subagents"`
+	Diffs              []output.StateDiff  `json:"diffs,omitempty"`
+	Verification       *VerificationReport `json:"verification"`
+	Duration           time.Duration       `json:"duration"`
+	ExportDBPath       string              `json:"exportDbPath,omitempty"`
+	Errors             []string            `json:"errors,omitempty"`
+	HasNativeStart     bool                `json:"hasNativeStart,omitempty"`
+	HasNativeEnd       bool                `json:"hasNativeEnd,omitempty"`
+	HasSyntheticStart  bool                `json:"hasSyntheticStart,omitempty"`
+	HasSyntheticEnd    bool                `json:"hasSyntheticEnd,omitempty"`
+	StrictLifecycle    bool                `json:"strictLifecycle,omitempty"`
+	LastEventTimestamp int64               `json:"lastEventTimestamp,omitempty"`
+	Comparison         *ComparisonResult   `json:"comparison,omitempty"`
 }
 
 // Summary builds a ReplaySummary presentation model from the replay result.
@@ -277,23 +277,23 @@ func RunReplay(ctx context.Context, opts ReplayOptions) (*ReplayResult, error) {
 	}
 
 	result := &ReplayResult{
-		Harness:           session.Harness,
-		SessionID:         session.SessionID,
-		AgentID:           agentID,
-		Agent:             finalAgent,
-		FramesProcessed:   framesProcessed,
-		EventCounts:       eventCounts,
-		Subagents:         session.Subagents,
-		Diffs:             diffs,
-		Verification:      verReport,
-		Duration:          time.Since(start),
-		ExportDBPath:      opts.ExportDB,
-		Errors:            replayErrors,
-		HasNativeStart:    hasNativeStart,
-		HasNativeEnd:      hasNativeEnd,
-		HasSyntheticStart: hasSyntheticStart,
-		HasSyntheticEnd:   hasSyntheticEnd,
-		StrictLifecycle:   opts.StrictLifecycle,
+		Harness:            session.Harness,
+		SessionID:          session.SessionID,
+		AgentID:            agentID,
+		Agent:              finalAgent,
+		FramesProcessed:    framesProcessed,
+		EventCounts:        eventCounts,
+		Subagents:          session.Subagents,
+		Diffs:              diffs,
+		Verification:       verReport,
+		Duration:           time.Since(start),
+		ExportDBPath:       opts.ExportDB,
+		Errors:             replayErrors,
+		HasNativeStart:     hasNativeStart,
+		HasNativeEnd:       hasNativeEnd,
+		HasSyntheticStart:  hasSyntheticStart,
+		HasSyntheticEnd:    hasSyntheticEnd,
+		StrictLifecycle:    opts.StrictLifecycle,
 		LastEventTimestamp: lastEventTS,
 	}
 

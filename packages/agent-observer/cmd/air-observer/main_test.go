@@ -17,11 +17,11 @@ import (
 
 	_ "github.com/ncruces/go-sqlite3/driver"
 
+	parser "github.com/alexgorbatchev/agent-parser"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/scanner"
 	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/tailer"
-	parser "github.com/alexgorbatchev/agent-parser"
 	"github.com/coder/websocket"
 )
 
@@ -2210,5 +2210,3 @@ func TestObserver_ScanAllSkipsProcessSnapshotWhenAllSessionsDead(t *testing.T) {
 		t.Errorf("expected process snapshot provider NOT to be called when all sessions belong to dead processes, but was called %d times", calls)
 	}
 }
-
-

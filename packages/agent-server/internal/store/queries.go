@@ -159,38 +159,38 @@ type agentRowScanner interface {
 
 func scanAgent(s agentRowScanner, nowMs int64) (*types.IAgentState, error) {
 	var (
-		id, sessionID, envID, harness                                 string
-		projectID, projectName, canonicalRoot                         string
-		branch                                                        string
-		isDetached, isWorktree                                        int
-		worktreeRelPath                                               sql.NullString
-		cwd                                                           string
-		currentRunID                                                  sql.NullString
-		activity                                                      string
-		title, action                                                 string
-		actionStale                                                   int
-		phase, activeTool, activeTarget, question                     sql.NullString
-		activeToolStartedAt                                           sql.NullInt64
-		lastThinkingExcerpt, lastError                                sql.NullString
-		tokensInput, tokensOutput, tokensCacheRead, tokensCacheWrite  int64
-		tokensReasoning, tokensTotal                                  int64
-		costUSD                                                       sql.NullFloat64
-		subagentCount                                                 int
-		activeSubagents                                               sql.NullString
-		firstStartedAt, updatedAt                                     int64
-		envLabel, envHostname, envPlatform, envUser                   string
-		envLastHeartbeat                                              int64
-		runPID                                                        sql.NullInt64
-		runHarnessVersion                                             sql.NullString
-		runStartedAt, runEndedAt                                      sql.NullInt64
-		isHidden                                                      int
-		hiddenAt                                                      sql.NullInt64
-		modelStr                                                      sql.NullString
-		contextWindow                                                 sql.NullInt64
-		contextFullness                                               sql.NullFloat64
-		rateLimitResetAt, retryAfterSeconds                           sql.NullInt64
-		hasUnseenCompletion                                           int
-		completedAt                                                   sql.NullInt64
+		id, sessionID, envID, harness                                string
+		projectID, projectName, canonicalRoot                        string
+		branch                                                       string
+		isDetached, isWorktree                                       int
+		worktreeRelPath                                              sql.NullString
+		cwd                                                          string
+		currentRunID                                                 sql.NullString
+		activity                                                     string
+		title, action                                                string
+		actionStale                                                  int
+		phase, activeTool, activeTarget, question                    sql.NullString
+		activeToolStartedAt                                          sql.NullInt64
+		lastThinkingExcerpt, lastError                               sql.NullString
+		tokensInput, tokensOutput, tokensCacheRead, tokensCacheWrite int64
+		tokensReasoning, tokensTotal                                 int64
+		costUSD                                                      sql.NullFloat64
+		subagentCount                                                int
+		activeSubagents                                              sql.NullString
+		firstStartedAt, updatedAt                                    int64
+		envLabel, envHostname, envPlatform, envUser                  string
+		envLastHeartbeat                                             int64
+		runPID                                                       sql.NullInt64
+		runHarnessVersion                                            sql.NullString
+		runStartedAt, runEndedAt                                     sql.NullInt64
+		isHidden                                                     int
+		hiddenAt                                                     sql.NullInt64
+		modelStr                                                     sql.NullString
+		contextWindow                                                sql.NullInt64
+		contextFullness                                              sql.NullFloat64
+		rateLimitResetAt, retryAfterSeconds                          sql.NullInt64
+		hasUnseenCompletion                                          int
+		completedAt                                                  sql.NullInt64
 	)
 
 	err := s.Scan(
@@ -547,20 +547,20 @@ func (s *Store) GetAgentLogs(ctx context.Context, agentID string, limit int, bef
 	frames := make([]types.ITelemetryFrame, 0)
 	for rows.Next() {
 		var (
-			seqID, ts                                    int64
-			agID, eventType, dataJSON                    string
-			subID                                        sql.NullString
-			sessionID, harness                           string
-			projectID, projectName, canonicalRoot        string
-			branch                                       string
-			isDetached, isWorktree                       int
-			worktreeRelPath                              sql.NullString
-			cwd                                          string
-			envID, envLabel, envHostname, envPlatform    string
-			envUser                                      string
-			envLastHeartbeat                             int64
-			runPID                                       sql.NullInt64
-			runHarnessVersion                            sql.NullString
+			seqID, ts                                 int64
+			agID, eventType, dataJSON                 string
+			subID                                     sql.NullString
+			sessionID, harness                        string
+			projectID, projectName, canonicalRoot     string
+			branch                                    string
+			isDetached, isWorktree                    int
+			worktreeRelPath                           sql.NullString
+			cwd                                       string
+			envID, envLabel, envHostname, envPlatform string
+			envUser                                   string
+			envLastHeartbeat                          int64
+			runPID                                    sql.NullInt64
+			runHarnessVersion                         sql.NullString
 		)
 
 		err := rows.Scan(

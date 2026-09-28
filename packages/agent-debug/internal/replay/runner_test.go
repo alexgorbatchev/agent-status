@@ -532,4 +532,3 @@ func TestReplayResult_Summary_HasUnseenCompletion(t *testing.T) {
 		t.Fatalf("expected summary.HasUnseenCompletion to be true, got %v", summary.HasUnseenCompletion)
 	}
 }
-

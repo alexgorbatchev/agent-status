@@ -1340,4 +1340,3 @@ func TestRunServer_DoesNotLeakLogsToUserXDGStateHome(t *testing.T) {
 		}
 	})
 }
-

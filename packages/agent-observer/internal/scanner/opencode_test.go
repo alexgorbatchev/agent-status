@@ -423,5 +423,3 @@ func TestOpencodeScanner_SetProcessFinderAndProvider(t *testing.T) {
 		t.Errorf("SetProcessSnapshotProvider failed: %v, %v", procs, err)
 	}
 }
-
-

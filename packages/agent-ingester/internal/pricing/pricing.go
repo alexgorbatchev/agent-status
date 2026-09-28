@@ -12,10 +12,10 @@ import (
 var defaultModelsJSON []byte
 
 type ModelPricing struct {
-	InputCostPerToken            float64 `json:"input_cost_per_token"`
-	OutputCostPerToken           float64 `json:"output_cost_per_token"`
-	CacheReadInputTokenCost      float64 `json:"cache_read_input_token_cost"`
-	CacheCreationInputTokenCost  float64 `json:"cache_creation_input_token_cost"`
+	InputCostPerToken           float64 `json:"input_cost_per_token"`
+	OutputCostPerToken          float64 `json:"output_cost_per_token"`
+	CacheReadInputTokenCost     float64 `json:"cache_read_input_token_cost"`
+	CacheCreationInputTokenCost float64 `json:"cache_creation_input_token_cost"`
 }
 
 type Usage struct {

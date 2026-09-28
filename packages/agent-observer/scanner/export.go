@@ -34,9 +34,8 @@ type LiveProcessSnapshotProvider = internalscanner.LiveProcessSnapshotProvider
 type ProcessMeta = internalscanner.ProcessMeta
 
 var (
-
 	DefaultClaudeSessionDirs = internalscanner.DefaultClaudeSessionDirs
-	NewClaudeCodeScanner    = internalscanner.NewClaudeCodeScanner
+	NewClaudeCodeScanner     = internalscanner.NewClaudeCodeScanner
 
 	DefaultPiSessionsDir = internalscanner.DefaultPiSessionsDir
 	LivePiProcessFinder  = internalscanner.LivePiProcessFinder
