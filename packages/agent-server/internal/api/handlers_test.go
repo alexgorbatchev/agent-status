@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -444,7 +445,7 @@ func TestGetAgents(t *testing.T) {
 	})
 
 	t.Run("filter no matches", func(t *testing.T) {
-		req := httptest.NewRequest("GET", "/api/v1/agents?project=p2", nil)
+		req := httptest.NewRequest("GET", "/api/v1/agents?project=p2&hidden=true", nil)
 		req.Header.Set("Authorization", "Bearer secret-token")
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)
@@ -453,6 +454,14 @@ func TestGetAgents(t *testing.T) {
 		_ = json.NewDecoder(w.Body).Decode(&agents)
 		if len(agents) != 0 {
 			t.Fatalf("len(agents) = %d, want 0", len(agents))
+		}
+
+		req2 := httptest.NewRequest("GET", "/api/v1/agents?hidden=false", nil)
+		req2.Header.Set("Authorization", "Bearer secret-token")
+		w2 := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w2, req2)
+		if w2.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d", w2.Code, http.StatusOK)
 		}
 	})
 
@@ -555,8 +564,15 @@ func TestGetAgentByID(t *testing.T) {
 }
 
 func TestPatchAgent(t *testing.T) {
+	var lastReceivedPath string
+	var lastReceivedPayload []byte
+
 	// Fake ingester backend
 	fakeIngester := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		lastReceivedPath = r.URL.Path
+		bodyBytes, _ := io.ReadAll(r.Body)
+		lastReceivedPayload = bodyBytes
+
 		if r.Header.Get("Authorization") != "Bearer secret-token" {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
@@ -573,19 +589,32 @@ func TestPatchAgent(t *testing.T) {
 		}
 
 		var body struct {
-			IsHidden bool `json:"isHidden"`
+			IsHidden              *bool `json:"isHidden"`
+			DismissCompletion     *bool `json:"dismissCompletion"`
+			AcknowledgeCompletion *bool `json:"acknowledgeCompletion"`
 		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if err := json.Unmarshal(bodyBytes, &body); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
 
+		tFalse := false
+		agent := types.IAgentState{
+			ID: "agent-1",
+			Activity: types.IAgentActivity{
+				Activity: types.ActivityIdle,
+			},
+		}
+		if body.IsHidden != nil {
+			agent.IsHidden = *body.IsHidden
+		}
+		if (body.DismissCompletion != nil && *body.DismissCompletion) || (body.AcknowledgeCompletion != nil && *body.AcknowledgeCompletion) {
+			agent.Activity.HasUnseenCompletion = &tFalse
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(types.IAgentState{
-			ID:       "agent-1",
-			IsHidden: body.IsHidden,
-		})
+		_ = json.NewEncoder(w).Encode(agent)
 	}))
 	defer fakeIngester.Close()
 
@@ -618,6 +647,102 @@ func TestPatchAgent(t *testing.T) {
 		if !agent.IsHidden {
 			t.Errorf("expected agent.IsHidden == true")
 		}
+		if lastReceivedPath != "/api/v1/internal/agents/agent-1" {
+			t.Errorf("expected forwarded path to be /api/v1/internal/agents/agent-1, got %s", lastReceivedPath)
+		}
+	})
+
+	t.Run("success dismiss completion via dismissCompletion", func(t *testing.T) {
+		body := strings.NewReader(`{"dismissCompletion":true}`)
+		req := httptest.NewRequest("PATCH", "/api/v1/agents/agent-1", body)
+		req.Header.Set("Authorization", "Bearer secret-token")
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+		}
+
+		var agent types.IAgentState
+		if err := json.NewDecoder(w.Body).Decode(&agent); err != nil {
+			t.Fatalf("decoding json: %v", err)
+		}
+		if agent.ID != "agent-1" {
+			t.Errorf("expected agent.ID == agent-1, got %s", agent.ID)
+		}
+		if agent.Activity.HasUnseenCompletion == nil || *agent.Activity.HasUnseenCompletion {
+			t.Errorf("expected HasUnseenCompletion to be false, got %v", agent.Activity.HasUnseenCompletion)
+		}
+		if lastReceivedPath != "/api/v1/internal/agents/agent-1" {
+			t.Errorf("expected forwarded path to be /api/v1/internal/agents/agent-1, got %s", lastReceivedPath)
+		}
+	})
+
+	t.Run("success dismiss completion via acknowledgeCompletion", func(t *testing.T) {
+		body := strings.NewReader(`{"acknowledgeCompletion":true}`)
+		req := httptest.NewRequest("PATCH", "/api/v1/agents/agent-1", body)
+		req.Header.Set("Authorization", "Bearer secret-token")
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+		}
+
+		var agent types.IAgentState
+		if err := json.NewDecoder(w.Body).Decode(&agent); err != nil {
+			t.Fatalf("decoding json: %v", err)
+		}
+		if agent.ID != "agent-1" {
+			t.Errorf("expected agent.ID == agent-1, got %s", agent.ID)
+		}
+		if lastReceivedPath != "/api/v1/internal/agents/agent-1" {
+			t.Errorf("expected forwarded path to be /api/v1/internal/agents/agent-1, got %s", lastReceivedPath)
+		}
+	})
+
+	t.Run("success composite payload (isHidden and dismissCompletion)", func(t *testing.T) {
+		body := strings.NewReader(`{"isHidden":true,"dismissCompletion":true}`)
+		req := httptest.NewRequest("PATCH", "/api/v1/agents/agent-1", body)
+		req.Header.Set("Authorization", "Bearer secret-token")
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+		}
+
+		var agent types.IAgentState
+		if err := json.NewDecoder(w.Body).Decode(&agent); err != nil {
+			t.Fatalf("decoding json: %v", err)
+		}
+		if agent.ID != "agent-1" {
+			t.Errorf("expected agent.ID == agent-1, got %s", agent.ID)
+		}
+		if !agent.IsHidden {
+			t.Errorf("expected agent.IsHidden == true, got false")
+		}
+		if agent.Activity.HasUnseenCompletion == nil || *agent.Activity.HasUnseenCompletion {
+			t.Errorf("expected HasUnseenCompletion to be false, got %v", agent.Activity.HasUnseenCompletion)
+		}
+		if lastReceivedPath != "/api/v1/internal/agents/agent-1" {
+			t.Errorf("expected forwarded path to be /api/v1/internal/agents/agent-1, got %s", lastReceivedPath)
+		}
+		if !strings.Contains(string(lastReceivedPayload), `"isHidden":true`) || !strings.Contains(string(lastReceivedPayload), `"dismissCompletion":true`) {
+			t.Errorf("expected composite payload forwarded to ingester, got: %s", string(lastReceivedPayload))
+		}
+	})
+
+	t.Run("400 on no recognized patch fields", func(t *testing.T) {
+		body := strings.NewReader(`{}`)
+		req := httptest.NewRequest("PATCH", "/api/v1/agents/agent-1", body)
+		req.Header.Set("Authorization", "Bearer secret-token")
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want %d", w.Code, http.StatusBadRequest)
+		}
 	})
 
 	t.Run("404 when agent not found in ingester", func(t *testing.T) {
@@ -641,6 +766,37 @@ func TestPatchAgent(t *testing.T) {
 
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("status = %d, want %d", w.Code, http.StatusBadRequest)
+		}
+	})
+
+	t.Run("success dismiss completion via request auth header forwarding", func(t *testing.T) {
+		forwardAuthSrv := NewServer(ServerConfig{
+			IngesterURL: fakeIngester.URL,
+		})
+		body := strings.NewReader(`{"dismissCompletion":true}`)
+		req := httptest.NewRequest("PATCH", "/api/v1/agents/agent-1", body)
+		req.Header.Set("Authorization", "Bearer secret-token")
+		w := httptest.NewRecorder()
+		forwardAuthSrv.Router().ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+		}
+	})
+
+	t.Run("502 when ingester unreachable", func(t *testing.T) {
+		deadSrv := NewServer(ServerConfig{
+			AuthToken:   "secret-token",
+			IngesterURL: "http://127.0.0.1:9999",
+		})
+		body := strings.NewReader(`{"dismissCompletion":true}`)
+		req := httptest.NewRequest("PATCH", "/api/v1/agents/agent-1", body)
+		req.Header.Set("Authorization", "Bearer secret-token")
+		w := httptest.NewRecorder()
+		deadSrv.Router().ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadGateway {
+			t.Fatalf("status = %d, want %d", w.Code, http.StatusBadGateway)
 		}
 	})
 

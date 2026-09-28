@@ -256,6 +256,32 @@ func Migrate(db *sql.DB) error {
 		version = 7
 	}
 
+	if version < 8 {
+		tx, err := db.Begin()
+		if err != nil {
+			return fmt.Errorf("beginning migration v8 transaction: %w", err)
+		}
+		defer func() {
+			_ = tx.Rollback()
+		}()
+
+		if _, err := tx.Exec("ALTER TABLE agents ADD COLUMN has_unseen_completion INTEGER NOT NULL DEFAULT 0;"); err != nil {
+			return fmt.Errorf("executing migration v8 has_unseen_completion: %w", err)
+		}
+		if _, err := tx.Exec("ALTER TABLE agents ADD COLUMN completed_at INTEGER;"); err != nil {
+			return fmt.Errorf("executing migration v8 completed_at: %w", err)
+		}
+
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("committing migration v8: %w", err)
+		}
+
+		if _, err := db.Exec("PRAGMA user_version = 8;"); err != nil {
+			return fmt.Errorf("updating user_version to 8: %w", err)
+		}
+		version = 8
+	}
+
 	return nil
 }
 

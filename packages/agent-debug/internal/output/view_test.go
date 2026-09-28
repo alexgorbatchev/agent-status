@@ -1608,8 +1608,11 @@ func TestRenderAgentView_AgentMode_Completed(t *testing.T) {
 	RenderAgentView(&buf, agent, true)
 	line := strings.TrimSpace(buf.String())
 
-	if !strings.Contains(line, "activity:COMPLETED") {
-		t.Errorf("expected activity:COMPLETED in agent mode, got:\n%s", line)
+	if !strings.Contains(line, "activity:IDLE") {
+		t.Errorf("expected activity:IDLE in agent mode, got:\n%s", line)
+	}
+	if strings.Contains(line, "activity:COMPLETED") {
+		t.Errorf("expected no activity:COMPLETED in agent mode, got:\n%s", line)
 	}
 	if !strings.Contains(line, "has_unseen_completion:true") {
 		t.Errorf("expected has_unseen_completion:true in agent mode, got:\n%s", line)

@@ -162,6 +162,9 @@ func runServer(ctx context.Context, cmd *cobra.Command, cfg *config.Config, read
 	mux := http.NewServeMux()
 	mux.Handle("/ws/ingest", rcv)
 	mux.HandleFunc("PATCH /api/v1/internal/agents/{id}/visibility", rcv.HandleSetVisibility)
+	mux.HandleFunc("PATCH /api/v1/internal/agents/{id}/dismiss-completion", rcv.HandleDismissCompletion)
+	mux.HandleFunc("POST /api/v1/internal/agents/{id}/dismiss-completion", rcv.HandleDismissCompletion)
+	mux.HandleFunc("PATCH /api/v1/internal/agents/{id}", rcv.HandlePatchAgent)
 	mux.HandleFunc("POST /api/v1/internal/agents/{id}/focus", rcv.HandleFocusAgent)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

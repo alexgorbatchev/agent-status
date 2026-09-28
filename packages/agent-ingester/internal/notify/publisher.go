@@ -140,6 +140,12 @@ func (p *Publisher) Publish(event types.IServerEvent) {
 	}
 }
 
+func (p *Publisher) Broadcast(event *types.IServerEvent) {
+	if p != nil && event != nil {
+		p.Publish(*event)
+	}
+}
+
 func (p *Publisher) Close() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()

@@ -106,7 +106,8 @@ const selectAgentQuery = `
 		a.cost_usd, a.subagent_count, a.first_started_at, a.updated_at,
 		COALESCE(e.label, ''), COALESCE(e.hostname, ''), COALESCE(e.platform, ''), COALESCE(e.user, ''), COALESCE(e.last_heartbeat_at, 0),
 		r.pid, r.harness_version, r.started_at, r.ended_at,
-		a.rate_limit_reset_at, a.retry_after_seconds
+		a.rate_limit_reset_at, a.retry_after_seconds,
+		a.has_unseen_completion, a.completed_at
 	FROM agents a
 	LEFT JOIN environments e ON a.environment_id = e.id
 	LEFT JOIN runs r ON a.current_run_id = r.id
@@ -144,6 +145,8 @@ func scanAgentRow(s rowScanner) (*types.IAgentState, error) {
 		runHarnessVersion                                            sql.NullString
 		runStartedAt, runEndedAt                                     sql.NullInt64
 		rateLimitResetAt, retryAfterSeconds                          sql.NullInt64
+		hasUnseenCompletion                                          int
+		completedAt                                                  sql.NullInt64
 	)
 
 	err := s.Scan(
@@ -159,6 +162,7 @@ func scanAgentRow(s rowScanner) (*types.IAgentState, error) {
 		&envLabel, &envHostname, &envPlatform, &envUser, &envLastHeartbeat,
 		&runPID, &runHarnessVersion, &runStartedAt, &runEndedAt,
 		&rateLimitResetAt, &retryAfterSeconds,
+		&hasUnseenCompletion, &completedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -259,6 +263,14 @@ func scanAgentRow(s rowScanner) (*types.IAgentState, error) {
 		v := retryAfterSeconds.Int64
 		agent.Activity.RetryAfterSeconds = &v
 	}
+	if hasUnseenCompletion == 1 {
+		b := true
+		agent.Activity.HasUnseenCompletion = &b
+	}
+	if completedAt.Valid {
+		v := completedAt.Int64
+		agent.Activity.CompletedAt = &v
+	}
 
 	return agent, nil
 }
@@ -276,7 +288,8 @@ const selectAllAgentsQuery = `
 		a.cost_usd, a.subagent_count, a.first_started_at, a.updated_at,
 		COALESCE(e.label, ''), COALESCE(e.hostname, ''), COALESCE(e.platform, ''), COALESCE(e.user, ''), COALESCE(e.last_heartbeat_at, 0),
 		r.pid, r.harness_version, r.started_at, r.ended_at,
-		a.rate_limit_reset_at, a.retry_after_seconds
+		a.rate_limit_reset_at, a.retry_after_seconds,
+		a.has_unseen_completion, a.completed_at
 	FROM agents a
 	LEFT JOIN environments e ON a.environment_id = e.id
 	LEFT JOIN runs r ON a.current_run_id = r.id

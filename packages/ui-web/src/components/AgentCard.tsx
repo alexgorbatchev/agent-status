@@ -69,8 +69,8 @@ export function AgentCard({
   const [showSubagents, setShowSubagents] = useState<boolean>(defaultShowSubagents);
   const { activity, environment, workspace, harness } = agent;
 
-  const hasUnseenCompletionProp = Boolean(activity.hasUnseenCompletion ?? activity.has_unseen_completion);
-  const currentCompletedAt = activity.completedAt ?? activity.completed_at;
+  const hasUnseenCompletionProp = Boolean(activity.hasUnseenCompletion);
+  const currentCompletedAt = activity.completedAt;
   const [acknowledged, setAcknowledged] = useState<boolean>(false);
   const [prevHasUnseen, setPrevHasUnseen] = useState<boolean>(hasUnseenCompletionProp);
   const [prevCompletedAt, setPrevCompletedAt] = useState<number | null | undefined>(currentCompletedAt);
@@ -86,7 +86,7 @@ export function AgentCard({
   const handleAcknowledgeCompletion = () => {
     if (effectiveHasUnseenCompletion) {
       setAcknowledged(true);
-      onAcknowledgeCompletion?.(agent);
+      onAcknowledgeCompletion?.(agent.id);
     }
   };
 
@@ -135,10 +135,6 @@ export function AgentCard({
     onOpenDrawer?.(agent);
   };
 
-  const handleFocus = () => {
-    handleAcknowledgeCompletion();
-  };
-
   const isError = activity.activity === "ERROR";
   const isWaitingQuestion = activity.activity === "WAITING_QUESTION";
   const isRateLimited = activity.activity === "RATE_LIMITED";
@@ -162,7 +158,6 @@ export function AgentCard({
       data-freshness={freshness}
       aria-label={`View details for ${title}`}
       onClick={handleClick}
-      onFocus={handleFocus}
       onKeyDown={handleKeyDown}
       className={clsx(
         "group relative flex flex-col justify-between p-4 rounded-xl bg-slate-900/80 border transition-all cursor-pointer shadow-lg hover:shadow-slate-950/50",

@@ -14,6 +14,7 @@ export function AgentGroupSection({
   agents,
   onSelectAgent,
   onToggleHide,
+  onAcknowledgeCompletion,
 }: IAgentGroupSectionProps): React.JSX.Element {
   const spend = calculateTotalSpend(agents);
   const activeCount = filterActiveAgents(agents).length;
@@ -36,6 +37,7 @@ export function AgentGroupSection({
         gridTestId={`${prefix}--grid`}
         onSelectAgent={onSelectAgent}
         onToggleHide={onToggleHide}
+        onAcknowledgeCompletion={onAcknowledgeCompletion}
       />
     </div>
   );

@@ -62,6 +62,8 @@ type agentContext struct {
 	turnFloorUntil          int64
 	hasUnseenCompletion     *bool
 	completedAt             *int64
+	turnEndTimestamp        int64
+	lastEventTimestamp      int64
 }
 
 func boolPtr(b bool) *bool {
@@ -252,6 +254,44 @@ func (c *Classifier) SetSyncMode(sync bool) {
 	c.syncMode = sync
 }
 
+// DismissCompletion clears in-memory unseen completion status, updates SQLite, and broadcasts the updated agent.
+func (c *Classifier) DismissCompletion(agentID string) (*types.IAgentState, error) {
+	var persistMu *sync.Mutex
+	c.mu.Lock()
+	if actx, ok := c.agentCtx[agentID]; ok {
+		persistMu = &actx.persistMu
+	}
+	c.mu.Unlock()
+
+	if persistMu != nil {
+		persistMu.Lock()
+		defer persistMu.Unlock()
+	}
+
+	c.mu.Lock()
+	if actx, ok := c.agentCtx[agentID]; ok {
+		actx.hasUnseenCompletion = nil
+		actx.completedAt = nil
+	}
+	cb := c.onUpdate
+	c.mu.Unlock()
+
+	if c.store == nil {
+		return nil, fmt.Errorf("classifier store is nil")
+	}
+
+	agent, err := c.store.DismissAgentCompletion(agentID)
+	if err != nil {
+		return nil, err
+	}
+
+	if cb != nil && agent != nil {
+		cb(agent)
+	}
+
+	return agent, nil
+}
+
 // Close gracefully stops all per-agent async workers and waits for in-flight jobs to complete.
 func (c *Classifier) Close() error {
 	c.mu.Lock()
@@ -385,7 +425,7 @@ func (c *Classifier) handleSubagentDwellExpired(agentID, subID string) {
 		c.mu.Unlock()
 		return
 	}
-	c.rollupActivityLocked(agent, actx)
+	c.rollupActivityLocked(agent, actx, now)
 	_ = c.store.SaveAgentState(*agent)
 	cb := c.onUpdate
 	hook := c.afterSubagentDwellHook
@@ -791,6 +831,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 
 	c.mu.Lock()
 	actx.saveGeneration++
+	actx.lastEventTimestamp = now
 	if !isSubagent && isRootStateEvent(frame.EventType) {
 		actx.rootGeneration++
 	}
@@ -806,9 +847,9 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			agent.Activity.RateLimitResetAt = nil
 			agent.Activity.RetryAfterSeconds = nil
 		}
-		agent.Activity.HasUnseenCompletion = actx.hasUnseenCompletion
-		agent.Activity.CompletedAt = actx.completedAt
 	}
+	agent.Activity.HasUnseenCompletion = actx.hasUnseenCompletion
+	agent.Activity.CompletedAt = actx.completedAt
 	if actx.seenSubagents == nil {
 		actx.seenSubagents = make(map[string]struct{})
 	}
@@ -878,6 +919,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 
 			agent.Activity.Lifecycle = types.LifecycleExited
 			agent.Activity.HasUnseenCompletion = nil
+			agent.Activity.CompletedAt = nil
 			agent.Activity.ActiveTool = nil
 			agent.Activity.ActiveTarget = nil
 			agent.Activity.ActiveToolStartedAt = nil
@@ -904,6 +946,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			c.mu.Unlock()
 			agent.Activity.Activity = types.ActivityWaitingQuestion
 			agent.Activity.HasUnseenCompletion = nil
+			agent.Activity.CompletedAt = nil
 			agent.Activity.ActiveTool = nil
 			agent.Activity.ActiveTarget = nil
 			agent.Activity.RateLimitResetAt = nil
@@ -933,6 +976,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				agent.Activity.RetryAfterSeconds = nil
 			}
 			agent.Activity.HasUnseenCompletion = nil
+			agent.Activity.CompletedAt = nil
 			agent.Activity.ActiveTool = nil
 			agent.Activity.ActiveTarget = nil
 			agent.Activity.ActiveToolStartedAt = nil
@@ -973,6 +1017,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			c.mu.Unlock()
 			agent.Activity.Activity = types.ActivityBusy
 			agent.Activity.HasUnseenCompletion = nil
+			agent.Activity.CompletedAt = nil
 			agent.Activity.LastError = nil
 			agent.Activity.ActiveToolStartedAt = &now
 			if frame.Data.ToolName != nil {
@@ -1005,6 +1050,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				if toolName == "AskUserQuestion" {
 					agent.Activity.Activity = types.ActivityWaitingQuestion
 					agent.Activity.HasUnseenCompletion = nil
+					agent.Activity.CompletedAt = nil
 					agent.Activity.RateLimitResetAt = nil
 					agent.Activity.RetryAfterSeconds = nil
 					if frame.Data.Question != nil {
@@ -1034,6 +1080,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			c.mu.Unlock()
 			agent.Activity.Activity = types.ActivityBusy
 			agent.Activity.HasUnseenCompletion = nil
+			agent.Activity.CompletedAt = nil
 			agent.Activity.LastError = nil
 			agent.Activity.RateLimitResetAt = nil
 			agent.Activity.RetryAfterSeconds = nil
@@ -1052,6 +1099,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			c.mu.Unlock()
 			agent.Activity.Activity = types.ActivityBusy
 			agent.Activity.HasUnseenCompletion = nil
+			agent.Activity.CompletedAt = nil
 			agent.Activity.LastError = nil
 			agent.Activity.RateLimitResetAt = nil
 			agent.Activity.RetryAfterSeconds = nil
@@ -1183,6 +1231,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 					if gracePeriod <= 0 || isSync || agent.Activity.Activity != types.ActivityBusy {
 						c.mu.Lock()
 						c.cancelIdleTimerLocked(agent.ID)
+						actx.turnEndTimestamp = now
 						c.mu.Unlock()
 						if agent.Activity.Activity == types.ActivityBusy {
 							agent.Activity.HasUnseenCompletion = boolPtr(true)
@@ -1206,6 +1255,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 							agent.Activity.RetryAfterSeconds = nil
 						}
 						c.mu.Lock()
+						actx.turnEndTimestamp = now
 						c.scheduleIdleTransitionLocked(agent.ID, actx.rootGeneration, gracePeriod)
 						c.mu.Unlock()
 						pendingJob = c.updateSummarization(agent, false)
@@ -1376,12 +1426,13 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 	}
 	if agent.Activity.Lifecycle != types.LifecycleExited {
 		c.pruneExpiredSubagentsLocked(agent.ID, actx, now)
-		c.rollupActivityLocked(agent, actx)
+		c.rollupActivityLocked(agent, actx, now)
 		actx.hasUnseenCompletion = agent.Activity.HasUnseenCompletion
 		actx.completedAt = agent.Activity.CompletedAt
 	} else {
 		agent.Activity.ActiveSubagents = nil
 		actx.hasUnseenCompletion = nil
+		actx.completedAt = nil
 		actx.rootRateLimitResetAt = nil
 		actx.rootRetryAfterSeconds = nil
 	}
@@ -1680,6 +1731,42 @@ func (c *Classifier) runWorker(agentID string, w *agentWorker) {
 	}
 }
 
+// syncCompletionToAgentActivity synchronizes completion state from actx (or store fallback) to agent.Activity.
+// Must be called with persistMu held, but outside c.mu.
+func (c *Classifier) syncCompletionToAgentActivity(agentID string, agent *types.IAgentState) {
+	var hasActx bool
+	var actxHasUnseen *bool
+	var actxCompletedAt *int64
+
+	c.mu.Lock()
+	if actx, ok := c.agentCtx[agentID]; ok {
+		hasActx = true
+		actxHasUnseen = actx.hasUnseenCompletion
+		actxCompletedAt = actx.completedAt
+	}
+	c.mu.Unlock()
+
+	if hasActx {
+		if actxHasUnseen == nil || !*actxHasUnseen {
+			agent.Activity.HasUnseenCompletion = nil
+			agent.Activity.CompletedAt = nil
+		} else {
+			agent.Activity.HasUnseenCompletion = actxHasUnseen
+			agent.Activity.CompletedAt = actxCompletedAt
+		}
+	} else if c.store != nil {
+		if fresh, err := c.store.GetAgent(agentID); err == nil && fresh != nil {
+			if fresh.Activity.HasUnseenCompletion == nil || !*fresh.Activity.HasUnseenCompletion {
+				agent.Activity.HasUnseenCompletion = nil
+				agent.Activity.CompletedAt = nil
+			} else {
+				agent.Activity.HasUnseenCompletion = fresh.Activity.HasUnseenCompletion
+				agent.Activity.CompletedAt = fresh.Activity.CompletedAt
+			}
+		}
+	}
+}
+
 func (c *Classifier) processSummaryJob(agentID string, job summaryJob) {
 	if job.input.Activity == types.ActivityRateLimited {
 		return
@@ -1711,7 +1798,24 @@ func (c *Classifier) processSummaryJob(agentID string, job summaryJob) {
 	if !shouldApplySummary(&agent.Activity, res) {
 		if agent.Activity.ActionStale {
 			agent.Activity.ActionStale = false
+
+			var persistMu *sync.Mutex
+			c.mu.Lock()
+			if actx, ok := c.agentCtx[agentID]; ok {
+				persistMu = &actx.persistMu
+			}
+			c.mu.Unlock()
+
+			if persistMu != nil {
+				persistMu.Lock()
+			}
+
+			c.syncCompletionToAgentActivity(agentID, agent)
+
 			_ = c.store.SaveAgentState(*agent)
+			if persistMu != nil {
+				persistMu.Unlock()
+			}
 		}
 		return
 	}
@@ -1721,14 +1825,32 @@ func (c *Classifier) processSummaryJob(agentID string, job summaryJob) {
 	agent.Activity.ActionStale = false
 	agent.Activity.UpdatedAt = time.Now().UnixMilli()
 
-	if err := c.store.SaveAgentState(*agent); err != nil {
-		logging.Error("saving_async_summary_error", "err", err, "agentId", agentID)
-		return
+	var persistMu *sync.Mutex
+	c.mu.Lock()
+	if actx, ok := c.agentCtx[agentID]; ok {
+		persistMu = &actx.persistMu
 	}
+	c.mu.Unlock()
+
+	if persistMu != nil {
+		persistMu.Lock()
+	}
+
+	c.syncCompletionToAgentActivity(agentID, agent)
 
 	c.mu.Lock()
 	cb := c.onUpdate
 	c.mu.Unlock()
+
+	saveErr := c.store.SaveAgentState(*agent)
+	if persistMu != nil {
+		persistMu.Unlock()
+	}
+
+	if saveErr != nil {
+		logging.Error("saving_async_summary_error", "err", saveErr, "agentId", agentID)
+		return
+	}
 
 	if cb != nil {
 		cb(agent)
@@ -1763,6 +1885,10 @@ func (c *Classifier) handleIdleTransition(agentID string, scheduledGen uint64) {
 
 	scheduledSaveGen := actx.saveGeneration
 	targetActx := actx
+	completedAtTs := actx.turnEndTimestamp
+	if completedAtTs == 0 {
+		completedAtTs = actx.lastEventTimestamp
+	}
 	c.mu.Unlock()
 
 	agent, err := c.store.GetAgent(agentID)
@@ -1776,9 +1902,12 @@ func (c *Classifier) handleIdleTransition(agentID string, scheduledGen uint64) {
 	}
 
 	now := time.Now().UnixMilli()
+	if completedAtTs == 0 {
+		completedAtTs = now
+	}
 	if agent.Activity.Activity == types.ActivityBusy {
 		agent.Activity.HasUnseenCompletion = boolPtr(true)
-		agent.Activity.CompletedAt = int64Ptr(now)
+		agent.Activity.CompletedAt = int64Ptr(completedAtTs)
 	}
 	agent.Activity.Activity = types.ActivityIdle
 	agent.Activity.ActiveTool = nil
@@ -1849,7 +1978,7 @@ func (c *Classifier) handleIdleTransition(agentID string, scheduledGen uint64) {
 	actx.rootQuestion = nil
 	actx.hasUnseenCompletion = agent.Activity.HasUnseenCompletion
 	actx.completedAt = agent.Activity.CompletedAt
-	c.rollupActivityLocked(agent, actx)
+	c.rollupActivityLocked(agent, actx, now)
 	actx.hasUnseenCompletion = agent.Activity.HasUnseenCompletion
 	actx.completedAt = agent.Activity.CompletedAt
 	c.mu.Unlock()
@@ -1920,10 +2049,8 @@ func (c *Classifier) handleSilenceTransition(agentID string, scheduledGen uint64
 	origAgentActivity := agent.Activity.Activity
 
 	now := time.Now().UnixMilli()
-	if agent.Activity.Activity == types.ActivityBusy {
-		agent.Activity.HasUnseenCompletion = boolPtr(true)
-		agent.Activity.CompletedAt = int64Ptr(now)
-	}
+	agent.Activity.HasUnseenCompletion = nil
+	agent.Activity.CompletedAt = nil
 	agent.Activity.Activity = types.ActivityIdle
 	agent.Activity.ActiveTool = nil
 	agent.Activity.ActiveTarget = nil
@@ -1991,7 +2118,7 @@ func (c *Classifier) handleSilenceTransition(agentID string, scheduledGen uint64
 		c.scheduleSubagentDwellTimerLocked(agentID, subID, sub, now)
 	}
 
-	c.rollupActivityLocked(agent, actx)
+	c.rollupActivityLocked(agent, actx, now)
 	actx.hasUnseenCompletion = agent.Activity.HasUnseenCompletion
 	actx.completedAt = agent.Activity.CompletedAt
 	c.mu.Unlock()
@@ -2050,7 +2177,7 @@ func extractTarget(toolName string, input map[string]interface{}) string {
 	return ""
 }
 
-func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentContext) {
+func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentContext, now int64) {
 	// Build ActiveSubagents summary list
 	var summaries []types.ISubagentSummary
 	for _, sub := range actx.subagents {
@@ -2187,7 +2314,6 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 	} else {
 		// Root is idle and all subagents are idle
 		if agent.Activity.Activity == types.ActivityBusy {
-			now := time.Now().UnixMilli()
 			agent.Activity.HasUnseenCompletion = boolPtr(true)
 			agent.Activity.CompletedAt = int64Ptr(now)
 		}

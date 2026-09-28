@@ -84,6 +84,7 @@ func (r *ReplayResult) Summary() output.ReplaySummary {
 		if r.Agent.Activity.Lifecycle == types.LifecycleExited {
 			s.IsLifecycleSynthetic = r.HasSyntheticEnd
 		}
+		s.HasUnseenCompletion = r.Agent.Activity.HasUnseenCompletion
 		s.Title = r.Agent.Activity.Title
 		s.Action = r.Agent.Activity.Action
 		s.TokensInput = r.Agent.Activity.Usage.Input

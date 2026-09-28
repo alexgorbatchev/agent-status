@@ -640,9 +640,14 @@ type ReplaySummary struct {
 	DurationMs           int64                `json:"durationMs"`
 }
 
+// IsUnacknowledgedCompletion returns true if the session is currently running, idle, and has an unacknowledged turn completion.
+func IsUnacknowledgedCompletion(lifecycle types.LifecycleState, activity types.ActivityState, hasUnseenCompletion *bool) bool {
+	return lifecycle == types.LifecycleRunning && activity == types.ActivityIdle && hasUnseenCompletion != nil && *hasUnseenCompletion
+}
+
 // FormatActivityStatus returns the human-readable status for a session.
 func FormatActivityStatus(lifecycle types.LifecycleState, activity types.ActivityState, hasUnseenCompletion *bool) string {
-	if lifecycle == types.LifecycleRunning && activity == types.ActivityIdle && hasUnseenCompletion != nil && *hasUnseenCompletion {
+	if IsUnacknowledgedCompletion(lifecycle, activity, hasUnseenCompletion) {
 		return "Completed"
 	}
 	if lifecycle == types.LifecycleExited {
@@ -690,13 +695,14 @@ func RenderReplaySummary(w io.Writer, s ReplaySummary, agentMode bool) {
 			}
 		}
 		activityStr := string(s.Activity)
-		if s.Lifecycle == types.LifecycleRunning && s.Activity == types.ActivityIdle && s.HasUnseenCompletion != nil && *s.HasUnseenCompletion {
-			activityStr = "COMPLETED"
+		extra := ""
+		if IsUnacknowledgedCompletion(s.Lifecycle, s.Activity, s.HasUnseenCompletion) {
+			extra = " has_unseen_completion:true"
 		}
-		_, _ = fmt.Fprintf(w, "harness:%s session_id:%s agent_id:%s project:%s branch:%s activity:%s lifecycle:%s tokens_in:%d tokens_out:%d tokens_total:%d cost_usd:%.4f subagents:%d frames:%d verification:%s ver_logs:%d duration_ms:%d\n",
+		_, _ = fmt.Fprintf(w, "harness:%s session_id:%s agent_id:%s project:%s branch:%s activity:%s lifecycle:%s tokens_in:%d tokens_out:%d tokens_total:%d cost_usd:%.4f subagents:%d frames:%d verification:%s ver_logs:%d duration_ms:%d%s\n",
 			harness, sessionID, agentID, proj, branch, activityStr, lifecycleStr,
 			s.TokensInput, s.TokensOutput, s.TokensTotal, s.CostUSD, s.SubagentCount,
-			s.FramesProcessed, verStatus, s.VerificationLogs, s.DurationMs)
+			s.FramesProcessed, verStatus, s.VerificationLogs, s.DurationMs, extra)
 		return
 	}
 
@@ -722,7 +728,7 @@ func RenderReplaySummary(w io.Writer, s ReplaySummary, agentMode bool) {
 		}
 	}
 	activityStr := string(s.Activity)
-	if s.Lifecycle == types.LifecycleRunning && s.Activity == types.ActivityIdle && s.HasUnseenCompletion != nil && *s.HasUnseenCompletion {
+	if IsUnacknowledgedCompletion(s.Lifecycle, s.Activity, s.HasUnseenCompletion) {
 		activityStr = "Completed"
 	}
 	_, _ = fmt.Fprintf(w, "  Lifecycle:       %s\n", lifecycleStr)

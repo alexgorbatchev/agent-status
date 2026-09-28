@@ -10,6 +10,7 @@ export function AgentCategoryGrids({
   hideWorktreeBadge = false,
   onSelectAgent,
   onToggleHide,
+  onAcknowledgeCompletion,
 }: IAgentCategoryGridsProps): React.JSX.Element {
   const prefix = gridTestId || "AgentCategoryGrids";
   const grouped = useMemo(() => groupAgentsByCategory(agents), [agents]);
@@ -31,6 +32,7 @@ export function AgentCategoryGrids({
               hideWorktreeBadge={hideWorktreeBadge}
               onOpenDrawer={onSelectAgent}
               onToggleHide={onToggleHide}
+              onAcknowledgeCompletion={onAcknowledgeCompletion}
             />
           ))}
         </div>

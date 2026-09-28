@@ -29,8 +29,8 @@ func TestOpen_Memory(t *testing.T) {
 	if err := st.DB().QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("query user_version failed: %v", err)
 	}
-	if version != 7 {
-		t.Errorf("got user_version = %d, want 7", version)
+	if version != 8 {
+		t.Errorf("got user_version = %d, want 8", version)
 	}
 }
 
@@ -215,8 +215,8 @@ func TestMigrate_V2ToV4(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 7 {
-		t.Errorf("got user_version = %d, want 7", version)
+	if version != 8 {
+		t.Errorf("got user_version = %d, want 8", version)
 	}
 }
 
@@ -257,8 +257,8 @@ func TestMigrate_V4ToV5(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 7 {
-		t.Errorf("got user_version = %d, want 7", version)
+	if version != 8 {
+		t.Errorf("got user_version = %d, want 8", version)
 	}
 
 	// Verify new columns exist by selecting them
@@ -394,8 +394,8 @@ CREATE INDEX IF NOT EXISTS idx_events_ts       ON telemetry_events(timestamp);
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 7 {
-		t.Errorf("got user_version = %d, want 7", version)
+	if version != 8 {
+		t.Errorf("got user_version = %d, want 8", version)
 	}
 
 	// Verify existing agent and telemetry event rows survived migration
@@ -653,8 +653,8 @@ func TestMigrate_V6ToV7(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 7 {
-		t.Errorf("got user_version = %d, want 7", version)
+	if version != 8 {
+		t.Errorf("got user_version = %d, want 8", version)
 	}
 
 	// Verify columns exist by querying them
@@ -662,6 +662,137 @@ func TestMigrate_V6ToV7(t *testing.T) {
 	err = db.QueryRow("SELECT rate_limit_reset_at, retry_after_seconds FROM agents LIMIT 1;").Scan(&resetAt, &retrySec)
 	if err != nil && err != sql.ErrNoRows {
 		t.Errorf("columns rate_limit_reset_at and retry_after_seconds missing: %v", err)
+	}
+}
+
+func TestMigrate_V7ToV8(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open failed: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	if _, err := db.Exec(schemaV1); err != nil {
+		t.Fatalf("schemaV1 failed: %v", err)
+	}
+	for _, col := range []string{
+		"ALTER TABLE agents ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0;",
+		"ALTER TABLE agents ADD COLUMN hidden_at INTEGER;",
+		"ALTER TABLE agents ADD COLUMN active_tool_started_at INTEGER;",
+		"ALTER TABLE agents ADD COLUMN active_subagents TEXT;",
+		"ALTER TABLE agents ADD COLUMN model TEXT;",
+		"ALTER TABLE agents ADD COLUMN context_window INTEGER;",
+		"ALTER TABLE agents ADD COLUMN context_fullness REAL;",
+		"ALTER TABLE agents ADD COLUMN rate_limit_reset_at INTEGER;",
+		"ALTER TABLE agents ADD COLUMN retry_after_seconds INTEGER;",
+	} {
+		if _, err := db.Exec(col); err != nil {
+			t.Fatalf("adding col failed: %v", err)
+		}
+	}
+	if _, err := db.Exec("PRAGMA user_version = 7;"); err != nil {
+		t.Fatalf("setting user_version = 7 failed: %v", err)
+	}
+
+	if err := Migrate(db); err != nil {
+		t.Fatalf("Migrate() from v7 failed: %v", err)
+	}
+
+	var version int
+	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
+		t.Fatalf("reading user_version: %v", err)
+	}
+	if version != 8 {
+		t.Errorf("got user_version = %d, want 8", version)
+	}
+
+	// Verify columns exist by querying them
+	var hasUnseen int
+	var completedAt sql.NullInt64
+	err = db.QueryRow("SELECT has_unseen_completion, completed_at FROM agents LIMIT 1;").Scan(&hasUnseen, &completedAt)
+	if err != nil && err != sql.ErrNoRows {
+		t.Errorf("columns has_unseen_completion and completed_at missing: %v", err)
+	}
+}
+
+func TestStore_DismissAgentCompletion(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	hasUnseen := true
+	completedAt := int64(1700000000000)
+	agent := types.IAgentState{
+		ID:        "env-1:claude-code:sess-dismiss-test",
+		SessionID: "sess-dismiss-test",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:              "env-1",
+			Label:           "local",
+			Hostname:        "host",
+			Platform:        "darwin",
+			User:            "user",
+			LastHeartbeatAt: 1000,
+		},
+		Project: types.IProjectInfo{
+			ID:            "proj-1",
+			Name:          "agent-status",
+			CanonicalRoot: "/work",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "main",
+			CWD:    "/work",
+		},
+		Activity: types.IAgentActivity{
+			Activity:            types.ActivityIdle,
+			Title:               "Completed turn",
+			Action:              "Idle",
+			HasUnseenCompletion: &hasUnseen,
+			CompletedAt:         &completedAt,
+			FirstStartedAt:      1000,
+			UpdatedAt:           2000,
+		},
+	}
+
+	if err := st.SaveAgentState(agent); err != nil {
+		t.Fatalf("SaveAgentState failed: %v", err)
+	}
+
+	// 1. Non-existent agent returns error
+	if _, err := st.DismissAgentCompletion("non-existent"); err == nil {
+		t.Errorf("expected error for non-existent agent")
+	}
+
+	// 2. Existing agent dismissed
+	dismissed, err := st.DismissAgentCompletion(agent.ID)
+	if err != nil {
+		t.Fatalf("DismissAgentCompletion failed: %v", err)
+	}
+	if dismissed.Activity.HasUnseenCompletion != nil && *dismissed.Activity.HasUnseenCompletion {
+		t.Errorf("expected HasUnseenCompletion to be nil/false, got %v", dismissed.Activity.HasUnseenCompletion)
+	}
+	if dismissed.Activity.CompletedAt != nil {
+		t.Errorf("expected CompletedAt to be nil, got %v", dismissed.Activity.CompletedAt)
+	}
+	if dismissed.Activity.UpdatedAt != 2000 {
+		t.Errorf("expected UpdatedAt to remain unchanged (2000), got %d", dismissed.Activity.UpdatedAt)
+	}
+
+	// 3. Reload from DB confirms persisted value is 0 and completed_at is NULL
+	loaded, err := st.GetAgent(agent.ID)
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if loaded.Activity.HasUnseenCompletion != nil && *loaded.Activity.HasUnseenCompletion {
+		t.Errorf("expected HasUnseenCompletion to be nil in DB, got %v", loaded.Activity.HasUnseenCompletion)
+	}
+	if loaded.Activity.UpdatedAt != 2000 {
+		t.Errorf("expected loaded UpdatedAt to remain unchanged (2000), got %d", loaded.Activity.UpdatedAt)
+	}
+	if loaded.Activity.CompletedAt != nil {
+		t.Errorf("expected CompletedAt to be nil in DB, got %v", loaded.Activity.CompletedAt)
 	}
 }
 
@@ -761,8 +892,8 @@ func TestMigrate_V3ToV4(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 7 {
-		t.Errorf("got user_version = %d, want 7", version)
+	if version != 8 {
+		t.Errorf("got user_version = %d, want 8", version)
 	}
 }
 
@@ -792,8 +923,8 @@ func TestMigrate_V1ToV2(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 7 {
-		t.Errorf("got user_version = %d, want 7", version)
+	if version != 8 {
+		t.Errorf("got user_version = %d, want 8", version)
 	}
 
 	var indexCount int
@@ -1520,6 +1651,67 @@ func TestStore_GetAllEnvironments_ScanError(t *testing.T) {
 	}
 	if _, err := st.GetAllEnvironments(); err == nil {
 		t.Errorf("expected scan error in GetAllEnvironments")
+	}
+}
+
+func TestStore_HasUnseenCompletion_Persistence(t *testing.T) {
+	st, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	hasUnseen := true
+	completedAt := int64(1700000000000)
+	agent := types.IAgentState{
+		ID:        "env-1:claude-code:sess-comp-roundtrip",
+		SessionID: "sess-comp-roundtrip",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:              "env-1",
+			Label:           "local",
+			Hostname:        "host",
+			Platform:        "darwin",
+			User:            "user",
+			LastHeartbeatAt: 1000,
+		},
+		Project: types.IProjectInfo{
+			ID:            "proj-1",
+			Name:          "agent-status",
+			CanonicalRoot: "/work",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "main",
+			CWD:    "/work",
+		},
+		Activity: types.IAgentActivity{
+			Activity:            types.ActivityIdle,
+			Title:               "Completed turn",
+			Action:              "Idle",
+			HasUnseenCompletion: &hasUnseen,
+			CompletedAt:         &completedAt,
+			FirstStartedAt:      1000,
+			UpdatedAt:           2000,
+		},
+	}
+
+	if err := st.SaveAgentState(agent); err != nil {
+		t.Fatalf("SaveAgentState failed: %v", err)
+	}
+
+	loaded, err := st.GetAgent(agent.ID)
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if loaded == nil {
+		t.Fatalf("GetAgent returned nil")
+	}
+
+	if loaded.Activity.HasUnseenCompletion == nil || !*loaded.Activity.HasUnseenCompletion {
+		t.Errorf("expected HasUnseenCompletion = true, got %v", loaded.Activity.HasUnseenCompletion)
+	}
+	if loaded.Activity.CompletedAt == nil || *loaded.Activity.CompletedAt != completedAt {
+		t.Errorf("expected CompletedAt = %d, got %v", completedAt, loaded.Activity.CompletedAt)
 	}
 }
 
@@ -2890,6 +3082,50 @@ func TestStore_Migrate_ErrorPaths(t *testing.T) {
 		}
 		if err := Migrate(db); err == nil {
 			t.Errorf("expected error in Migrate v7 on duplicate retry_after_seconds")
+		}
+	})
+
+	// 12. Error in v8 migration on duplicate has_unseen_completion
+	t.Run("v8 error on duplicate has_unseen_completion", func(t *testing.T) {
+		db, err := sql.Open("sqlite3", ":memory:")
+		if err != nil {
+			t.Fatalf("sql.Open failed: %v", err)
+		}
+		defer func() { _ = db.Close() }()
+
+		if _, err := db.Exec(schemaV1); err != nil {
+			t.Fatalf("schemaV1 failed: %v", err)
+		}
+		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN has_unseen_completion INTEGER;"); err != nil {
+			t.Fatalf("adding duplicate column failed: %v", err)
+		}
+		if _, err := db.Exec("PRAGMA user_version = 7;"); err != nil {
+			t.Fatalf("setting user_version = 7 failed: %v", err)
+		}
+		if err := Migrate(db); err == nil {
+			t.Errorf("expected error in Migrate v8 on duplicate has_unseen_completion")
+		}
+	})
+
+	// 13. Error in v8 migration on duplicate completed_at
+	t.Run("v8 error on duplicate completed_at", func(t *testing.T) {
+		db, err := sql.Open("sqlite3", ":memory:")
+		if err != nil {
+			t.Fatalf("sql.Open failed: %v", err)
+		}
+		defer func() { _ = db.Close() }()
+
+		if _, err := db.Exec(schemaV1); err != nil {
+			t.Fatalf("schemaV1 failed: %v", err)
+		}
+		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN completed_at INTEGER;"); err != nil {
+			t.Fatalf("adding duplicate column failed: %v", err)
+		}
+		if _, err := db.Exec("PRAGMA user_version = 7;"); err != nil {
+			t.Fatalf("setting user_version = 7 failed: %v", err)
+		}
+		if err := Migrate(db); err == nil {
+			t.Errorf("expected error in Migrate v8 on duplicate completed_at")
 		}
 	})
 }

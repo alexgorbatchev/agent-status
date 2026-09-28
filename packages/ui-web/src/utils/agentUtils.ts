@@ -48,8 +48,7 @@ export function isAgentStaleIdle(
   if (activity.lifecycle !== "RUNNING" || activity.activity !== "IDLE") {
     return false;
   }
-  const effectiveHasUnseenCompletion =
-    Boolean(activity.hasUnseenCompletion ?? activity.has_unseen_completion) && !acknowledgedCompletion;
+  const effectiveHasUnseenCompletion = Boolean(activity.hasUnseenCompletion) && !acknowledgedCompletion;
   if (effectiveHasUnseenCompletion) {
     return false;
   }
@@ -64,8 +63,7 @@ export function getAgentIdleFreshness(
   if (activity.lifecycle !== "RUNNING" || activity.activity !== "IDLE") {
     return "fresh";
   }
-  const effectiveHasUnseenCompletion =
-    Boolean(activity.hasUnseenCompletion ?? activity.has_unseen_completion) && !acknowledgedCompletion;
+  const effectiveHasUnseenCompletion = Boolean(activity.hasUnseenCompletion) && !acknowledgedCompletion;
   if (effectiveHasUnseenCompletion) {
     return "fresh";
   }

@@ -146,7 +146,8 @@ const selectAgentBaseQuery = `
 		r.pid, r.harness_version, r.started_at, r.ended_at,
 		a.is_hidden, a.hidden_at,
 		a.model, a.context_window, a.context_fullness,
-		a.rate_limit_reset_at, a.retry_after_seconds
+		a.rate_limit_reset_at, a.retry_after_seconds,
+		a.has_unseen_completion, a.completed_at
 	FROM agents a
 	INNER JOIN environments e ON a.environment_id = e.id
 	LEFT JOIN runs r ON a.current_run_id = r.id
@@ -188,6 +189,8 @@ func scanAgent(s agentRowScanner, nowMs int64) (*types.IAgentState, error) {
 		contextWindow                                                 sql.NullInt64
 		contextFullness                                               sql.NullFloat64
 		rateLimitResetAt, retryAfterSeconds                           sql.NullInt64
+		hasUnseenCompletion                                           int
+		completedAt                                                   sql.NullInt64
 	)
 
 	err := s.Scan(
@@ -205,6 +208,7 @@ func scanAgent(s agentRowScanner, nowMs int64) (*types.IAgentState, error) {
 		&isHidden, &hiddenAt,
 		&modelStr, &contextWindow, &contextFullness,
 		&rateLimitResetAt, &retryAfterSeconds,
+		&hasUnseenCompletion, &completedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -359,6 +363,14 @@ func scanAgent(s agentRowScanner, nowMs int64) (*types.IAgentState, error) {
 	if retryAfterSeconds.Valid {
 		v := retryAfterSeconds.Int64
 		agent.Activity.RetryAfterSeconds = &v
+	}
+	if hasUnseenCompletion == 1 {
+		b := true
+		agent.Activity.HasUnseenCompletion = &b
+	}
+	if completedAt.Valid {
+		v := completedAt.Int64
+		agent.Activity.CompletedAt = &v
 	}
 
 	if activeSubagents.Valid && strings.TrimSpace(activeSubagents.String) != "" {

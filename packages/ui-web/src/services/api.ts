@@ -47,3 +47,47 @@ export async function focusAgent(
     };
   }
 }
+
+export interface IDismissCompletionResponse {
+  ok: boolean;
+  error?: string;
+}
+
+export async function dismissCompletion(
+  agentId: string,
+  apiBaseUrl?: string,
+  token: string = DEFAULT_DEV_TOKEN,
+): Promise<IDismissCompletionResponse> {
+  const baseUrl = resolveApiBaseUrl(apiBaseUrl);
+  try {
+    const response = await fetch(`${baseUrl}/api/v1/agents/${encodeURIComponent(agentId)}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ dismissCompletion: true }),
+    });
+
+    const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+
+    if (!response.ok) {
+      const errorMessage =
+        typeof data.error === "string" ? data.error : `HTTP ${response.status}: ${response.statusText}`;
+      return {
+        ok: false,
+        error: errorMessage,
+      };
+    }
+
+    return {
+      ok: true,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Network error";
+    return {
+      ok: false,
+      error: message,
+    };
+  }
+}

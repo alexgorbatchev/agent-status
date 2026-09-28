@@ -173,6 +173,66 @@ func TestPublisher_BroadcastToClients(t *testing.T) {
 	}
 }
 
+func TestPublisher_Broadcast(t *testing.T) {
+	tempDir := shortTempDir(t)
+	sockPath := filepath.Join(tempDir, "notify.sock")
+
+	pub, err := NewPublisher(sockPath)
+	if err != nil {
+		t.Fatalf("NewPublisher() failed: %v", err)
+	}
+	defer func() {
+		_ = pub.Close()
+	}()
+
+	// Nil publisher broadcast should not panic
+	var nilPub *Publisher
+	nilPub.Broadcast(nil)
+	pub.Broadcast(nil)
+
+	conn, err := net.Dial("unix", sockPath)
+	if err != nil {
+		t.Fatalf("net.Dial failed: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	for i := 0; i < 50; i++ {
+		pub.mu.Lock()
+		count := len(pub.clients)
+		pub.mu.Unlock()
+		if count == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	r := bufio.NewReader(conn)
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, err = r.ReadBytes('\n') // read hello
+	if err != nil {
+		t.Fatalf("reading hello failed: %v", err)
+	}
+
+	event := types.IServerEvent{
+		Type: "broadcast_event",
+		At:   987654321,
+	}
+	pub.Broadcast(&event)
+
+	line, err := r.ReadBytes('\n')
+	if err != nil {
+		t.Fatalf("reading from client failed: %v", err)
+	}
+
+	var got types.IServerEvent
+	if err := json.Unmarshal(line, &got); err != nil {
+		t.Fatalf("unmarshaling event failed: %v", err)
+	}
+	if got.Type != "broadcast_event" || got.At != 987654321 {
+		t.Errorf("got %+v, want %+v", got, event)
+	}
+}
+
 func TestPublisher_ClientSaturationAndDrop(t *testing.T) {
 	tempDir := shortTempDir(t)
 	sockPath := filepath.Join(tempDir, "notify.sock")

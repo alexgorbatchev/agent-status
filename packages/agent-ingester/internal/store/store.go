@@ -194,6 +194,12 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 	}
 	hiddenAt := agent.HiddenAt
 
+	hasUnseenCompletion := 0
+	if agent.Activity.HasUnseenCompletion != nil && *agent.Activity.HasUnseenCompletion {
+		hasUnseenCompletion = 1
+	}
+	completedAt := agent.Activity.CompletedAt
+
 	var activeSubagentsStr *string
 	if len(agent.Activity.ActiveSubagents) > 0 {
 		if b, err := json.Marshal(agent.Activity.ActiveSubagents); err == nil {
@@ -213,7 +219,8 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 			tokens_input, tokens_output, tokens_cache_read, tokens_cache_write, tokens_reasoning, tokens_total,
 			cost_usd, subagent_count, active_subagents, first_started_at, updated_at,
 			is_hidden, hidden_at,
-			model, context_window, context_fullness
+			model, context_window, context_fullness,
+			has_unseen_completion, completed_at
 		) VALUES (
 			?, ?, ?, ?,
 			?, ?, ?,
@@ -224,7 +231,8 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 			?, ?, ?, ?, ?, ?,
 			?, ?, ?, ?, ?,
 			?, ?,
-			?, ?, ?
+			?, ?, ?,
+			?, ?
 		)
 		ON CONFLICT(id) DO UPDATE SET
 			project_id = excluded.project_id,
@@ -263,7 +271,9 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 			hidden_at = excluded.hidden_at,
 			model = excluded.model,
 			context_window = excluded.context_window,
-			context_fullness = excluded.context_fullness
+			context_fullness = excluded.context_fullness,
+			has_unseen_completion = excluded.has_unseen_completion,
+			completed_at = excluded.completed_at
 	`,
 		agent.ID, agent.SessionID, agent.Environment.ID, string(agent.Harness),
 		agent.Project.ID, agent.Project.Name, agent.Project.CanonicalRoot,
@@ -275,6 +285,7 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 		costUSD, agent.Activity.SubagentCount, activeSubagentsStr, agent.Activity.FirstStartedAt, agent.Activity.UpdatedAt,
 		isHidden, hiddenAt,
 		agent.Activity.Model, agent.Activity.ContextWindow, agent.Activity.ContextFullness,
+		hasUnseenCompletion, completedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("upserting agent: %w", err)
@@ -296,7 +307,8 @@ func (s *Store) GetAgent(id string) (*types.IAgentState, error) {
 			e.id, e.label, e.hostname, e.platform, e.user, e.last_heartbeat_at,
 			r.id, r.pid, r.harness_version, r.started_at, r.ended_at,
 			a.is_hidden, a.hidden_at,
-			a.model, a.context_window, a.context_fullness
+			a.model, a.context_window, a.context_fullness,
+			a.has_unseen_completion, a.completed_at
 		FROM agents a
 		JOIN environments e ON a.environment_id = e.id
 		LEFT JOIN runs r ON a.current_run_id = r.id
@@ -325,6 +337,8 @@ func (s *Store) GetAgent(id string) (*types.IAgentState, error) {
 		modelStr                                           sql.NullString
 		contextWindow                                      sql.NullInt64
 		contextFullness                                    sql.NullFloat64
+		hasUnseenCompletion                                int
+		completedAt                                        sql.NullInt64
 	)
 
 	err := row.Scan(
@@ -339,6 +353,7 @@ func (s *Store) GetAgent(id string) (*types.IAgentState, error) {
 		&runID, &runPID, &runHarnessVer, &runStart, &runEnd,
 		&isHidden, &hiddenAt,
 		&modelStr, &contextWindow, &contextFullness,
+		&hasUnseenCompletion, &completedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -415,6 +430,14 @@ func (s *Store) GetAgent(id string) (*types.IAgentState, error) {
 		v := contextFullness.Float64
 		agent.Activity.ContextFullness = &v
 	}
+	if hasUnseenCompletion == 1 {
+		b := true
+		agent.Activity.HasUnseenCompletion = &b
+	}
+	if completedAt.Valid {
+		v := completedAt.Int64
+		agent.Activity.CompletedAt = &v
+	}
 
 	// Lifecycle derivation based on current run
 	if currentRunID.Valid && runID.Valid && !runEnd.Valid {
@@ -464,6 +487,25 @@ func (s *Store) SetAgentVisibility(id string, isHidden bool, hiddenAt *int64) (*
 	`, val, hiddenAt, now, id)
 	if err != nil {
 		return nil, fmt.Errorf("updating agent visibility %s: %w", id, err)
+	}
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("checking rows affected for %s: %w", id, err)
+	}
+	if rowsAffected == 0 {
+		return nil, fmt.Errorf("agent %s not found", id)
+	}
+	return s.GetAgent(id)
+}
+
+func (s *Store) DismissAgentCompletion(id string) (*types.IAgentState, error) {
+	res, err := s.db.Exec(`
+		UPDATE agents
+		SET has_unseen_completion = 0, completed_at = NULL
+		WHERE id = ?
+	`, id)
+	if err != nil {
+		return nil, fmt.Errorf("updating agent completion %s: %w", id, err)
 	}
 	rowsAffected, err := res.RowsAffected()
 	if err != nil {

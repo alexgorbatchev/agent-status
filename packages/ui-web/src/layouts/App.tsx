@@ -13,6 +13,7 @@ import { ViewSwitcher } from "../components/ViewSwitcher";
 import { IconWrapper } from "../components/IconWrapper";
 import { Layers, Server, Eye, EyeOff, Activity } from "lucide-react";
 import { DEFAULT_DEV_TOKEN, resolveApiBaseUrl } from "../utils/config";
+import { dismissCompletion } from "../services/api";
 import { clsx } from "clsx";
 
 export interface IAppProps {
@@ -80,6 +81,16 @@ export function App({ apiBaseUrl, token = DEFAULT_DEV_TOKEN }: IAppProps = {}): 
       }
     },
     [resolvedBaseUrl, token, updateAgent],
+  );
+
+  const handleAcknowledgeCompletion = useCallback(
+    async (agentId: string) => {
+      const res = await dismissCompletion(agentId, apiBaseUrl, token);
+      if (!res.ok) {
+        console.error("Failed to dismiss completion:", res.error);
+      }
+    },
+    [apiBaseUrl, token],
   );
 
   const projectGroups = useMemo(
@@ -218,6 +229,7 @@ export function App({ apiBaseUrl, token = DEFAULT_DEV_TOKEN }: IAppProps = {}): 
               treeGroup={group}
               onSelectAgent={setSelectedAgent}
               onToggleHide={handleToggleHide}
+              onAcknowledgeCompletion={handleAcknowledgeCompletion}
             />
           ))
         ) : (
@@ -228,6 +240,7 @@ export function App({ apiBaseUrl, token = DEFAULT_DEV_TOKEN }: IAppProps = {}): 
               agents={group.agents}
               onSelectAgent={setSelectedAgent}
               onToggleHide={handleToggleHide}
+              onAcknowledgeCompletion={handleAcknowledgeCompletion}
             />
           ))
         )}

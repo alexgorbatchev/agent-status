@@ -217,11 +217,26 @@ func (s *Server) handlePatchAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var body struct {
-		IsHidden bool `json:"isHidden"`
+	payload, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read request body")
+		return
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+
+	var body struct {
+		IsHidden              *bool `json:"isHidden"`
+		DismissCompletion     *bool `json:"dismissCompletion"`
+		AcknowledgeCompletion *bool `json:"acknowledgeCompletion"`
+	}
+	if err := json.Unmarshal(payload, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if body.IsHidden == nil &&
+		(body.DismissCompletion == nil || !*body.DismissCompletion) &&
+		(body.AcknowledgeCompletion == nil || !*body.AcknowledgeCompletion) {
+		writeError(w, http.StatusBadRequest, "no recognized patch fields")
 		return
 	}
 
@@ -230,8 +245,7 @@ func (s *Server) handlePatchAgent(w http.ResponseWriter, r *http.Request) {
 		ingesterURL = "http://127.0.0.1:4501"
 	}
 
-	targetURL := fmt.Sprintf("%s/api/v1/internal/agents/%s/visibility", ingesterURL, url.PathEscape(id))
-	payload, _ := json.Marshal(body)
+	targetURL := fmt.Sprintf("%s/api/v1/internal/agents/%s", ingesterURL, url.PathEscape(id))
 
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPatch, targetURL, bytes.NewReader(payload))
 	if err != nil {

@@ -593,4 +593,143 @@ describe("App Layout & Session Visibility", () => {
 
     await unmount();
   });
+
+  it("calls dismissCompletion API when completed agent card is acknowledged in App layout", async () => {
+    const { mockDoc, cleanup } = setupMockDomEnvironment();
+    envCleanup = cleanup;
+
+    interface IFetchCall {
+      url: string;
+      method: string;
+      body: string;
+    }
+    const calls: IFetchCall[] = [];
+
+    globalThis.fetch = (async (input: FetchTarget, init?: FetchInit): Promise<Response> => {
+      calls.push({
+        url: input.toString(),
+        method: init?.method ?? "GET",
+        body: init?.body?.toString() || "",
+      });
+      return new Response(JSON.stringify({ ok: true, logs: [] }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const completedAgent: IAgentState = {
+      ...fixture_agentStateRunning,
+      id: "agent-completed-app",
+      activity: {
+        ...fixture_agentStateRunning.activity,
+        lifecycle: "RUNNING",
+        activity: "IDLE",
+        hasUnseenCompletion: true,
+        completedAt: Date.now() - 5000,
+      },
+    };
+
+    const { container, unmount } = await mountComponent(
+      <App apiBaseUrl="http://localhost:4501" token="custom-token" />,
+      mockDoc,
+    );
+
+    await act(async () => {
+      const snapshotEvent = new CustomEvent<ServerEvent>("mock-sse-event", {
+        detail: {
+          type: "snapshot",
+          at: Date.now(),
+          agents: [completedAgent],
+          environments: [completedAgent.environment],
+        },
+      });
+      window.dispatchEvent(snapshotEvent);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    const card = container.querySelector('[data-testid="AgentCard"]');
+    assert(card, "AgentCard must be rendered");
+
+    const statusBadge = container.querySelector('[data-testid="StatusBadge--label"]');
+    expect(statusBadge?.textContent).toBe("Completed");
+
+    // Click card to acknowledge completion
+    await act(async () => {
+      card.click();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    const patchCall = calls.find((c) => c.method === "PATCH");
+    assert(patchCall, "PATCH call must be made");
+    expect(patchCall.url).toBe("http://localhost:4501/api/v1/agents/agent-completed-app");
+    expect(patchCall.body).toBe(JSON.stringify({ dismissCompletion: true }));
+    expect(statusBadge?.textContent).toBe("Idle");
+
+    await unmount();
+  });
+
+  it("logs error via console.error when dismissCompletion fails in App layout", async () => {
+    const { mockDoc, cleanup } = setupMockDomEnvironment();
+    envCleanup = cleanup;
+
+    const originalConsoleError = console.error;
+    const errorLogs: unknown[][] = [];
+    console.error = (...args: unknown[]) => {
+      errorLogs.push(args);
+    };
+
+    try {
+      globalThis.fetch = (async (): Promise<Response> => {
+        return new Response(JSON.stringify({ error: "Database disk is full" }), {
+          status: 500,
+          statusText: "Internal Server Error",
+        });
+      }) as unknown as typeof fetch;
+
+      const completedAgent: IAgentState = {
+        ...fixture_agentStateRunning,
+        id: "agent-completed-fail",
+        activity: {
+          ...fixture_agentStateRunning.activity,
+          lifecycle: "RUNNING",
+          activity: "IDLE",
+          hasUnseenCompletion: true,
+          completedAt: Date.now() - 5000,
+        },
+      };
+
+      const { container, unmount } = await mountComponent(
+        <App apiBaseUrl="http://localhost:4501" token="custom-token" />,
+        mockDoc,
+      );
+
+      await act(async () => {
+        const snapshotEvent = new CustomEvent<ServerEvent>("mock-sse-event", {
+          detail: {
+            type: "snapshot",
+            at: Date.now(),
+            agents: [completedAgent],
+            environments: [completedAgent.environment],
+          },
+        });
+        window.dispatchEvent(snapshotEvent);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+
+      const card = container.querySelector('[data-testid="AgentCard"]');
+      assert(card, "AgentCard must be rendered");
+
+      // Click card to acknowledge completion
+      await act(async () => {
+        card.click();
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      });
+
+      const errorLogged = errorLogs.some((args) =>
+        args.some((arg) => typeof arg === "string" && arg.includes("Failed to dismiss completion")),
+      );
+      expect(errorLogged).toBe(true);
+
+      await unmount();
+    } finally {
+      console.error = originalConsoleError;
+    }
+  });
 });

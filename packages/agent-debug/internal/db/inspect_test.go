@@ -74,6 +74,8 @@ func setupTestDB(t *testing.T) (string, func()) {
 		subagent_count INTEGER NOT NULL DEFAULT 0,
 		rate_limit_reset_at INTEGER,
 		retry_after_seconds INTEGER,
+		has_unseen_completion INTEGER NOT NULL DEFAULT 0,
+		completed_at INTEGER,
 		first_started_at INTEGER NOT NULL,
 		updated_at INTEGER NOT NULL
 	);
@@ -436,6 +438,59 @@ func TestInspect_RateLimitMetadata(t *testing.T) {
 	}
 	if agent.Agent.Activity.RetryAfterSeconds == nil || *agent.Agent.Activity.RetryAfterSeconds != retrySec {
 		t.Errorf("got RetryAfterSeconds %v, want %d", agent.Agent.Activity.RetryAfterSeconds, retrySec)
+	}
+}
+
+func TestInspect_CompletionMetadata(t *testing.T) {
+	ctx := context.Background()
+	dbPath, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	db, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	completedAt := int64(1789900065000)
+	_, err = db.Exec(`UPDATE agents SET activity = 'IDLE', has_unseen_completion = 1, completed_at = ? WHERE session_id = 'ses-abc-123'`, completedAt)
+	if err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
+
+	inspected, err := InspectSession(ctx, dbPath, "ses-abc-123")
+	if err != nil {
+		t.Fatalf("InspectSession failed: %v", err)
+	}
+	if inspected.Agent == nil {
+		t.Fatalf("inspected.Agent is nil")
+	}
+	if inspected.Agent.Activity.HasUnseenCompletion == nil || !*inspected.Agent.Activity.HasUnseenCompletion {
+		t.Errorf("got HasUnseenCompletion %v, want true", inspected.Agent.Activity.HasUnseenCompletion)
+	}
+	if inspected.Agent.Activity.CompletedAt == nil || *inspected.Agent.Activity.CompletedAt != completedAt {
+		t.Errorf("got CompletedAt %v, want %d", inspected.Agent.Activity.CompletedAt, completedAt)
+	}
+
+	agents, err := ListAgents(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("ListAgents failed: %v", err)
+	}
+	var found *types.IAgentState
+	for i := range agents {
+		if agents[i].SessionID == "ses-abc-123" {
+			found = &agents[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("agent ses-abc-123 not found in ListAgents")
+	}
+	if found.Activity.HasUnseenCompletion == nil || !*found.Activity.HasUnseenCompletion {
+		t.Errorf("ListAgents got HasUnseenCompletion %v, want true", found.Activity.HasUnseenCompletion)
+	}
+	if found.Activity.CompletedAt == nil || *found.Activity.CompletedAt != completedAt {
+		t.Errorf("ListAgents got CompletedAt %v, want %d", found.Activity.CompletedAt, completedAt)
 	}
 }
 

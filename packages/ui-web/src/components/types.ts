@@ -81,7 +81,7 @@ export interface IAgentCardProps {
   projectName?: string;
   onOpenDrawer?: (agent: IAgentState) => void;
   onSelect?: (agent: IAgentState) => void;
-  onAcknowledgeCompletion?: (agent: IAgentState) => void;
+  onAcknowledgeCompletion?: (agentId: string) => void;
   onToggleHide?: (agent: IAgentState) => void;
   defaultShowSubagents?: boolean;
   hideWorktreeBadge?: boolean;
@@ -94,6 +94,7 @@ export interface IProjectGroupProps {
   treeGroup?: IProjectTreeGroup;
   onSelectAgent: AgentSelectCallback;
   onToggleHide?: AgentToggleHideCallback;
+  onAcknowledgeCompletion?: (agentId: string) => void;
 }
 
 export interface IEnvironmentGroupProps {
@@ -101,6 +102,7 @@ export interface IEnvironmentGroupProps {
   agents: IAgentState[];
   onSelectAgent: (agent: IAgentState) => void;
   onToggleHide?: (agent: IAgentState) => void;
+  onAcknowledgeCompletion?: (agentId: string) => void;
 }
 
 export interface IAgentGroupHeaderProps {
@@ -121,6 +123,7 @@ export interface IAgentCategoryGridsProps {
   hideWorktreeBadge?: boolean;
   onSelectAgent: AgentSelectCallback;
   onToggleHide?: AgentToggleHideCallback;
+  onAcknowledgeCompletion?: (agentId: string) => void;
 }
 
 export interface IAgentGroupSectionProps {
@@ -133,6 +136,7 @@ export interface IAgentGroupSectionProps {
   agents: IAgentState[];
   onSelectAgent: (agent: IAgentState) => void;
   onToggleHide?: (agent: IAgentState) => void;
+  onAcknowledgeCompletion?: (agentId: string) => void;
 }
 
 export interface ILogDrawerProps {

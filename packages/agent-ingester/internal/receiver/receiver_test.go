@@ -51,6 +51,15 @@ func newTestReceiver(t *testing.T) (*Receiver, *store.Store, *notify.Publisher) 
 	}
 
 	cls := classifier.New(st, priceEngine, sumEngine)
+	cls.SetOnUpdate(func(agent *types.IAgentState) {
+		if pub != nil && agent != nil {
+			pub.Publish(types.IServerEvent{
+				Type:  "agent_upsert",
+				At:    time.Now().UnixMilli(),
+				Agent: agent,
+			})
+		}
+	})
 	rcv := New(st, cls, pub, "test-token")
 
 	t.Cleanup(func() {
@@ -1054,6 +1063,253 @@ func TestReceiver_HandleSetVisibility(t *testing.T) {
 	}
 }
 
+func TestReceiver_HandleDismissCompletion(t *testing.T) {
+	rcv, st, _ := newTestReceiver(t)
+
+	now := time.Now().UnixMilli()
+	hasUnseen := true
+	completedAt := now - 5000
+	agent := types.IAgentState{
+		ID:        "env-1:claude-code:sess-dismiss-api",
+		SessionID: "sess-dismiss-api",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:              "env-1",
+			Label:           "local",
+			Hostname:        "host",
+			Platform:        "darwin",
+			User:            "user",
+			LastHeartbeatAt: now,
+		},
+		Project: types.IProjectInfo{
+			ID:            "proj-1",
+			Name:          "agent-status",
+			CanonicalRoot: "/work",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "main",
+			CWD:    "/work",
+		},
+		Activity: types.IAgentActivity{
+			Activity:            types.ActivityIdle,
+			Title:               "Completed turn",
+			Action:              "Idle",
+			HasUnseenCompletion: &hasUnseen,
+			CompletedAt:         &completedAt,
+			FirstStartedAt:      now - 10000,
+			UpdatedAt:           now - 5000,
+		},
+	}
+	if err := st.SaveAgentState(agent); err != nil {
+		t.Fatalf("SaveAgentState failed: %v", err)
+	}
+
+	// 1. Method not allowed
+	req := httptest.NewRequest("GET", "/api/v1/internal/agents/env-1:claude-code:sess-dismiss-api/dismiss-completion", nil)
+	w := httptest.NewRecorder()
+	rcv.HandleDismissCompletion(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("got status %d on GET, want %d", w.Code, http.StatusMethodNotAllowed)
+	}
+
+	// 2. Unauthorized without token
+	req = httptest.NewRequest("PATCH", "/api/v1/internal/agents/env-1:claude-code:sess-dismiss-api/dismiss-completion", nil)
+	req.SetPathValue("id", "env-1:claude-code:sess-dismiss-api")
+	w = httptest.NewRecorder()
+	rcv.HandleDismissCompletion(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("got status %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+
+	// 3. 404 for non-existent agent
+	req = httptest.NewRequest("PATCH", "/api/v1/internal/agents/non-existent/dismiss-completion", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.SetPathValue("id", "non-existent")
+	w = httptest.NewRecorder()
+	rcv.HandleDismissCompletion(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("got status %d, want %d", w.Code, http.StatusNotFound)
+	}
+
+	// 4. Missing id
+	req = httptest.NewRequest("PATCH", "/api/v1/internal/agents//dismiss-completion", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	w = httptest.NewRecorder()
+	rcv.HandleDismissCompletion(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("got status %d, want %d", w.Code, http.StatusBadRequest)
+	}
+
+	// 5. Success dismiss completion
+	req = httptest.NewRequest("PATCH", "/api/v1/internal/agents/env-1:claude-code:sess-dismiss-api/dismiss-completion", nil)
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.SetPathValue("id", "env-1:claude-code:sess-dismiss-api")
+	w = httptest.NewRecorder()
+	rcv.HandleDismissCompletion(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("got status %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var resAgent types.IAgentState
+	if err := json.NewDecoder(w.Body).Decode(&resAgent); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resAgent.Activity.HasUnseenCompletion != nil && *resAgent.Activity.HasUnseenCompletion {
+		t.Errorf("expected HasUnseenCompletion to be nil/false in response, got true")
+	}
+
+	// Verify persistence in SQLite
+	loaded, err := st.GetAgent("env-1:claude-code:sess-dismiss-api")
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if loaded.Activity.HasUnseenCompletion != nil && *loaded.Activity.HasUnseenCompletion {
+		t.Errorf("expected HasUnseenCompletion to be nil in SQLite after dismissal, got true")
+	}
+
+	// 6. Test dismissal via HandlePatchAgent
+	// Re-save agent with unseen completion = true
+	agent.Activity.HasUnseenCompletion = &hasUnseen
+	if err := st.SaveAgentState(agent); err != nil {
+		t.Fatalf("SaveAgentState re-save failed: %v", err)
+	}
+	body := strings.NewReader(`{"dismissCompletion":true}`)
+	req = httptest.NewRequest("PATCH", "/api/v1/internal/agents/env-1:claude-code:sess-dismiss-api", body)
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.SetPathValue("id", "env-1:claude-code:sess-dismiss-api")
+	w = httptest.NewRecorder()
+	rcv.HandlePatchAgent(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("HandlePatchAgent got status %d, want %d", w.Code, http.StatusOK)
+	}
+	loaded, err = st.GetAgent("env-1:claude-code:sess-dismiss-api")
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if loaded.Activity.HasUnseenCompletion != nil && *loaded.Activity.HasUnseenCompletion {
+		t.Errorf("expected HasUnseenCompletion to be cleared via HandlePatchAgent")
+	}
+
+	// 7. Test acknowledgeCompletion via HandlePatchAgent
+	agent.Activity.HasUnseenCompletion = &hasUnseen
+	if err := st.SaveAgentState(agent); err != nil {
+		t.Fatalf("SaveAgentState re-save failed: %v", err)
+	}
+	body = strings.NewReader(`{"acknowledgeCompletion":true}`)
+	req = httptest.NewRequest("PATCH", "/api/v1/internal/agents/env-1:claude-code:sess-dismiss-api", body)
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.SetPathValue("id", "env-1:claude-code:sess-dismiss-api")
+	w = httptest.NewRecorder()
+	rcv.HandlePatchAgent(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("HandlePatchAgent with acknowledgeCompletion got status %d, want %d", w.Code, http.StatusOK)
+	}
+	loaded, err = st.GetAgent("env-1:claude-code:sess-dismiss-api")
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if loaded.Activity.HasUnseenCompletion != nil && *loaded.Activity.HasUnseenCompletion {
+		t.Errorf("expected HasUnseenCompletion to be cleared via HandlePatchAgent with acknowledgeCompletion")
+	}
+	// 8. HandlePatchAgent error & auth cases
+	// Invalid method
+	req = httptest.NewRequest("GET", "/api/v1/internal/agents/env-1:claude-code:sess-dismiss-api", nil)
+	w = httptest.NewRecorder()
+	rcv.HandlePatchAgent(w, req)
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405 on GET, got %d", w.Code)
+	}
+
+	// Missing auth
+	req = httptest.NewRequest("PATCH", "/api/v1/internal/agents/env-1:claude-code:sess-dismiss-api", strings.NewReader(`{}`))
+	w = httptest.NewRecorder()
+	rcv.HandlePatchAgent(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 on missing auth, got %d", w.Code)
+	}
+
+	// Invalid auth token
+	req = httptest.NewRequest("PATCH", "/api/v1/internal/agents/env-1:claude-code:sess-dismiss-api", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer wrong-token")
+	w = httptest.NewRecorder()
+	rcv.HandlePatchAgent(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 on wrong token, got %d", w.Code)
+	}
+
+	// Invalid auth token for HandleDismissCompletion
+	req = httptest.NewRequest("PATCH", "/api/v1/internal/agents/env-1:claude-code:sess-dismiss-api/dismiss-completion", nil)
+	req.Header.Set("Authorization", "Bearer wrong-token")
+	w = httptest.NewRecorder()
+	rcv.HandleDismissCompletion(w, req)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 on wrong token for HandleDismissCompletion, got %d", w.Code)
+	}
+
+	// Missing ID in HandlePatchAgent
+	req = httptest.NewRequest("PATCH", "/api/v1/internal/agents/", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer test-token")
+	w = httptest.NewRecorder()
+	rcv.HandlePatchAgent(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 on missing id, got %d", w.Code)
+	}
+
+	// Malformed JSON in HandlePatchAgent
+	req = httptest.NewRequest("PATCH", "/api/v1/internal/agents/env-1:claude-code:sess-dismiss-api", strings.NewReader(`{invalid`))
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.SetPathValue("id", "env-1:claude-code:sess-dismiss-api")
+	w = httptest.NewRecorder()
+	rcv.HandlePatchAgent(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 on malformed JSON, got %d", w.Code)
+	}
+
+	// No changes applied (empty body)
+	req = httptest.NewRequest("PATCH", "/api/v1/internal/agents/env-1:claude-code:sess-dismiss-api", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.SetPathValue("id", "env-1:claude-code:sess-dismiss-api")
+	w = httptest.NewRecorder()
+	rcv.HandlePatchAgent(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 on empty body, got %d", w.Code)
+	}
+
+	// Not found on dismiss in HandlePatchAgent
+	req = httptest.NewRequest("PATCH", "/api/v1/internal/agents/non-existent", strings.NewReader(`{"dismissCompletion":true}`))
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.SetPathValue("id", "non-existent")
+	w = httptest.NewRecorder()
+	rcv.HandlePatchAgent(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 on non-existent agent dismiss, got %d", w.Code)
+	}
+
+	// Not found on isHidden in HandlePatchAgent
+	req = httptest.NewRequest("PATCH", "/api/v1/internal/agents/non-existent", strings.NewReader(`{"isHidden":true}`))
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.SetPathValue("id", "non-existent")
+	w = httptest.NewRecorder()
+	rcv.HandlePatchAgent(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 on non-existent agent isHidden, got %d", w.Code)
+	}
+
+	// Success isHidden in HandlePatchAgent
+	req = httptest.NewRequest("POST", "/api/v1/internal/agents/env-1:claude-code:sess-dismiss-api", strings.NewReader(`{"isHidden":true}`))
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.SetPathValue("id", "env-1:claude-code:sess-dismiss-api")
+	w = httptest.NewRecorder()
+	rcv.HandlePatchAgent(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 on isHidden via POST, got %d", w.Code)
+	}
+	loaded, err = st.GetAgent("env-1:claude-code:sess-dismiss-api")
+	if err != nil || !loaded.IsHidden {
+		t.Errorf("expected IsHidden to be true")
+	}
+}
+
 type safeBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -1506,5 +1762,98 @@ func TestReceiver_HandleFocusAgent(t *testing.T) {
 	rcv.HandleFocusAgent(w, req)
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("got status %d, want %d", w.Code, http.StatusInternalServerError)
+	}
+}
+
+func TestReceiver_HandlePatchAgent_BroadcastsExactlyOnce(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("store.Open failed: %v", err)
+	}
+	sockDir, err := os.MkdirTemp("/tmp", "as-sock-")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer func() { _ = os.RemoveAll(sockDir) }()
+	sockPath := sockDir + "/test.sock"
+	pub, err := notify.NewPublisher(sockPath)
+	if err != nil {
+		t.Fatalf("failed to create publisher: %v", err)
+	}
+	defer func() { _ = pub.Close() }()
+
+	// Connect client to notify socket
+	conn, err := net.Dial("unix", sockPath)
+	if err != nil {
+		t.Fatalf("failed to dial unix socket: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	scanner := bufio.NewScanner(conn)
+	// Read hello message
+	if !scanner.Scan() {
+		t.Fatalf("failed to read hello message: %v", scanner.Err())
+	}
+
+	rcv := New(st, nil, pub, "test-token")
+	agentID := "env-1:claude-code:sess-patch-once"
+	hasUnseen := true
+	compAt := int64(1000)
+	agent := types.IAgentState{
+		ID:        agentID,
+		SessionID: "sess-patch-once",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-1",
+			Platform: "darwin",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle:           types.LifecycleRunning,
+			Activity:            types.ActivityIdle,
+			HasUnseenCompletion: &hasUnseen,
+			CompletedAt:         &compAt,
+		},
+	}
+	if err := st.SaveAgentState(agent); err != nil {
+		t.Fatalf("SaveAgentState failed: %v", err)
+	}
+
+	msgChan := make(chan types.IServerEvent, 10)
+	go func() {
+		for scanner.Scan() {
+			var ev types.IServerEvent
+			if err := json.Unmarshal(scanner.Bytes(), &ev); err == nil {
+				msgChan <- ev
+			}
+		}
+	}()
+
+	// PATCH dismissCompletion: true
+	body := strings.NewReader(`{"dismissCompletion":true}`)
+	req := httptest.NewRequest("PATCH", "/api/v1/internal/agents/"+agentID, body)
+	req.Header.Set("Authorization", "Bearer test-token")
+	req.SetPathValue("id", agentID)
+	w := httptest.NewRecorder()
+	rcv.HandlePatchAgent(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("HandlePatchAgent got status %d, want %d", w.Code, http.StatusOK)
+	}
+
+	// Verify broadcast event count: must be exactly 1
+	var receivedCount int
+	timeout := time.After(150 * time.Millisecond)
+drainLoop:
+	for {
+		select {
+		case ev := <-msgChan:
+			if ev.Type == "agent_upsert" && ev.Agent != nil && ev.Agent.ID == agentID {
+				receivedCount++
+			}
+		case <-timeout:
+			break drainLoop
+		}
+	}
+	if receivedCount != 1 {
+		t.Errorf("expected exactly 1 broadcast event on patch, got %d", receivedCount)
 	}
 }

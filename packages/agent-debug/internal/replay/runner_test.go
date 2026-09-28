@@ -504,3 +504,32 @@ func TestReplay_Opencode(t *testing.T) {
 		}
 	})
 }
+
+func TestReplayResult_Summary_HasUnseenCompletion(t *testing.T) {
+	tTrue := true
+	res := &ReplayResult{
+		SessionID: "sess-1",
+		Harness:   types.HarnessClaudeCode,
+		Agent: &types.IAgentState{
+			ID: "agent-1",
+			Activity: types.IAgentActivity{
+				Activity:            types.ActivityIdle,
+				Lifecycle:           types.LifecycleRunning,
+				HasUnseenCompletion: &tTrue,
+			},
+			Workspace: types.IWorkspaceInfo{
+				Branch: "main",
+				CWD:    "/test",
+			},
+			Project: types.IProjectInfo{
+				Name: "test-proj",
+			},
+		},
+	}
+
+	summary := res.Summary()
+	if summary.HasUnseenCompletion == nil || !*summary.HasUnseenCompletion {
+		t.Fatalf("expected summary.HasUnseenCompletion to be true, got %v", summary.HasUnseenCompletion)
+	}
+}
+

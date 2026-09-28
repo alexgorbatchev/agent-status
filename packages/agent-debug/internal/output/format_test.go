@@ -711,6 +711,36 @@ func TestTrimProjectPrefix(t *testing.T) {
 	}
 }
 
+func TestIsUnacknowledgedCompletion(t *testing.T) {
+	tTrue := true
+	tFalse := false
+
+	tests := []struct {
+		name                string
+		lifecycle           types.LifecycleState
+		activity            types.ActivityState
+		hasUnseenCompletion *bool
+		want                bool
+	}{
+		{"running idle unseen true", types.LifecycleRunning, types.ActivityIdle, &tTrue, true},
+		{"running idle unseen false", types.LifecycleRunning, types.ActivityIdle, &tFalse, false},
+		{"running idle unseen nil", types.LifecycleRunning, types.ActivityIdle, nil, false},
+		{"exited idle unseen true", types.LifecycleExited, types.ActivityIdle, &tTrue, false},
+		{"running busy unseen true", types.LifecycleRunning, types.ActivityBusy, &tTrue, false},
+		{"running question unseen true", types.LifecycleRunning, types.ActivityWaitingQuestion, &tTrue, false},
+		{"running error unseen true", types.LifecycleRunning, types.ActivityError, &tTrue, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := IsUnacknowledgedCompletion(tt.lifecycle, tt.activity, tt.hasUnseenCompletion)
+			if got != tt.want {
+				t.Errorf("IsUnacknowledgedCompletion(%s, %s, %v) = %v, want %v", tt.lifecycle, tt.activity, tt.hasUnseenCompletion, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestFormatActivityStatus(t *testing.T) {
 	tTrue := true
 	tFalse := false
@@ -765,8 +795,21 @@ func TestRenderReplaySummary_Completed(t *testing.T) {
 	var agentBuf bytes.Buffer
 	RenderReplaySummary(&agentBuf, s, true)
 	agentOut := agentBuf.String()
-	if !strings.Contains(agentOut, "activity:COMPLETED") {
-		t.Errorf("expected agent output to contain activity:COMPLETED, got:\n%s", agentOut)
+	if !strings.Contains(agentOut, "activity:IDLE") {
+		t.Errorf("expected agent output to contain activity:IDLE, got:\n%s", agentOut)
+	}
+	if !strings.Contains(agentOut, "has_unseen_completion:true") {
+		t.Errorf("expected agent output to contain has_unseen_completion:true, got:\n%s", agentOut)
+	}
+
+	// Verify that when HasUnseenCompletion is nil or false, has_unseen_completion:true is not appended
+	sNotCompleted := s
+	sNotCompleted.HasUnseenCompletion = nil
+	var noCompBuf bytes.Buffer
+	RenderReplaySummary(&noCompBuf, sNotCompleted, true)
+	noCompOut := noCompBuf.String()
+	if strings.Contains(noCompOut, "has_unseen_completion") {
+		t.Errorf("expected agent output to not contain has_unseen_completion, got:\n%s", noCompOut)
 	}
 }
 

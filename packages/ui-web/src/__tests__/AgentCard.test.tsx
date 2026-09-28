@@ -1060,7 +1060,7 @@ describe("AgentCard Component", () => {
       cleanup();
     });
 
-    it("acknowledges completion when card receives focus", async () => {
+    it("does not acknowledge completion when card receives focus (#108)", async () => {
       const { mockDoc, cleanup } = setupMockDomEnvironment();
       let acknowledged = false;
       const completedAgent = factory_agentState({
@@ -1094,9 +1094,9 @@ describe("AgentCard Component", () => {
         card.dispatchEvent({ type: "focus", bubbles: true });
       });
 
-      expect(acknowledged).toBe(true);
+      expect(acknowledged).toBe(false);
       const statusLabelAfter = container.querySelector('[data-testid="StatusBadge--label"]');
-      expect(statusLabelAfter?.textContent).toBe("Idle");
+      expect(statusLabelAfter?.textContent).toBe("Completed");
 
       await unmount();
       cleanup();

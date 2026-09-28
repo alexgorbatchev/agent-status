@@ -735,17 +735,17 @@ describe("agentUtils", () => {
       expect(isAgentStaleIdle(exitedActivity, now)).toBe(false);
     });
 
-    it("treats has_unseen_completion: true as unacknowledged completion and prevents stale idle classification even if updatedAt > 2h", () => {
+    it("treats hasUnseenCompletion: true as unacknowledged completion and prevents stale idle classification even if updatedAt > 2h", () => {
       const now = 20_000_000;
-      const snakeCaseUnseenActivity: IAgentActivity = {
+      const unseenActivity: IAgentActivity = {
         ...factory_createAgent().activity,
         lifecycle: "RUNNING",
         activity: "IDLE",
         updatedAt: now - 3 * 3600 * 1000,
-        has_unseen_completion: true,
+        hasUnseenCompletion: true,
       };
-      expect(isAgentStaleIdle(snakeCaseUnseenActivity, now)).toBe(false);
-      expect(isAgentStaleIdle(snakeCaseUnseenActivity, now, true)).toBe(true);
+      expect(isAgentStaleIdle(unseenActivity, now)).toBe(false);
+      expect(isAgentStaleIdle(unseenActivity, now, true)).toBe(true);
     });
   });
 
@@ -786,17 +786,17 @@ describe("agentUtils", () => {
       expect(getAgentIdleFreshness(exitedActivity, now)).toBe("fresh");
     });
 
-    it("treats has_unseen_completion: true as unacknowledged completion preventing stale tier", () => {
+    it("treats hasUnseenCompletion: true as unacknowledged completion preventing stale tier", () => {
       const now = 20_000_000;
-      const snakeCaseUnseenActivity: IAgentActivity = {
+      const unseenActivity: IAgentActivity = {
         ...factory_createAgent().activity,
         lifecycle: "RUNNING",
         activity: "IDLE",
         updatedAt: now - 3 * 3600 * 1000,
-        has_unseen_completion: true,
+        hasUnseenCompletion: true,
       };
-      expect(getAgentIdleFreshness(snakeCaseUnseenActivity, now)).toBe("fresh");
-      expect(getAgentIdleFreshness(snakeCaseUnseenActivity, now, true)).toBe("stale");
+      expect(getAgentIdleFreshness(unseenActivity, now)).toBe("fresh");
+      expect(getAgentIdleFreshness(unseenActivity, now, true)).toBe("stale");
     });
   });
 

@@ -85,7 +85,7 @@ func IsAgentStaleIdle(agent types.IAgentState, nowMs int64) bool {
 	if agent.Activity.Lifecycle != types.LifecycleRunning || agent.Activity.Activity != types.ActivityIdle {
 		return false
 	}
-	if agent.Activity.HasUnseenCompletion != nil && *agent.Activity.HasUnseenCompletion {
+	if IsUnacknowledgedCompletion(agent.Activity.Lifecycle, agent.Activity.Activity, agent.Activity.HasUnseenCompletion) {
 		return false
 	}
 	return GetIdleFreshness(agent.Activity.UpdatedAt, nowMs) == FreshnessStale
@@ -98,7 +98,7 @@ func GetAgentIdleFreshness(agent types.IAgentState, nowMs int64) IdleFreshness {
 	if agent.Activity.Lifecycle != types.LifecycleRunning || agent.Activity.Activity != types.ActivityIdle {
 		return FreshnessFresh
 	}
-	if agent.Activity.HasUnseenCompletion != nil && *agent.Activity.HasUnseenCompletion {
+	if IsUnacknowledgedCompletion(agent.Activity.Lifecycle, agent.Activity.Activity, agent.Activity.HasUnseenCompletion) {
 		return FreshnessFresh
 	}
 	return GetIdleFreshness(agent.Activity.UpdatedAt, nowMs)
@@ -500,10 +500,7 @@ func renderAgentViewAgentMode(w io.Writer, agent types.IAgentState, nowMs int64)
 	if activity == "" {
 		activity = string(types.ActivityIdle)
 	}
-	isCompleted := agent.Activity.Lifecycle == types.LifecycleRunning && agent.Activity.Activity == types.ActivityIdle && agent.Activity.HasUnseenCompletion != nil && *agent.Activity.HasUnseenCompletion
-	if isCompleted {
-		activity = "COMPLETED"
-	}
+	isCompleted := IsUnacknowledgedCompletion(agent.Activity.Lifecycle, agent.Activity.Activity, agent.Activity.HasUnseenCompletion)
 	lifecycle := string(agent.Activity.Lifecycle)
 	if lifecycle == "" {
 		lifecycle = string(types.LifecycleRunning)
@@ -590,7 +587,7 @@ func renderAgentViewHumanMode(w io.Writer, agent types.IAgentState, nowMs int64)
 	buttons = append(buttons, hideButton)
 	headerLeft := fmt.Sprintf("%s %s", harnessBadge, strings.Join(buttons, " "))
 	statusLabel := lifecycle
-	if agent.Activity.Lifecycle == types.LifecycleRunning && agent.Activity.Activity == types.ActivityIdle && agent.Activity.HasUnseenCompletion != nil && *agent.Activity.HasUnseenCompletion {
+	if IsUnacknowledgedCompletion(agent.Activity.Lifecycle, agent.Activity.Activity, agent.Activity.HasUnseenCompletion) {
 		statusLabel = AnsiGreen + "Completed" + AnsiReset
 	} else if agent.Activity.Activity == types.ActivityRateLimited {
 		statusLabel = AnsiYellow + "Rate Limited" + AnsiReset

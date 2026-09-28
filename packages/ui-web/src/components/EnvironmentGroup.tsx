@@ -8,6 +8,7 @@ export function EnvironmentGroup({
   agents,
   onSelectAgent,
   onToggleHide,
+  onAcknowledgeCompletion,
 }: IEnvironmentGroupProps): React.JSX.Element {
   const isStale = environment.isStale;
   const staleBadge = (
@@ -33,6 +34,7 @@ export function EnvironmentGroup({
         agents={agents}
         onSelectAgent={onSelectAgent}
         onToggleHide={onToggleHide}
+        onAcknowledgeCompletion={onAcknowledgeCompletion}
       />
     </div>
   );

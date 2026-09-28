@@ -7588,6 +7588,86 @@ func TestClassifier_ThinkingFloor_TurnFloor_LatencyWindow(t *testing.T) {
 	}
 }
 
+func TestClassifier_SilenceTimeout_DoesNotSetHasUnseenCompletion(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, s := newTestClassifier(t, sum)
+	silenceTimeout := 50 * time.Millisecond
+	c.SetTurnSilenceTimeout(silenceTimeout)
+	c.SetIdleGracePeriod(200 * time.Millisecond) // longer than silence timeout so grace period doesn't trigger first
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{ID: "env-1", Hostname: "host", Platform: "linux"}
+	ws := types.IWorkspaceInfo{CWD: "/workspace"}
+	proj := types.IProjectInfo{ID: "proj-1", Name: "repo"}
+
+	agentID := "env-1:pi:sess-silence-no-completion"
+	baseFrame := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       "env-1",
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-silence-no-completion",
+		PID:         2001,
+		Harness:     types.HarnessPi,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   1000,
+		EventType:   "run_started",
+	}
+	if _, err := c.ProcessFrame(baseFrame); err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+
+	toolName := "Bash"
+	fTool := baseFrame
+	fTool.Seq = 2
+	fTool.Timestamp = 2000
+	fTool.EventType = "tool_call"
+	fTool.Data = types.TelemetryFrameData{
+		ToolName: &toolName,
+	}
+	if _, err := c.ProcessFrame(fTool); err != nil {
+		t.Fatalf("tool_call failed: %v", err)
+	}
+
+	// Inactive session: wait for silence timeout to elapse
+	time.Sleep(80 * time.Millisecond)
+
+	agent, err := s.GetAgent(agentID)
+	if err != nil || agent == nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityIdle {
+		t.Fatalf("expected inactive session to transition to IDLE after silence timeout, got %s", agent.Activity.Activity)
+	}
+	if agent.Activity.HasUnseenCompletion != nil && *agent.Activity.HasUnseenCompletion {
+		t.Errorf("silence timeout (stall/abandonment) must NOT set HasUnseenCompletion = true")
+	}
+	if agent.Activity.CompletedAt != nil {
+		t.Errorf("silence timeout must NOT set CompletedAt, got %v", *agent.Activity.CompletedAt)
+	}
+
+	// Check in-memory classifier context
+	c.mu.Lock()
+	actx := c.agentCtx[agentID]
+	var inMemoryUnseen *bool
+	var inMemoryCompletedAt *int64
+	if actx != nil {
+		inMemoryUnseen = actx.hasUnseenCompletion
+		inMemoryCompletedAt = actx.completedAt
+	}
+	c.mu.Unlock()
+	if inMemoryUnseen != nil && *inMemoryUnseen {
+		t.Errorf("silence timeout (stall/abandonment) must NOT set in-memory hasUnseenCompletion = true")
+	}
+	if inMemoryCompletedAt != nil {
+		t.Errorf("silence timeout must NOT set in-memory completedAt, got %v", *inMemoryCompletedAt)
+	}
+}
+
 func TestClassifier_TurnSilenceTimeout_ExtendedWindow(t *testing.T) {
 	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
 	if err != nil {
@@ -9183,6 +9263,9 @@ func TestClassifier_HasUnseenCompletion_TurnCompletionAndTransitions(t *testing.
 	if agent.Activity.HasUnseenCompletion != nil && *agent.Activity.HasUnseenCompletion {
 		t.Errorf("expected HasUnseenCompletion to be cleared on new turn_start, got true")
 	}
+	if agent.Activity.CompletedAt != nil {
+		t.Errorf("expected CompletedAt to be cleared on new turn_start, got %v", *agent.Activity.CompletedAt)
+	}
 
 	// 6. Another turn_end -> IDLE
 	f6 := baseFrame
@@ -9252,6 +9335,418 @@ func TestClassifier_HasUnseenCompletion_TurnCompletionAndTransitions(t *testing.
 	}
 	if agent.Activity.HasUnseenCompletion != nil && *agent.Activity.HasUnseenCompletion {
 		t.Errorf("expected HasUnseenCompletion cleared on error, got true")
+	}
+
+	// 10. Start turn, execute tool, and end turn to IDLE -> HasUnseenCompletion true
+	f9b := baseFrame
+	f9b.Seq = 11
+	f9b.Timestamp = 9500
+	f9b.EventType = "turn_start"
+	f9b.Data = types.TelemetryFrameData{Content: &p}
+	if _, err = c.ProcessFrame(f9b); err != nil {
+		t.Fatalf("turn_start failed: %v", err)
+	}
+
+	f9c := baseFrame
+	f9c.Seq = 12
+	f9c.Timestamp = 9600
+	f9c.EventType = "tool_call"
+	f9c.Data = types.TelemetryFrameData{ToolName: &tool}
+	if _, err = c.ProcessFrame(f9c); err != nil {
+		t.Fatalf("tool_call failed: %v", err)
+	}
+
+	f10 := baseFrame
+	f10.Seq = 13
+	f10.Timestamp = 10000
+	f10.EventType = "turn_end"
+	f10.Data = types.TelemetryFrameData{StopReason: &stopReason}
+	agent, err = c.ProcessFrame(f10)
+	if err != nil {
+		t.Fatalf("turn_end failed: %v", err)
+	}
+	if agent.Activity.HasUnseenCompletion == nil || !*agent.Activity.HasUnseenCompletion {
+		t.Fatalf("expected HasUnseenCompletion true on turn_end, got %v", agent.Activity.HasUnseenCompletion)
+	}
+	if agent.Activity.CompletedAt == nil || *agent.Activity.CompletedAt != 10000 {
+		t.Fatalf("expected CompletedAt to be 10000, got %v", agent.Activity.CompletedAt)
+	}
+
+	// 11. run_exited -> clears HasUnseenCompletion and CompletedAt
+	f11 := baseFrame
+	f11.Seq = 14
+	f11.Timestamp = 11000
+	f11.EventType = "run_exited"
+	agent, err = c.ProcessFrame(f11)
+	if err != nil {
+		t.Fatalf("run_exited failed: %v", err)
+	}
+	if agent.Activity.HasUnseenCompletion != nil && *agent.Activity.HasUnseenCompletion {
+		t.Errorf("expected HasUnseenCompletion cleared on run_exited, got true")
+	}
+	if agent.Activity.CompletedAt != nil {
+		t.Errorf("expected CompletedAt cleared on run_exited, got %v", *agent.Activity.CompletedAt)
+	}
+}
+
+func TestClassifier_DismissCompletion(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, st := newTestClassifier(t, sum)
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{ID: "env-1", Hostname: "host", Platform: "linux"}
+	ws := types.IWorkspaceInfo{CWD: "/workspace"}
+	proj := types.IProjectInfo{ID: "proj-1", Name: "repo"}
+
+	agentID := "env-1:pi:sess-dismiss-classifier"
+	baseFrame := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       "env-1",
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-dismiss-classifier",
+		PID:         2001,
+		Harness:     types.HarnessPi,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   1000,
+		EventType:   "run_started",
+	}
+	if _, err := c.ProcessFrame(baseFrame); err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+
+	p := "Do work"
+	fStart := baseFrame
+	fStart.Seq = 2
+	fStart.Timestamp = 2000
+	fStart.EventType = "turn_start"
+	fStart.Data = types.TelemetryFrameData{Content: &p}
+	if _, err := c.ProcessFrame(fStart); err != nil {
+		t.Fatalf("turn_start failed: %v", err)
+	}
+
+	tool := "Edit"
+	fTool := baseFrame
+	fTool.Seq = 3
+	fTool.Timestamp = 3000
+	fTool.EventType = "tool_call"
+	fTool.Data = types.TelemetryFrameData{ToolName: &tool}
+	if _, err := c.ProcessFrame(fTool); err != nil {
+		t.Fatalf("tool_call failed: %v", err)
+	}
+
+	stopReason := "end_turn"
+	fEnd := baseFrame
+	fEnd.Seq = 4
+	fEnd.Timestamp = 4000
+	fEnd.EventType = "turn_end"
+	fEnd.Data = types.TelemetryFrameData{StopReason: &stopReason}
+	agent, err := c.ProcessFrame(fEnd)
+	if err != nil {
+		t.Fatalf("turn_end failed: %v", err)
+	}
+	if agent.Activity.HasUnseenCompletion == nil || !*agent.Activity.HasUnseenCompletion {
+		t.Fatalf("expected HasUnseenCompletion = true")
+	}
+
+	// Verify in-memory context has unseen completion
+	c.mu.Lock()
+	actx := c.agentCtx[agentID]
+	if actx == nil || actx.hasUnseenCompletion == nil || !*actx.hasUnseenCompletion {
+		c.mu.Unlock()
+		t.Fatalf("expected in-memory actx.hasUnseenCompletion = true")
+	}
+	c.mu.Unlock()
+
+	var broadcastedAgent *types.IAgentState
+	c.SetOnUpdate(func(a *types.IAgentState) {
+		broadcastedAgent = a
+	})
+
+	// Call DismissCompletion
+	dismissedAgent, err := c.DismissCompletion(agentID)
+	if err != nil {
+		t.Fatalf("DismissCompletion failed: %v", err)
+	}
+	if dismissedAgent == nil {
+		t.Fatalf("expected dismissedAgent to not be nil")
+	}
+	if dismissedAgent.Activity.HasUnseenCompletion != nil && *dismissedAgent.Activity.HasUnseenCompletion {
+		t.Errorf("expected dismissedAgent.Activity.HasUnseenCompletion to be nil/false, got %v", dismissedAgent.Activity.HasUnseenCompletion)
+	}
+	if broadcastedAgent == nil || broadcastedAgent.ID != agentID {
+		t.Errorf("expected broadcastedAgent to be called for %s, got %v", agentID, broadcastedAgent)
+	}
+
+	// Verify SQLite updated
+	inStore, err := st.GetAgent(agentID)
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if inStore.Activity.HasUnseenCompletion != nil && *inStore.Activity.HasUnseenCompletion {
+		t.Errorf("expected store HasUnseenCompletion to be nil, got %v", inStore.Activity.HasUnseenCompletion)
+	}
+
+	// Verify in-memory context cleared
+	c.mu.Lock()
+	actx = c.agentCtx[agentID]
+	if actx != nil && actx.hasUnseenCompletion != nil {
+		t.Errorf("expected actx.hasUnseenCompletion to be nil after DismissCompletion, got %v", *actx.hasUnseenCompletion)
+	}
+	if actx != nil && actx.completedAt != nil {
+		t.Errorf("expected actx.completedAt to be nil after DismissCompletion, got %v", *actx.completedAt)
+	}
+	c.mu.Unlock()
+}
+
+func TestClassifier_ProcessSummaryJob_DoesNotRestoreDismissedCompletion(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("failed to open store: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New failed: %v", err)
+	}
+
+	c := New(st, nil, sum)
+	c.SetIdleGracePeriod(0)
+
+	env := types.IEnvironmentInfo{ID: "env-1", Hostname: "host", Platform: "linux"}
+	ws := types.IWorkspaceInfo{CWD: "/workspace"}
+	proj := types.IProjectInfo{ID: "proj-1", Name: "repo"}
+
+	sessionID := "sess-dismiss-race"
+	agentID := "env-1:pi:" + sessionID
+
+	baseFrame := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       "env-1",
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   sessionID,
+		PID:         2001,
+		Harness:     types.HarnessPi,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   1000,
+		EventType:   "run_started",
+	}
+	if _, err := c.ProcessFrame(baseFrame); err != nil {
+		t.Fatalf("ProcessFrame(baseFrame) failed: %v", err)
+	}
+
+	p := "Do work"
+	fTurnStart := baseFrame
+	fTurnStart.Seq = 2
+	fTurnStart.Timestamp = 2000
+	fTurnStart.EventType = "turn_start"
+	fTurnStart.Data = types.TelemetryFrameData{Content: &p}
+	if _, err := c.ProcessFrame(fTurnStart); err != nil {
+		t.Fatalf("ProcessFrame(fTurnStart) failed: %v", err)
+	}
+
+	tool := "Edit"
+	fTool := baseFrame
+	fTool.Seq = 3
+	fTool.Timestamp = 2500
+	fTool.EventType = "tool_call"
+	fTool.Data = types.TelemetryFrameData{ToolName: &tool}
+	if _, err := c.ProcessFrame(fTool); err != nil {
+		t.Fatalf("ProcessFrame(fTool) failed: %v", err)
+	}
+
+	stopReason := "end_turn"
+	fEnd := baseFrame
+	fEnd.Seq = 4
+	fEnd.Timestamp = 4000
+	fEnd.EventType = "turn_end"
+	fEnd.Data = types.TelemetryFrameData{StopReason: &stopReason}
+	agent, err := c.ProcessFrame(fEnd)
+	if err != nil {
+		t.Fatalf("ProcessFrame(fEnd) failed: %v", err)
+	}
+	if agent.Activity.HasUnseenCompletion == nil || !*agent.Activity.HasUnseenCompletion {
+		t.Fatalf("expected HasUnseenCompletion = true before dismiss")
+	}
+
+	// Dismiss completion via classifier
+	if _, err := c.DismissCompletion(agentID); err != nil {
+		t.Fatalf("DismissCompletion failed: %v", err)
+	}
+
+	// Verify in-memory context cleared
+	c.mu.Lock()
+	actx := c.agentCtx[agentID]
+	if actx == nil || actx.hasUnseenCompletion != nil {
+		t.Fatalf("expected actx.hasUnseenCompletion to be nil after DismissCompletion")
+	}
+	c.mu.Unlock()
+
+	// Execute an async summary job with a new action.
+	// Even though the DB previously had has_unseen_completion=1,
+	// processSummaryJob must sync with actx under lock before saving so that
+	// has_unseen_completion is cleared in the saved agent.
+	activeTool := "bash"
+	activeTarget := "run tests"
+	c.processSummaryJob(agentID, summaryJob{
+		input: summarizer.SummaryInput{
+			Activity:     types.ActivityIdle,
+			ActiveTool:   &activeTool,
+			ActiveTarget: &activeTarget,
+		},
+	})
+
+	savedAgent, err := c.store.GetAgent(agentID)
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if savedAgent.Activity.HasUnseenCompletion != nil && *savedAgent.Activity.HasUnseenCompletion {
+		t.Errorf("expected savedAgent.Activity.HasUnseenCompletion to be nil after processSummaryJob, got %v", *savedAgent.Activity.HasUnseenCompletion)
+	}
+	if savedAgent.Activity.CompletedAt != nil {
+		t.Errorf("expected savedAgent.Activity.CompletedAt to be nil after processSummaryJob, got %v", *savedAgent.Activity.CompletedAt)
+	}
+}
+
+func TestClassifier_ConcurrentDismissAndProcessSummaryJob(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+	c, st := newTestClassifier(t, sum)
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{ID: "env-1", Hostname: "host", Platform: "linux"}
+	ws := types.IWorkspaceInfo{CWD: "/workspace"}
+	proj := types.IProjectInfo{ID: "proj-1", Name: "repo"}
+
+	agentID := "env-1:claude-code:sess-concurrent-dismiss"
+	baseFrame := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       "env-1",
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-concurrent-dismiss",
+		PID:         1234,
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   1000,
+		EventType:   "run_started",
+	}
+	if _, err := c.ProcessFrame(baseFrame); err != nil {
+		t.Fatalf("ProcessFrame(baseFrame) failed: %v", err)
+	}
+
+	stopReason := "end_turn"
+	fEnd := baseFrame
+	fEnd.Seq = 2
+	fEnd.Timestamp = 2000
+	fEnd.EventType = "turn_end"
+	fEnd.Data = types.TelemetryFrameData{StopReason: &stopReason}
+	if _, err := c.ProcessFrame(fEnd); err != nil {
+		t.Fatalf("ProcessFrame(fEnd) failed: %v", err)
+	}
+
+	activeTool := "bash"
+	activeTarget := "run tests"
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		_, _ = c.DismissCompletion(agentID)
+	}()
+
+	go func() {
+		defer wg.Done()
+		c.processSummaryJob(agentID, summaryJob{
+			input: summarizer.SummaryInput{
+				Activity:     types.ActivityIdle,
+				ActiveTool:   &activeTool,
+				ActiveTarget: &activeTarget,
+			},
+		})
+	}()
+
+	wg.Wait()
+
+	savedAgent, err := st.GetAgent(agentID)
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if savedAgent.Activity.HasUnseenCompletion != nil && *savedAgent.Activity.HasUnseenCompletion {
+		t.Errorf("expected HasUnseenCompletion to be nil after concurrent dismiss and summary, got %v", *savedAgent.Activity.HasUnseenCompletion)
+	}
+}
+
+func TestClassifier_RollupActivity_FrameTimestamp(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New failed: %v", err)
+	}
+	c, _ := newTestClassifier(t, sum)
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{ID: "env-1", Hostname: "host", Platform: "linux"}
+	ws := types.IWorkspaceInfo{CWD: "/workspace"}
+	proj := types.IProjectInfo{ID: "proj-1", Name: "repo"}
+
+	agentID := "env-1:claude-code:sess-rollup-ts"
+	baseFrame := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       "env-1",
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-rollup-ts",
+		PID:         2001,
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+		Timestamp:   1000,
+		EventType:   "run_started",
+	}
+	if _, err := c.ProcessFrame(baseFrame); err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+
+	// Subagent starts
+	subID := "sub-1"
+	fSubStart := baseFrame
+	fSubStart.Seq = 2
+	fSubStart.Timestamp = 2000
+	fSubStart.EventType = "tool_call"
+	fSubStart.SubagentID = &subID
+	toolName := "Bash"
+	fSubStart.Data = types.TelemetryFrameData{ToolName: &toolName}
+	if _, err := c.ProcessFrame(fSubStart); err != nil {
+		t.Fatalf("subagent tool_call failed: %v", err)
+	}
+
+	// Subagent finishes at timestamp 5000
+	fSubEnd := baseFrame
+	fSubEnd.Seq = 3
+	fSubEnd.Timestamp = 5000
+	fSubEnd.EventType = "turn_end"
+	fSubEnd.SubagentID = &subID
+	agent, err := c.ProcessFrame(fSubEnd)
+	if err != nil {
+		t.Fatalf("subagent tool_result failed: %v", err)
+	}
+
+	if agent.Activity.HasUnseenCompletion == nil || !*agent.Activity.HasUnseenCompletion {
+		t.Fatalf("expected HasUnseenCompletion = true")
+	}
+	if agent.Activity.CompletedAt == nil || *agent.Activity.CompletedAt != 5000 {
+		t.Fatalf("expected CompletedAt = 5000 (frame timestamp), got %v", agent.Activity.CompletedAt)
 	}
 }
 
@@ -10183,7 +10678,7 @@ func TestClassifier_RateLimitedActivity(t *testing.T) {
 		}
 		// Force root activity to Error
 		actx.rootActivity = types.ActivityError
-		c.rollupActivityLocked(agent, actx)
+		c.rollupActivityLocked(agent, actx, 1000)
 		c.mu.Unlock()
 
 		if agent.Activity.Activity != types.ActivityError {
@@ -10201,7 +10696,7 @@ func TestClassifier_RateLimitedActivity(t *testing.T) {
 		agent.Activity.RetryAfterSeconds = &retrySec
 		c.mu.Lock()
 		actx.rootActivity = types.ActivityWaitingQuestion
-		c.rollupActivityLocked(agent, actx)
+		c.rollupActivityLocked(agent, actx, 1000)
 		c.mu.Unlock()
 
 		if agent.Activity.Activity != types.ActivityWaitingQuestion {
@@ -11089,6 +11584,247 @@ func TestClassifier_RateLimitedActivity_BypassesLLMSummarization(t *testing.T) {
 		t.Errorf("expected 0 LLM requests for rate-limited agent across sync and async modes, got %d", count)
 	}
 }
+
+func TestClassifier_SubagentFrame_PreservesAuthoritativeInMemoryCompletion(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New failed: %v", err)
+	}
+	c, st := newTestClassifier(t, sum)
+	c.SetSyncMode(true)
+
+	agentID := "env-1:claude-code:sess-sub-authoritative"
+	baseFrame := types.ITelemetryFrame{
+		Version:   "1.0",
+		EnvID:     "env-1",
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-1",
+			Platform: "darwin",
+		},
+		AgentID:   agentID,
+		SessionID: "sess-sub-authoritative",
+		Harness:   types.HarnessClaudeCode,
+		Project: types.IProjectInfo{
+			ID:   "proj-1",
+			Name: "proj-1",
+		},
+		Workspace: types.IWorkspaceInfo{
+			CWD: "/tmp",
+		},
+	}
+
+	// 1. Root run_started and turn_start
+	fStart := baseFrame
+	fStart.Seq = 1
+	fStart.Timestamp = 1000
+	fStart.EventType = "run_started"
+	if _, err := c.ProcessFrame(fStart); err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+
+	fTurnStart := baseFrame
+	fTurnStart.Seq = 2
+	fTurnStart.Timestamp = 1100
+	fTurnStart.EventType = "turn_start"
+	if _, err := c.ProcessFrame(fTurnStart); err != nil {
+		t.Fatalf("turn_start failed: %v", err)
+	}
+
+	// 2. Root turn_end to idle -> HasUnseenCompletion = true, CompletedAt = 2000
+	stopReason := "end_turn"
+	fTurnEnd := baseFrame
+	fTurnEnd.Seq = 3
+	fTurnEnd.Timestamp = 2000
+	fTurnEnd.EventType = "turn_end"
+	fTurnEnd.Data = types.TelemetryFrameData{StopReason: &stopReason}
+	agent, err := c.ProcessFrame(fTurnEnd)
+	if err != nil {
+		t.Fatalf("turn_end failed: %v", err)
+	}
+	if agent.Activity.HasUnseenCompletion == nil || !*agent.Activity.HasUnseenCompletion {
+		t.Fatalf("expected HasUnseenCompletion = true, got %v", agent.Activity.HasUnseenCompletion)
+	}
+	if agent.Activity.CompletedAt == nil || *agent.Activity.CompletedAt != 2000 {
+		t.Fatalf("expected CompletedAt = 2000, got %v", agent.Activity.CompletedAt)
+	}
+
+	// 3. Stale agent simulation: simulate a DB or caller state where HasUnseenCompletion is nil
+	staleAgent, err := st.GetAgent(agentID)
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	staleAgent.Activity.HasUnseenCompletion = nil
+	staleAgent.Activity.CompletedAt = nil
+	if err := st.SaveAgentState(*staleAgent); err != nil {
+		t.Fatalf("SaveAgentState failed: %v", err)
+	}
+
+	// 4. Now process a subagent frame (subagent turn_end)
+	subID := "sub-1"
+	fSub := baseFrame
+	fSub.Seq = 4
+	fSub.Timestamp = 2500
+	fSub.EventType = "turn_end"
+	fSub.SubagentID = &subID
+	resAgent, err := c.ProcessFrame(fSub)
+	if err != nil {
+		t.Fatalf("subagent frame failed: %v", err)
+	}
+
+	// The in-memory authoritative completion MUST NOT have been overwritten by stale DB values
+	if resAgent.Activity.HasUnseenCompletion == nil || !*resAgent.Activity.HasUnseenCompletion {
+		t.Errorf("expected HasUnseenCompletion to remain true after subagent frame, got %v", resAgent.Activity.HasUnseenCompletion)
+	}
+	if resAgent.Activity.CompletedAt == nil || *resAgent.Activity.CompletedAt != 2000 {
+		t.Errorf("expected CompletedAt to remain 2000, got %v", resAgent.Activity.CompletedAt)
+	}
+}
+
+func TestClassifier_HandleIdleTransition_PreservesFrameTimestamp(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("store.Open failed: %v", err)
+	}
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New failed: %v", err)
+	}
+	c := New(st, nil, sum)
+	c.SetIdleGracePeriod(10 * time.Second) // enable grace period so it doesn't transition immediately
+
+	agentID := "env-1:claude-code:sess-idle-ts"
+	baseFrame := types.ITelemetryFrame{
+		Version:   "1.0",
+		EnvID:     "env-1",
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-1",
+			Platform: "darwin",
+		},
+		AgentID:   agentID,
+		SessionID: "sess-idle-ts",
+		Harness:   types.HarnessClaudeCode,
+		Project: types.IProjectInfo{
+			ID:   "proj-1",
+			Name: "proj-1",
+		},
+		Workspace: types.IWorkspaceInfo{
+			CWD: "/tmp",
+		},
+	}
+
+	// 1. run_started and turn_start
+	fStart := baseFrame
+	fStart.Seq = 1
+	fStart.Timestamp = 1000
+	fStart.EventType = "run_started"
+	if _, err := c.ProcessFrame(fStart); err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+
+	fTurnStart := baseFrame
+	fTurnStart.Seq = 2
+	fTurnStart.Timestamp = 1100
+	fTurnStart.EventType = "turn_start"
+	if _, err := c.ProcessFrame(fTurnStart); err != nil {
+		t.Fatalf("turn_start failed: %v", err)
+	}
+
+	// 2. turn_end at a specific frame timestamp
+	frameTimestamp := int64(1700000000000)
+	fTurnEnd := baseFrame
+	fTurnEnd.Seq = 3
+	fTurnEnd.Timestamp = frameTimestamp
+	fTurnEnd.EventType = "turn_end"
+	agent, err := c.ProcessFrame(fTurnEnd)
+	if err != nil {
+		t.Fatalf("turn_end failed: %v", err)
+	}
+	if agent.Activity.Activity != types.ActivityBusy {
+		t.Fatalf("expected ActivityBusy during grace period, got %v", agent.Activity.Activity)
+	}
+
+	// 3. Trigger handleIdleTransition
+	c.mu.Lock()
+	actx := c.agentCtx[agentID]
+	gen := actx.rootGeneration
+	c.mu.Unlock()
+
+	c.handleIdleTransition(agentID, gen)
+
+	// Check agent state in store
+	loaded, err := st.GetAgent(agentID)
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if loaded.Activity.Activity != types.ActivityIdle {
+		t.Fatalf("expected ActivityIdle, got %v", loaded.Activity.Activity)
+	}
+	if loaded.Activity.HasUnseenCompletion == nil || !*loaded.Activity.HasUnseenCompletion {
+		t.Fatalf("expected HasUnseenCompletion = true")
+	}
+	if loaded.Activity.CompletedAt == nil || *loaded.Activity.CompletedAt != frameTimestamp {
+		t.Fatalf("expected CompletedAt to equal initiating frame timestamp %d, got %v", frameTimestamp, loaded.Activity.CompletedAt)
+	}
+}
+
+func TestClassifier_ProcessSummaryJob_StoreFallbackLockSeparationAndSymmetricSync(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("store.Open failed: %v", err)
+	}
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New failed: %v", err)
+	}
+	c := New(st, nil, sum)
+
+	agentID := "env-1:claude-code:sess-fallback-sync"
+	hasUnseen := true
+	compAt := int64(3000)
+	initialAgent := types.IAgentState{
+		ID:        agentID,
+		SessionID: "sess-fallback-sync",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-1",
+			Platform: "darwin",
+		},
+		Activity: types.IAgentActivity{
+			Lifecycle:           types.LifecycleRunning,
+			Activity:            types.ActivityBusy,
+			HasUnseenCompletion: &hasUnseen,
+			CompletedAt:         &compAt,
+		},
+	}
+	if err := st.SaveAgentState(initialAgent); err != nil {
+		t.Fatalf("SaveAgentState failed: %v", err)
+	}
+
+	// Ensure agent is NOT in c.agentCtx
+	c.mu.Lock()
+	delete(c.agentCtx, agentID)
+	c.mu.Unlock()
+
+	job := summaryJob{
+		input: summarizer.SummaryInput{
+			Activity: types.ActivityBusy,
+		},
+		timestamp: 3100,
+	}
+	c.processSummaryJob(agentID, job)
+
+	loaded, err := st.GetAgent(agentID)
+	if err != nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if loaded.Activity.HasUnseenCompletion == nil || !*loaded.Activity.HasUnseenCompletion {
+		t.Errorf("expected HasUnseenCompletion = true from store fallback, got %v", loaded.Activity.HasUnseenCompletion)
+	}
+	if loaded.Activity.CompletedAt == nil || *loaded.Activity.CompletedAt != 3000 {
+		t.Errorf("expected CompletedAt = 3000 from store fallback, got %v", loaded.Activity.CompletedAt)
+	}
+}
+
 
 
 

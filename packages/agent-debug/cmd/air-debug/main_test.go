@@ -671,6 +671,8 @@ func createTestStatusDB(t *testing.T, dir string) string {
 		subagent_count INTEGER NOT NULL DEFAULT 0,
 		rate_limit_reset_at INTEGER,
 		retry_after_seconds INTEGER,
+		has_unseen_completion INTEGER NOT NULL DEFAULT 0,
+		completed_at INTEGER,
 		first_started_at INTEGER NOT NULL,
 		updated_at INTEGER NOT NULL
 	);
@@ -985,7 +987,8 @@ func TestCLI_SessionFleet(t *testing.T) {
 				tokens_input INTEGER, tokens_output INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER,
 				tokens_reasoning INTEGER, tokens_total INTEGER,
 				cost_usd REAL, subagent_count INTEGER, first_started_at INTEGER, updated_at INTEGER,
-				rate_limit_reset_at INTEGER, retry_after_seconds INTEGER
+				rate_limit_reset_at INTEGER, retry_after_seconds INTEGER,
+				has_unseen_completion INTEGER NOT NULL DEFAULT 0, completed_at INTEGER
 			);
 			CREATE TABLE environments (id TEXT PRIMARY KEY, label TEXT, hostname TEXT, platform TEXT, user TEXT, last_heartbeat_at INTEGER);
 			CREATE TABLE runs (id TEXT PRIMARY KEY, pid INTEGER, harness_version TEXT, started_at INTEGER, ended_at INTEGER);
@@ -1043,7 +1046,8 @@ func TestCLI_SessionFleet(t *testing.T) {
 				tokens_input INTEGER, tokens_output INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER,
 				tokens_reasoning INTEGER, tokens_total INTEGER,
 				cost_usd REAL, subagent_count INTEGER, first_started_at INTEGER, updated_at INTEGER,
-				rate_limit_reset_at INTEGER, retry_after_seconds INTEGER
+				rate_limit_reset_at INTEGER, retry_after_seconds INTEGER,
+				has_unseen_completion INTEGER NOT NULL DEFAULT 0, completed_at INTEGER
 			);
 			CREATE TABLE environments (id TEXT PRIMARY KEY, label TEXT, hostname TEXT, platform TEXT, user TEXT, last_heartbeat_at INTEGER);
 			CREATE TABLE runs (id TEXT PRIMARY KEY, pid INTEGER, harness_version TEXT, started_at INTEGER, ended_at INTEGER);

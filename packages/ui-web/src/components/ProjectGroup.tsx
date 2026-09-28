@@ -13,6 +13,7 @@ export function ProjectGroup({
   treeGroup,
   onSelectAgent,
   onToggleHide,
+  onAcknowledgeCompletion,
 }: IProjectGroupProps): React.JSX.Element {
   const tree = useMemo(() => {
     if (treeGroup) {
@@ -58,6 +59,7 @@ export function ProjectGroup({
           hideWorktreeBadge={false}
           onSelectAgent={onSelectAgent}
           onToggleHide={onToggleHide}
+          onAcknowledgeCompletion={onAcknowledgeCompletion}
         />
       ) : (
         <div className="flex flex-col gap-6">
@@ -86,6 +88,7 @@ export function ProjectGroup({
                   hideWorktreeBadge={false}
                   onSelectAgent={onSelectAgent}
                   onToggleHide={onToggleHide}
+                  onAcknowledgeCompletion={onAcknowledgeCompletion}
                 />
               </div>
             </div>
@@ -120,6 +123,7 @@ export function ProjectGroup({
                     hideWorktreeBadge={true}
                     onSelectAgent={onSelectAgent}
                     onToggleHide={onToggleHide}
+                    onAcknowledgeCompletion={onAcknowledgeCompletion}
                   />
                 </div>
               </div>
