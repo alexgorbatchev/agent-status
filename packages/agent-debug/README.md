@@ -3,7 +3,8 @@ An offline debugging and transcript replay utility for AI coding agent sessions.
 # What It Does
 
 - **Replays agent sessions offline** from Claude Code, Pi, OpenAI Codex, and OpenCode transcripts through the ingestion pipeline.
-- **Validates state transitions** and lifecycle fidelity (`RUNNING` -> `EXITED`, `IDLE`, `BUSY`, `WAITING_QUESTION`, `ERROR`) without launching live harnesses.
+- **Validates state transitions** and lifecycle fidelity (`RUNNING` -> `EXITED`, `IDLE`, `BUSY`, `WAITING_QUESTION`, `ERROR`, `RATE_LIMITED`) and turn completion status (`Completed`) without launching live harnesses.
+- **Renders hierarchical fleet views** (`air-debug session fleet` / `air-debug fleet`) grouping sessions by project and linked worktree branches with idle freshness tiering.
 - **Audits token pricing and usage** against static pricing models to diagnose calculation drift.
 - **Inspects turn-by-turn state diffs** (`--diff`) to isolate the exact turn where state corrupts.
 - **Verifies read-side queries** (`GetAgentByID`, `GetAgentLogs`) against an in-memory SQLite store to guarantee dashboard renderability.
@@ -11,7 +12,7 @@ An offline debugging and transcript replay utility for AI coding agent sessions.
 # How It Works
 
 - Auto-detects agent harness format from JSONL lines or SQLite headers.
-- Parses logs using pure Go parsing routines (`packages/agent-parser`).
+- Parses logs using pure Go parsing routines (`github.com/alexgorbatchev/agent-parser`).
 - Resolves Git repositories, branches, and worktrees (`packages/agent-observer/git`).
 - Classifies agent state, calculates pricing, and accumulates token usage (`packages/agent-ingester/classifier`).
 - Synthesizes lifecycle boundaries (`run_started`, `run_exited`) when transcripts do not persist OS process boundaries.
@@ -68,6 +69,10 @@ air-debug session validate session-abc.jsonl
 
 # View terminal UI card representation of agent session state
 air-debug session view session-abc.jsonl
+
+# View hierarchical fleet tree across transcripts or SQLite database
+air-debug session fleet ~/.claude/sessions/*.jsonl
+air-debug session fleet .tmp/dev-stack/data/agent-status.db
 
 # List sessions inside an OpenCode SQLite database
 air-debug session list ~/.local/share/opencode/opencode.db
@@ -139,6 +144,16 @@ Session Replay Summary (pi)
 | `--until-line <N>`     | (none) | `0`     | Halt replay after processing source line N                           |
 | `--until-event <type>` | (none) | `""`    | Halt replay after encountering event type                            |
 | `--json`               | (none) | `false` | Output final agent state as JSON                                     |
+
+### `air-debug session fleet` / `air-debug fleet`
+
+| Flag               | Short  | Default | Description                                                          |
+| :----------------- | :----- | :------ | :------------------------------------------------------------------- |
+| `--db <path>`      | (none) | `auto`  | Path to `agent-status.db` (auto-detects if omitted)                  |
+| `--cwd <path>`     | (none) | `""`    | Override transcript working directory for local Git resolution       |
+| `--env <label>`    | (none) | `debug` | Environment label override                                           |
+| `--harness <name>` | (none) | `""`    | Explicit harness override (`claude-code`, `pi`, `codex`, `opencode`) |
+| `--json`           | (none) | `false` | Output fleet agents as JSON                                          |
 
 ### `air-debug db inspect`
 

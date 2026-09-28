@@ -29,7 +29,7 @@ Whether an Agent is being carried by a Run right now. An Agent is either Running
 _Avoid_: "done", "finished", "complete", "dead". None of them are true: an Exited Agent may come back, and the work it was doing may have succeeded or failed.
 
 **Activity**:
-What an Agent is doing, independent of whether it is running: working, waiting on the engineer, errored, or idle between turns. Activity is remembered across an exit, so an Agent that died mid-error is still an errored Agent.
+What an Agent is doing, independent of whether it is running: working, waiting on the engineer, errored, rate-limited by provider quotas, or idle between turns. Turn completion (`Completed`) tracks an idle agent that has completed its turn and is waiting for engineer review or the next prompt. Activity is remembered across an exit, so an Agent that died mid-error is still an errored Agent.
 _Avoid_: collapsing Activity and Lifecycle into one word such as "status" or "state".
 
 **Attention**:

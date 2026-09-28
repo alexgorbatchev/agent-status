@@ -172,6 +172,11 @@ The table below lists environment variables read by the system, in precedence an
 | `AIR_SUMMARIZER_MODEL`  | Provider default                                 | Custom model identifier override for action summarization                                |
 | `AIR_NO_SUMMARIZE`      | `0`                                              | Set to `1` to disable LLM action summarization and use deterministic fallback heuristics |
 | `AIR_IDLE_GRACE_PERIOD` | `5s`                                             | Grace period to debounce BUSY -> IDLE transitions after turn end                         |
+| `AIR_INGESTER_ADDR`     | `:4501`                                          | Listen address for `air-ingester` WebSocket server                                       |
+| `AIR_INGESTER_URL`      | `http://127.0.0.1:4501`                          | HTTP URL of `air-ingester` service for `air-server` mutation proxying                    |
+| `AGENT_INGESTER_URL`    | `ws://127.0.0.1:4501/ws/ingest`                  | WebSocket ingestion endpoint URL of `air-ingester` for `air-observer` telemetry streaming |
+| `AIR_BEARER_TOKEN`      | `dev-secret-token`                               | Shared bearer token for telemetry ingestion authentication                               |
+| `AGENT_STATUS_TOKEN`    | (none)                                           | Shared bearer authentication token used by `air-observer` and `air-server`               |
 | `AIR_LOG_DIR`           | `~/.local/state/agent-status/logs`               | Directory path for rotating daemon disk logs                                             |
 | `AIR_LOG_FILE`         | (none)                                           | Explicit file path override for daemon disk logging                                      |
 

@@ -181,14 +181,18 @@ The following source checkouts are retained on disk:
    - Validates `version: "1.0"` and deduplicates on `(environment, seq)`.
 2. **Deterministic State Machine**:
    - Reference: `.tmp/gitsnip/agenthud/src/data/sessionLiveness.ts` and `.tmp/gitsnip/claude-code-ui/packages/daemon/src/status-machine.ts`.
+   - Five-state activity model: `BUSY`, `WAITING_QUESTION`, `ERROR`, `RATE_LIMITED`, `IDLE`.
    - Ordered pure-Go reducer rules:
      1. `run_exited` $\to$ `lifecycle: EXITED`
      2. `run_started` $\to$ `lifecycle: RUNNING`
      3. `question_prompt` / `AskUserQuestion` $\to$ `activity: WAITING_QUESTION` (stores question text)
-     4. `tool_result` (`isError: true`) $\to$ `activity: ERROR` (stores `lastError` truncated to 2,000 chars)
+     4. `tool_result` $\to$ preserves `activity = BUSY` (even with `isError: true` or non-zero exit codes, tool results are normal command outcomes; clears `activeTool`, `activeTarget`, and `lastError`)
      5. `tool_call` $\to$ `activity: BUSY` (records `activeTool` and `activeTarget`)
-     6. `turn_end` $\to$ `activity: IDLE` (clears `activeTool`, `activeTarget`, and `question`)
-     7. `thinking` / `turn_start` $\to$ `activity: BUSY`
+     6. Genuine runtime `error` $\to$ `activity: ERROR` (stores `lastError` truncated to 2,000 chars), or `activity: RATE_LIMITED` on structured rate-limit signals / HTTP 429 (stores `rateLimitResetAt`, `retryAfterSeconds`, and schedules silence timer)
+     7. `turn_end` $\to$ debounced via turn-end grace window (default 5s) when coming from `BUSY` to prevent inter-step BUSY/IDLE flipping. On expiration without new activity (or immediately in sync mode), transitions to `activity: IDLE`, setting `has_unseen_completion: true` and `completed_at` timestamp while clearing `activeTool`, `activeTarget`, and `question`.
+     8. `thinking` / `turn_start` $\to$ `activity: BUSY`
+   - **Completed Status**: When an agent finishes a turn without errors or blocking questions, it enters `IDLE` with `has_unseen_completion: true` and `completed_at` timestamp. This renders an emerald `Completed` status badge until explicitly dismissed via the public client API `PATCH /api/v1/agents/:id` (which `air-server` proxies to `air-ingester`) or until a new prompt begins.
+   - **Idle Freshness Tiering**: Active running agents in `IDLE` state are tiered visually based on elapsed time since `updatedAt`: `fresh` (<15m), `standard` (15m–2h), and `dormant/stale` (>2h, rendered with visual dimming in dashboard cards and terminal views unless an unacknowledged completion is pending).
 
 ---
 

@@ -125,13 +125,40 @@ export function StateHelpDialog({ onClose }: IStateHelpDialogProps): React.JSX.E
               </div>
 
               <div className="p-3 rounded-lg bg-slate-950/40 border border-slate-800/80 flex items-start gap-3">
+                <StatusBadge lifecycle="RUNNING" activity="IDLE" hasUnseenCompletion={true} />
+                <div className="flex-1">
+                  <p className="text-slate-300 font-medium">Completed turn</p>
+                  <p className="text-slate-400 text-[11px] mt-0.5">
+                    The agent finished its turn and is waiting for your review or acknowledgment. Highlighted in emerald
+                    until dismissed or a new prompt begins.
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-lg bg-slate-950/40 border border-slate-800/80 flex items-start gap-3">
                 <StatusBadge lifecycle="RUNNING" activity="IDLE" />
                 <div className="flex-1">
                   <p className="text-slate-300 font-medium">Idle & waiting for input</p>
                   <p className="text-slate-400 text-[11px] mt-0.5">
-                    The agent session completed its turn and is sitting idle in terminal waiting for the user's next
-                    prompt.
+                    The agent session is sitting idle in terminal waiting for the user's next prompt.
                   </p>
+                  <div className="mt-2.5 pt-2 border-t border-slate-800/60 text-[11px] text-slate-400 space-y-1">
+                    <p className="font-semibold text-slate-300">Idle freshness tiering &amp; dimming:</p>
+                    <ul className="list-disc list-inside space-y-0.5 text-slate-400">
+                      <li>
+                        <strong className="font-medium text-slate-200">Fresh</strong> (&lt; 15m): Warm idle session
+                        recently active.
+                      </li>
+                      <li>
+                        <strong className="font-medium text-slate-200">Standard</strong> (15m–2h): Standard idle
+                        session.
+                      </li>
+                      <li>
+                        <strong className="font-medium text-slate-200">Dormant / Stale</strong> (&gt; 2h): Visually
+                        dimmed with reduced opacity and sorted below warm idle sessions.
+                      </li>
+                    </ul>
+                  </div>
                 </div>
               </div>
 
@@ -147,12 +174,25 @@ export function StateHelpDialog({ onClose }: IStateHelpDialogProps): React.JSX.E
               </div>
 
               <div className="p-3 rounded-lg bg-slate-950/40 border border-slate-800/80 flex items-start gap-3">
+                <StatusBadge lifecycle="RUNNING" activity="RATE_LIMITED" />
+                <div className="flex-1">
+                  <p className="text-slate-300 font-medium">Rate limited</p>
+                  <p className="text-slate-400 text-[11px] mt-0.5">
+                    The agent reached an API quota or rate limit (HTTP 429) and is backing off until the reset timestamp
+                    or retry window expires. Displayed in the <strong className="text-amber-300">Act Now</strong> banner
+                    if stalled.
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-lg bg-slate-950/40 border border-slate-800/80 flex items-start gap-3">
                 <StatusBadge lifecycle="RUNNING" activity="ERROR" />
                 <div className="flex-1">
                   <p className="text-slate-300 font-medium">Execution error</p>
                   <p className="text-slate-400 text-[11px] mt-0.5">
-                    A tool execution failed with an error or unhandled exception. Displayed in the{" "}
-                    <strong className="text-red-300">Act Now</strong> banner.
+                    An unhandled runtime error, unrecoverable exception, or harness API failure occurred. Normal command
+                    or tool execution failures do not trigger an error state (they preserve Working status). Displayed
+                    in the <strong className="text-red-300">Act Now</strong> banner.
                   </p>
                 </div>
               </div>
@@ -195,6 +235,16 @@ export function StateHelpDialog({ onClose }: IStateHelpDialogProps): React.JSX.E
                   <p className="text-slate-300 font-medium">Abandoned prompt</p>
                   <p className="text-slate-400 text-[11px] mt-0.5">
                     The session was stopped while waiting for user question input.
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-lg bg-slate-950/40 border border-slate-800/80 flex items-start gap-3">
+                <StatusBadge lifecycle="EXITED" activity="RATE_LIMITED" />
+                <div className="flex-1">
+                  <p className="text-slate-300 font-medium">Rate limited</p>
+                  <p className="text-slate-400 text-[11px] mt-0.5">
+                    The agent process exited or was stopped while throttled by provider rate limits.
                   </p>
                 </div>
               </div>

@@ -33,9 +33,9 @@ Systematically audit `agent-parser` (`github.com/alexgorbatchev/agent-parser`) a
 ### A. Top-Level Line & Record Parsing
 
 - **Claude Code**: Verify handling for all top-level record types (`assistant`, `user`, `ai-title`, `last-prompt`, `attachment`, `system`, `permission-mode`, `progress`, `pr-link`). Ensure API errors (`error`, `apiErrorStatus`, `isApiErrorMessage`) are parsed and emitted as error events.
-- **Pi**: Verify line 1 header (`type: "session"`) vs graph nodes (`message`, `model_change`, `thinking_level_change`, `compaction`, `branch_summary`, `custom_message`, `label`, `session_info`). Verify `model_change` accepts `modelId` (with fallbacks) and `label` accepts `label`.
-- **Codex**: Verify `session_meta`, `turn_context`, `event_msg`, and `response_item` unmarshaling. Verify secondary unmarshaling of stringified JSON in `function_call.arguments`.
-- **OpenCode**: Verify SQLite read-only connection strings (`?mode=ro&_pragma=busy_timeout(5000)`), query filtering, and JSON-in-TEXT parsing.
+- **Pi**: Verify line 1 header (`type: "session"`) vs graph nodes (`message`, `model_change`, `thinking_level_change`, `compaction`, `branch_summary`, `custom_message`, `label`, `session_info`). Verify `model_change` accepts `modelId` (with fallbacks) and `label` accepts `label`. Verify assistant `stopReason: "error"` and error text extraction from `errorMessage` (user abort `stopReason: "aborted"` does not emit error).
+- **Codex**: Verify `session_meta`, `turn_context`, `event_msg`, and `response_item` unmarshaling. Verify secondary unmarshaling of stringified JSON in `function_call.arguments`. Verify error event messages and structured status in `codex_error_info` (`RateLimitExceeded`, `UsageLimitExceeded`, `ServerOverloaded`, `HttpConnectionFailed`).
+- **OpenCode**: Verify SQLite read-only connection strings (`?mode=ro&_pragma=busy_timeout(5000)`), query filtering, and JSON-in-TEXT parsing. Verify tool failures (`p.Data.State.Error`), retry parts (`type: "retry"` with HTTP 429), and message-level error finish reasons and typed errors (`msg.Data.Error`).
 
 ### B. Content Block Classification
 
@@ -63,7 +63,7 @@ Audit the complete path from parsed event to database and frontend:
 2. **Ingester Storage (`packages/agent-ingester/internal/store`)**:
    - Verify `store.RecordTelemetryEvent(frame)` persists `frame.Data` as `data_json` in `telemetry_events` table so zero data is lost.
 3. **Ingester Classifier (`packages/agent-ingester/internal/classifier`)**:
-   - Verify deterministic state machine transitions on `frame.EventType`: `run_started`, `run_exited`, `turn_start`, `thinking`, `tool_call`, `tool_result`, `question_prompt`, `error`, `turn_end`, `title_change`.
+   - Verify deterministic state machine transitions on `frame.EventType`: `run_started`, `run_exited`, `turn_start`, `thinking`, `tool_call`, `tool_result`, `question_prompt`, `error`, `turn_end`, `title_change`, including `RATE_LIMITED` (structured HTTP 429 / rate-limit metadata) and completion states (`turn_end` setting `hasUnseenCompletion` and `completedAt`).
    - Verify `extractTarget()` keys inspect relevant tool parameters (`file_path`, `path`, `notebook_path`, `command`, `url`, `query`, `skill`, `pattern`, `prompt`).
    - Verify cumulative token accounting in `agent.Activity.Usage` uses `u.Total` directly or adds non-overlapping token components.
 4. **Server & Web UI Synchronization (`packages/agent-server`, `packages/ui-web`)**:
@@ -74,13 +74,17 @@ Audit the complete path from parsed event to database and frontend:
 
 ## 4. Test Execution & Coverage Verification
 
-Run all test suites across the parser, observer, ingester, and server packages:
+Run all test suites across the parser (external module `github.com/alexgorbatchev/agent-parser`), observer, ingester, and server packages:
 
 ```bash
-cd packages/agent-parser && go test -v -race -cover ./...
-cd ../agent-observer && go test -v -race -cover ./...
+# Parser tests (external module github.com/alexgorbatchev/agent-parser checkout)
+cd /path/to/agent-parser && go test -v -race -cover ./...
+
+# agent-status packages (or run 'just test-all' from repo root)
+cd packages/agent-observer && go test -v -race -cover ./...
 cd ../agent-ingester && go test -v -race -cover ./...
 cd ../agent-server && go test -v -race -cover ./...
+cd ../agent-debug && go test -v -race -cover ./...
 cd ../ui-web && bun run build && bun x tsc --noEmit
 ```
 

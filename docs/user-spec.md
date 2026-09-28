@@ -59,7 +59,10 @@ The first release supports **Claude Code** and **Pi**.
   - **WAITING_QUESTION**: Immediately flag when an agent is blocked on an `AskUserQuestion` prompt. Display the exact question text in an alert banner at the top of the dashboard.
   - **BUSY**: Indicate that the agent is actively thinking or running tools. Show the active tool name and target file path.
   - **ERROR**: Highlight when an agent hits a genuine tool failure. A tool that reports failure as its normal result — a `grep` with no match, a test suite that is supposed to fail — must not raise this. A banner that cries wolf is worse than no banner.
+  - **RATE_LIMITED**: Flag when an agent hits provider rate limits or quotas (HTTP 429), capturing reset timestamps (`rateLimitResetAt`) and retry delays (`retryAfterSeconds`) so backing-off agents are distinct from silent hangs or unhandled errors.
+  - **Completed**: Distinctly badge and highlight when an agent has successfully completed its turn and is sitting idle awaiting developer review or new input, persisting until acknowledged/dismissed or a new turn begins.
   - **IDLE / DONE**: Distinguish "finished its turn, still running" from "process is gone".
+  - **Idle Freshness Dimming**: Active running agents in `IDLE` state (without unacknowledged completion) tier visually by elapsed time since last activity (`fresh` < 15m, `standard` 15m–2h, and `dormant/stale` > 2h dimmed) so dormant idle sessions do not distract from active work.
 
 ### Wish 5: AI-Powered Action & Thought Summarization
 

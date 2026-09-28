@@ -307,12 +307,22 @@ Evaluated on the hot path without external network calls:
 1. On `run_exited`: Set agent `lifecycle = EXITED`, update `runs.ended_at`, clear `agents.current_run_id`. `activity` remains untouched.
 2. On `run_started`: Set agent `lifecycle = RUNNING`, insert/update `runs`, set `agents.current_run_id`.
 3. On `question_prompt` (`AskUserQuestion`): Set `activity = WAITING_QUESTION`, store question text.
-4. On `tool_result` where `isError == true`: Set `activity = ERROR`, store truncated error message in `lastError`.
+4. On `tool_result`: `tool_result` frames (even with `isError: true` or non-zero exit codes) preserve `activity = BUSY` (as normal command outcomes), clearing `activeTool`, `activeTarget`, and `lastError`.
 5. On `tool_call`: Set `activity = BUSY`, record `activeTool` and `activeTarget`.
-6. On `turn_end`: Set `activity = IDLE`, clear `activeTool`, `activeTarget`, and `question`.
-7. On `thinking` or `turn_start`: Set `activity = BUSY`.
+6. On genuine runtime `error`: Transition the agent to `activity = ERROR` (storing truncated error message in `lastError`), or `activity = RATE_LIMITED` on structured rate-limit signals / HTTP 429 (storing `rateLimitResetAt` in epoch ms and `retryAfterSeconds` from headers or error message, and scheduling silence timer).
+7. On `turn_end`:
+   - If the agent was `BUSY`, evaluate via the **turn-end grace window** (default 5s, configurable via `--idle-grace-period` / `AIR_IDLE_GRACE_PERIOD`). The agent remains `BUSY` during the grace window to prevent rapid BUSY/IDLE flipping across multi-step execution.
+   - When the grace window expires without subsequent activity (or immediately in synchronous mode / when not BUSY), transition to `activity = IDLE`, clear `activeTool`, `activeTarget`, and `question`, set `hasUnseenCompletion = true`, and record `completedAt` timestamp.
+   - If the agent is in `RATE_LIMITED` without terminal output, remain in `RATE_LIMITED` and reschedule silence timers rather than transitioning to `IDLE`.
+   - Attention states (WAITING_QUESTION, ERROR) are preserved across turn_end without transitioning to IDLE, and incoming attention states cancel any pending idle grace period immediately.
+8. On `thinking` or `turn_start`: Set `activity = BUSY`.
 
-Subagent events update parent token usage and cost roll-ups, but do not override the parent's top-level `activity` unless the parent is explicitly waiting on subagent completion (`BUSY` with `activeTool = "Agent"`).
+Subagent events update parent token usage and cost roll-ups, track active subagents in `activeSubagents` (with dwell smoothing), and roll up composite activity state onto the parent agent according to strict precedence:
+1. `ERROR`: Root error takes precedence, followed by active subagent error (e.g. `[Subagent <id>] <error>`). Note that failed subagent `tool_result` frames (`isError = true`) keep the subagent in `BUSY` matching root behavior; only genuine subagent `error` frames escalate activity.
+2. `WAITING_QUESTION`: Root interactive question prompt takes precedence, followed by active subagent question (e.g. `[Subagent <id>] <question>`).
+3. `RATE_LIMITED`: Root rate limit takes precedence, followed by active subagent rate limit (attaching subagent reset targets and retry delays).
+4. `BUSY`: Root busy execution takes precedence, followed by any active running subagent.
+5. `IDLE`: Composite activity resolves to `IDLE` when neither root nor any active subagent is in error, waiting on a question, rate limited, or busy.
 
 #### 4.2.3. Model Pricing Engine
 
@@ -420,21 +430,28 @@ Single-page web application built with **Bun + React + TypeScript + Tailwind v4*
 1. **Fleet Header**:
    - Total active agents, online vs. stale environments, count of agents requiring attention, and total live fleet cost.
 2. **Two-Tier Attention Banner**:
-   - **ACT NOW**: Sticky alert banner for live agents with `lifecycle = RUNNING` and `activity IN ('WAITING_QUESTION', 'ERROR')`. Displays exact question prompt or error snippet. Clicking jumps to the card and opens drawer.
-   - **REVIEW (Last 2 Hours)**: Collapsible section for `lifecycle = EXITED` agents that stopped on error or unanswered prompt.
+   - **ACT NOW**: Sticky alert banner for live agents (`lifecycle = RUNNING`) requiring immediate developer intervention:
+     - `activity IN ('WAITING_QUESTION', 'ERROR')`: Interactive prompt or unhandled execution error.
+     - `activity = RATE_LIMITED`: Throttled session whose reset target or retry window has passed and is stalled.
+     - Silence timeout: Agent in `activity = BUSY` that has stalled without telemetry updates exceeding the silence timeout threshold, or a tool execution running past the stalled threshold without return.
+     Displays exact question prompt, error snippet, or stall duration. Clicking jumps to the card and opens drawer.
+   - **REVIEW (Last 2 Hours)**: Collapsible section for `lifecycle = EXITED` agents that stopped on error, unanswered prompt, or rate limit.
    - Stale environments are excluded from both tiers.
 3. **Dual Grouping**:
    - **Group by Project** (Default): Aggregates agents across machines working on the same normalized project, displaying project-level total cost.
    - **Group by Environment**: Shows machines/users with machine status pills (Live / Stale) and environment-level cost.
 4. **Agent Card**:
-   - **Status Badge**: Computed from `(lifecycle, activity)`:
-     - `RUNNING / BUSY`: Blue pulsing indicator
-     - `RUNNING / WAITING_QUESTION`: Amber alert pill
-     - `RUNNING / ERROR`: Red alert pill
-     - `RUNNING / IDLE`: Slate pill
+   - **Status Badge**: Computed from `(lifecycle, activity, hasUnseenCompletion)`:
+     - `RUNNING / BUSY`: Blue pulsing indicator ("Working")
+     - `RUNNING / WAITING_QUESTION`: Amber alert pill ("Waiting on Question")
+     - `RUNNING / ERROR`: Red alert pill ("Error")
+     - `RUNNING / RATE_LIMITED`: Amber pulsing alert pill ("Rate Limited")
+     - `RUNNING / IDLE` (with unseen completion): Emerald pill ("Completed")
+     - `RUNNING / IDLE` (standard): Slate pill ("Idle")
      - `EXITED / IDLE`: Emerald "Finished" pill
      - `EXITED / ERROR`: Red outline "Died on error" pill
      - `EXITED / WAITING_QUESTION`: Amber outline "Abandoned prompt" pill
+     - `EXITED / RATE_LIMITED`: Amber outline "Rate limited" pill
    - **Title & Action Summary**: Stable title on top, dynamic action line below.
    - **Metadata Row**: Environment pill (`🏷️ work-macbook`), Git Branch (`🌿 feat-x`), Worktree tag (`📁 .workspaces/feat-x`), Harness (`Claude Code` / `Pi`).
    - **Spend & Usage**: Formatted cost (`$12.45`), token breakdown tooltip (Input, Output, Cache Read, Cache Write, Reasoning), and subagent indicator (`3 subagents`).
@@ -559,7 +576,7 @@ Source of truth: `packages/ui-web/src/types/index.ts`. Go structures match field
 ```typescript
 export type LifecycleState = "RUNNING" | "EXITED";
 
-export type ActivityState = "BUSY" | "WAITING_QUESTION" | "ERROR" | "IDLE";
+export type ActivityState = "BUSY" | "WAITING_QUESTION" | "ERROR" | "RATE_LIMITED" | "IDLE";
 
 export type HarnessType = "claude-code" | "pi" | "codex" | "opencode";
 
@@ -612,6 +629,19 @@ export interface IRunInfo {
   endedAt: number | null;
 }
 
+export type SubagentStatus = "running" | "completed";
+
+export interface ISubagentSummary {
+  id: string;
+  activity: ActivityState;
+  activeTool?: string | null;
+  action?: string;
+  lastError?: string | null;
+  status?: SubagentStatus;
+  startedAt?: number;
+  completedAt?: number | null;
+}
+
 export interface IAgentActivity {
   lifecycle: LifecycleState;
   activity: ActivityState;
@@ -621,13 +651,22 @@ export interface IAgentActivity {
   phase: AgentPhase | null;
   activeTool: string | null;
   activeTarget: string | null;
+  activeToolStartedAt?: number | null;
   question: string | null; // Active prompt when WAITING_QUESTION
+  rateLimitResetAt?: number | null;
+  retryAfterSeconds?: number | null;
   lastThinkingExcerpt: string | null;
   lastError: string | null;
+  model?: string | null;
+  contextWindow?: number | null;
+  contextFullness?: number | null;
   usage: ITokenUsage;
   cost: ICostInfo | null;
   subagentCount: number;
+  activeSubagents?: ISubagentSummary[];
   currentRun: IRunInfo | null;
+  hasUnseenCompletion?: boolean | null;
+  completedAt?: number | null;
   firstStartedAt: number;
   updatedAt: number;
 }
@@ -640,6 +679,8 @@ export interface IAgentState {
   project: IProjectInfo;
   workspace: IWorkspaceInfo;
   activity: IAgentActivity;
+  isHidden?: boolean;
+  hiddenAt?: number | null;
 }
 ```
 
@@ -682,6 +723,9 @@ export interface ITelemetryFrame {
     toolInput: Record<string, unknown> | null;
     toolOutput: string | null;
     isError: boolean | null;
+    isRateLimit?: boolean | null;
+    rateLimitResetAt?: number | null;
+    retryAfterSeconds?: number | null;
     exitCode: number | null;
     question: string | null;
     stopReason: string | null;
@@ -735,7 +779,7 @@ CREATE TABLE IF NOT EXISTS agents (
     id                    TEXT PRIMARY KEY, -- `${envId}:${harness}:${sessionId}`
     session_id            TEXT NOT NULL,
     environment_id        TEXT NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
-    harness               TEXT NOT NULL CHECK (harness IN ('claude-code','pi')),
+    harness               TEXT NOT NULL CHECK (harness IN ('claude-code','pi','codex','opencode')),
     project_id            TEXT NOT NULL,
     project_name          TEXT NOT NULL,
     canonical_root        TEXT NOT NULL,
@@ -745,14 +789,17 @@ CREATE TABLE IF NOT EXISTS agents (
     worktree_rel_path     TEXT,
     cwd                   TEXT NOT NULL,
     current_run_id        TEXT REFERENCES runs(id) ON DELETE SET NULL,
-    activity              TEXT NOT NULL CHECK (activity IN ('BUSY','WAITING_QUESTION','ERROR','IDLE')),
+    activity              TEXT NOT NULL CHECK (activity IN ('BUSY','WAITING_QUESTION','ERROR','RATE_LIMITED','IDLE')),
     title                 TEXT NOT NULL DEFAULT '',
     action                TEXT NOT NULL DEFAULT '',
     action_stale          INTEGER NOT NULL DEFAULT 0,
     phase                 TEXT CHECK (phase IS NULL OR phase IN ('planning','editing','testing','debugging','investigating')),
     active_tool           TEXT,
     active_target         TEXT,
+    active_tool_started_at INTEGER,
     question              TEXT,
+    rate_limit_reset_at   INTEGER,
+    retry_after_seconds   INTEGER,
     last_thinking_excerpt TEXT,
     last_error            TEXT,
     tokens_input          INTEGER NOT NULL DEFAULT 0,
@@ -763,8 +810,16 @@ CREATE TABLE IF NOT EXISTS agents (
     tokens_total          INTEGER NOT NULL DEFAULT 0,
     cost_usd              REAL,
     subagent_count        INTEGER NOT NULL DEFAULT 0,
+    active_subagents      TEXT,
+    model                 TEXT,
+    context_window        INTEGER,
+    context_fullness      REAL,
+    has_unseen_completion INTEGER NOT NULL DEFAULT 0,
+    completed_at          INTEGER,
     first_started_at      INTEGER NOT NULL,
     updated_at            INTEGER NOT NULL,
+    is_hidden             INTEGER NOT NULL DEFAULT 0,
+    hidden_at             INTEGER,
     UNIQUE (environment_id, harness, session_id)
 );
 

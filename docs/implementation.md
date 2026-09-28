@@ -52,7 +52,7 @@ All development must be strictly grounded in:
 - [ ] Initialize `packages/ui-web/package.json` with React, React DOM, Lucide React, and Tailwind v4.
 - [ ] Implement `packages/ui-web/src/types/index.ts` declaring exact TypeScript contracts from `docs/prd.md` §6:
   - `LifecycleState` (`"RUNNING" | "EXITED"`)
-  - `ActivityState` (`"BUSY" | "WAITING_QUESTION" | "ERROR" | "IDLE"`)
+  - `ActivityState` (`"BUSY" | "WAITING_QUESTION" | "ERROR" | "RATE_LIMITED" | "IDLE"`)
   - `HarnessType` (`"claude-code" | "pi" | "codex" | "opencode"`)
   - `AgentPhase`
   - `IEnvironmentInfo`, `IWorkspaceInfo`, `IProjectInfo`, `ITokenUsage`, `ICostInfo`, `IRunInfo`, `IAgentActivity`, `IAgentState`, `ITelemetryFrame`, `IServerEvent`.

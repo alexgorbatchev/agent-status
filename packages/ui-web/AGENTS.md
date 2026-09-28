@@ -20,21 +20,21 @@ Web frontend dashboard for agent-status built with React 19, Tailwind CSS v4, Lu
 - State machines live in `src/machines/` with XState v5 actors and strict event typing.
 - Spec-first UI workflow: when modifying or designing UI components (`AgentCard`, `AttentionBanner`, `LogDrawer`), follow the upstream specification established by `air-debug session view` (#50) using `[buttons]` and `(badges)` notation.
 - Accessibility tree snapshot testing: write semantic accessibility role-tree snapshot tests in `src/__tests__/*.a11y.test.tsx` using `formatA11yTree` (`src/utils/a11ySnapshot.ts`) to verify component accessible hierarchies, accessible names, headings, badges, and buttons.
-- Agent card ordering and grouping: session cards maintain stable order without changing places based on recent activity, new sessions are appended, and sessions are grouped by busy/idle/finished in that order without subtitles, separated by double vertical gap (`gap-8`) with each category starting on its own row; within the idle category, stale idle sessions are stably partitioned below warm idle sessions while preserving relative order within each partition.
-- Subagent chips in `AgentCard` render visual status indicators (`data-subagent-status` "running" vs "completed"/"settling") with smooth exit transitions during their dwell window (#98).
+- Agent card ordering and grouping: sessions are grouped by busy/idle/finished in that order without subtitles, separated by double vertical gap (`gap-8`) with each category starting on its own row; busy and finished categories are sorted by recency (`updatedAt` descending), while the idle category is partitioned into warm and stale idle sessions while preserving relative order within each partition.
+- Subagent chips in `AgentCard` render visual status indicators (`data-subagent-status` "running" vs "completed"/"settling") with smooth exit transitions during their dwell window.
 - Sessions can be hidden/unhidden via `PATCH /api/v1/agents/{id}`, filtered out by default with a UI toggle to inspect and unhide them.
 - Finished sessions are hidden by default on load, with a UI toggle (`App--toggle-show-finished`) next to show/hide hidden to show/hide finished sessions without state persistence.
 - ToolExecutionBlock multiline output container must constrain height (`max-h-64`) and handle overflow (`overflow-auto`) on the flex scroll container wrapping the line gutter and pre output, ensuring line numbers and output content scroll together without empty space.
-- Line number stripping in `ToolExecutionBlock` is restricted strictly to known file-read tools (`FILE_READ_TOOLS`), and the output Copy button must always copy the raw unstripped `toolOutput` (#116).
+- Line number stripping in `ToolExecutionBlock` is restricted strictly to known file-read tools (`FILE_READ_TOOLS`), and the output Copy button must always copy the raw unstripped `toolOutput`.
 - Custom scrollbars matching page colors (standard `scrollbar-width: thin`, `scrollbar-color: #334155 transparent` and WebKit `#334155` slate-700 thumb on transparent track) must be defined in `src/theme.css` across all scrollable elements.
 - Hierarchical project nesting uses `IProjectTreeGroup` and `IWorktreeBranchGroup` (`src/types/types.ts`) via `groupAgentsByProjectHierarchy`, separating root checkout agents from linked worktree branches with dedicated headers and subgrids.
-- Semantic color precedence strictly reserves green and red for lifecycle and activity states; tokens in `src/theme.css` guarantee WCAG AA contrast compliance (>= 4.5:1 text, >= 3:1 graphical) across dark card surfaces (`#020617`, `#0f172a`, `#1e293b`). Light-mode media query swapping is removed to prevent washed-out colors on dark surfaces (#106).
-- Card border highlighting uses Tailwind utility classes directly; `src/theme.css` avoids `.status-*` classes or `[data-semantic-status]` selectors that collide with Tailwind card borders (#106).
-- CLI parity and color gating: follow `air-debug session view` color gating conventions where color output respects `NO_COLOR` and terminal detection (`go-isatty`) (#106).
+- Semantic color precedence strictly reserves green and red for lifecycle and activity states; tokens in `src/theme.css` guarantee WCAG AA contrast compliance (>= 4.5:1 text, >= 3:1 graphical) across dark card surfaces (`#020617`, `#0f172a`, `#1e293b`). Light-mode media query swapping is removed to prevent washed-out colors on dark surfaces.
+- Card border highlighting uses Tailwind utility classes directly; `src/theme.css` avoids `.status-*` classes or `[data-semantic-status]` selectors that collide with Tailwind card borders.
+- CLI parity and color gating: follow `air-debug session view` color gating conventions where color output respects `NO_COLOR` and terminal detection (`go-isatty`).
 - Unacknowledged completion state: When `hasUnseenCompletion` is true, cards display a green `(Completed)` status badge and completion callout with an acknowledge action to dismiss the completion state.
-- Idle freshness tiers classify idle sessions as `fresh` (<15m), `standard` (15m–2h), or `stale` (>2h, visually dimmed via opacity styling unless unacknowledged completion is active; within the idle category, stale idle sessions are stably partitioned below warm idle sessions while preserving relative order within each partition, #109).
+- Idle freshness tiers classify idle sessions as `fresh` (<15m), `standard` (15m–2h), or `stale` (>2h, visually dimmed via opacity styling unless unacknowledged completion is active; within the idle category, stale idle sessions are stably partitioned below warm idle sessions while preserving relative order within each partition).
 - Redundant project prefixes in card titles are stripped with `trimProjectTitlePrefix` (`src/utils/agentUtils.ts`) strictly when displayed in project group context (`ProjectGroup` providing `projectName`); single cards or environment views without project headers preserve full titles. Matching requires exact case and whitespace-bounded separators (colons, slashes, hyphens, brackets) sharing test vectors with `packages/agent-common/testdata/project-prefix-fixtures.json`.
-- Rate-limiting is rendered with a dedicated `RATE_LIMITED` status badge and callout detailing remaining wait time or reset timestamp (`rateLimitResetAt`, `retryAfterSeconds`).
+- Rate-limiting is rendered with a dedicated `RATE_LIMITED` status badge and callout detailing relative wait duration (e.g. `retry in 45s`, `retry in 2m 1s`) derived from `rateLimitResetAt` or `retryAfterSeconds`.
 - Enforce strict TypeScript: no `any`, no type assertions (`as Type`), explicit return types on public functions.
 
 ## Local gotchas
@@ -47,11 +47,14 @@ Web frontend dashboard for agent-status built with React 19, Tailwind CSS v4, Lu
 
 ## Boundaries
 
+- Always: automatically record all new user instructions in the most appropriate `AGENTS.md` file immediately upon receipt (check with user if existing instructions conflict)
 - Always: read typescript-ai-policy guidelines (`bun x typescript-ai-policy guidance`) before making changes
-- Always (code-based projects only): any time code is changed such that results from running that code are changed, a test file must be changed as well; 90% code coverage is required (scripts/ folder is excluded from this rule)
+- Always: run `just test` and `just lint` before committing changes
+- Always (code-based projects only): any time code is changed such that results from running that code are changed, a test file must be changed as well; 90% statement coverage is required (scripts/ folder is excluded from this rule)
 - Ask first: adding UI state management libraries or changing top-level component architecture
 - Never: use inline `import("...").Type` or unsafe type casts
 - Never: publish releases automatically without explicit user authorization
+- Never: parse or transmit credentials, API keys, or session auth tokens from agent harnesses
 
 ## References
 

@@ -154,9 +154,35 @@ air-debug session replay --diff session.jsonl
 Inspect field mutations:
 
 - `Activity: IDLE -> BUSY` (prompt received or tool running)
+- `Activity: BUSY -> RATE_LIMITED` (API quota or rate limit error)
+- `RateLimitResetAt: nil -> 1726912800000` / `RetryAfterSeconds: nil -> 60` (rate limit backoff duration)
+- `Activity: BUSY -> IDLE` with completion latch (`HasUnseenCompletion: true`, `CompletedAt: 1726912800000`, rendered as `Completed` turn status)
 - `ActiveTool: nil -> "Edit"` / `ActiveTarget: nil -> "server.go"`
 - `Question: nil -> "Do you want to run this command?"`
 - `LastError: nil -> "..."`
+
+Diff examples:
+
+- **`tool_result` with error** (preserves `Activity: BUSY` and clears `ActiveTool`, `ActiveTarget`, and `LastError`):
+  ```text
+  Step 4 [tool_result] (line 18):
+    ActiveTool:    "Bash" -> nil
+    ActiveTarget:  "go test ./..." -> nil
+    LastError:     "exit status 1" -> nil
+  ```
+
+- **Runtime `error`** (transitions `Activity: BUSY -> ERROR` or `RATE_LIMITED`):
+  ```text
+  Step 5 [error] (line 22):
+    Activity:      BUSY -> ERROR
+    LastError:     nil -> "context deadline exceeded"
+  ```
+  or for provider rate limits:
+  ```text
+  Step 5 [error] (line 22):
+    Activity:      BUSY -> RATE_LIMITED
+    LastError:     nil -> "rate limit exceeded: 429"
+  ```
 
 ### Breakpoint Analysis (`--until-line`, `--until-event`)
 
