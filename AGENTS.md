@@ -61,5 +61,5 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - Dev stack orchestrator: `scripts/dev-stack.ts`
 - Root task runner: `justfile`
 - Canonical harness log specs & parser: [`alexgorbatchev/agent-parser`](https://github.com/alexgorbatchev/agent-parser) (`docs/harness-logs/`)
-- Standalone session transcript printer: [`alexgorbatchev/agent-print-session-cli`](https://github.com/alexgorbatchev/agent-print-session-cli)
+- Standalone session transcript printer: [`alexgorbatchev/agent-print-session-cli`](https://github.com/alexgorbatchev/agent-print-session-cli) (`v1.0.0`)
 - GitHub issue fixing skill: [`github-fix-issues`](https://github.com/alexgorbatchev/ai-registry/tree/main/skills/agent/github-fix-issues) (`skills/agent/github-fix-issues` in `alexgorbatchev/ai-registry`)
