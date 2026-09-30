@@ -1708,7 +1708,14 @@ func TestObserverStartupPrunesCursors(t *testing.T) {
 			Key:       "stale",
 			Path:      validFile,
 			Offset:    2,
+			Inode:     999999,                   // old inode no longer matching active.jsonl
 			UpdatedAt: now - (48 * 3600 * 1000), // 48h ago
+		},
+		"old_active": {
+			Key:       "old_active",
+			Path:      validFile,
+			Offset:    6,
+			UpdatedAt: now - (48 * 3600 * 1000), // 48h ago but file still exists on disk
 		},
 	}
 	cursorBytes, err := json.Marshal(initialCursors)
@@ -1768,6 +1775,9 @@ func TestObserverStartupPrunesCursors(t *testing.T) {
 
 	if _, ok := saved["valid"]; !ok {
 		t.Errorf("expected valid cursor to be retained")
+	}
+	if _, ok := saved["old_active"]; !ok {
+		t.Errorf("expected old_active cursor for existing file to be retained on startup")
 	}
 	if _, ok := saved["missing"]; ok {
 		t.Errorf("expected missing cursor to be pruned on startup")
