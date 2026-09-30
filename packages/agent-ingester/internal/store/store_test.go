@@ -182,6 +182,36 @@ func TestMigrate_ErrorCases(t *testing.T) {
 	if err := Migrate(db6); err == nil {
 		t.Errorf("expected error running v6 migration without agents table, got nil")
 	}
+
+	// Test v7 failure when agents table does not exist
+	db7, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open failed: %v", err)
+	}
+	defer func() {
+		_ = db7.Close()
+	}()
+	if _, err := db7.Exec("PRAGMA user_version = 6;"); err != nil {
+		t.Fatalf("setting user_version = 6 failed: %v", err)
+	}
+	if err := Migrate(db7); err == nil {
+		t.Errorf("expected error running v7 migration without agents table, got nil")
+	}
+
+	// Test v8 failure when agents table does not exist
+	db8, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open failed: %v", err)
+	}
+	defer func() {
+		_ = db8.Close()
+	}()
+	if _, err := db8.Exec("PRAGMA user_version = 7;"); err != nil {
+		t.Fatalf("setting user_version = 7 failed: %v", err)
+	}
+	if err := Migrate(db8); err == nil {
+		t.Errorf("expected error running v8 migration without agents table, got nil")
+	}
 }
 
 func TestMigrate_V2ToV4(t *testing.T) {
@@ -712,6 +742,43 @@ func TestMigrate_V7ToV8(t *testing.T) {
 	err = db.QueryRow("SELECT has_unseen_completion, completed_at FROM agents LIMIT 1;").Scan(&hasUnseen, &completedAt)
 	if err != nil && err != sql.ErrNoRows {
 		t.Errorf("columns has_unseen_completion and completed_at missing: %v", err)
+	}
+}
+
+func TestStore_Open_DiskFile(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test-store.db")
+	st, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer func() {
+		_ = st.Close()
+	}()
+
+	if st.DB() == nil {
+		t.Errorf("expected non-nil DB")
+	}
+}
+
+func TestStore_Open_Errors(t *testing.T) {
+	// 1. Error creating database directory
+	if _, err := Open("/dev/null/impossible/db.sqlite"); err == nil {
+		t.Errorf("expected error from Open with impossible directory, got nil")
+	}
+
+	// 2. Error during Migrate in Open
+	dbPath := filepath.Join(t.TempDir(), "conflict.db")
+	rawDB, err := sql.Open("sqlite3", dbPath)
+	if err != nil {
+		t.Fatalf("opening raw db failed: %v", err)
+	}
+	if _, err := rawDB.Exec("CREATE VIEW agents AS SELECT 1 AS id;"); err != nil {
+		t.Fatalf("creating view failed: %v", err)
+	}
+	_ = rawDB.Close()
+
+	if _, err := Open(dbPath); err == nil {
+		t.Errorf("expected error from Open when Migrate fails, got nil")
 	}
 }
 
@@ -1797,6 +1864,9 @@ func TestStore_ErrorHandlingOnClosedDB(t *testing.T) {
 	if _, err := st.SetAgentVisibility("a", true, nil); err == nil {
 		t.Errorf("expected error on closed db for SetAgentVisibility")
 	}
+	if _, err := st.DismissAgentCompletion("a"); err == nil {
+		t.Errorf("expected error on closed db for DismissAgentCompletion")
+	}
 	if _, err := st.GetAllActiveAgents(); err == nil {
 		t.Errorf("expected error on closed db for GetAllActiveAgents")
 	}
@@ -2806,6 +2876,28 @@ func TestStore_Migrate_ErrorPaths(t *testing.T) {
 		}
 	})
 
+	// Error on v2 conflicting index name
+	t.Run("v2 error on conflicting index", func(t *testing.T) {
+		db, err := sql.Open("sqlite3", ":memory:")
+		if err != nil {
+			t.Fatalf("sql.Open failed: %v", err)
+		}
+		defer func() { _ = db.Close() }()
+
+		if _, err := db.Exec(schemaV1); err != nil {
+			t.Fatalf("schemaV1 failed: %v", err)
+		}
+		if _, err := db.Exec("CREATE TABLE idx_agents_hidden (id INT);"); err != nil {
+			t.Fatalf("pre-creating conflicting table failed: %v", err)
+		}
+		if _, err := db.Exec("PRAGMA user_version = 1;"); err != nil {
+			t.Fatalf("setting user_version = 1 failed: %v", err)
+		}
+		if err := Migrate(db); err == nil {
+			t.Errorf("expected error in Migrate v2 on conflicting index name")
+		}
+	})
+
 	// 2. Error in v3 migration (e.g. duplicate active_tool_started_at column)
 	t.Run("v3 error on duplicate column", func(t *testing.T) {
 		db, err := sql.Open("sqlite3", ":memory:")
@@ -3040,91 +3132,67 @@ func TestStore_Migrate_ErrorPaths(t *testing.T) {
 		}
 	})
 
-	// 10. Error in v7 migration on duplicate rate_limit_reset_at
-	t.Run("v7 error on duplicate rate_limit_reset_at", func(t *testing.T) {
+	// 10. Error in v7 migration on conflicting agents view (first column rate_limit_reset_at)
+	t.Run("v7 error on conflicting view", func(t *testing.T) {
 		db, err := sql.Open("sqlite3", ":memory:")
 		if err != nil {
 			t.Fatalf("sql.Open failed: %v", err)
 		}
 		defer func() { _ = db.Close() }()
 
-		if _, err := db.Exec(schemaV1); err != nil {
-			t.Fatalf("schemaV1 failed: %v", err)
-		}
-		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN rate_limit_reset_at INTEGER;"); err != nil {
-			t.Fatalf("adding duplicate column failed: %v", err)
-		}
-		if _, err := db.Exec("PRAGMA user_version = 6;"); err != nil {
-			t.Fatalf("setting user_version = 6 failed: %v", err)
+		if _, err := db.Exec("CREATE VIEW agents AS SELECT 1 AS id; PRAGMA user_version = 6;"); err != nil {
+			t.Fatalf("creating conflicting view failed: %v", err)
 		}
 		if err := Migrate(db); err == nil {
-			t.Errorf("expected error in Migrate v7 on duplicate rate_limit_reset_at")
+			t.Errorf("expected error in Migrate v7 on conflicting view")
 		}
 	})
 
-	// 11. Error in v7 migration on duplicate retry_after_seconds
-	t.Run("v7 error on duplicate retry_after_seconds", func(t *testing.T) {
+	// 11. Error in v7 migration on conflicting agents view (second column retry_after_seconds)
+	t.Run("v7 error on second column retry_after_seconds", func(t *testing.T) {
 		db, err := sql.Open("sqlite3", ":memory:")
 		if err != nil {
 			t.Fatalf("sql.Open failed: %v", err)
 		}
 		defer func() { _ = db.Close() }()
 
-		if _, err := db.Exec(schemaV1); err != nil {
-			t.Fatalf("schemaV1 failed: %v", err)
-		}
-		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN retry_after_seconds INTEGER;"); err != nil {
-			t.Fatalf("adding duplicate column failed: %v", err)
-		}
-		if _, err := db.Exec("PRAGMA user_version = 6;"); err != nil {
-			t.Fatalf("setting user_version = 6 failed: %v", err)
+		if _, err := db.Exec("CREATE VIEW agents AS SELECT 1 AS id, 1 AS rate_limit_reset_at; PRAGMA user_version = 6;"); err != nil {
+			t.Fatalf("creating conflicting view failed: %v", err)
 		}
 		if err := Migrate(db); err == nil {
-			t.Errorf("expected error in Migrate v7 on duplicate retry_after_seconds")
+			t.Errorf("expected error in Migrate v7 on second column")
 		}
 	})
 
-	// 12. Error in v8 migration on duplicate has_unseen_completion
-	t.Run("v8 error on duplicate has_unseen_completion", func(t *testing.T) {
+	// 12. Error in v8 migration on conflicting agents view (first column has_unseen_completion)
+	t.Run("v8 error on conflicting view", func(t *testing.T) {
 		db, err := sql.Open("sqlite3", ":memory:")
 		if err != nil {
 			t.Fatalf("sql.Open failed: %v", err)
 		}
 		defer func() { _ = db.Close() }()
 
-		if _, err := db.Exec(schemaV1); err != nil {
-			t.Fatalf("schemaV1 failed: %v", err)
-		}
-		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN has_unseen_completion INTEGER;"); err != nil {
-			t.Fatalf("adding duplicate column failed: %v", err)
-		}
-		if _, err := db.Exec("PRAGMA user_version = 7;"); err != nil {
-			t.Fatalf("setting user_version = 7 failed: %v", err)
+		if _, err := db.Exec("CREATE VIEW agents AS SELECT 1 AS id; PRAGMA user_version = 7;"); err != nil {
+			t.Fatalf("creating conflicting view failed: %v", err)
 		}
 		if err := Migrate(db); err == nil {
-			t.Errorf("expected error in Migrate v8 on duplicate has_unseen_completion")
+			t.Errorf("expected error in Migrate v8 on conflicting view")
 		}
 	})
 
-	// 13. Error in v8 migration on duplicate completed_at
-	t.Run("v8 error on duplicate completed_at", func(t *testing.T) {
+	// 13. Error in v8 migration on conflicting agents view (second column completed_at)
+	t.Run("v8 error on second column completed_at", func(t *testing.T) {
 		db, err := sql.Open("sqlite3", ":memory:")
 		if err != nil {
 			t.Fatalf("sql.Open failed: %v", err)
 		}
 		defer func() { _ = db.Close() }()
 
-		if _, err := db.Exec(schemaV1); err != nil {
-			t.Fatalf("schemaV1 failed: %v", err)
-		}
-		if _, err := db.Exec("ALTER TABLE agents ADD COLUMN completed_at INTEGER;"); err != nil {
-			t.Fatalf("adding duplicate column failed: %v", err)
-		}
-		if _, err := db.Exec("PRAGMA user_version = 7;"); err != nil {
-			t.Fatalf("setting user_version = 7 failed: %v", err)
+		if _, err := db.Exec("CREATE VIEW agents AS SELECT 1 AS id, 1 AS has_unseen_completion; PRAGMA user_version = 7;"); err != nil {
+			t.Fatalf("creating conflicting view failed: %v", err)
 		}
 		if err := Migrate(db); err == nil {
-			t.Errorf("expected error in Migrate v8 on duplicate completed_at")
+			t.Errorf("expected error in Migrate v8 on second column")
 		}
 	})
 }

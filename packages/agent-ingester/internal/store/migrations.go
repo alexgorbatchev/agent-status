@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS agents (
     worktree_rel_path     TEXT,
     cwd                   TEXT NOT NULL,
     current_run_id        TEXT REFERENCES runs(id) ON DELETE SET NULL,
-    activity              TEXT NOT NULL CHECK (activity IN ('BUSY','WAITING_QUESTION','ERROR','RATE_LIMITED','IDLE')),
+    activity              TEXT NOT NULL CHECK (activity IN ('BUSY','WAITING_QUESTION','ERROR','IDLE')),
     title                 TEXT NOT NULL DEFAULT '',
     action                TEXT NOT NULL DEFAULT '',
     action_stale          INTEGER NOT NULL DEFAULT 0,
@@ -109,12 +109,12 @@ func Migrate(db *sql.DB) error {
 			return fmt.Errorf("executing migration v1: %w", err)
 		}
 
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("committing migration v1: %w", err)
+		if _, err := tx.Exec("PRAGMA user_version = 1;"); err != nil {
+			return fmt.Errorf("updating user_version to 1: %w", err)
 		}
 
-		if _, err := db.Exec("PRAGMA user_version = 1;"); err != nil {
-			return fmt.Errorf("updating user_version to 1: %w", err)
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("committing migration v1: %w", err)
 		}
 		version = 1
 	}
@@ -138,12 +138,12 @@ func Migrate(db *sql.DB) error {
 			return fmt.Errorf("executing migration v2 idx_agents_hidden: %w", err)
 		}
 
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("committing migration v2: %w", err)
+		if _, err := tx.Exec("PRAGMA user_version = 2;"); err != nil {
+			return fmt.Errorf("updating user_version to 2: %w", err)
 		}
 
-		if _, err := db.Exec("PRAGMA user_version = 2;"); err != nil {
-			return fmt.Errorf("updating user_version to 2: %w", err)
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("committing migration v2: %w", err)
 		}
 		version = 2
 	}
@@ -161,12 +161,12 @@ func Migrate(db *sql.DB) error {
 			return fmt.Errorf("executing migration v3 active_tool_started_at: %w", err)
 		}
 
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("committing migration v3: %w", err)
+		if _, err := tx.Exec("PRAGMA user_version = 3;"); err != nil {
+			return fmt.Errorf("updating user_version to 3: %w", err)
 		}
 
-		if _, err := db.Exec("PRAGMA user_version = 3;"); err != nil {
-			return fmt.Errorf("updating user_version to 3: %w", err)
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("committing migration v3: %w", err)
 		}
 		version = 3
 	}
@@ -184,12 +184,12 @@ func Migrate(db *sql.DB) error {
 			return fmt.Errorf("executing migration v4 active_subagents: %w", err)
 		}
 
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("committing migration v4: %w", err)
+		if _, err := tx.Exec("PRAGMA user_version = 4;"); err != nil {
+			return fmt.Errorf("updating user_version to 4: %w", err)
 		}
 
-		if _, err := db.Exec("PRAGMA user_version = 4;"); err != nil {
-			return fmt.Errorf("updating user_version to 4: %w", err)
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("committing migration v4: %w", err)
 		}
 		version = 4
 	}
@@ -213,12 +213,12 @@ func Migrate(db *sql.DB) error {
 			return fmt.Errorf("executing migration v5 context_fullness: %w", err)
 		}
 
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("committing migration v5: %w", err)
+		if _, err := tx.Exec("PRAGMA user_version = 5;"); err != nil {
+			return fmt.Errorf("updating user_version to 5: %w", err)
 		}
 
-		if _, err := db.Exec("PRAGMA user_version = 5;"); err != nil {
-			return fmt.Errorf("updating user_version to 5: %w", err)
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("committing migration v5: %w", err)
 		}
 		version = 5
 	}
@@ -239,19 +239,28 @@ func Migrate(db *sql.DB) error {
 			_ = tx.Rollback()
 		}()
 
-		if _, err := tx.Exec("ALTER TABLE agents ADD COLUMN rate_limit_reset_at INTEGER;"); err != nil {
-			return fmt.Errorf("executing migration v7 rate_limit_reset_at: %w", err)
+		cols, err := tableColumns(tx, "agents")
+		if err != nil {
+			return fmt.Errorf("checking columns for migration v7: %w", err)
 		}
-		if _, err := tx.Exec("ALTER TABLE agents ADD COLUMN retry_after_seconds INTEGER;"); err != nil {
-			return fmt.Errorf("executing migration v7 retry_after_seconds: %w", err)
+
+		if !cols["rate_limit_reset_at"] {
+			if _, err := tx.Exec("ALTER TABLE agents ADD COLUMN rate_limit_reset_at INTEGER;"); err != nil {
+				return fmt.Errorf("executing migration v7 rate_limit_reset_at: %w", err)
+			}
+		}
+		if !cols["retry_after_seconds"] {
+			if _, err := tx.Exec("ALTER TABLE agents ADD COLUMN retry_after_seconds INTEGER;"); err != nil {
+				return fmt.Errorf("executing migration v7 retry_after_seconds: %w", err)
+			}
+		}
+
+		if _, err := tx.Exec("PRAGMA user_version = 7;"); err != nil {
+			return fmt.Errorf("updating user_version to 7: %w", err)
 		}
 
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("committing migration v7: %w", err)
-		}
-
-		if _, err := db.Exec("PRAGMA user_version = 7;"); err != nil {
-			return fmt.Errorf("updating user_version to 7: %w", err)
 		}
 		version = 7
 	}
@@ -265,19 +274,28 @@ func Migrate(db *sql.DB) error {
 			_ = tx.Rollback()
 		}()
 
-		if _, err := tx.Exec("ALTER TABLE agents ADD COLUMN has_unseen_completion INTEGER NOT NULL DEFAULT 0;"); err != nil {
-			return fmt.Errorf("executing migration v8 has_unseen_completion: %w", err)
+		cols, err := tableColumns(tx, "agents")
+		if err != nil {
+			return fmt.Errorf("checking columns for migration v8: %w", err)
 		}
-		if _, err := tx.Exec("ALTER TABLE agents ADD COLUMN completed_at INTEGER;"); err != nil {
-			return fmt.Errorf("executing migration v8 completed_at: %w", err)
+
+		if !cols["has_unseen_completion"] {
+			if _, err := tx.Exec("ALTER TABLE agents ADD COLUMN has_unseen_completion INTEGER NOT NULL DEFAULT 0;"); err != nil {
+				return fmt.Errorf("executing migration v8 has_unseen_completion: %w", err)
+			}
+		}
+		if !cols["completed_at"] {
+			if _, err := tx.Exec("ALTER TABLE agents ADD COLUMN completed_at INTEGER;"); err != nil {
+				return fmt.Errorf("executing migration v8 completed_at: %w", err)
+			}
+		}
+
+		if _, err := tx.Exec("PRAGMA user_version = 8;"); err != nil {
+			return fmt.Errorf("updating user_version to 8: %w", err)
 		}
 
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("committing migration v8: %w", err)
-		}
-
-		if _, err := db.Exec("PRAGMA user_version = 8;"); err != nil {
-			return fmt.Errorf("updating user_version to 8: %w", err)
 		}
 		version = 8
 	}
@@ -443,6 +461,10 @@ CREATE INDEX IF NOT EXISTS idx_agents_hidden      ON agents(is_hidden);
 		return fmt.Errorf("foreign key check failed for migration v6: %s", strings.Join(fkViolations, "; "))
 	}
 
+	if _, err := tx.ExecContext(ctx, "PRAGMA user_version = 6;"); err != nil {
+		return fmt.Errorf("updating user_version to 6: %w", err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("committing migration v6: %w", err)
 	}
@@ -452,9 +474,38 @@ CREATE INDEX IF NOT EXISTS idx_agents_hidden      ON agents(is_hidden);
 	}
 	fkReenabled = true
 
-	if _, err := conn.ExecContext(ctx, "PRAGMA user_version = 6;"); err != nil {
-		return fmt.Errorf("updating user_version to 6: %w", err)
-	}
-
 	return nil
+}
+
+// tableColumns returns a map of existing column names for the given table.
+// It queries PRAGMA table_info(<table_name>); using native sql primitives.
+// If the table does not exist, an empty map is returned without error.
+func tableColumns(tx *sql.Tx, table string) (map[string]bool, error) {
+	rows, err := tx.Query(fmt.Sprintf("PRAGMA table_info(%s);", table))
+	if err != nil {
+		return nil, fmt.Errorf("querying table_info for %s: %w", table, err)
+	}
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	cols := make(map[string]bool)
+	for rows.Next() {
+		var (
+			cid       int
+			name      string
+			colType   string
+			notNull   int
+			dfltValue any
+			pk        int
+		)
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &pk); err != nil {
+			return nil, fmt.Errorf("scanning table_info for %s: %w", table, err)
+		}
+		cols[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating table_info for %s: %w", table, err)
+	}
+	return cols, nil
 }
