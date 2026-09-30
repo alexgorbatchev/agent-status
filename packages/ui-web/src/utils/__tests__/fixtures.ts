@@ -7,7 +7,7 @@ export const fixture_testEnvironment: IEnvironmentInfo = {
   platform: "darwin",
   user: "tester",
   isStale: false,
-  lastHeartbeatAt: 1789850000000,
+  lastHeartbeatAt: Date.now() + 86_400_000,
 };
 
 export const fixture_testStaleEnvironment: IEnvironmentInfo = {
@@ -71,11 +71,16 @@ export const fixture_telemetryFrameSubagent: ITelemetryFrame = {
 };
 
 export function factory_createAgent(overrides: Partial<IAgentState> = {}): IAgentState {
+  const { environment, ...restOverrides } = overrides;
   return {
     id: "env-test-1:claude-code:sess-1",
     sessionId: "sess-1",
     harness: "claude-code",
-    environment: fixture_testEnvironment,
+    environment: {
+      ...fixture_testEnvironment,
+      lastHeartbeatAt: Date.now(),
+      ...environment,
+    },
     project: {
       id: "github.com/alexgorbatchev/agent-status",
       name: "agent-status",
@@ -124,6 +129,6 @@ export function factory_createAgent(overrides: Partial<IAgentState> = {}): IAgen
       firstStartedAt: 1789850000000,
       updatedAt: 1789850000000,
     },
-    ...overrides,
+    ...restOverrides,
   };
 }

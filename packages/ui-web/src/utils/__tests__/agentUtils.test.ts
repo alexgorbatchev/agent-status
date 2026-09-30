@@ -14,12 +14,16 @@ import {
   getToolStallTier,
   formatDuration,
   isSessionStalled,
+  isEnvironmentStale,
   trimProjectTitlePrefix,
   getIdleFreshness,
   isAgentStaleIdle,
   getAgentIdleFreshness,
   type IdleFreshness,
   formatRateLimitCallout,
+  ENVIRONMENT_STALE_THRESHOLD_MS,
+  SESSION_SILENCE_THRESHOLD_MS,
+  TOOL_STALL_THRESHOLD_MS,
 } from "../agentUtils";
 import { factory_createAgent, fixture_testEnvironment, fixture_testStaleEnvironment } from "./fixtures";
 import type { ActivityState, IAgentActivity, IAgentState, LifecycleState } from "../../types";
@@ -33,6 +37,21 @@ interface IIdleFreshnessFixture {
   updatedAt: number;
   expectedTier: IdleFreshness;
   expectedStaleIdle: boolean;
+}
+
+interface IAttentionFixture {
+  name: string;
+  lifecycle: LifecycleState;
+  activity: ActivityState;
+  updatedAt: number;
+  activeTool: string | null;
+  activeToolStartedAt: number | null;
+  rateLimitResetAt: number | null;
+  retryAfterSeconds: number | null;
+  environmentLastHeartbeatAt: number;
+  environmentIsStale: boolean;
+  nowMs: number;
+  expectedRequiresAttention: boolean;
 }
 
 interface IProjectPrefixFixture {
@@ -226,6 +245,23 @@ describe("agentUtils", () => {
         },
       });
       expect(isAgentRequiringAttention(agent)).toBe(false);
+    });
+
+    it("returns false when agent.environment.isStale is false but dynamically stale (now - lastHeartbeatAt > 30_000)", () => {
+      const now = 200000;
+      const agent = factory_createAgent({
+        environment: {
+          ...fixture_testEnvironment,
+          isStale: false,
+          lastHeartbeatAt: now - 35000,
+        },
+        activity: {
+          ...factory_createAgent().activity,
+          lifecycle: "RUNNING",
+          activity: "WAITING_QUESTION",
+        },
+      });
+      expect(isAgentRequiringAttention(agent, now)).toBe(false);
     });
 
     it("returns false for recently updated running RATE_LIMITED agent", () => {
@@ -501,11 +537,11 @@ describe("agentUtils", () => {
     it("evaluates warning for 120s - 179s", () => {
       expect(getToolStallTier(120000)).toBe("warning");
       expect(getToolStallTier(150000)).toBe("warning");
-      expect(getToolStallTier(179999)).toBe("warning");
+      expect(getToolStallTier(TOOL_STALL_THRESHOLD_MS - 1)).toBe("warning");
     });
 
     it("evaluates stalled for >= 180s (3m+)", () => {
-      expect(getToolStallTier(180000)).toBe("stalled");
+      expect(getToolStallTier(TOOL_STALL_THRESHOLD_MS)).toBe("stalled");
       expect(getToolStallTier(202000)).toBe("stalled");
       expect(getToolStallTier(600000)).toBe("stalled");
     });
@@ -604,18 +640,33 @@ describe("agentUtils", () => {
       });
       expect(isAgentRequiringAttention(idleAgent, now)).toBe(false);
     });
+
+    it("returns false for a running IDLE agent with activeToolStartedAt >= 180s", () => {
+      const now = 200000;
+      const idleAgent = factory_createAgent({
+        activity: {
+          ...factory_createAgent().activity,
+          lifecycle: "RUNNING",
+          activity: "IDLE",
+          activeTool: "bash",
+          activeToolStartedAt: now - 185000,
+          updatedAt: now - 10000,
+        },
+      });
+      expect(isAgentRequiringAttention(idleAgent, now)).toBe(false);
+    });
   });
 
   describe("isSessionStalled", () => {
     it("returns false when silence duration is below threshold", () => {
       const now = 200000;
       expect(isSessionStalled(now - 30000, now)).toBe(false);
-      expect(isSessionStalled(now - 119999, now)).toBe(false);
+      expect(isSessionStalled(now - (SESSION_SILENCE_THRESHOLD_MS - 1), now)).toBe(false);
     });
 
     it("returns true when silence duration is at or exceeds threshold", () => {
       const now = 1000000;
-      expect(isSessionStalled(now - 120000, now)).toBe(true);
+      expect(isSessionStalled(now - SESSION_SILENCE_THRESHOLD_MS, now)).toBe(true);
       expect(isSessionStalled(now - 300000, now)).toBe(true);
     });
 
@@ -630,6 +681,55 @@ describe("agentUtils", () => {
       expect(isSessionStalled(0, now)).toBe(false);
       expect(isSessionStalled(-100, now)).toBe(false);
       expect(isSessionStalled(Number.NaN, now)).toBe(false);
+    });
+  });
+
+  describe("isEnvironmentStale", () => {
+    it("returns false when heartbeat duration is at or below threshold", () => {
+      const now = 200000;
+      expect(isEnvironmentStale(now - 10000, now)).toBe(false);
+      expect(isEnvironmentStale(now - ENVIRONMENT_STALE_THRESHOLD_MS, now)).toBe(false);
+    });
+
+    it("returns true when heartbeat duration exceeds threshold", () => {
+      const now = 1000000;
+      expect(isEnvironmentStale(now - (ENVIRONMENT_STALE_THRESHOLD_MS + 1), now)).toBe(true);
+      expect(isEnvironmentStale(now - 40000, now)).toBe(true);
+    });
+
+    it("respects custom thresholdMs", () => {
+      const now = 200000;
+      expect(isEnvironmentStale(now - 15000, now, 20000)).toBe(false);
+      expect(isEnvironmentStale(now - 25000, now, 20000)).toBe(true);
+    });
+
+    it("returns true for invalid timestamps", () => {
+      const now = 200000;
+      expect(isEnvironmentStale(0, now)).toBe(true);
+      expect(isEnvironmentStale(-100, now)).toBe(true);
+      expect(isEnvironmentStale(Number.NaN, now)).toBe(true);
+    });
+
+    it("returns false when heartbeat timestamp is in the future", () => {
+      const now = 200000;
+      expect(isEnvironmentStale(now + 86_400_000, now)).toBe(false);
+    });
+  });
+
+  describe("factory_createAgent freshness", () => {
+    it("assigns dynamic lastHeartbeatAt when building agent", () => {
+      const before = Date.now();
+      const agent = factory_createAgent();
+      const after = Date.now();
+      expect(agent.environment.lastHeartbeatAt).toBeGreaterThanOrEqual(before);
+      expect(agent.environment.lastHeartbeatAt).toBeLessThanOrEqual(after);
+      expect(isEnvironmentStale(agent.environment.lastHeartbeatAt, after)).toBe(false);
+    });
+
+    it("fixture_testEnvironment has future heartbeat that does not decay", () => {
+      const now = Date.now();
+      expect(fixture_testEnvironment.lastHeartbeatAt).toBeGreaterThan(now + 3600_000);
+      expect(isEnvironmentStale(fixture_testEnvironment.lastHeartbeatAt, now)).toBe(false);
     });
   });
 
@@ -816,6 +916,35 @@ describe("agentUtils", () => {
 
         expect(getAgentIdleFreshness(activity, fixture.nowMs)).toBe(fixture.expectedTier);
         expect(isAgentStaleIdle(activity, fixture.nowMs)).toBe(fixture.expectedStaleIdle);
+      });
+    }
+  });
+
+  describe("attention shared fixtures", () => {
+    const fixturePath = resolve(__dirname, "../../../../agent-common/testdata/attention-fixtures.json");
+    const fixtures: IAttentionFixture[] = JSON.parse(readFileSync(fixturePath, "utf-8"));
+
+    for (const fixture of fixtures) {
+      it(fixture.name, () => {
+        const agent = factory_createAgent({
+          environment: {
+            ...fixture_testEnvironment,
+            isStale: fixture.environmentIsStale,
+            lastHeartbeatAt: fixture.environmentLastHeartbeatAt,
+          },
+          activity: {
+            ...factory_createAgent().activity,
+            lifecycle: fixture.lifecycle,
+            activity: fixture.activity,
+            updatedAt: fixture.updatedAt,
+            activeTool: fixture.activeTool,
+            activeToolStartedAt: fixture.activeToolStartedAt,
+            rateLimitResetAt: fixture.rateLimitResetAt,
+            retryAfterSeconds: fixture.retryAfterSeconds,
+          },
+        });
+
+        expect(isAgentRequiringAttention(agent, fixture.nowMs)).toBe(fixture.expectedRequiresAttention);
       });
     }
   });

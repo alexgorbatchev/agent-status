@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -368,6 +369,268 @@ func TestStore_GetStatus(t *testing.T) {
 		}
 	})
 
+	t.Run("stale environment suppresses requires attention count", func(t *testing.T) {
+		sStale := setupTestDB(t)
+		ctx := context.Background()
+		now := time.Now().UnixMilli()
+
+		// Stale environment: last_heartbeat_at was 40 seconds ago (> 30s threshold)
+		staleHeartbeat := now - 40000
+		_, err := sStale.db.ExecContext(ctx, `
+			INSERT INTO environments (id, label, hostname, platform, user, dropped_frames, last_heartbeat_at)
+			VALUES ('env-stale', 'macbook', 'macbook.local', 'darwin', 'alex', 0, ?)
+		`, staleHeartbeat)
+		if err != nil {
+			t.Fatalf("inserting environment: %v", err)
+		}
+
+		_, err = sStale.db.ExecContext(ctx, `
+			INSERT INTO runs (id, agent_id, pid, harness_version, started_at, ended_at)
+			VALUES ('run-stale', 'agent-stale', 1234, '1.0', ?, NULL)
+		`, now-300000)
+		if err != nil {
+			t.Fatalf("inserting run: %v", err)
+		}
+
+		// Agent has WAITING_QUESTION (which requires attention in active environments), but environment is stale
+		_, err = sStale.db.ExecContext(ctx, `
+			INSERT INTO agents (
+				id, session_id, environment_id, harness, project_id, project_name, canonical_root,
+				branch, is_detached, is_worktree, worktree_rel_path, cwd, current_run_id,
+				activity, title, action, action_stale, phase, active_tool, active_target,
+				active_tool_started_at,
+				tokens_input, tokens_output, tokens_cache_read, tokens_cache_write,
+				tokens_reasoning, tokens_total, cost_usd, subagent_count, first_started_at, updated_at
+			) VALUES (
+				'agent-stale', 'sess-stale', 'env-stale', 'claude-code', 'proj', 'proj', '/repo',
+				'main', 0, 0, NULL, '/repo', 'run-stale',
+				'WAITING_QUESTION', 'Question', 'Awaiting input', 0, 'editing', NULL, NULL,
+				NULL,
+				0, 0, 0, 0, 0, 0, 0, 0, ?, ?
+			)
+		`, now-300000, now)
+		if err != nil {
+			t.Fatalf("inserting agent: %v", err)
+		}
+
+		status, err := sStale.GetStatus(ctx)
+		if err != nil {
+			t.Fatalf("GetStatus failed: %v", err)
+		}
+
+		if status.ActiveAgentCount != 1 {
+			t.Errorf("ActiveAgentCount = %d, want 1", status.ActiveAgentCount)
+		}
+		if status.RequiresAttentionCount != 0 {
+			t.Errorf("RequiresAttentionCount = %d, want 0 (stale environment must suppress attention)", status.RequiresAttentionCount)
+		}
+	})
+
+	t.Run("non-positive last_heartbeat_at is treated as stale", func(t *testing.T) {
+		tests := []struct {
+			name        string
+			heartbeatAt int64
+		}{
+			{name: "zero heartbeat", heartbeatAt: 0},
+			{name: "negative heartbeat", heartbeatAt: -100},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				st := setupTestDB(t)
+				ctx := context.Background()
+				now := int64(20000)
+
+				_, err := st.db.ExecContext(ctx, `
+					INSERT INTO environments (id, label, hostname, platform, user, dropped_frames, last_heartbeat_at)
+					VALUES ('env-nonpositive', 'macbook', 'macbook.local', 'darwin', 'alex', 0, ?)
+				`, tt.heartbeatAt)
+				if err != nil {
+					t.Fatalf("inserting environment: %v", err)
+				}
+
+				_, err = st.db.ExecContext(ctx, `
+					INSERT INTO runs (id, agent_id, pid, harness_version, started_at, ended_at)
+					VALUES ('run-nonpositive', 'agent-nonpositive', 1234, '1.0', ?, NULL)
+				`, now-10000)
+				if err != nil {
+					t.Fatalf("inserting run: %v", err)
+				}
+
+				_, err = st.db.ExecContext(ctx, `
+					INSERT INTO agents (
+						id, session_id, environment_id, harness, project_id, project_name, canonical_root,
+						branch, is_detached, is_worktree, worktree_rel_path, cwd, current_run_id,
+						activity, title, action, action_stale, phase, active_tool, active_target,
+						active_tool_started_at,
+						tokens_input, tokens_output, tokens_cache_read, tokens_cache_write,
+						tokens_reasoning, tokens_total, cost_usd, subagent_count, first_started_at, updated_at
+					) VALUES (
+						'agent-nonpositive', 'sess-nonpositive', 'env-nonpositive', 'claude-code', 'proj', 'proj', '/repo',
+						'main', 0, 0, NULL, '/repo', 'run-nonpositive',
+						'WAITING_QUESTION', 'Question', 'Awaiting input', 0, 'editing', NULL, NULL,
+						NULL,
+						0, 0, 0, 0, 0, 0, 0, 0, ?, ?
+					)
+				`, now-10000, now)
+				if err != nil {
+					t.Fatalf("inserting agent: %v", err)
+				}
+
+				status, err := st.GetStatusAt(ctx, now)
+				if err != nil {
+					t.Fatalf("GetStatusAt failed: %v", err)
+				}
+
+				if status.ActiveAgentCount != 1 {
+					t.Errorf("ActiveAgentCount = %d, want 1", status.ActiveAgentCount)
+				}
+				if status.RequiresAttentionCount != 0 {
+					t.Errorf("RequiresAttentionCount = %d, want 0 (non-positive heartbeat must suppress attention)", status.RequiresAttentionCount)
+				}
+			})
+		}
+	})
+
+	t.Run("non-busy agent with old tool start does not increase requires attention count", func(t *testing.T) {
+		sNonBusy := setupTestDB(t)
+		ctx := context.Background()
+		now := time.Now().UnixMilli()
+
+		_, err := sNonBusy.db.ExecContext(ctx, `
+			INSERT INTO environments (id, label, hostname, platform, user, dropped_frames, last_heartbeat_at)
+			VALUES ('env-active', 'macbook', 'macbook.local', 'darwin', 'alex', 0, ?)
+		`, now)
+		if err != nil {
+			t.Fatalf("inserting environment: %v", err)
+		}
+
+		_, err = sNonBusy.db.ExecContext(ctx, `
+			INSERT INTO runs (id, agent_id, pid, harness_version, started_at, ended_at)
+			VALUES ('run-nonbusy', 'agent-nonbusy', 1234, '1.0', ?, NULL)
+		`, now-300000)
+		if err != nil {
+			t.Fatalf("inserting run: %v", err)
+		}
+
+		// Agent is IDLE, but has active_tool_started_at from 200s ago (stalled tool if BUSY, but here activity is IDLE)
+		stalledToolStart := now - 200000
+		_, err = sNonBusy.db.ExecContext(ctx, `
+			INSERT INTO agents (
+				id, session_id, environment_id, harness, project_id, project_name, canonical_root,
+				branch, is_detached, is_worktree, worktree_rel_path, cwd, current_run_id,
+				activity, title, action, action_stale, phase, active_tool, active_target,
+				active_tool_started_at,
+				tokens_input, tokens_output, tokens_cache_read, tokens_cache_write,
+				tokens_reasoning, tokens_total, cost_usd, subagent_count, first_started_at, updated_at
+			) VALUES (
+				'agent-nonbusy', 'sess-nonbusy', 'env-active', 'claude-code', 'proj', 'proj', '/repo',
+				'main', 0, 0, NULL, '/repo', 'run-nonbusy',
+				'IDLE', 'Idle', 'Waiting', 0, 'editing', 'bash', 'git rebase',
+				?,
+				0, 0, 0, 0, 0, 0, 0, 0, ?, ?
+			)
+		`, stalledToolStart, now-300000, now-10000)
+		if err != nil {
+			t.Fatalf("inserting agent: %v", err)
+		}
+
+		status, err := sNonBusy.GetStatus(ctx)
+		if err != nil {
+			t.Fatalf("GetStatus failed: %v", err)
+		}
+
+		if status.ActiveAgentCount != 1 {
+			t.Errorf("ActiveAgentCount = %d, want 1", status.ActiveAgentCount)
+		}
+		if status.RequiresAttentionCount != 0 {
+			t.Errorf("RequiresAttentionCount = %d, want 0 (non-busy agent with old tool start must not require attention)", status.RequiresAttentionCount)
+		}
+	})
+
+	t.Run("busy agent with old tool start but empty tool or zero timestamps does not require attention", func(t *testing.T) {
+		sEdge := setupTestDB(t)
+		ctx := context.Background()
+		now := time.Now().UnixMilli()
+
+		_, err := sEdge.db.ExecContext(ctx, `
+			INSERT INTO environments (id, label, hostname, platform, user, dropped_frames, last_heartbeat_at)
+			VALUES ('env-edge', 'macbook', 'macbook.local', 'darwin', 'alex', 0, ?)
+		`, now)
+		if err != nil {
+			t.Fatalf("inserting environment: %v", err)
+		}
+
+		// Agent 1: BUSY, active_tool = '', active_tool_started_at is 200s ago, updated_at fresh
+		stalledToolStart := now - 200000
+		_, err = sEdge.db.ExecContext(ctx, `
+			INSERT INTO runs (id, agent_id, pid, harness_version, started_at, ended_at)
+			VALUES ('run-edge-1', 'agent-edge-1', 1001, '1.0', ?, NULL)
+		`, now-300000)
+		if err != nil {
+			t.Fatalf("inserting run 1: %v", err)
+		}
+		_, err = sEdge.db.ExecContext(ctx, `
+			INSERT INTO agents (
+				id, session_id, environment_id, harness, project_id, project_name, canonical_root,
+				branch, is_detached, is_worktree, worktree_rel_path, cwd, current_run_id,
+				activity, title, action, action_stale, phase, active_tool, active_target,
+				active_tool_started_at,
+				tokens_input, tokens_output, tokens_cache_read, tokens_cache_write,
+				tokens_reasoning, tokens_total, cost_usd, subagent_count, first_started_at, updated_at
+			) VALUES (
+				'agent-edge-1', 'sess-edge-1', 'env-edge', 'claude-code', 'proj', 'proj', '/repo',
+				'main', 0, 0, NULL, '/repo', 'run-edge-1',
+				'BUSY', 'Working', 'Executing', 0, 'editing', '', 'target',
+				?,
+				0, 0, 0, 0, 0, 0, 0, 0, ?, ?
+			)
+		`, stalledToolStart, now-300000, now-10000)
+		if err != nil {
+			t.Fatalf("inserting agent 1: %v", err)
+		}
+
+		// Agent 2: BUSY, updated_at = 0
+		_, err = sEdge.db.ExecContext(ctx, `
+			INSERT INTO runs (id, agent_id, pid, harness_version, started_at, ended_at)
+			VALUES ('run-edge-2', 'agent-edge-2', 1002, '1.0', ?, NULL)
+		`, now-300000)
+		if err != nil {
+			t.Fatalf("inserting run 2: %v", err)
+		}
+		_, err = sEdge.db.ExecContext(ctx, `
+			INSERT INTO agents (
+				id, session_id, environment_id, harness, project_id, project_name, canonical_root,
+				branch, is_detached, is_worktree, worktree_rel_path, cwd, current_run_id,
+				activity, title, action, action_stale, phase, active_tool, active_target,
+				active_tool_started_at,
+				tokens_input, tokens_output, tokens_cache_read, tokens_cache_write,
+				tokens_reasoning, tokens_total, cost_usd, subagent_count, first_started_at, updated_at
+			) VALUES (
+				'agent-edge-2', 'sess-edge-2', 'env-edge', 'claude-code', 'proj', 'proj', '/repo',
+				'main', 0, 0, NULL, '/repo', 'run-edge-2',
+				'BUSY', 'Working', 'Executing', 0, 'editing', NULL, NULL,
+				NULL,
+				0, 0, 0, 0, 0, 0, 0, 0, ?, 0
+			)
+		`, now-300000)
+		if err != nil {
+			t.Fatalf("inserting agent 2: %v", err)
+		}
+
+		status, err := sEdge.GetStatus(ctx)
+		if err != nil {
+			t.Fatalf("GetStatus failed: %v", err)
+		}
+
+		if status.ActiveAgentCount != 2 {
+			t.Errorf("ActiveAgentCount = %d, want 2", status.ActiveAgentCount)
+		}
+		if status.RequiresAttentionCount != 0 {
+			t.Errorf("RequiresAttentionCount = %d, want 0", status.RequiresAttentionCount)
+		}
+	})
+
 	t.Run("stalled silence increases requires attention count", func(t *testing.T) {
 		sSilence := setupTestDB(t)
 		ctx := context.Background()
@@ -597,6 +860,28 @@ func TestStore_GetEnvironments(t *testing.T) {
 			t.Fatal("expected error on closed db, got nil")
 		}
 	})
+
+	t.Run("non-positive heartbeat is stale even when nowMs is small", func(t *testing.T) {
+		sZero := setupTestDB(t)
+		ctx := context.Background()
+		_, err := sZero.db.ExecContext(ctx, `
+			INSERT INTO environments (id, label, hostname, platform, user, dropped_frames, last_heartbeat_at)
+			VALUES ('env-zero', 'zero-env', 'zero.local', 'darwin', 'alex', 0, 0)
+		`)
+		if err != nil {
+			t.Fatalf("inserting zero environment: %v", err)
+		}
+		envs, err := sZero.GetEnvironmentsAt(ctx, 10000)
+		if err != nil {
+			t.Fatalf("GetEnvironmentsAt() error = %v", err)
+		}
+		if len(envs) != 1 {
+			t.Fatalf("len(envs) = %d, want 1", len(envs))
+		}
+		if !envs[0].IsStale {
+			t.Errorf("expected env-zero to be stale, got IsStale = false")
+		}
+	})
 }
 
 func boolPtr(b bool) *bool {
@@ -768,6 +1053,41 @@ func TestStore_GetAgentByID(t *testing.T) {
 			t.Fatal("expected error on closed db, got nil")
 		}
 	})
+
+	t.Run("non-positive environment heartbeat marks agent environment as stale", func(t *testing.T) {
+		sZero := setupTestDB(t)
+		ctx := context.Background()
+		_, err := sZero.db.ExecContext(ctx, `
+			INSERT INTO environments (id, label, hostname, platform, user, dropped_frames, last_heartbeat_at)
+			VALUES ('env-zero', 'zero-env', 'zero.local', 'darwin', 'alex', 0, 0)
+		`)
+		if err != nil {
+			t.Fatalf("inserting zero environment: %v", err)
+		}
+		_, err = sZero.db.ExecContext(ctx, `
+			INSERT INTO agents (
+				id, session_id, environment_id, harness, project_id, project_name, canonical_root,
+				branch, is_detached, is_worktree, cwd, activity, title, action, action_stale,
+				phase, tokens_input, tokens_output, tokens_cache_read, tokens_cache_write,
+				tokens_reasoning, tokens_total, cost_usd, subagent_count, first_started_at, updated_at
+			) VALUES (
+				'env-zero:claude-code:sess-zero', 'sess-zero', 'env-zero', 'claude-code', 'proj', 'proj', '/repo',
+				'main', 0, 0, '/repo', 'IDLE', 'Idle', 'Waiting', 0,
+				'editing', 0, 0, 0, 0, 0, 0, 0, 0, 1000, 1000
+			)
+		`)
+		if err != nil {
+			t.Fatalf("inserting agent: %v", err)
+		}
+		row := sZero.db.QueryRowContext(ctx, selectAgentBaseQuery+" WHERE a.id = ?", "env-zero:claude-code:sess-zero")
+		agent, err := scanAgent(row, 10000)
+		if err != nil {
+			t.Fatalf("scanAgent error: %v", err)
+		}
+		if !agent.Environment.IsStale {
+			t.Errorf("expected agent.Environment.IsStale = true for 0 heartbeat with small nowMs")
+		}
+	})
 }
 
 func TestStore_GetProjects(t *testing.T) {
@@ -916,6 +1236,50 @@ func TestStore_GetAgentLogs(t *testing.T) {
 		_, err := sErr.GetAgentLogs(context.Background(), "env1:claude-code:sess1", 10, 0, "")
 		if err == nil {
 			t.Fatal("expected error on closed db, got nil")
+		}
+	})
+
+	t.Run("non-positive environment heartbeat marks frame environment as stale", func(t *testing.T) {
+		sZero := setupTestDB(t)
+		ctx := context.Background()
+		_, err := sZero.db.ExecContext(ctx, `
+			INSERT INTO environments (id, label, hostname, platform, user, dropped_frames, last_heartbeat_at)
+			VALUES ('env-zero', 'zero-env', 'zero.local', 'darwin', 'alex', 0, 0)
+		`)
+		if err != nil {
+			t.Fatalf("inserting zero environment: %v", err)
+		}
+		_, err = sZero.db.ExecContext(ctx, `
+			INSERT INTO agents (
+				id, session_id, environment_id, harness, project_id, project_name, canonical_root,
+				branch, is_detached, is_worktree, cwd, activity, title, action, action_stale,
+				phase, tokens_input, tokens_output, tokens_cache_read, tokens_cache_write,
+				tokens_reasoning, tokens_total, cost_usd, subagent_count, first_started_at, updated_at
+			) VALUES (
+				'env-zero:claude-code:sess-zero', 'sess-zero', 'env-zero', 'claude-code', 'proj', 'proj', '/repo',
+				'main', 0, 0, '/repo', 'IDLE', 'Idle', 'Waiting', 0,
+				'editing', 0, 0, 0, 0, 0, 0, 0, 0, 1000, 1000
+			)
+		`)
+		if err != nil {
+			t.Fatalf("inserting agent: %v", err)
+		}
+		_, err = sZero.db.ExecContext(ctx, `
+			INSERT INTO telemetry_events (id, agent_id, subagent_id, event_type, timestamp, data_json)
+			VALUES (1, 'env-zero:claude-code:sess-zero', NULL, 'turn_start', 1000, '{}')
+		`)
+		if err != nil {
+			t.Fatalf("inserting telemetry event: %v", err)
+		}
+		frames, err := sZero.GetAgentLogs(ctx, "env-zero:claude-code:sess-zero", 10, 0, "")
+		if err != nil {
+			t.Fatalf("GetAgentLogs error: %v", err)
+		}
+		if len(frames) != 1 {
+			t.Fatalf("len(frames) = %d, want 1", len(frames))
+		}
+		if !frames[0].Environment.IsStale {
+			t.Errorf("expected frames[0].Environment.IsStale = true for 0 heartbeat")
 		}
 	})
 }
@@ -1099,5 +1463,111 @@ func TestStore_RateLimitedFilterAndStatus(t *testing.T) {
 	}
 	if agentFresh.Activity.RetryAfterSeconds == nil || *agentFresh.Activity.RetryAfterSeconds != retrySecVal {
 		t.Errorf("expected RetryAfterSeconds %d, got %v", retrySecVal, agentFresh.Activity.RetryAfterSeconds)
+	}
+}
+
+type attentionFixture struct {
+	Name                       string  `json:"name"`
+	Lifecycle                  string  `json:"lifecycle"`
+	Activity                   string  `json:"activity"`
+	UpdatedAt                  int64   `json:"updatedAt"`
+	ActiveTool                 *string `json:"activeTool"`
+	ActiveToolStartedAt        *int64  `json:"activeToolStartedAt"`
+	RateLimitResetAt           *int64  `json:"rateLimitResetAt"`
+	RetryAfterSeconds          *int64  `json:"retryAfterSeconds"`
+	EnvironmentLastHeartbeatAt int64   `json:"environmentLastHeartbeatAt"`
+	EnvironmentIsStale         bool    `json:"environmentIsStale"`
+	NowMs                      int64   `json:"nowMs"`
+	ExpectedRequiresAttention  bool    `json:"expectedRequiresAttention"`
+}
+
+func TestStore_GetStatus_SharedAttentionFixtures(t *testing.T) {
+	fixtureData, err := os.ReadFile("../../../agent-common/testdata/attention-fixtures.json")
+	if err != nil {
+		t.Fatalf("reading shared attention fixtures: %v", err)
+	}
+
+	var fixtures []attentionFixture
+	if err := json.Unmarshal(fixtureData, &fixtures); err != nil {
+		t.Fatalf("unmarshaling attention fixtures: %v", err)
+	}
+
+	for _, f := range fixtures {
+		t.Run(f.Name, func(t *testing.T) {
+			st := setupTestDB(t)
+			ctx := context.Background()
+
+			// Seed environment
+			_, err := st.db.ExecContext(ctx, `
+				INSERT INTO environments (id, label, hostname, platform, user, dropped_frames, last_heartbeat_at)
+				VALUES ('env-test', 'test-host', 'test.local', 'linux', 'tester', 0, ?);
+			`, f.EnvironmentLastHeartbeatAt)
+			if err != nil {
+				t.Fatalf("inserting environment: %v", err)
+			}
+
+			// If lifecycle is RUNNING, seed run
+			var currentRunID sql.NullString
+			if f.Lifecycle == string(types.LifecycleRunning) {
+				currentRunID = sql.NullString{String: "run-test", Valid: true}
+				_, err = st.db.ExecContext(ctx, `
+					INSERT INTO runs (id, agent_id, pid, harness_version, started_at)
+					VALUES ('run-test', 'env-test:claude-code:sess-1', 1234, '1.0.0', ?);
+				`, f.NowMs-300000)
+				if err != nil {
+					t.Fatalf("inserting run: %v", err)
+				}
+			}
+
+			// Seed agent
+			_, err = st.db.ExecContext(ctx, `
+				INSERT INTO agents (
+					id, session_id, environment_id, harness,
+					project_id, project_name, canonical_root,
+					branch, is_detached, is_worktree, worktree_rel_path, cwd,
+					current_run_id, activity, title, action, action_stale,
+					phase, active_tool, active_tool_started_at,
+					tokens_input, tokens_output, tokens_cache_read, tokens_cache_write,
+					tokens_reasoning, tokens_total, cost_usd, subagent_count,
+					first_started_at, updated_at,
+					rate_limit_reset_at, retry_after_seconds
+				) VALUES (
+					'env-test:claude-code:sess-1', 'sess-1', 'env-test', 'claude-code',
+					'github.com/org/repo', 'repo', '/path/to/repo',
+					'main', 0, 0, NULL, '/path/to/repo',
+					?, ?, 'Title', 'Action', 0,
+					'editing', ?, ?,
+					100, 50, 0, 0,
+					0, 150, 0.25, 0,
+					?, ?,
+					?, ?
+				);
+			`, currentRunID, f.Activity, f.ActiveTool, f.ActiveToolStartedAt,
+				f.NowMs-300000, f.UpdatedAt, f.RateLimitResetAt, f.RetryAfterSeconds)
+			if err != nil {
+				t.Fatalf("inserting agent: %v", err)
+			}
+
+			status, err := st.GetStatusAt(ctx, f.NowMs)
+			if err != nil {
+				t.Fatalf("GetStatusAt failed: %v", err)
+			}
+
+			wantAttention := 0
+			if f.ExpectedRequiresAttention {
+				wantAttention = 1
+			}
+			if status.RequiresAttentionCount != wantAttention {
+				t.Errorf("RequiresAttentionCount = %d, want %d", status.RequiresAttentionCount, wantAttention)
+			}
+
+			wantActive := 0
+			if f.Lifecycle == string(types.LifecycleRunning) {
+				wantActive = 1
+			}
+			if status.ActiveAgentCount != wantActive {
+				t.Errorf("ActiveAgentCount = %d, want %d", status.ActiveAgentCount, wantActive)
+			}
+		})
 	}
 }

@@ -7,7 +7,7 @@ export const fixture_environmentInfo: IEnvironmentInfo = {
   platform: "darwin",
   user: "alex",
   isStale: false,
-  lastHeartbeatAt: 1789850000000,
+  lastHeartbeatAt: Date.now() + 86_400_000,
 };
 
 export const fixture_staleEnvironmentInfo: IEnvironmentInfo = {
@@ -293,6 +293,7 @@ export function factory_agentState(overrides?: Partial<IAgentState>): IAgentStat
     },
     environment: {
       ...fixture_agentStateRunning.environment,
+      lastHeartbeatAt: Date.now(),
       ...overrides?.environment,
     },
     project: {

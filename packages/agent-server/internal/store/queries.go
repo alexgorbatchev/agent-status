@@ -16,6 +16,12 @@ import (
 
 var ErrNotFound = errors.New("not found")
 
+const (
+	EnvironmentStaleThresholdMs int64 = 30000
+	SessionSilenceThresholdMs   int64 = 120000
+	ToolStallThresholdMs        int64 = 180000
+)
+
 type Store struct {
 	db *sql.DB
 }
@@ -53,6 +59,10 @@ type AgentFilter struct {
 }
 
 func (s *Store) GetEnvironments(ctx context.Context) ([]types.IEnvironmentInfo, error) {
+	return s.GetEnvironmentsAt(ctx, time.Now().UnixMilli())
+}
+
+func (s *Store) GetEnvironmentsAt(ctx context.Context, nowMs int64) ([]types.IEnvironmentInfo, error) {
 	query := `
 		SELECT id, label, hostname, platform, user, last_heartbeat_at
 		FROM environments
@@ -66,7 +76,6 @@ func (s *Store) GetEnvironments(ctx context.Context) ([]types.IEnvironmentInfo, 
 		_ = rows.Close()
 	}()
 
-	nowMs := time.Now().UnixMilli()
 	envs := make([]types.IEnvironmentInfo, 0)
 	for rows.Next() {
 		var env types.IEnvironmentInfo
@@ -75,8 +84,8 @@ func (s *Store) GetEnvironments(ctx context.Context) ([]types.IEnvironmentInfo, 
 			return nil, fmt.Errorf("scanning environment row: %w", err)
 		}
 		env.LastHeartbeatAt = lastHeartbeat
-		// Stale if last heartbeat was more than 30 seconds (30,000 ms) ago
-		env.IsStale = (nowMs - lastHeartbeat) > 30000
+		// Stale if last heartbeat was non-positive or more than 30 seconds (30,000 ms) ago
+		env.IsStale = lastHeartbeat <= 0 || (nowMs-lastHeartbeat) > EnvironmentStaleThresholdMs
 		envs = append(envs, env)
 	}
 	if err := rows.Err(); err != nil {
@@ -85,8 +94,30 @@ func (s *Store) GetEnvironments(ctx context.Context) ([]types.IEnvironmentInfo, 
 	return envs, nil
 }
 
+var statusQuery = fmt.Sprintf(`
+		SELECT
+			COALESCE(SUM(CASE WHEN a.current_run_id IS NOT NULL THEN 1 ELSE 0 END), 0) AS active_count,
+			COALESCE(SUM(CASE 
+				WHEN a.current_run_id IS NOT NULL AND e.last_heartbeat_at > 0 AND (? - e.last_heartbeat_at) <= %d AND (
+					a.activity IN ('WAITING_QUESTION', 'ERROR') OR
+					(a.activity = 'BUSY' AND a.active_tool IS NOT NULL AND a.active_tool != '' AND a.active_tool_started_at > 0 AND (? - a.active_tool_started_at) >= %d) OR
+					(a.activity = 'BUSY' AND a.updated_at > 0 AND (? - a.updated_at) >= %d) OR
+					(a.activity = 'RATE_LIMITED' AND a.updated_at > 0 AND (? - a.updated_at) >= %d AND (
+						(a.rate_limit_reset_at IS NOT NULL AND a.rate_limit_reset_at <= ?) OR
+						(a.rate_limit_reset_at IS NULL AND (a.retry_after_seconds IS NULL OR (? - a.updated_at) >= (a.retry_after_seconds * 1000)))
+					))
+				) THEN 1 ELSE 0 END), 0) AS attention_count,
+			SUM(a.cost_usd) AS total_spend
+		FROM agents a
+		LEFT JOIN environments e ON a.environment_id = e.id
+	`, EnvironmentStaleThresholdMs, ToolStallThresholdMs, SessionSilenceThresholdMs, SessionSilenceThresholdMs)
+
 func (s *Store) GetStatus(ctx context.Context) (*types.StatusResponse, error) {
-	envs, err := s.GetEnvironments(ctx)
+	return s.GetStatusAt(ctx, time.Now().UnixMilli())
+}
+
+func (s *Store) GetStatusAt(ctx context.Context, nowMs int64) (*types.StatusResponse, error) {
+	envs, err := s.GetEnvironmentsAt(ctx, nowMs)
 	if err != nil {
 		return nil, fmt.Errorf("getting environments for status: %w", err)
 	}
@@ -95,24 +126,7 @@ func (s *Store) GetStatus(ctx context.Context) (*types.StatusResponse, error) {
 	var requiresAttentionCount int
 	var totalSpend sql.NullFloat64
 
-	nowMs := time.Now().UnixMilli()
-	query := `
-		SELECT
-			COALESCE(SUM(CASE WHEN current_run_id IS NOT NULL THEN 1 ELSE 0 END), 0) AS active_count,
-			COALESCE(SUM(CASE 
-				WHEN current_run_id IS NOT NULL AND (
-					activity IN ('WAITING_QUESTION', 'ERROR') OR
-					(active_tool_started_at IS NOT NULL AND (? - active_tool_started_at) >= 180000) OR
-					(activity = 'BUSY' AND (? - updated_at) >= 120000) OR
-					(activity = 'RATE_LIMITED' AND (? - updated_at) >= 120000 AND (
-						(rate_limit_reset_at IS NOT NULL AND rate_limit_reset_at <= ?) OR
-						(rate_limit_reset_at IS NULL AND (retry_after_seconds IS NULL OR (? - updated_at) >= (retry_after_seconds * 1000)))
-					))
-				) THEN 1 ELSE 0 END), 0) AS attention_count,
-			SUM(cost_usd) AS total_spend
-		FROM agents
-	`
-	err = s.db.QueryRowContext(ctx, query, nowMs, nowMs, nowMs, nowMs, nowMs).Scan(&activeAgentCount, &requiresAttentionCount, &totalSpend)
+	err = s.db.QueryRowContext(ctx, statusQuery, nowMs, nowMs, nowMs, nowMs, nowMs, nowMs).Scan(&activeAgentCount, &requiresAttentionCount, &totalSpend)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("querying status aggregates: %w", err)
 	}
@@ -301,7 +315,7 @@ func scanAgent(s agentRowScanner, nowMs int64) (*types.IAgentState, error) {
 			Hostname:        envHostname,
 			Platform:        envPlatform,
 			User:            envUser,
-			IsStale:         (nowMs - envLastHeartbeat) > 30000,
+			IsStale:         envLastHeartbeat <= 0 || (nowMs-envLastHeartbeat) > EnvironmentStaleThresholdMs,
 			LastHeartbeatAt: envLastHeartbeat,
 		},
 		Project: types.IProjectInfo{
@@ -603,7 +617,7 @@ func (s *Store) GetAgentLogs(ctx context.Context, agentID string, limit int, bef
 				Hostname:        envHostname,
 				Platform:        envPlatform,
 				User:            envUser,
-				IsStale:         (nowMs - envLastHeartbeat) > 30000,
+				IsStale:         envLastHeartbeat <= 0 || (nowMs-envLastHeartbeat) > EnvironmentStaleThresholdMs,
 				LastHeartbeatAt: envLastHeartbeat,
 			},
 			AgentID:        agID,

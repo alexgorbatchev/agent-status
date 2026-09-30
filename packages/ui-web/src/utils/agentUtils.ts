@@ -23,6 +23,10 @@ export type ToolStallTier = "healthy" | "notice" | "warning" | "stalled";
 
 export type IdleFreshness = "fresh" | "standard" | "stale";
 
+export const ENVIRONMENT_STALE_THRESHOLD_MS = 30_000;
+export const SESSION_SILENCE_THRESHOLD_MS = 120_000;
+export const TOOL_STALL_THRESHOLD_MS = 180_000;
+
 const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
 const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
 
@@ -91,7 +95,7 @@ export function getToolStallTier(durationMs: number | null): ToolStallTier {
   if (durationMs < 120000) {
     return "notice";
   }
-  if (durationMs < 180000) {
+  if (durationMs < TOOL_STALL_THRESHOLD_MS) {
     return "warning";
   }
   return "stalled";
@@ -118,15 +122,34 @@ export function formatDuration(durationMs: number): string {
   return `${mins}m`;
 }
 
-export function isSessionStalled(updatedAt: number, now: number = Date.now(), thresholdMs: number = 120_000): boolean {
+export function isSessionStalled(
+  updatedAt: number,
+  now: number = Date.now(),
+  thresholdMs: number = SESSION_SILENCE_THRESHOLD_MS,
+): boolean {
   if (!updatedAt || updatedAt <= 0 || Number.isNaN(updatedAt)) {
     return false;
   }
   return now - updatedAt >= thresholdMs;
 }
 
+export function isEnvironmentStale(
+  lastHeartbeatAt: number,
+  now: number = Date.now(),
+  thresholdMs: number = ENVIRONMENT_STALE_THRESHOLD_MS,
+): boolean {
+  if (!lastHeartbeatAt || lastHeartbeatAt <= 0 || Number.isNaN(lastHeartbeatAt)) {
+    return true;
+  }
+  return now - lastHeartbeatAt > thresholdMs;
+}
+
 export function isAgentRequiringAttention(agent: IAgentState, now: number = Date.now()): boolean {
-  if (agent.activity.lifecycle !== "RUNNING" || agent.environment.isStale) {
+  if (
+    agent.activity.lifecycle !== "RUNNING" ||
+    agent.environment.isStale ||
+    isEnvironmentStale(agent.environment.lastHeartbeatAt, now)
+  ) {
     return false;
   }
   if (agent.activity.activity === "WAITING_QUESTION" || agent.activity.activity === "ERROR") {
