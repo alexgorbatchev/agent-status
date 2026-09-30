@@ -20,6 +20,7 @@ type pendingSummaryCandidate struct {
 	input     summarizer.SummaryInput
 	timestamp int64
 	toolKey   string
+	saveGen   uint64
 }
 
 type subagentState struct {
@@ -78,6 +79,7 @@ type summaryJob struct {
 	input     summarizer.SummaryInput
 	timestamp int64
 	force     bool
+	saveGen   uint64
 	flushDone chan struct{}
 }
 
@@ -117,10 +119,12 @@ type Classifier struct {
 	closed                bool
 	syncMode              bool
 
-	beforeIdleSummarizeHook func(agentID string)
-	beforeIdleSaveHook      func(agentID string)
-	beforeSilenceSaveHook   func(agentID string)
-	afterSubagentDwellHook  func(agentID, subagentID string)
+	beforeIdleSummarizeHook     func(agentID string)
+	beforeIdleSaveHook          func(agentID string)
+	beforeSilenceSaveHook       func(agentID string)
+	beforeSummarySaveHook       func(agentID string)
+	beforeSubagentDwellSaveHook func(agentID, subagentID string)
+	afterSubagentDwellHook      func(agentID, subagentID string)
 }
 
 func New(s *store.Store, p *pricing.Engine, sum *summarizer.Summarizer) *Classifier {
@@ -414,22 +418,68 @@ func (c *Classifier) handleSubagentDwellExpired(agentID, subID string) {
 		c.mu.Unlock()
 		return
 	}
-	delete(actx.subagents, subID)
-
 	if c.store == nil {
 		c.mu.Unlock()
 		return
 	}
+	targetActx := actx
+	scheduledSaveGen := actx.saveGeneration
+	persistMu := &actx.persistMu
+	c.mu.Unlock()
+
+	if c.beforeSubagentDwellSaveHook != nil {
+		c.beforeSubagentDwellSaveHook(agentID, subID)
+	}
+
+	persistMu.Lock()
+
+	c.mu.Lock()
+	actx, ok = c.agentCtx[agentID]
+	if !ok || c.closed || actx != targetActx || actx.saveGeneration != scheduledSaveGen {
+		c.mu.Unlock()
+		persistMu.Unlock()
+		if hook := c.afterSubagentDwellHook; hook != nil {
+			hook(agentID, subID)
+		}
+		return
+	}
+	delete(actx.subagents, subID)
+	c.mu.Unlock()
+
 	agent, err := c.store.GetAgent(agentID)
 	if err != nil || agent == nil || agent.Activity.Lifecycle == types.LifecycleExited {
+		persistMu.Unlock()
+		if hook := c.afterSubagentDwellHook; hook != nil {
+			hook(agentID, subID)
+		}
+		return
+	}
+
+	c.mu.Lock()
+	actx, ok = c.agentCtx[agentID]
+	if !ok || c.closed || actx != targetActx || actx.saveGeneration != scheduledSaveGen {
 		c.mu.Unlock()
+		persistMu.Unlock()
+		if hook := c.afterSubagentDwellHook; hook != nil {
+			hook(agentID, subID)
+		}
 		return
 	}
 	c.rollupActivityLocked(agent, actx, now)
-	_ = c.store.SaveAgentState(*agent)
 	cb := c.onUpdate
 	hook := c.afterSubagentDwellHook
 	c.mu.Unlock()
+
+	saveErr := c.store.SaveAgentState(*agent)
+	persistMu.Unlock()
+
+	if saveErr != nil {
+		logging.Error("saving_subagent_dwell_expired_failed", "err", saveErr, "agentId", agentID, "subagentId", subID)
+		if hook != nil {
+			hook(agentID, subID)
+		}
+		return
+	}
 
 	if cb != nil {
 		cb(agent)
@@ -549,7 +599,7 @@ func (c *Classifier) flushTrailingCandidateLocked(agentID string) {
 		return
 	}
 
-	c.enqueueJobLocked(agentID, input, ts, false)
+	c.enqueueJobLocked(agentID, input, ts, false, cand.saveGen)
 }
 
 // Flush blocks until all pending jobs in the queue for a specific agent have completed.
@@ -1460,7 +1510,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 
 	// Enqueue async LLM summarization job after agent is safely committed to database
 	if pendingJob != nil {
-		c.enqueueJob(agent.ID, pendingJob.input, pendingJob.timestamp, pendingJob.force)
+		c.enqueueJob(agent.ID, pendingJob.input, pendingJob.timestamp, pendingJob.force, pendingJob.saveGen)
 	}
 
 	return agent, nil
@@ -1574,6 +1624,7 @@ func (c *Classifier) dispatchSummaryLocked(agent *types.IAgentState, actx *agent
 			input:     input,
 			timestamp: agent.Activity.UpdatedAt,
 			force:     true,
+			saveGen:   actx.saveGeneration,
 		}
 	}
 
@@ -1615,6 +1666,7 @@ func (c *Classifier) dispatchSummaryLocked(agent *types.IAgentState, actx *agent
 			input:     input,
 			timestamp: agent.Activity.UpdatedAt,
 			force:     false,
+			saveGen:   actx.saveGeneration,
 		}
 	}
 
@@ -1623,6 +1675,7 @@ func (c *Classifier) dispatchSummaryLocked(agent *types.IAgentState, actx *agent
 		input:     input,
 		timestamp: nowMs,
 		toolKey:   currentToolKey,
+		saveGen:   actx.saveGeneration,
 	}
 	if agent.Activity.Activity == types.ActivityBusy {
 		agent.Activity.ActionStale = true
@@ -1668,13 +1721,13 @@ func (c *Classifier) updateSummarization(agent *types.IAgentState, forceTrigger 
 	return c.dispatchSummaryLocked(agent, actx, input, currentToolKey, forceTrigger)
 }
 
-func (c *Classifier) enqueueJob(agentID string, input summarizer.SummaryInput, timestamp int64, force bool) {
+func (c *Classifier) enqueueJob(agentID string, input summarizer.SummaryInput, timestamp int64, force bool, saveGen ...uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.enqueueJobLocked(agentID, input, timestamp, force)
+	c.enqueueJobLocked(agentID, input, timestamp, force, saveGen...)
 }
 
-func (c *Classifier) enqueueJobLocked(agentID string, input summarizer.SummaryInput, timestamp int64, force bool) {
+func (c *Classifier) enqueueJobLocked(agentID string, input summarizer.SummaryInput, timestamp int64, force bool, saveGen ...uint64) {
 	if c.closed {
 		return
 	}
@@ -1690,10 +1743,18 @@ func (c *Classifier) enqueueJobLocked(agentID string, input summarizer.SummaryIn
 		go c.runWorker(agentID, w)
 	}
 
+	var sg uint64
+	if len(saveGen) > 0 && saveGen[0] > 0 {
+		sg = saveGen[0]
+	} else if actx, ok := c.agentCtx[agentID]; ok {
+		sg = actx.saveGeneration
+	}
+
 	job := summaryJob{
 		input:     input,
 		timestamp: timestamp,
 		force:     force,
+		saveGen:   sg,
 	}
 
 	select {
@@ -1772,50 +1833,110 @@ func (c *Classifier) processSummaryJob(agentID string, job summaryJob) {
 		return
 	}
 
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return
+	}
+	actx, ok := c.agentCtx[agentID]
+	if !ok {
+		// Summary jobs only apply to active runs.
+		c.mu.Unlock()
+		return
+	}
+	targetActx := actx
+	scheduledSaveGen := job.saveGen
+	if scheduledSaveGen == 0 {
+		scheduledSaveGen = actx.saveGeneration
+	} else if actx.saveGeneration != scheduledSaveGen {
+		// Newer frame arrived before Summarize was dispatched.
+		c.mu.Unlock()
+		return
+	}
+	persistMu := &actx.persistMu
+	c.mu.Unlock()
+
 	res := c.summarizer.Summarize(context.Background(), job.input)
 	if res.Action == "" {
 		return
 	}
 
+	if c.beforeSummarySaveHook != nil {
+		c.beforeSummarySaveHook(agentID)
+	}
+
+	persistMu.Lock()
+
+	c.mu.Lock()
+	actx, ok = c.agentCtx[agentID]
+	if !ok || c.closed || actx != targetActx || actx.saveGeneration != scheduledSaveGen {
+		c.mu.Unlock()
+		persistMu.Unlock()
+		return
+	}
+	c.mu.Unlock()
+
+	if c.store == nil {
+		persistMu.Unlock()
+		return
+	}
 	agent, err := c.store.GetAgent(agentID)
 	if err != nil || agent == nil {
+		persistMu.Unlock()
 		return
 	}
 
 	if agent.Activity.Activity == types.ActivityRateLimited {
+		persistMu.Unlock()
 		return
 	}
 
 	// Discard stale summary if agent has exited or transitioned to another activity state
 	if agent.Activity.Lifecycle == types.LifecycleExited || (agent.Activity.CurrentRun != nil && agent.Activity.CurrentRun.EndedAt != nil) {
+		persistMu.Unlock()
 		return
 	}
 	if agent.Activity.Activity != job.input.Activity {
+		persistMu.Unlock()
 		return
 	}
+	if !equalPtr(agent.Activity.ActiveTool, job.input.ActiveTool) {
+		persistMu.Unlock()
+		return
+	}
+
+	c.mu.Lock()
+	actx, ok = c.agentCtx[agentID]
+	if !ok || c.closed || actx != targetActx || actx.saveGeneration != scheduledSaveGen {
+		c.mu.Unlock()
+		persistMu.Unlock()
+		return
+	}
+	c.mu.Unlock()
 
 	// Deduplication check: reject near-duplicates when phase and target are unchanged
 	if !shouldApplySummary(&agent.Activity, res) {
 		if agent.Activity.ActionStale {
 			agent.Activity.ActionStale = false
 
-			var persistMu *sync.Mutex
-			c.mu.Lock()
-			if actx, ok := c.agentCtx[agentID]; ok {
-				persistMu = &actx.persistMu
-			}
-			c.mu.Unlock()
-
-			if persistMu != nil {
-				persistMu.Lock()
-			}
-
 			c.syncCompletionToAgentActivity(agentID, agent)
 
-			_ = c.store.SaveAgentState(*agent)
-			if persistMu != nil {
-				persistMu.Unlock()
+			c.mu.Lock()
+			cb := c.onUpdate
+			c.mu.Unlock()
+
+			saveErr := c.store.SaveAgentState(*agent)
+			persistMu.Unlock()
+
+			if saveErr != nil {
+				logging.Error("saving_async_summary_dedup_error", "err", saveErr, "agentId", agentID)
+				return
 			}
+			if cb != nil {
+				cb(agent)
+			}
+		} else {
+			persistMu.Unlock()
 		}
 		return
 	}
@@ -1825,17 +1946,6 @@ func (c *Classifier) processSummaryJob(agentID string, job summaryJob) {
 	agent.Activity.ActionStale = false
 	agent.Activity.UpdatedAt = time.Now().UnixMilli()
 
-	var persistMu *sync.Mutex
-	c.mu.Lock()
-	if actx, ok := c.agentCtx[agentID]; ok {
-		persistMu = &actx.persistMu
-	}
-	c.mu.Unlock()
-
-	if persistMu != nil {
-		persistMu.Lock()
-	}
-
 	c.syncCompletionToAgentActivity(agentID, agent)
 
 	c.mu.Lock()
@@ -1843,9 +1953,7 @@ func (c *Classifier) processSummaryJob(agentID string, job summaryJob) {
 	c.mu.Unlock()
 
 	saveErr := c.store.SaveAgentState(*agent)
-	if persistMu != nil {
-		persistMu.Unlock()
-	}
+	persistMu.Unlock()
 
 	if saveErr != nil {
 		logging.Error("saving_async_summary_error", "err", saveErr, "agentId", agentID)
@@ -1992,7 +2100,7 @@ func (c *Classifier) handleIdleTransition(agentID string, scheduledGen uint64) {
 	}
 
 	if job != nil {
-		c.enqueueJob(agent.ID, job.input, job.timestamp, job.force)
+		c.enqueueJob(agent.ID, job.input, job.timestamp, job.force, job.saveGen)
 	}
 
 	c.mu.Lock()
@@ -2132,7 +2240,7 @@ func (c *Classifier) handleSilenceTransition(agentID string, scheduledGen uint64
 	}
 
 	if job != nil {
-		c.enqueueJob(agent.ID, job.input, job.timestamp, job.force)
+		c.enqueueJob(agent.ID, job.input, job.timestamp, job.force, job.saveGen)
 	}
 
 	c.mu.Lock()

@@ -3,6 +3,7 @@ package classifier
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -2520,6 +2521,9 @@ func TestClassifier_CoverageEdgeCases(t *testing.T) {
 	if err := s2.SaveAgentState(agentState); err != nil {
 		t.Fatalf("SaveAgentState failed: %v", err)
 	}
+	c2.mu.Lock()
+	c2.agentCtx[agentID] = &agentContext{}
+	c2.mu.Unlock()
 	c2.processSummaryJob(agentID, summaryJob{
 		input: summarizer.SummaryInput{
 			Activity:      types.ActivityBusy,
@@ -11822,5 +11826,789 @@ func TestClassifier_ProcessSummaryJob_StoreFallbackLockSeparationAndSymmetricSyn
 	}
 	if loaded.Activity.CompletedAt == nil || *loaded.Activity.CompletedAt != 3000 {
 		t.Errorf("expected CompletedAt = 3000 from store fallback, got %v", loaded.Activity.CompletedAt)
+	}
+}
+
+func TestClassifier_ProcessSummaryJob_NewerFrameDoesNotOverwriteFileState(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New failed: %v", err)
+	}
+	c, st := newTestClassifier(t, sum)
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{
+		ID:       "env-summary-race",
+		Label:    "workstation",
+		Hostname: "workstation",
+		Platform: "darwin",
+		User:     "engineer",
+	}
+	ws := types.IWorkspaceInfo{
+		Branch: "main",
+		CWD:    "/path/to/repo",
+	}
+	proj := types.IProjectInfo{
+		ID:            "repo",
+		Name:          "repo",
+		CanonicalRoot: "/path/to/repo",
+	}
+	agentID := "env-summary-race:claude-code:sess-summary-race"
+
+	baseFrame := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-summary-race",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+	}
+
+	// 1. run_started
+	fStart := baseFrame
+	fStart.Seq = 1
+	fStart.Timestamp = 1000
+	fStart.EventType = "run_started"
+	if _, err := c.ProcessFrame(fStart); err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+
+	// 2. tool_call (first frame) with 100 tokens
+	toolGrep := "Grep"
+	fTool1 := baseFrame
+	fTool1.Seq = 2
+	fTool1.Timestamp = 1010
+	fTool1.EventType = "tool_call"
+	fTool1.Data = types.TelemetryFrameData{
+		ToolName: &toolGrep,
+		Usage: &types.ITokenUsage{
+			Input: 100,
+			Total: 100,
+		},
+	}
+	if _, err := c.ProcessFrame(fTool1); err != nil {
+		t.Fatalf("tool_call 1 failed: %v", err)
+	}
+
+	// Verify store has 100 tokens
+	initLoaded, err := st.GetAgent(agentID)
+	if err != nil || initLoaded == nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if initLoaded.Activity.Usage.Total != 100 {
+		t.Fatalf("expected 100 tokens, got %d", initLoaded.Activity.Usage.Total)
+	}
+
+	// 3. Register hook to inject newer frame between GetAgent and SaveAgentState
+	hookCalled := false
+	c.beforeSummarySaveHook = func(id string) {
+		hookCalled = true
+		toolBash := "Bash"
+		fNewer := baseFrame
+		fNewer.Seq = 3
+		fNewer.Timestamp = 1050
+		fNewer.EventType = "tool_call"
+		fNewer.Data = types.TelemetryFrameData{
+			ToolName: &toolBash,
+			Usage: &types.ITokenUsage{
+				Input: 5000,
+				Total: 5000,
+			},
+		}
+		if _, err := c.ProcessFrame(fNewer); err != nil {
+			t.Fatalf("ProcessFrame in beforeSummarySaveHook failed: %v", err)
+		}
+	}
+
+	// 4. Run processSummaryJob for the original tool
+	target := "main.go"
+	job := summaryJob{
+		input: summarizer.SummaryInput{
+			Activity:     types.ActivityBusy,
+			ActiveTool:   &toolGrep,
+			ActiveTarget: &target,
+		},
+		timestamp: 1010,
+	}
+	c.processSummaryJob(agentID, job)
+
+	if !hookCalled {
+		t.Fatalf("expected beforeSummarySaveHook to be called")
+	}
+
+	// 5. Verify SQLite: newer frame's state (tokens=5100, ActiveTool="Bash") must NOT be overwritten!
+	loaded, err := st.GetAgent(agentID)
+	if err != nil || loaded == nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if loaded.Activity.Usage.Total != 5100 {
+		t.Errorf("FAIL: summary job overwrote newer frame usage totals: expected 5100, got %d", loaded.Activity.Usage.Total)
+	}
+	if loaded.Activity.ActiveTool == nil || *loaded.Activity.ActiveTool != "Bash" {
+		t.Errorf("FAIL: summary job overwrote newer frame active tool: expected 'Bash', got %v", loaded.Activity.ActiveTool)
+	}
+}
+
+func TestClassifier_HandleSubagentDwellExpired_NewerFrameDoesNotOverwriteFileState(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New failed: %v", err)
+	}
+	c, st := newTestClassifier(t, sum)
+	defer func() { _ = c.Close() }()
+
+	env := types.IEnvironmentInfo{
+		ID:       "env-dwell-race",
+		Label:    "workstation",
+		Hostname: "workstation",
+		Platform: "darwin",
+		User:     "engineer",
+	}
+	ws := types.IWorkspaceInfo{
+		Branch: "main",
+		CWD:    "/path/to/repo",
+	}
+	proj := types.IProjectInfo{
+		ID:            "repo",
+		Name:          "repo",
+		CanonicalRoot: "/path/to/repo",
+	}
+	agentID := "env-dwell-race:claude-code:sess-dwell-race"
+	subID := "sub-dwell-1"
+
+	baseFrame := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-dwell-race",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+	}
+
+	// 1. run_started
+	fStart := baseFrame
+	fStart.Seq = 1
+	fStart.Timestamp = 1000
+	fStart.EventType = "run_started"
+	if _, err := c.ProcessFrame(fStart); err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+
+	// 2. Subagent tool_call with 100 tokens
+	subTool := "Read"
+	fSubStart := baseFrame
+	fSubStart.Seq = 2
+	fSubStart.SubagentID = &subID
+	fSubStart.Timestamp = 1010
+	fSubStart.EventType = "tool_call"
+	fSubStart.Data = types.TelemetryFrameData{
+		ToolName: &subTool,
+		Usage: &types.ITokenUsage{
+			Input: 100,
+			Total: 100,
+		},
+	}
+	if _, err := c.ProcessFrame(fSubStart); err != nil {
+		t.Fatalf("subagent tool_call failed: %v", err)
+	}
+
+	// 3. Subagent completes (turn_end)
+	stopReason := "end_turn"
+	fSubEnd := baseFrame
+	fSubEnd.Seq = 3
+	fSubEnd.SubagentID = &subID
+	fSubEnd.Timestamp = 1020
+	fSubEnd.EventType = "turn_end"
+	fSubEnd.Data = types.TelemetryFrameData{
+		StopReason: &stopReason,
+	}
+	if _, err := c.ProcessFrame(fSubEnd); err != nil {
+		t.Fatalf("subagent turn_end failed: %v", err)
+	}
+
+	// Cancel scheduled timer so we invoke handleSubagentDwellExpired directly
+	c.mu.Lock()
+	c.cancelSubagentTimerLocked(agentID, subID)
+	// Force startedAt far in the past so diff <= 1 (dwell expired)
+	if actx := c.agentCtx[agentID]; actx != nil {
+		if sub, ok := actx.subagents[subID]; ok {
+			sub.startedAt = 1
+		}
+	}
+	c.mu.Unlock()
+
+	// 4. Register hook: inject a newer frame between read and save
+	hookCalled := false
+	c.beforeSubagentDwellSaveHook = func(aID, sID string) {
+		hookCalled = true
+		toolBash := "Bash"
+		fNewer := baseFrame
+		fNewer.Seq = 4
+		fNewer.Timestamp = 40000
+		fNewer.EventType = "tool_call"
+		fNewer.Data = types.TelemetryFrameData{
+			ToolName: &toolBash,
+			Usage: &types.ITokenUsage{
+				Input: 5000,
+				Total: 5000,
+			},
+		}
+		if _, err := c.ProcessFrame(fNewer); err != nil {
+			t.Fatalf("ProcessFrame in beforeSubagentDwellSaveHook failed: %v", err)
+		}
+	}
+
+	// 5. Trigger dwell expiration
+	c.handleSubagentDwellExpired(agentID, subID)
+
+	if !hookCalled {
+		t.Fatalf("expected beforeSubagentDwellSaveHook to be called")
+	}
+
+	// 6. Verify SQLite: newer frame's state (tokens=5100, ActiveTool="Bash") must NOT be overwritten!
+	loaded, err := st.GetAgent(agentID)
+	if err != nil || loaded == nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if loaded.Activity.Usage.Total != 5100 {
+		t.Errorf("FAIL: dwell expired overwrote newer frame usage totals: expected 5100, got %d", loaded.Activity.Usage.Total)
+	}
+	if loaded.Activity.ActiveTool == nil || *loaded.Activity.ActiveTool != "Bash" {
+		t.Errorf("FAIL: dwell expired overwrote newer frame active tool: expected 'Bash', got %v", loaded.Activity.ActiveTool)
+	}
+	for _, sub := range loaded.Activity.ActiveSubagents {
+		if sub.ID == subID {
+			t.Errorf("FAIL: subagent %q was not pruned from ActiveSubagents", subID)
+		}
+	}
+}
+
+func TestClassifier_ProcessSummaryJob_FramesArrivingDuringLLMInference_InvalidatesStaleSummary(t *testing.T) {
+	inferenceStarted := make(chan struct{}, 1)
+	inferenceResume := make(chan struct{})
+
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		bodyStr := string(body)
+
+		var action, target string
+		if strings.Contains(bodyStr, "Active Tool: Grep") {
+			select {
+			case inferenceStarted <- struct{}{}:
+			default:
+			}
+			<-inferenceResume
+			action = "Stale grep search in progress"
+			target = "old_file.go"
+		} else {
+			action = "Running bash script"
+			target = "new_script.sh"
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]interface{}{
+			"id":     "chatcmpl-stale-test",
+			"object": "chat.completion",
+			"choices": []map[string]interface{}{
+				{
+					"index": 0,
+					"message": map[string]interface{}{
+						"role":    "assistant",
+						"content": fmt.Sprintf(`{"action":%q,"phase":"investigating","activeTarget":%q}`, action, target),
+					},
+					"finish_reason": "stop",
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	t.Cleanup(mockServer.Close)
+
+	p, err := openai.New(
+		anyllm.WithBaseURL(mockServer.URL+"/v1"),
+		anyllm.WithAPIKey("test-key"),
+	)
+	if err != nil {
+		t.Fatalf("openai.New() failed: %v", err)
+	}
+
+	sum, err := summarizer.New(summarizer.Config{
+		Providers: []summarizer.ProviderConfig{
+			{
+				Name:     "mock-openai",
+				Provider: p,
+				Model:    "gpt-4o-mini",
+			},
+		},
+		DebounceWindow: 10 * time.Second,
+		Timeout:        5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("summarizer.New() failed: %v", err)
+	}
+
+	c, st := newTestClassifier(t, sum)
+	defer func() { _ = c.Close() }()
+
+	var updates []string
+	var updateMu sync.Mutex
+	c.onUpdate = func(a *types.IAgentState) {
+		updateMu.Lock()
+		defer updateMu.Unlock()
+		if a.Activity.Action != "" {
+			updates = append(updates, a.Activity.Action)
+		}
+	}
+
+	env := types.IEnvironmentInfo{
+		ID:       "env-inference-race",
+		Label:    "workstation",
+		Hostname: "workstation",
+		Platform: "darwin",
+		User:     "engineer",
+	}
+	ws := types.IWorkspaceInfo{
+		Branch: "main",
+		CWD:    "/path/to/repo",
+	}
+	proj := types.IProjectInfo{
+		ID:            "repo",
+		Name:          "repo",
+		CanonicalRoot: "/path/to/repo",
+	}
+	agentID := "env-inference-race:claude-code:sess-inference-race"
+
+	baseFrame := types.ITelemetryFrame{
+		Version:     "1.0",
+		EnvID:       env.ID,
+		Environment: env,
+		AgentID:     agentID,
+		SessionID:   "sess-inference-race",
+		Harness:     types.HarnessClaudeCode,
+		Project:     proj,
+		Workspace:   ws,
+	}
+
+	// 1. run_started
+	fStart := baseFrame
+	fStart.Seq = 1
+	fStart.Timestamp = 1000
+	fStart.EventType = "run_started"
+	if _, err := c.ProcessFrame(fStart); err != nil {
+		t.Fatalf("run_started failed: %v", err)
+	}
+
+	// 2. tool_call Grep (triggers async LLM summarization)
+	toolGrep := "Grep"
+	targetOld := "old_file.go"
+	fGrep := baseFrame
+	fGrep.Seq = 2
+	fGrep.Timestamp = 1010
+	fGrep.EventType = "tool_call"
+	fGrep.Data = types.TelemetryFrameData{
+		ToolName: &toolGrep,
+		ToolInput: map[string]interface{}{
+			"path": targetOld,
+		},
+		Usage: &types.ITokenUsage{
+			Input: 100,
+			Total: 100,
+		},
+	}
+	if _, err := c.ProcessFrame(fGrep); err != nil {
+		t.Fatalf("tool_call Grep failed: %v", err)
+	}
+
+	// Wait for LLM inference to begin in the background worker
+	select {
+	case <-inferenceStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for LLM inference to start")
+	}
+
+	// 3. While LLM inference is in flight, a newer frame arrives (tool_call Bash, 5000 tokens)
+	toolBash := "Bash"
+	targetNew := "new_script.sh"
+	fBash := baseFrame
+	fBash.Seq = 3
+	fBash.Timestamp = 1050
+	fBash.EventType = "tool_call"
+	fBash.Data = types.TelemetryFrameData{
+		ToolName: &toolBash,
+		ToolInput: map[string]interface{}{
+			"command": targetNew,
+		},
+		Usage: &types.ITokenUsage{
+			Input: 5000,
+			Total: 5000,
+		},
+	}
+	if _, err := c.ProcessFrame(fBash); err != nil {
+		t.Fatalf("tool_call Bash failed: %v", err)
+	}
+
+	// Verify that SQLite currently holds the newer frame's state (Bash, 5100 total tokens)
+	current, err := st.GetAgent(agentID)
+	if err != nil || current == nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if current.Activity.Usage.Total != 5100 {
+		t.Fatalf("expected 5100 total tokens before resuming inference, got %d", current.Activity.Usage.Total)
+	}
+	if current.Activity.ActiveTool == nil || *current.Activity.ActiveTool != "Bash" {
+		t.Fatalf("expected ActiveTool = 'Bash' before resuming inference, got %v", current.Activity.ActiveTool)
+	}
+
+	// 4. Release mock LLM inference to return the stale Grep summary
+	close(inferenceResume)
+
+	// Flush all pending classifier worker jobs
+	c.Flush(agentID)
+
+	// 5. Verify SQLite: the stale summary must have been invalidated!
+	loaded, err := st.GetAgent(agentID)
+	if err != nil || loaded == nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+
+	// The newer frame's ActiveTool ("Bash") and token count (5100) must NOT be overwritten
+	if loaded.Activity.ActiveTool == nil || *loaded.Activity.ActiveTool != "Bash" {
+		t.Errorf("FAIL: stale summary overwrote active tool: expected 'Bash', got %v", loaded.Activity.ActiveTool)
+	}
+	if loaded.Activity.Usage.Total != 5100 {
+		t.Errorf("FAIL: stale summary overwrote usage: expected 5100, got %d", loaded.Activity.Usage.Total)
+	}
+	if loaded.Activity.Action == "Stale grep search in progress" {
+		t.Errorf("FAIL: stale summary was applied to agent state: %q", loaded.Activity.Action)
+	}
+
+	updateMu.Lock()
+	for _, up := range updates {
+		if up == "Stale grep search in progress" {
+			t.Errorf("FAIL: onUpdate was called with stale summary: %q", up)
+		}
+	}
+	updateMu.Unlock()
+}
+
+func TestClassifier_ProcessSummaryJob_ActiveToolMismatch_AbortsWithoutSaving(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New failed: %v", err)
+	}
+	c, st := newTestClassifier(t, sum)
+	defer func() { _ = c.Close() }()
+
+	agentID := "env-tool-mismatch:claude-code:sess-tool-mismatch"
+	toolBash := "Bash"
+	toolGrep := "Grep"
+
+	c.mu.Lock()
+	c.agentCtx[agentID] = &agentContext{
+		saveGeneration: 1,
+	}
+	c.mu.Unlock()
+
+	agent := &types.IAgentState{
+		ID:        agentID,
+		SessionID: "sess-tool-mismatch",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-tool-mismatch",
+			Platform: "darwin",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "main",
+			CWD:    "/path/to/repo",
+		},
+		Project: types.IProjectInfo{
+			ID:            "repo",
+			Name:          "repo",
+			CanonicalRoot: "/path/to/repo",
+		},
+		Activity: types.IAgentActivity{
+			Activity:   types.ActivityBusy,
+			ActiveTool: &toolBash,
+		},
+	}
+	if err := st.SaveAgentState(*agent); err != nil {
+		t.Fatalf("SaveAgentState failed: %v", err)
+	}
+
+	// Summary job is for "Grep", but agent currently has "Bash"
+	job := summaryJob{
+		input: summarizer.SummaryInput{
+			Activity:   types.ActivityBusy,
+			ActiveTool: &toolGrep,
+		},
+		saveGen: 1,
+	}
+
+	c.processSummaryJob(agentID, job)
+
+	loaded, err := st.GetAgent(agentID)
+	if err != nil || loaded == nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if loaded.Activity.ActiveTool == nil || *loaded.Activity.ActiveTool != "Bash" {
+		t.Errorf("expected ActiveTool to remain Bash, got %v", loaded.Activity.ActiveTool)
+	}
+	if loaded.Activity.Action != "" {
+		t.Errorf("expected no action to be set for mismatched tool, got %q", loaded.Activity.Action)
+	}
+}
+
+func TestClassifier_ProcessSummaryJob_InactiveRun_AbortsEarly(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New failed: %v", err)
+	}
+	c, st := newTestClassifier(t, sum)
+	defer func() { _ = c.Close() }()
+
+	agentID := "env-inactive:claude-code:sess-inactive"
+	agent := &types.IAgentState{
+		ID:        agentID,
+		SessionID: "sess-inactive",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-inactive",
+			Platform: "darwin",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "main",
+			CWD:    "/path/to/repo",
+		},
+		Project: types.IProjectInfo{
+			ID:            "repo",
+			Name:          "repo",
+			CanonicalRoot: "/path/to/repo",
+		},
+		Activity: types.IAgentActivity{
+			Activity: types.ActivityBusy,
+			Action:   "initial",
+		},
+	}
+	if err := st.SaveAgentState(*agent); err != nil {
+		t.Fatalf("SaveAgentState failed: %v", err)
+	}
+
+	// Agent is NOT in c.agentCtx
+	job := summaryJob{
+		input: summarizer.SummaryInput{
+			Activity: types.ActivityBusy,
+		},
+	}
+	c.processSummaryJob(agentID, job)
+
+	loaded, err := st.GetAgent(agentID)
+	if err != nil || loaded == nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if loaded.Activity.Action != "initial" {
+		t.Errorf("expected action to remain 'initial' for inactive run, got %q", loaded.Activity.Action)
+	}
+}
+
+func TestClassifier_ProcessSummaryJob_RateLimited_AbortsEarly(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New failed: %v", err)
+	}
+	c, st := newTestClassifier(t, sum)
+	defer func() { _ = c.Close() }()
+
+	agentID := "env-rl-job:claude-code:sess-rl-job"
+	c.mu.Lock()
+	c.agentCtx[agentID] = &agentContext{saveGeneration: 1}
+	c.mu.Unlock()
+
+	agent := &types.IAgentState{
+		ID:        agentID,
+		SessionID: "sess-rl-job",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-rl-job",
+			Platform: "darwin",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "main",
+			CWD:    "/path/to/repo",
+		},
+		Project: types.IProjectInfo{
+			ID:            "repo",
+			Name:          "repo",
+			CanonicalRoot: "/path/to/repo",
+		},
+		Activity: types.IAgentActivity{
+			Activity: types.ActivityRateLimited,
+			Action:   "rate-limited",
+		},
+	}
+	if err := st.SaveAgentState(*agent); err != nil {
+		t.Fatalf("SaveAgentState failed: %v", err)
+	}
+
+	job := summaryJob{
+		input: summarizer.SummaryInput{
+			Activity: types.ActivityRateLimited,
+		},
+		saveGen: 1,
+	}
+	c.processSummaryJob(agentID, job)
+
+	loaded, err := st.GetAgent(agentID)
+	if err != nil || loaded == nil {
+		t.Fatalf("GetAgent failed: %v", err)
+	}
+	if loaded.Activity.Action != "rate-limited" {
+		t.Errorf("expected action to remain 'rate-limited', got %q", loaded.Activity.Action)
+	}
+}
+
+func TestClassifier_HandleSubagentDwellExpired_AgentExited_HookCalled(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New failed: %v", err)
+	}
+	c, st := newTestClassifier(t, sum)
+	defer func() { _ = c.Close() }()
+
+	agentID := "env-dwell-hook:claude-code:sess-dwell-hook"
+	subID := "sub-1"
+	compAt := int64(1000)
+
+	c.mu.Lock()
+	c.agentCtx[agentID] = &agentContext{
+		saveGeneration: 1,
+		subagents: map[string]*subagentState{
+			subID: {
+				id:          subID,
+				startedAt:   1,
+				completedAt: &compAt,
+			},
+		},
+	}
+	c.mu.Unlock()
+
+	// Agent in store has exited
+	agent := &types.IAgentState{
+		ID:        agentID,
+		SessionID: "sess-dwell-hook",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-dwell-hook",
+			Platform: "darwin",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "main",
+			CWD:    "/path/to/repo",
+		},
+		Project: types.IProjectInfo{
+			ID:            "repo",
+			Name:          "repo",
+			CanonicalRoot: "/path/to/repo",
+		},
+		Activity: types.IAgentActivity{
+			Activity:  types.ActivityIdle,
+			Lifecycle: types.LifecycleExited,
+		},
+	}
+	if err := st.SaveAgentState(*agent); err != nil {
+		t.Fatalf("SaveAgentState failed: %v", err)
+	}
+
+	hookCalled := false
+	c.afterSubagentDwellHook = func(aID, sID string) {
+		if aID == agentID && sID == subID {
+			hookCalled = true
+		}
+	}
+
+	c.handleSubagentDwellExpired(agentID, subID)
+
+	if !hookCalled {
+		t.Errorf("expected afterSubagentDwellHook to be called when agent is exited")
+	}
+}
+
+func TestClassifier_HandleSubagentDwellExpired_SaveErrorLoggedAndHookCalled(t *testing.T) {
+	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
+	if err != nil {
+		t.Fatalf("summarizer.New failed: %v", err)
+	}
+	c, st := newTestClassifier(t, sum)
+	defer func() { _ = c.Close() }()
+
+	agentID := "env-dwell-err:claude-code:sess-dwell-err"
+	subID := "sub-err"
+	compAt := int64(1000)
+
+	c.mu.Lock()
+	c.agentCtx[agentID] = &agentContext{
+		saveGeneration: 1,
+		subagents: map[string]*subagentState{
+			subID: {
+				id:          subID,
+				startedAt:   1,
+				completedAt: &compAt,
+			},
+		},
+	}
+	c.mu.Unlock()
+
+	agent := &types.IAgentState{
+		ID:        agentID,
+		SessionID: "sess-dwell-err",
+		Harness:   types.HarnessClaudeCode,
+		Environment: types.IEnvironmentInfo{
+			ID:       "env-dwell-err",
+			Platform: "darwin",
+		},
+		Workspace: types.IWorkspaceInfo{
+			Branch: "main",
+			CWD:    "/path/to/repo",
+		},
+		Project: types.IProjectInfo{
+			ID:            "repo",
+			Name:          "repo",
+			CanonicalRoot: "/path/to/repo",
+		},
+		Activity: types.IAgentActivity{
+			Activity: types.ActivityBusy,
+		},
+	}
+	if err := st.SaveAgentState(*agent); err != nil {
+		t.Fatalf("SaveAgentState failed: %v", err)
+	}
+
+	hookCalled := false
+	c.afterSubagentDwellHook = func(aID, sID string) {
+		if aID == agentID && sID == subID {
+			hookCalled = true
+		}
+	}
+
+	cbCalled := false
+	c.onUpdate = func(a *types.IAgentState) {
+		cbCalled = true
+	}
+
+	// Install SQLite trigger that fails the update inside SaveAgentState
+	c.beforeSubagentDwellSaveHook = func(aID, sID string) {
+		_, _ = st.DB().Exec("CREATE TRIGGER fail_subagent_dwell_update BEFORE UPDATE ON agents BEGIN SELECT RAISE(FAIL, 'simulated save error'); END;")
+	}
+
+	c.handleSubagentDwellExpired(agentID, subID)
+
+	if !hookCalled {
+		t.Errorf("expected afterSubagentDwellHook to be called when SaveAgentState fails")
+	}
+	if cbCalled {
+		t.Errorf("expected onUpdate NOT to be called when SaveAgentState fails")
 	}
 }
