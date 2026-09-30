@@ -1164,13 +1164,6 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			}
 
 		case "turn_end":
-			if frame.Data.RateLimitResetAt != nil {
-				agent.Activity.RateLimitResetAt = frame.Data.RateLimitResetAt
-			}
-			if frame.Data.RetryAfterSeconds != nil {
-				agent.Activity.RetryAfterSeconds = frame.Data.RetryAfterSeconds
-			}
-
 			if frame.Data.Content != nil && strings.TrimSpace(*frame.Data.Content) != "" {
 				c.mu.Lock()
 				actx.lastAssistantResponse = strings.TrimSpace(*frame.Data.Content)
@@ -1288,22 +1281,14 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 							agent.Activity.CompletedAt = int64Ptr(now)
 						}
 						agent.Activity.Activity = types.ActivityIdle
-						if frame.Data.RateLimitResetAt == nil {
-							agent.Activity.RateLimitResetAt = nil
-						}
-						if frame.Data.RetryAfterSeconds == nil {
-							agent.Activity.RetryAfterSeconds = nil
-						}
+						agent.Activity.RateLimitResetAt = nil
+						agent.Activity.RetryAfterSeconds = nil
 						pendingJob = c.updateSummarization(agent, true)
 					} else {
 						// Keep agent BUSY during grace period and schedule transition to IDLE if no new events arrive.
 						agent.Activity.Activity = types.ActivityBusy
-						if frame.Data.RateLimitResetAt == nil {
-							agent.Activity.RateLimitResetAt = nil
-						}
-						if frame.Data.RetryAfterSeconds == nil {
-							agent.Activity.RetryAfterSeconds = nil
-						}
+						agent.Activity.RateLimitResetAt = nil
+						agent.Activity.RetryAfterSeconds = nil
 						c.mu.Lock()
 						actx.turnEndTimestamp = now
 						c.scheduleIdleTransitionLocked(agent.ID, actx.rootGeneration, gracePeriod)
@@ -1481,6 +1466,8 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		actx.completedAt = agent.Activity.CompletedAt
 	} else {
 		agent.Activity.ActiveSubagents = nil
+		agent.Activity.RateLimitResetAt = nil
+		agent.Activity.RetryAfterSeconds = nil
 		actx.hasUnseenCompletion = nil
 		actx.completedAt = nil
 		actx.rootRateLimitResetAt = nil
@@ -2306,6 +2293,10 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 	agent.Activity.ActiveSubagents = summaries
 
 	if len(actx.subagents) == 0 {
+		if agent.Activity.Activity != types.ActivityRateLimited {
+			agent.Activity.RateLimitResetAt = nil
+			agent.Activity.RetryAfterSeconds = nil
+		}
 		return
 	}
 
@@ -2433,6 +2424,11 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 		} else {
 			agent.Activity.Action = "Idle"
 		}
+	}
+
+	if agent.Activity.Activity != types.ActivityRateLimited {
+		agent.Activity.RateLimitResetAt = nil
+		agent.Activity.RetryAfterSeconds = nil
 	}
 }
 

@@ -11,7 +11,7 @@ Central telemetry ingestion daemon (`air-ingester`) that receives agent events, 
 
 ## Local conventions
 - SQLite schema migrations are defined sequentially in `internal/store/migrations.go`. Table rebuild migrations must pin a single dedicated connection via `db.Conn(ctx)` to disable foreign keys, run the transaction, verify `PRAGMA foreign_key_check`, and re-enable foreign keys, preventing accidental cascade deletion of related tables across pooled connections.
-- Structured rate-limit metadata (`RateLimitResetAt`, `RetryAfterSeconds`) extracted from telemetry frames is persisted to the `agents` table and attached to `IAgentActivity`, elevating activity to `RATE_LIMITED` and preserving reset targets across turns (`internal/classifier/classifier.go`, `internal/store/store.go`).
+- Structured rate-limit metadata (`RateLimitResetAt`, `RetryAfterSeconds`) extracted from telemetry frames is persisted to the `agents` table and attached to `IAgentActivity`, elevating activity to `RATE_LIMITED`; rate-limit reset fields are cleared whenever the resulting activity is not `RATE_LIMITED` (`internal/classifier/classifier.go`, `internal/store/store.go`).
 - Silence timers are scheduled on rate-limit error frames (`scheduleSilenceTimerLocked`) so that unrecovered or abandoned throttled sessions transition to `IDLE` after the silence timeout window instead of stalling in `RATE_LIMITED` indefinitely (`internal/classifier/classifier.go`).
 - Hidden agent state is stored in SQLite (`is_hidden`, `hidden_at`); incoming telemetry frames with new activity automatically reset `is_hidden = 0`.
 - Real-time updates broadcast over Unix domain socket `$XDG_RUNTIME_DIR/agent-status/notify.sock` via `internal/notify/publisher.go`.

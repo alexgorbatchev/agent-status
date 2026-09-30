@@ -9931,45 +9931,141 @@ func TestClassifier_RateLimitedActivity(t *testing.T) {
 		}
 	})
 
-	t.Run("turn_end preserves specifically supplied RateLimitResetAt and RetryAfterSeconds on busy agent", func(t *testing.T) {
-		c := newTestClassifier()
-		fStart := baseFrame
-		fStart.AgentID = "agent-te-rl-busy"
-		fStart.SessionID = "sess-te-rl-busy"
-		fStart.Seq = 1
-		fStart.Timestamp = 1000
-		fStart.EventType = "turn_start"
-		agentStart, err := c.ProcessFrame(fStart)
-		if err != nil {
-			t.Fatalf("turn_start failed: %v", err)
-		}
-		if agentStart.Activity.Activity != types.ActivityBusy {
-			t.Fatalf("expected ActivityBusy, got %v", agentStart.Activity.Activity)
+	t.Run("turn_end clears RateLimitResetAt and RetryAfterSeconds when not RATE_LIMITED", func(t *testing.T) {
+		tests := []struct {
+			name          string
+			hasSubagent   bool
+			sendTextFrame bool
+		}{
+			{
+				name:          "no subagents, turn_end",
+				hasSubagent:   false,
+				sendTextFrame: false,
+			},
+			{
+				name:          "no subagents, turn_end then text frame",
+				hasSubagent:   false,
+				sendTextFrame: true,
+			},
+			{
+				name:          "busy subagent, turn_end",
+				hasSubagent:   true,
+				sendTextFrame: false,
+			},
+			{
+				name:          "busy subagent, turn_end then text frame",
+				hasSubagent:   true,
+				sendTextFrame: true,
+			},
 		}
 
-		fEnd := baseFrame
-		fEnd.AgentID = "agent-te-rl-busy"
-		fEnd.SessionID = "sess-te-rl-busy"
-		fEnd.Seq = 2
-		fEnd.Timestamp = 2000
-		fEnd.EventType = "turn_end"
-		stopReason := "end_turn"
-		resetAt := int64(1700000060000)
-		retrySec := int64(60)
-		fEnd.Data = types.TelemetryFrameData{
-			StopReason:        &stopReason,
-			RateLimitResetAt:  &resetAt,
-			RetryAfterSeconds: &retrySec,
-		}
-		agentEnd, err := c.ProcessFrame(fEnd)
-		if err != nil {
-			t.Fatalf("turn_end failed: %v", err)
-		}
-		if agentEnd.Activity.RateLimitResetAt == nil || *agentEnd.Activity.RateLimitResetAt != resetAt {
-			t.Fatalf("expected RateLimitResetAt %d preserved on turn_end, got %v", resetAt, agentEnd.Activity.RateLimitResetAt)
-		}
-		if agentEnd.Activity.RetryAfterSeconds == nil || *agentEnd.Activity.RetryAfterSeconds != retrySec {
-			t.Fatalf("expected RetryAfterSeconds %d preserved on turn_end, got %v", retrySec, agentEnd.Activity.RetryAfterSeconds)
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				c := newTestClassifier()
+				agentID := "agent-te-rl-table"
+				sessionID := "sess-te-rl-table"
+				var seq int64 = 1
+
+				if tc.hasSubagent {
+					subID := "sub-1"
+					toolName := "Read"
+					fSub := baseFrame
+					fSub.AgentID = agentID
+					fSub.SessionID = sessionID
+					fSub.Seq = seq
+					seq++
+					fSub.Timestamp = 500
+					fSub.SubagentID = &subID
+					fSub.EventType = "tool_call"
+					fSub.Data = types.TelemetryFrameData{
+						ToolName: &toolName,
+					}
+					if _, err := c.ProcessFrame(fSub); err != nil {
+						t.Fatalf("subagent tool_call failed: %v", err)
+					}
+				}
+
+				fStart := baseFrame
+				fStart.AgentID = agentID
+				fStart.SessionID = sessionID
+				fStart.Seq = seq
+				seq++
+				fStart.Timestamp = 1000
+				fStart.EventType = "turn_start"
+				agentStart, err := c.ProcessFrame(fStart)
+				if err != nil {
+					t.Fatalf("turn_start failed: %v", err)
+				}
+				if agentStart.Activity.Activity != types.ActivityBusy {
+					t.Fatalf("expected ActivityBusy, got %v", agentStart.Activity.Activity)
+				}
+
+				fEnd := baseFrame
+				fEnd.AgentID = agentID
+				fEnd.SessionID = sessionID
+				fEnd.Seq = seq
+				seq++
+				fEnd.Timestamp = 2000
+				fEnd.EventType = "turn_end"
+				stopReason := "end_turn"
+				resetAt := int64(1700000060000)
+				retrySec := int64(60)
+				fEnd.Data = types.TelemetryFrameData{
+					StopReason:        &stopReason,
+					RateLimitResetAt:  &resetAt,
+					RetryAfterSeconds: &retrySec,
+				}
+				agentEnd, err := c.ProcessFrame(fEnd)
+				if err != nil {
+					t.Fatalf("turn_end failed: %v", err)
+				}
+
+				lastAgent := agentEnd
+				if tc.sendTextFrame {
+					fText := baseFrame
+					fText.AgentID = agentID
+					fText.SessionID = sessionID
+					fText.Seq = seq
+					fText.Timestamp = 3000
+					fText.EventType = "text"
+					content := "working on task"
+					fText.Data = types.TelemetryFrameData{
+						Content: &content,
+					}
+					agentText, err := c.ProcessFrame(fText)
+					if err != nil {
+						t.Fatalf("text frame failed: %v", err)
+					}
+					lastAgent = agentText
+				}
+
+				if lastAgent.Activity.Activity == types.ActivityRateLimited {
+					t.Fatalf("expected activity not to be RATE_LIMITED, got %v", lastAgent.Activity.Activity)
+				}
+				if lastAgent.Activity.RateLimitResetAt != nil {
+					t.Errorf("expected in-memory RateLimitResetAt to be nil, got %v", *lastAgent.Activity.RateLimitResetAt)
+				}
+				if lastAgent.Activity.RetryAfterSeconds != nil {
+					t.Errorf("expected in-memory RetryAfterSeconds to be nil, got %v", *lastAgent.Activity.RetryAfterSeconds)
+				}
+
+				persisted, err := c.store.GetAgent(agentID)
+				if err != nil {
+					t.Fatalf("store.GetAgent failed: %v", err)
+				}
+				if persisted == nil {
+					t.Fatalf("persisted agent is nil")
+				}
+				if persisted.Activity.Activity == types.ActivityRateLimited {
+					t.Fatalf("expected persisted activity not to be RATE_LIMITED, got %v", persisted.Activity.Activity)
+				}
+				if persisted.Activity.RateLimitResetAt != nil {
+					t.Errorf("expected persisted RateLimitResetAt to be nil, got %v", *persisted.Activity.RateLimitResetAt)
+				}
+				if persisted.Activity.RetryAfterSeconds != nil {
+					t.Errorf("expected persisted RetryAfterSeconds to be nil, got %v", *persisted.Activity.RetryAfterSeconds)
+				}
+			})
 		}
 	})
 
@@ -11122,7 +11218,7 @@ func TestClassifier_RateLimitSilenceDuration_HugeResetAt_OverflowProtection(t *t
 	}
 }
 
-func TestClassifier_TurnEnd_IdleGracePeriod_PreservesSuppliedRateLimitMetadata(t *testing.T) {
+func TestClassifier_TurnEnd_IdleGracePeriod_ClearsRateLimitMetadataWhenBusy(t *testing.T) {
 	sum, err := summarizer.New(summarizer.Config{NoSummarize: true})
 	if err != nil {
 		t.Fatalf("summarizer.New() failed: %v", err)
@@ -11198,15 +11294,15 @@ func TestClassifier_TurnEnd_IdleGracePeriod_PreservesSuppliedRateLimitMetadata(t
 		t.Fatalf("turn_end failed: %v", err)
 	}
 
-	// During grace period, agent remains BUSY and supplied rate-limit metadata must be preserved
+	// During grace period, agent remains BUSY and supplied rate-limit metadata must be cleared outside RATE_LIMITED
 	if agent.Activity.Activity != types.ActivityBusy {
 		t.Fatalf("expected agent Activity to be BUSY during grace period, got %v", agent.Activity.Activity)
 	}
-	if agent.Activity.RateLimitResetAt == nil || *agent.Activity.RateLimitResetAt != resetAt {
-		t.Errorf("expected RateLimitResetAt %d preserved, got %v", resetAt, agent.Activity.RateLimitResetAt)
+	if agent.Activity.RateLimitResetAt != nil {
+		t.Errorf("expected RateLimitResetAt to be nil outside RATE_LIMITED, got %v", agent.Activity.RateLimitResetAt)
 	}
-	if agent.Activity.RetryAfterSeconds == nil || *agent.Activity.RetryAfterSeconds != retrySec {
-		t.Errorf("expected RetryAfterSeconds %d preserved, got %v", retrySec, agent.Activity.RetryAfterSeconds)
+	if agent.Activity.RetryAfterSeconds != nil {
+		t.Errorf("expected RetryAfterSeconds to be nil outside RATE_LIMITED, got %v", agent.Activity.RetryAfterSeconds)
 	}
 
 	// Also verify stored agent in database
@@ -11220,11 +11316,11 @@ func TestClassifier_TurnEnd_IdleGracePeriod_PreservesSuppliedRateLimitMetadata(t
 	if loaded.Activity.Activity != types.ActivityBusy {
 		t.Errorf("expected stored agent Activity to be BUSY, got %v", loaded.Activity.Activity)
 	}
-	if loaded.Activity.RateLimitResetAt == nil || *loaded.Activity.RateLimitResetAt != resetAt {
-		t.Errorf("expected stored RateLimitResetAt %d preserved, got %v", resetAt, loaded.Activity.RateLimitResetAt)
+	if loaded.Activity.RateLimitResetAt != nil {
+		t.Errorf("expected stored RateLimitResetAt to be nil outside RATE_LIMITED, got %v", loaded.Activity.RateLimitResetAt)
 	}
-	if loaded.Activity.RetryAfterSeconds == nil || *loaded.Activity.RetryAfterSeconds != retrySec {
-		t.Errorf("expected stored RetryAfterSeconds %d preserved, got %v", retrySec, loaded.Activity.RetryAfterSeconds)
+	if loaded.Activity.RetryAfterSeconds != nil {
+		t.Errorf("expected stored RetryAfterSeconds to be nil outside RATE_LIMITED, got %v", loaded.Activity.RetryAfterSeconds)
 	}
 
 	// Subsequent turn_end without rate-limit metadata clears it
