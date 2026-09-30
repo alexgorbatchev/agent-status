@@ -1,17 +1,22 @@
 package stream
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-server/internal/store"
 )
@@ -644,5 +649,188 @@ func TestSubscriber_ReconcileSnapshotOnReconnectionAfterMissedEvents(t *testing.
 		}
 	case <-time.After(1 * time.Second):
 		t.Fatal("timed out waiting for snapshot event on reconnection after missed events")
+	}
+}
+
+func TestSubscriber_ReadLoop_ContextCancellationUnblocks(t *testing.T) {
+	mockStore := &mockStoreReader{}
+	hub := NewHub()
+	defer hub.Close()
+
+	sub := NewSubscriber(SubscriberConfig{}, mockStore, hub)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	client, server := net.Pipe()
+	defer func() { _ = server.Close() }()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		sub.readLoop(ctx, client)
+	}()
+
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(1 * time.Second):
+		t.Fatal("readLoop did not exit promptly after context cancellation")
+	}
+}
+
+func TestSubscriber_ReadLoop_NoGoroutineLeak(t *testing.T) {
+	mockStore := &mockStoreReader{}
+	hub := NewHub()
+	defer hub.Close()
+
+	sub := NewSubscriber(SubscriberConfig{}, mockStore, hub)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	baseline := runtime.NumGoroutine()
+
+	const cycles = 10
+	for i := 0; i < cycles; i++ {
+		client, server := net.Pipe()
+		_ = server.Close()
+		sub.readLoop(ctx, client)
+	}
+
+	leaked := runtime.NumGoroutine() - baseline
+	if leaked > 1 {
+		t.Fatalf("expected goroutine count to be stable (<= 1), but leaked %d goroutines across %d readLoop calls", leaked, cycles)
+	}
+}
+
+func TestSubscriber_Reconnect_NoGoroutineLeak(t *testing.T) {
+	baseline := runtime.NumGoroutine()
+
+	sockPath := filepath.Join(t.TempDir(), "notify.sock")
+
+	listener, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("creating test unix socket: %v", err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	mockStore := &mockStoreReader{}
+	hub := NewHub()
+	defer hub.Close()
+
+	sub := NewSubscriber(SubscriberConfig{
+		SocketPath:    sockPath,
+		ReconnectWait: 5 * time.Millisecond,
+	}, mockStore, hub)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		sub.Run(ctx)
+	}()
+
+	const cycles = 10
+	for i := 0; i < cycles; i++ {
+		conn, err := listener.Accept()
+		if err != nil {
+			t.Fatalf("accept failed on cycle %d: %v", i, err)
+		}
+		_ = conn.Close()
+	}
+
+	leaked := runtime.NumGoroutine() - baseline - 1
+	if leaked > 1 {
+		t.Fatalf("expected goroutine count to be stable across reconnects (<= 1), but leaked %d goroutines across %d reconnect cycles", leaked, cycles)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for sub.Run to exit")
+	}
+}
+
+type stubConn struct {
+	net.Conn
+	readErr error
+}
+
+func (s *stubConn) Read(b []byte) (n int, err error) {
+	if s.readErr != nil {
+		return 0, s.readErr
+	}
+	return s.Conn.Read(b)
+}
+
+func TestSubscriber_ReadLoop_ErrorLoggingSuppressedOnCancelledContext(t *testing.T) {
+	var buf bytes.Buffer
+	logger := logging.New(&buf, "test", "warn")
+
+	mockStore := &mockStoreReader{}
+	hub := NewHub()
+	defer hub.Close()
+
+	sub := NewSubscriber(SubscriberConfig{Logger: logger}, mockStore, hub)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	client, server := net.Pipe()
+	defer func() { _ = server.Close() }()
+
+	stub := &stubConn{Conn: client, readErr: errors.New("read error while cancelled")}
+	sub.readLoop(ctx, stub)
+
+	if strings.Contains(buf.String(), "notify_socket_read_error") {
+		t.Fatalf("expected warning to be suppressed when ctx is cancelled, got: %s", buf.String())
+	}
+}
+
+func TestSubscriber_ReadLoop_ErrorLoggingSuppressedOnClosedPipe(t *testing.T) {
+	var buf bytes.Buffer
+	logger := logging.New(&buf, "test", "warn")
+
+	mockStore := &mockStoreReader{}
+	hub := NewHub()
+	defer hub.Close()
+
+	sub := NewSubscriber(SubscriberConfig{Logger: logger}, mockStore, hub)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	client, server := net.Pipe()
+	defer func() { _ = server.Close() }()
+
+	stub := &stubConn{Conn: client, readErr: io.ErrClosedPipe}
+	sub.readLoop(ctx, stub)
+
+	if strings.Contains(buf.String(), "notify_socket_read_error") {
+		t.Fatalf("expected warning to be suppressed on io.ErrClosedPipe, got: %s", buf.String())
+	}
+}
+
+func TestSubscriber_ReadLoop_ErrorLoggingLoggedOnUnexpectedError(t *testing.T) {
+	var buf bytes.Buffer
+	logger := logging.New(&buf, "test", "warn")
+
+	mockStore := &mockStoreReader{}
+	hub := NewHub()
+	defer hub.Close()
+
+	sub := NewSubscriber(SubscriberConfig{Logger: logger}, mockStore, hub)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	client, server := net.Pipe()
+	defer func() { _ = server.Close() }()
+
+	stub := &stubConn{Conn: client, readErr: errors.New("unexpected socket fault")}
+	sub.readLoop(ctx, stub)
+
+	if !strings.Contains(buf.String(), "notify_socket_read_error") {
+		t.Fatalf("expected warning to be logged on unexpected error, got: %s", buf.String())
 	}
 }

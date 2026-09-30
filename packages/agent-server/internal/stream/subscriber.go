@@ -118,10 +118,10 @@ func (s *Subscriber) readLoop(ctx context.Context, conn net.Conn) {
 	}()
 
 	// Close conn if context canceled
-	go func() {
-		<-ctx.Done()
+	stop := context.AfterFunc(ctx, func() {
 		_ = conn.Close()
-	}()
+	})
+	defer stop()
 
 	scanner := bufio.NewScanner(conn)
 	// Allocate scanner buffer up to 16MB for large telemetry events
@@ -162,7 +162,7 @@ func (s *Subscriber) readLoop(ctx context.Context, conn net.Conn) {
 		s.hub.Broadcast(&event)
 	}
 
-	if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {
+	if err := scanner.Err(); err != nil && ctx.Err() == nil && !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) && !errors.Is(err, io.ErrClosedPipe) {
 		s.logger.WarnContext(ctx, "notify_socket_read_error", "err", err)
 	}
 }
