@@ -1013,9 +1013,9 @@ describe("AgentCard Component", () => {
       expect(html).toContain('<span data-testid="StatusBadge--label">Completed</span>');
     });
 
-    it("acknowledges completion and returns badge to Idle when clicked", async () => {
+    it("acknowledges completion and calls onAcknowledgeCompletion when clicked", async () => {
       const { mockDoc, cleanup } = setupMockDomEnvironment();
-      let acknowledged = false;
+      let acknowledgedId = "";
       let openedDrawer = false;
       const completedAgent = factory_agentState({
         activity: {
@@ -1033,8 +1033,8 @@ describe("AgentCard Component", () => {
           onOpenDrawer={() => {
             openedDrawer = true;
           }}
-          onAcknowledgeCompletion={() => {
-            acknowledged = true;
+          onAcknowledgeCompletion={(agentId) => {
+            acknowledgedId = agentId;
           }}
         />,
         mockDoc,
@@ -1051,10 +1051,7 @@ describe("AgentCard Component", () => {
       });
 
       expect(openedDrawer).toBe(true);
-      expect(acknowledged).toBe(true);
-
-      const statusLabelAfter = container.querySelector('[data-testid="StatusBadge--label"]');
-      expect(statusLabelAfter?.textContent).toBe("Idle");
+      expect(acknowledgedId).toBe(completedAgent.id);
 
       await unmount();
       cleanup();
@@ -1104,7 +1101,7 @@ describe("AgentCard Component", () => {
 
     it("acknowledges completion on Enter key down", async () => {
       const { mockDoc, cleanup } = setupMockDomEnvironment();
-      let acknowledged = false;
+      let acknowledgedId = "";
       const completedAgent = factory_agentState({
         activity: {
           ...fixture_agentStateRunning.activity,
@@ -1118,8 +1115,8 @@ describe("AgentCard Component", () => {
       const { container, unmount } = await mountComponent(
         <AgentCard
           agent={completedAgent}
-          onAcknowledgeCompletion={() => {
-            acknowledged = true;
+          onAcknowledgeCompletion={(agentId) => {
+            acknowledgedId = agentId;
           }}
         />,
         mockDoc,
@@ -1132,9 +1129,7 @@ describe("AgentCard Component", () => {
         card.dispatchEvent({ type: "keydown", key: "Enter", bubbles: true });
       });
 
-      expect(acknowledged).toBe(true);
-      const statusLabelAfter = container.querySelector('[data-testid="StatusBadge--label"]');
-      expect(statusLabelAfter?.textContent).toBe("Idle");
+      expect(acknowledgedId).toBe(completedAgent.id);
 
       await unmount();
       cleanup();

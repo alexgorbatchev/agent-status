@@ -732,4 +732,81 @@ describe("App Layout & Session Visibility", () => {
       console.error = originalConsoleError;
     }
   });
+
+  it("reverts optimistic completion dismissal and restores Completed badge when dismissCompletion fails", async () => {
+    const { mockDoc, cleanup } = setupMockDomEnvironment();
+    envCleanup = cleanup;
+
+    const originalConsoleError = console.error;
+    console.error = () => {};
+
+    try {
+      const { promise: fetchPromise, resolve: resolveFetch } = Promise.withResolvers<Response>();
+      globalThis.fetch = (() => fetchPromise) as unknown as typeof fetch;
+
+      const completedAgent: IAgentState = {
+        ...fixture_agentStateRunning,
+        id: "agent-completed-rollback",
+        activity: {
+          ...fixture_agentStateRunning.activity,
+          lifecycle: "RUNNING",
+          activity: "IDLE",
+          hasUnseenCompletion: true,
+          completedAt: Date.now() - 5000,
+        },
+      };
+
+      const { container, unmount } = await mountComponent(
+        <App apiBaseUrl="http://localhost:4501" token="custom-token" />,
+        mockDoc,
+      );
+
+      await act(async () => {
+        const snapshotEvent = new CustomEvent<ServerEvent>("mock-sse-event", {
+          detail: {
+            type: "snapshot",
+            at: Date.now(),
+            agents: [completedAgent],
+            environments: [completedAgent.environment],
+          },
+        });
+        window.dispatchEvent(snapshotEvent);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+
+      const card = container.querySelector('[data-testid="AgentCard"]');
+      assert(card, "AgentCard must be rendered");
+
+      const statusBadgeBefore = container.querySelector('[data-testid="StatusBadge--label"]');
+      expect(statusBadgeBefore?.textContent).toBe("Completed");
+
+      // Click card to acknowledge completion: triggers optimistic update while fetch is pending
+      await act(async () => {
+        card.click();
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      });
+
+      const statusBadgeOptimistic = container.querySelector('[data-testid="StatusBadge--label"]');
+      expect(statusBadgeOptimistic?.textContent).toBe("Idle");
+
+      // Resolve fetch with 500 failure
+      await act(async () => {
+        resolveFetch(
+          new Response(JSON.stringify({ error: "Database disk is full" }), {
+            status: 500,
+            statusText: "Internal Server Error",
+          }),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      });
+
+      // After dismissal failure, optimistic update must be rolled back:
+      const statusBadgeAfter = container.querySelector('[data-testid="StatusBadge--label"]');
+      expect(statusBadgeAfter?.textContent).toBe("Completed");
+
+      await unmount();
+    } finally {
+      console.error = originalConsoleError;
+    }
+  });
 });

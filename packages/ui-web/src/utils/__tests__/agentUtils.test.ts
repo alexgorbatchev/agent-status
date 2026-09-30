@@ -877,7 +877,7 @@ describe("agentUtils", () => {
         hasUnseenCompletion: true,
       };
       expect(getAgentIdleFreshness(unseenActivity, now)).toBe("fresh");
-      expect(getAgentIdleFreshness(unseenActivity, now, true)).toBe("stale");
+      expect(getAgentIdleFreshness({ ...unseenActivity, hasUnseenCompletion: false }, now)).toBe("stale");
 
       const exitedActivity: IAgentActivity = {
         ...eligibleStale,
@@ -896,7 +896,7 @@ describe("agentUtils", () => {
         hasUnseenCompletion: true,
       };
       expect(getAgentIdleFreshness(unseenActivity, now)).toBe("fresh");
-      expect(getAgentIdleFreshness(unseenActivity, now, true)).toBe("stale");
+      expect(getAgentIdleFreshness({ ...unseenActivity, hasUnseenCompletion: false }, now)).toBe("stale");
     });
   });
 

@@ -59,15 +59,11 @@ export function isAgentStaleIdle(
   return getIdleFreshness(activity.updatedAt, now) === "stale";
 }
 
-export function getAgentIdleFreshness(
-  activity: IAgentActivity,
-  now: number = Date.now(),
-  acknowledgedCompletion: boolean = false,
-): IdleFreshness {
+export function getAgentIdleFreshness(activity: IAgentActivity, now: number = Date.now()): IdleFreshness {
   if (activity.lifecycle !== "RUNNING" || activity.activity !== "IDLE") {
     return "fresh";
   }
-  const effectiveHasUnseenCompletion = Boolean(activity.hasUnseenCompletion) && !acknowledgedCompletion;
+  const effectiveHasUnseenCompletion = Boolean(activity.hasUnseenCompletion);
   if (effectiveHasUnseenCompletion) {
     return "fresh";
   }

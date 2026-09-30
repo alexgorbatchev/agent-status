@@ -69,23 +69,10 @@ export function AgentCard({
   const [showSubagents, setShowSubagents] = useState<boolean>(defaultShowSubagents);
   const { activity, environment, workspace, harness } = agent;
 
-  const hasUnseenCompletionProp = Boolean(activity.hasUnseenCompletion);
-  const currentCompletedAt = activity.completedAt;
-  const [acknowledged, setAcknowledged] = useState<boolean>(false);
-  const [prevHasUnseen, setPrevHasUnseen] = useState<boolean>(hasUnseenCompletionProp);
-  const [prevCompletedAt, setPrevCompletedAt] = useState<number | null | undefined>(currentCompletedAt);
-
-  if (hasUnseenCompletionProp !== prevHasUnseen || currentCompletedAt !== prevCompletedAt) {
-    setPrevHasUnseen(hasUnseenCompletionProp);
-    setPrevCompletedAt(currentCompletedAt);
-    setAcknowledged(false);
-  }
-
-  const effectiveHasUnseenCompletion = hasUnseenCompletionProp && !acknowledged;
+  const hasUnseenCompletion = Boolean(activity.hasUnseenCompletion);
 
   const handleAcknowledgeCompletion = () => {
-    if (effectiveHasUnseenCompletion) {
-      setAcknowledged(true);
+    if (hasUnseenCompletion) {
       onAcknowledgeCompletion?.(agent.id);
     }
   };
@@ -115,7 +102,7 @@ export function AgentCard({
   const silenceMinutes = Math.floor(silenceMs / 60000);
   const silenceDuration = `${silenceMinutes}m`;
 
-  const freshness: IdleFreshness = getAgentIdleFreshness(activity, now, acknowledged);
+  const freshness: IdleFreshness = getAgentIdleFreshness(activity, now);
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.target !== event.currentTarget) {
@@ -140,7 +127,7 @@ export function AgentCard({
   const isRateLimited = activity.activity === "RATE_LIMITED";
   const isAttentionState = isError || isWaitingQuestion || isRateLimited;
   const brandState = isAttentionState ? "muted" : isFinished ? "quiescent" : "active";
-  const isCompleted = effectiveHasUnseenCompletion && activity.lifecycle === "RUNNING" && activity.activity === "IDLE";
+  const isCompleted = hasUnseenCompletion && activity.lifecycle === "RUNNING" && activity.activity === "IDLE";
   const semanticStatus = isError
     ? "error"
     : isWaitingQuestion || isRateLimited || isStalled || sessionStalled
@@ -291,7 +278,7 @@ export function AgentCard({
               toolDuration={formattedDuration ?? undefined}
               isSessionStalled={sessionStalled}
               silenceDuration={sessionStalled ? silenceDuration : undefined}
-              hasUnseenCompletion={effectiveHasUnseenCompletion}
+              hasUnseenCompletion={hasUnseenCompletion}
             />
           </div>
         </div>

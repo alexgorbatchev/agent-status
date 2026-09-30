@@ -12,8 +12,8 @@ import { filterActiveAgents } from "../utils/agentUtils";
 import { ViewSwitcher } from "../components/ViewSwitcher";
 import { IconWrapper } from "../components/IconWrapper";
 import { Layers, Server, Eye, EyeOff, Activity } from "lucide-react";
-import { DEFAULT_DEV_TOKEN, resolveApiBaseUrl } from "../utils/config";
-import { dismissCompletion } from "../services/api";
+import { DEFAULT_DEV_TOKEN } from "../utils/config";
+import { dismissCompletion, setAgentVisibility } from "../services/api";
 import { clsx } from "clsx";
 
 export interface IAppProps {
@@ -22,7 +22,6 @@ export interface IAppProps {
 }
 
 export function App({ apiBaseUrl, token = DEFAULT_DEV_TOKEN }: IAppProps = {}): React.JSX.Element {
-  const resolvedBaseUrl = resolveApiBaseUrl(apiBaseUrl);
   const { agents, environments, isConnected, error, updateAgent } = useEventStream(apiBaseUrl, token);
   const [groupBy, setGroupBy] = useState<GroupByOption>("project");
   const [selectedAgent, setSelectedAgent] = useState<IAgentState | null>(null);
@@ -62,35 +61,45 @@ export function App({ apiBaseUrl, token = DEFAULT_DEV_TOKEN }: IAppProps = {}): 
       const nextHidden = !agent.isHidden;
       updateAgent?.({ ...agent, isHidden: nextHidden });
 
-      try {
-        const response = await fetch(`${resolvedBaseUrl}/api/v1/agents/${encodeURIComponent(agent.id)}`, {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ isHidden: nextHidden }),
-        });
-        if (!response.ok) {
-          throw new Error(`Failed to update visibility: ${response.statusText}`);
-        }
-      } catch (err) {
-        console.error("Failed to toggle agent visibility:", err);
+      const res = await setAgentVisibility(agent.id, nextHidden, apiBaseUrl, token);
+      if (!res.ok) {
+        console.error("Failed to toggle agent visibility:", res.error);
         // Revert optimistic update on error
         updateAgent?.({ ...agent, isHidden: agent.isHidden });
       }
     },
-    [resolvedBaseUrl, token, updateAgent],
+    [apiBaseUrl, token, updateAgent],
   );
 
   const handleAcknowledgeCompletion = useCallback(
     async (agentId: string) => {
+      const targetAgent = agents.find((a) => a.id === agentId);
+      if (!targetAgent) {
+        return;
+      }
+      const previousValue = targetAgent.activity.hasUnseenCompletion;
+      updateAgent?.({
+        ...targetAgent,
+        activity: {
+          ...targetAgent.activity,
+          hasUnseenCompletion: false,
+        },
+      });
+
       const res = await dismissCompletion(agentId, apiBaseUrl, token);
       if (!res.ok) {
         console.error("Failed to dismiss completion:", res.error);
+        // Revert optimistic update on error
+        updateAgent?.({
+          ...targetAgent,
+          activity: {
+            ...targetAgent.activity,
+            hasUnseenCompletion: previousValue,
+          },
+        });
       }
     },
-    [apiBaseUrl, token],
+    [agents, apiBaseUrl, token, updateAgent],
   );
 
   const projectGroups = useMemo(
