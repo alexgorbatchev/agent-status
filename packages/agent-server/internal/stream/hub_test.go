@@ -472,3 +472,175 @@ func TestHub_BroadcastSnapshot(t *testing.T) {
 		}
 	})
 }
+
+func TestHub_Broadcast_EvictsSlowSubscriberOnStateBearingEvents(t *testing.T) {
+	t.Run("evicts slow subscriber when buffer is full on agent_upsert", func(t *testing.T) {
+		hub := NewHub()
+		defer hub.Close()
+
+		ch := hub.SubscribeGlobal()
+		if hub.GlobalSubscriberCount() != 1 {
+			t.Fatalf("GlobalSubscriberCount() = %d, want 1", hub.GlobalSubscriberCount())
+		}
+
+		// Fill subscriber buffer to capacity (ClientChanBufferSize = 64)
+		for i := 0; i < ClientChanBufferSize; i++ {
+			hub.Broadcast(&types.IServerEvent{
+				Type: "agent_upsert",
+				At:   time.Now().UnixMilli(),
+				Agent: &types.IAgentState{
+					ID: "agent-initial",
+				},
+			})
+		}
+
+		// Buffer is full. Broadcast state-bearing agent_upsert.
+		hub.Broadcast(&types.IServerEvent{
+			Type: "agent_upsert",
+			At:   time.Now().UnixMilli(),
+			Agent: &types.IAgentState{
+				ID: "agent-update",
+			},
+		})
+
+		// Slow subscriber must be evicted and channel closed so client reconnects for fresh snapshot
+		if got := hub.GlobalSubscriberCount(); got != 0 {
+			t.Fatalf("GlobalSubscriberCount() = %d, want 0 (subscriber should be evicted on agent_upsert drop)", got)
+		}
+
+		// Drain pre-existing items
+		for i := 0; i < ClientChanBufferSize; i++ {
+			select {
+			case <-ch:
+			case <-time.After(100 * time.Millisecond):
+				t.Fatalf("timed out reading pre-existing event %d", i)
+			}
+		}
+
+		// Channel must be closed now
+		select {
+		case _, ok := <-ch:
+			if ok {
+				t.Fatal("expected subscriber channel to be closed after eviction, but was still open")
+			}
+		case <-time.After(100 * time.Millisecond):
+			t.Fatal("timed out waiting for channel to close after eviction")
+		}
+
+		// Safe duplicate unsubscribe
+		hub.UnsubscribeGlobal(ch)
+		if hub.GlobalSubscriberCount() != 0 {
+			t.Errorf("GlobalSubscriberCount() = %d, want 0", hub.GlobalSubscriberCount())
+		}
+	})
+
+	t.Run("evicts slow subscriber when buffer is full on environment_upsert", func(t *testing.T) {
+		hub := NewHub()
+		defer hub.Close()
+
+		ch := hub.SubscribeGlobal()
+
+		for i := 0; i < ClientChanBufferSize; i++ {
+			ch <- &types.IServerEvent{Type: "fill"}
+		}
+
+		hub.Broadcast(&types.IServerEvent{
+			Type: "environment_upsert",
+			At:   time.Now().UnixMilli(),
+			Environment: &types.IEnvironmentInfo{
+				ID: "env-1",
+			},
+		})
+
+		if got := hub.GlobalSubscriberCount(); got != 0 {
+			t.Fatalf("GlobalSubscriberCount() = %d, want 0 (subscriber should be evicted on environment_upsert drop)", got)
+		}
+
+		for i := 0; i < ClientChanBufferSize; i++ {
+			<-ch
+		}
+		select {
+		case _, ok := <-ch:
+			if ok {
+				t.Fatal("expected subscriber channel to be closed after eviction")
+			}
+		case <-time.After(100 * time.Millisecond):
+			t.Fatal("timed out waiting for channel to close")
+		}
+	})
+
+	t.Run("evicts only full subscriber when multiple subscribers exist on agent_upsert", func(t *testing.T) {
+		hub := NewHub()
+		defer hub.Close()
+
+		slowCh := hub.SubscribeGlobalWithID("sub-slow")
+		fastCh := hub.SubscribeGlobalWithID("sub-fast")
+
+		// Fill only slow subscriber's buffer
+		for i := 0; i < ClientChanBufferSize; i++ {
+			slowCh <- &types.IServerEvent{Type: "fill"}
+		}
+
+		event := &types.IServerEvent{
+			Type: "agent_upsert",
+			At:   time.Now().UnixMilli(),
+			Agent: &types.IAgentState{
+				ID: "agent-1",
+			},
+		}
+
+		hub.Broadcast(event)
+
+		if got := hub.GlobalSubscriberCount(); got != 1 {
+			t.Fatalf("GlobalSubscriberCount() = %d, want 1", got)
+		}
+
+		// Fast subscriber receives the agent_upsert
+		select {
+		case evt := <-fastCh:
+			if evt.Type != "agent_upsert" || evt.Agent.ID != "agent-1" {
+				t.Fatalf("fastCh received unexpected event: %+v", evt)
+			}
+		case <-time.After(100 * time.Millisecond):
+			t.Fatal("timed out waiting for agent_upsert on fastCh")
+		}
+
+		// Slow subscriber was closed after eviction
+		for i := 0; i < ClientChanBufferSize; i++ {
+			<-slowCh
+		}
+		select {
+		case _, ok := <-slowCh:
+			if ok {
+				t.Fatal("expected slowCh to be closed after eviction")
+			}
+		case <-time.After(100 * time.Millisecond):
+			t.Fatal("timed out waiting for slowCh to close")
+		}
+	})
+
+	t.Run("logs subscriber_evicted on dropped agent_upsert", func(t *testing.T) {
+		var logBuf bytes.Buffer
+		customLogger := logging.NewWithMode(&logBuf, "test-server", "debug", true)
+		hub := NewHub(customLogger)
+		defer hub.Close()
+
+		ch := hub.SubscribeGlobalWithID("sub-slow-agent")
+		for i := 0; i < ClientChanBufferSize; i++ {
+			ch <- &types.IServerEvent{Type: "fill"}
+		}
+
+		hub.Broadcast(&types.IServerEvent{
+			Type: "agent_upsert",
+			At:   time.Now().UnixMilli(),
+			Agent: &types.IAgentState{
+				ID: "agent-1",
+			},
+		})
+
+		logs := logBuf.String()
+		if !strings.Contains(logs, "action=subscriber_evicted") || !strings.Contains(logs, "event_type=agent_upsert") || !strings.Contains(logs, "subscriber_id=sub-slow-agent") {
+			t.Errorf("expected logs to contain subscriber_evicted with event_type=agent_upsert, got:\n%s", logs)
+		}
+	})
+}

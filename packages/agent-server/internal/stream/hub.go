@@ -118,6 +118,15 @@ func (h *Hub) UnsubscribeAgentTail(agentID string, ch chan *types.ITelemetryFram
 	}
 }
 
+// isStateBearingEvent reports whether an event carries authoritative state
+// (snapshot, agent_upsert, environment_*, etc.) that subscribers must not miss.
+// When a slow subscriber cannot accept a state-bearing event, it is evicted
+// to force an SSE reconnect and per-client initial snapshot resync.
+// Tail telemetry frames (log_append) are lossy and do not evict subscribers.
+func isStateBearingEvent(eventType string) bool {
+	return eventType != "log_append"
+}
+
 // Broadcast sends an event to all global subscribers and any relevant agent tail subscribers.
 func (h *Hub) Broadcast(event *types.IServerEvent) {
 	if event == nil {
@@ -134,7 +143,7 @@ func (h *Hub) Broadcast(event *types.IServerEvent) {
 		select {
 		case ch <- event:
 		default:
-			if event.Type == "snapshot" {
+			if isStateBearingEvent(event.Type) {
 				delete(h.globalSubscribers, ch)
 				close(ch)
 				h.log().Warn("subscriber_evicted", "subscriber_id", subID, "event_type", event.Type)

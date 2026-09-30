@@ -16,7 +16,7 @@ Central REST API and Server-Sent Events (SSE) daemon (`air-server`) providing qu
 - Agent mutations (visibility toggling via `isHidden` and turn completion dismissal via `dismissCompletion` or `acknowledgeCompletion`) via `PATCH /api/v1/agents/{id}` forward composite or individual payloads directly to `air-ingester` (`PATCH /api/v1/internal/agents/{id}`) to preserve read-only SQLite access.
 - Live updates subscribe to `$XDG_RUNTIME_DIR/agent-status/notify.sock` and fan out to connected SSE clients via `internal/stream/hub.go`.
 - Socket subscriber executes `reconcileSnapshot` (`internal/stream/subscriber.go`) on initial connection and upon every reconnection to rebuild and broadcast a full database snapshot, preventing lost frames or stale state across ingester restarts.
-- Hub evicts slow global subscribers when buffer is full on snapshot broadcast (`action=subscriber_evicted`) to force client reconnect and prevent permanent desynchronization.
+- Hub evicts slow global subscribers when buffer is full on state-bearing event broadcast (snapshot, agent_upsert, environment_*, `action=subscriber_evicted`) to force client reconnect and prevent permanent desynchronization. Tail telemetry (`log_append`) drops remain lossy (`action=subscriber_dropped`).
 
 ## Local gotchas
 
