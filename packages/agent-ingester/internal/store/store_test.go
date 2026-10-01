@@ -766,6 +766,21 @@ func TestStore_Open_Errors(t *testing.T) {
 		t.Errorf("expected error from Open with impossible directory, got nil")
 	}
 
+	// Parent directory creation fails cleanly when a regular file blocks the path
+	blocker := filepath.Join(t.TempDir(), "blocker_file")
+	if err := os.WriteFile(blocker, []byte("data"), 0644); err != nil {
+		t.Fatalf("creating blocker file failed: %v", err)
+	}
+	_ = os.RemoveAll("file:")
+	t.Cleanup(func() { _ = os.RemoveAll("file:") })
+	if _, err := Open(filepath.Join(blocker, "test.db")); err == nil {
+		t.Errorf("expected error from Open when parent directory creation fails, got nil")
+	}
+	if _, err := os.Stat("file:"); !os.IsNotExist(err) {
+		_ = os.RemoveAll("file:")
+		t.Errorf("store test created persistent 'file:' directory in working tree")
+	}
+
 	// 2. Error during Migrate in Open
 	dbPath := filepath.Join(t.TempDir(), "conflict.db")
 	rawDB, err := sql.Open("sqlite3", dbPath)
@@ -2603,11 +2618,6 @@ func TestStore_RecordTelemetryEvent_SubagentAndCoverage(t *testing.T) {
 	}
 	if gotRL.Activity.Activity != types.ActivityRateLimited {
 		t.Errorf("got activity %s, want %s", gotRL.Activity.Activity, types.ActivityRateLimited)
-	}
-
-	// Test Open error with inaccessible path
-	if _, err := Open("file:/nonexistent_dir/sub/test.db?mode=ro"); err == nil {
-		t.Errorf("expected error opening non-existent read-only path")
 	}
 }
 
