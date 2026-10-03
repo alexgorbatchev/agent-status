@@ -5,7 +5,7 @@ go 1.26.2
 require (
 	github.com/alexgorbatchev/agent-parser v1.0.0
 	github.com/alexgorbatchev/agent-status/packages/agent-common v0.0.0-00010101000000-000000000000
-	github.com/alexgorbatchev/agent-watcher v1.0.0
+	github.com/alexgorbatchev/agent-watcher v1.0.1
 	github.com/alexgorbatchev/cobra-help-tree v1.1.0
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/coder/websocket v1.8.15

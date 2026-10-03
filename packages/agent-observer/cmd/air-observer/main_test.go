@@ -1688,8 +1688,10 @@ func TestObserverStartupPrunesCursors(t *testing.T) {
 	if _, ok := saved["valid"]; !ok {
 		t.Errorf("expected valid cursor to be retained")
 	}
-	if _, ok := saved["old_active"]; !ok {
+	if cursor, ok := saved["old_active"]; !ok || cursor == nil {
 		t.Errorf("expected old_active cursor for existing file to be retained on startup")
+	} else if cursor.Offset != initialCursors["old_active"].Offset {
+		t.Errorf("old_active cursor offset = %d, want committed offset %d", cursor.Offset, initialCursors["old_active"].Offset)
 	}
 	if _, ok := saved["missing"]; ok {
 		t.Errorf("expected missing cursor to be pruned on startup")

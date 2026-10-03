@@ -15,7 +15,7 @@ require (
 	github.com/alexgorbatchev/agent-status/packages/agent-ingester v0.0.0-00010101000000-000000000000
 	github.com/alexgorbatchev/agent-status/packages/agent-observer v0.0.0-00010101000000-000000000000
 	github.com/alexgorbatchev/agent-status/packages/agent-server v0.0.0-00010101000000-000000000000
-	github.com/alexgorbatchev/agent-watcher v1.0.0
+	github.com/alexgorbatchev/agent-watcher v1.0.1
 	github.com/alexgorbatchev/cobra-help-tree v1.1.0
 	github.com/mattn/go-isatty v0.0.20
 	github.com/mattn/go-runewidth v0.0.30

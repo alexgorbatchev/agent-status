@@ -26,7 +26,7 @@ Local observer daemon (`air-observer`) that consumes `agent-watcher`, formats te
 - Watcher shutdown joins tailers and flushes cursors, database checkpoints, and session state before shipper shutdown.
 - Transcript files remain the durable queue when the bounded shipper buffer fills up.
 - Claude Code compaction replaces or truncates transcripts; file generation checks belong to the library.
-- Observer and debug consume a tagged GitHub version of the watcher. Keep sibling workspace overrides optional and out of committed manifests.
+- Observer and debug consume the same tested watcher release, at least `v1.0.1` to preserve cursors for existing transcripts. Keep sibling workspace overrides optional and out of committed manifests.
 
 ## Boundaries
 
