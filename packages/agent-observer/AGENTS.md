@@ -1,46 +1,47 @@
 # agent-observer
 
-Local observer daemon (`air-observer`) that scans harness sessions, tails transcripts incrementally, and ships telemetry over WebSocket.
+Local observer daemon (`air-observer`) that consumes `agent-watcher`, formats telemetry, resolves git workspaces, and ships events over WebSocket.
 
 ## Commands
 
 - Dev: `go run ./cmd/air-observer`
 - Build: `just build`
-- Test: `just test` (enforces >= 90% statement coverage gate via `scripts/check-coverage.sh`)
-- Check coverage: `just check-coverage` (repo root task checking all Go packages)
+- Test: `just test` (>=90% statement coverage via `scripts/check-coverage.sh`)
 - Lint: `just lint`
 
 ## Local conventions
 
-- Scanner routines live in `internal/scanner/` and git workspace resolution in `internal/git/`.
-- Transcript activity timestamps are derived using `ExtractLastActiveTimestamp` (`internal/scanner/tail_timestamp.go`), which reads backwards in chunks (256KB) from the end of transcript files across oversized records, filtering only to conversational/turn-generating records via an explicit allowlist (`user`, `assistant`, `message`, `event_msg`, `response_item`, `turn_start`, `turn_end`, etc.) while excluding non-conversational records and start times, falling back to file modification time (`ModTime()`) when no valid conversational timestamp is found; `ExtractLastActiveTimestamp` is used by Pi and Codex scanners and subagent discovery for recency, while Claude Code root sessions rely on process snapshot pairing and modification timestamps. `ExtractFirstActiveTimestamp` reads the first timestamped line from transcript headers to derive subagent start timestamps for `run_started`.
-- Pi scanner (`internal/scanner/pi.go`) and Codex scanner (`internal/scanner/codex.go`) maintain an in-memory cache of session file and rollout metadata (`size`, `modTime`, `header`, `lastActive`, `dev`, `ino`) across scan ticks, reusing cached headers and timestamps for unchanged files and pruning entries for deleted, vanished, or unseen sessions after each scan.
-- File tailing commits persistent byte offsets in memory via `internal/tailer/cursor.go` upon acknowledgement from `air-ingester` (cursor-committed delivery) and flushes them to disk at a bounded rate via a background flusher (debounced periodic flush, default 2s) and on daemon shutdown, avoiding synchronous atomic file rewrites on every committed line.
-- Session tracker (`internal/scanner/session_tracker.go`) writes state to disk only when tracked sessions change (`dirty` flag), eliminating redundant file writes on unchanged scan ticks.
-- Hot-path persistence files (cursor store and session tracker) serialize using compact `json.Marshal` rather than indented JSON.
-- Cursor store prunes entries for deleted files and replaced transcripts (inode mismatch) on daemon startup and periodically via background pruner; cursors for transcripts that still exist on disk with matching device and inode are never pruned by age alone.
-- Shipper implements bounded dispatch with tailer backpressure (`NewTailerWithOffsetHandler`) and sequence-keyed ACK callbacks; reads pause when disconnected or buffer is full.
-- Shipper resets exponential backoff only upon receiving an ACK from the ingester or after 5s of sustained error-free streaming, rather than immediately on the hello frame.
-- Tailers share directory fsnotify watches via a reference-counted `WatcherRegistry` (`internal/tailer/watcher.go`), dispatching file-change events selectively to the owning tailer to avoid descriptor leaks and O(N^2) wakeup stampedes in multi-subagent sessions.
-- Process enumeration is captured at most once per scan tick using a shared `ProcessSnapshot` (`internal/scanner/process_snapshot.go`) storing lightweight scalar metadata (`PID`, `Name`, `CreateTime`, `Alive`) rather than full process handles; on Darwin, bulk kernel querying uses `unix.SysctlKinfoProcSlice("kern.proc.all")` in a single syscall, cheap name filtering excludes non-agent processes before cmdline/cwd inspection, and Claude Code probes candidate PIDs (`unix.Kill(pid, 0)`) to skip snapshot enumeration entirely when all on-disk sessions belong to dead processes. Process finding is skipped in scanners when there are no candidate session files to pair.
-- Structured logging uses `packages/agent-common/logging` with snake_case actions and dual-mode (`AGENT=1`) output.
+- Keep discovery, lifecycle, transcript/database watching, and parser-event emission in standalone `github.com/alexgorbatchev/agent-watcher`.
+- `cmd/air-observer/main.go` maps `watcher.Event` to telemetry. Environment identity, git workspace resolution (`internal/git/`), and WebSocket delivery (`internal/shipper/`) belong here.
+- Pass explicit harness paths to `watcher.Config`; do not change process environment variables to configure the library.
+- Preserve agent-status cache locations using `config.ObserverCachePath`: `observer-cursors.json` and `observer-sessions.json` under `$XDG_CACHE_HOME/agent-status/` or `~/.cache/agent-status/`.
+- OpenCode messages use read-only database access and a separate acknowledged checkpoint file at the resolved cursor path + `.opencode`.
+- Pass the shipper's sequence-keyed ingester acknowledgement to the watcher. Transcript cursors advance only through contiguous acknowledged lines; only the last event from a line carries its acknowledgement.
+- Watcher pruning removes cursors for deleted or replaced transcripts; cursors for existing files with matching device and inode survive age pruning.
+- Shipper bounded dispatch supplies backpressure: reads pause when disconnected or the buffer is full. Backoff resets only on an ACK or after 5s of sustained error-free streaming.
+- Structured logging uses `packages/agent-common/logging`, including its logger injected into the watcher, with snake_case actions and dual-mode (`AGENT=1`) output.
 
 ## Local gotchas
 
-- Claude Code session compactions rewrite transcript files atomically; tailer detects inode change or file truncation and resets cursor accordingly (`internal/tailer/tailer.go`).
-- Daemon shutdown guarantees persistent cursor serialization to disk via deferred `cursorStore.Save()` in `runObserverContext`.
-- When the ingester is disconnected, tailers pause reading from disk once the bounded shipper buffer fills up, preserving transcript files as the durable queue.
+- Watcher shutdown joins tailers and flushes cursors, database checkpoints, and session state before shipper shutdown.
+- Transcript files remain the durable queue when the bounded shipper buffer fills up.
+- Claude Code compaction replaces or truncates transcripts; file generation checks belong to the library.
+- Observer and debug consume a tagged GitHub version of the watcher. Keep sibling workspace overrides optional and out of committed manifests.
 
 ## Boundaries
 
-- Always (code-based projects only): any time code is changed such that results from running that code are changed, a test file must be changed as well; 90% statement coverage is required and enforced on `just test` via `scripts/check-coverage.sh` (scripts/ folder is excluded from this rule)
-- Always: automatically record all new user instructions in the most appropriate `AGENTS.md` file immediately upon receipt (check with user if existing instructions conflict)
-- Ask first: modifying cursor storage structure or WebSocket wire protocol
-- Never: lock, mutate, or delete active agent session log files
-- Never: publish releases automatically without explicit user authorization
+- Always: keep the full reusable watching pipeline in `agent-watcher`; agent-status owns formatting and transport.
+- Always: preserve incoming fixes and their behavioral tests in `agent-watcher` when resolving conflicts in code extracted from observer.
+- Always: include OpenCode message watching, with acknowledged database checkpoints separate from transcript byte cursors.
+- Always: functional code changes require behavioral test changes, red/green verification, and >=90% statement coverage per package (scripts excluded).
+- Always: automatically record new user instructions in the appropriate `AGENTS.md`, checking conflicts with the user.
+- Ask first: modifying cursor storage structure or WebSocket wire protocol.
+- Never: lock, mutate, or delete active harness logs or databases.
+- Never: publish releases automatically without explicit authorization.
 
 ## References
 
-- Entry point: `cmd/air-observer/main.go`
-- Shipper logic: `internal/shipper/shipper.go`
-- Scanner implementations: `internal/scanner/`
+- Entry point and telemetry adapter: `cmd/air-observer/main.go`
+- Shipper: `internal/shipper/shipper.go`
+- Watcher API and implementation: `github.com/alexgorbatchev/agent-watcher`
+- Public git resolver used by debug: `git/export.go`

@@ -17,11 +17,10 @@ import (
 
 	_ "github.com/ncruces/go-sqlite3/driver"
 
-	parser "github.com/alexgorbatchev/agent-parser"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
-	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/scanner"
-	"github.com/alexgorbatchev/agent-status/packages/agent-observer/internal/tailer"
+	"github.com/alexgorbatchev/agent-watcher/scanner"
+	"github.com/alexgorbatchev/agent-watcher/tailer"
 	"github.com/coder/websocket"
 )
 
@@ -41,6 +40,19 @@ func TestMain(m *testing.M) {
 		fmt.Fprintf(os.Stderr, "failed to set AIR_LOG_DIR: %v\n", err)
 		_ = os.RemoveAll(tmpDir)
 		os.Exit(1)
+	}
+	for name, path := range map[string]string{
+		"XDG_CACHE_HOME":      filepath.Join(tmpDir, "cache"),
+		"CLAUDE_SESSIONS_DIR": filepath.Join(tmpDir, "claude-sessions"),
+		"CLAUDE_PROJECTS_DIR": filepath.Join(tmpDir, "claude-projects"),
+		"PI_SESSIONS_DIR":     filepath.Join(tmpDir, "pi-sessions"),
+		"CODEX_SESSIONS_DIR":  filepath.Join(tmpDir, "codex-sessions"),
+		"OPENCODE_DB_PATH":    filepath.Join(tmpDir, "opencode.db"),
+	} {
+		if err := os.Setenv(name, path); err != nil {
+			fmt.Fprintf(os.Stderr, "isolating harness paths: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	code := m.Run()
@@ -244,106 +256,6 @@ func TestObserverCommandEnvFallbacks(t *testing.T) {
 	}
 }
 
-func TestParserDispatchForHarnessTypes(t *testing.T) {
-	tests := []struct {
-		name        string
-		harness     types.HarnessType
-		line        []byte
-		cwd         string
-		wantErr     bool
-		errContains string
-	}{
-		{
-			name:    "claude-code valid line",
-			harness: types.HarnessClaudeCode,
-			line:    []byte(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}`),
-			wantErr: false,
-		},
-		{
-			name:    "pi valid line",
-			harness: types.HarnessPi,
-			line:    []byte(`{"type":"session","id":"pi-sess-1","cwd":"/path"}`),
-			cwd:     "/path",
-			wantErr: false,
-		},
-		{
-			name:    "codex valid line",
-			harness: types.HarnessCodex,
-			line:    []byte(`{"type":"session_meta","payload":{"id":"codex-1","cwd":"/path"}}`),
-			wantErr: false,
-		},
-		{
-			name:        "opencode in line tailer returns error",
-			harness:     types.HarnessOpencode,
-			line:        []byte(`{}`),
-			wantErr:     true,
-			errContains: "unsupported harness type",
-		},
-		{
-			name:        "unknown harness returns error",
-			harness:     types.HarnessType("unknown"),
-			line:        []byte(`{}`),
-			wantErr:     true,
-			errContains: "unsupported harness type",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			events, pErr := parseLineForHarness(tt.harness, tt.line, tt.cwd, nil, nil)
-
-			if (pErr != nil) != tt.wantErr {
-				t.Fatalf("parseLineForHarness(%v) error = %v, wantErr %v", tt.harness, pErr, tt.wantErr)
-			}
-			if tt.wantErr && tt.errContains != "" {
-				if pErr == nil || !strings.Contains(pErr.Error(), tt.errContains) {
-					t.Errorf("error %v does not contain %q", pErr, tt.errContains)
-				}
-			}
-			if !tt.wantErr && pErr == nil && len(events) == 0 {
-				t.Errorf("expected at least 1 parsed event for valid line")
-			}
-		})
-	}
-
-	t.Run("codex parser preserves state across lines", func(t *testing.T) {
-		codexParser := parser.NewCodexParser()
-		line1 := []byte(`{
-			"type": "event_msg",
-			"timestamp": "2026-06-12T16:08:43.000Z",
-			"payload": {
-				"type": "token_count",
-				"info": { "total_token_usage": { "total_tokens": 100 } },
-				"rate_limits": { "remaining_tokens": 0, "reset_tokens": "45s" }
-			}
-		}`)
-		_, err := parseLineForHarness(types.HarnessCodex, line1, "", nil, codexParser)
-		if err != nil {
-			t.Fatalf("unexpected error line 1: %v", err)
-		}
-
-		line2 := []byte(`{
-			"type": "event_msg",
-			"timestamp": "2026-06-12T16:08:44.000Z",
-			"payload": {
-				"type": "error",
-				"message": "Rate limit reached",
-				"codex_error_info": "RateLimitExceeded"
-			}
-		}`)
-		evs, err := parseLineForHarness(types.HarnessCodex, line2, "", nil, codexParser)
-		if err != nil {
-			t.Fatalf("unexpected error line 2: %v", err)
-		}
-		if len(evs) != 1 {
-			t.Fatalf("expected 1 event, got %d", len(evs))
-		}
-		if evs[0].Data.RetryAfterSeconds == nil || *evs[0].Data.RetryAfterSeconds != 44 {
-			t.Fatalf("expected RetryAfterSeconds=44 (45s discounted by 1s) from preserved state, got %v", evs[0].Data.RetryAfterSeconds)
-		}
-	})
-}
-
 func TestObserverRunLogging(t *testing.T) {
 	buf := &testSyncBuffer{}
 	logger := logging.NewWithMode(buf, "observer", "info", false)
@@ -434,6 +346,7 @@ func TestObserverContextCancellationFlushesCursorStore(t *testing.T) {
 	if err := os.WriteFile(metaPath, metaData, 0644); err != nil {
 		t.Fatalf("writing session metadata: %v", err)
 	}
+	t.Setenv("CLAUDE_SESSIONS_DIR", claudeDir)
 
 	piDir := filepath.Join(tmpDir, "pi-sessions")
 	_ = os.MkdirAll(piDir, 0755)
@@ -467,14 +380,13 @@ func TestObserverContextCancellationFlushesCursorStore(t *testing.T) {
 	defer mockIngester.Close()
 
 	opts := observerOptions{
-		ingesterURL:       "ws" + strings.TrimPrefix(mockIngester.URL, "http") + "/ws/ingest",
-		cursorPath:        cursorPath,
-		claudeSessionsDir: claudeDir,
-		piSessionsDir:     piDir,
-		codexSessionsDir:  codexDir,
-		opencodeDBPath:    opencodeDb,
-		scanInterval:      50 * time.Millisecond,
-		envFlag:           "test-env",
+		ingesterURL:      "ws" + strings.TrimPrefix(mockIngester.URL, "http") + "/ws/ingest",
+		cursorPath:       cursorPath,
+		piSessionsDir:    piDir,
+		codexSessionsDir: codexDir,
+		opencodeDBPath:   opencodeDb,
+		scanInterval:     50 * time.Millisecond,
+		envFlag:          "test-env",
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1785,80 +1697,6 @@ func TestObserverStartupPrunesCursors(t *testing.T) {
 	if _, ok := saved["stale"]; ok {
 		t.Errorf("expected stale cursor to be pruned on startup")
 	}
-}
-
-type mockCursorPruner struct {
-	mu     sync.Mutex
-	calls  int
-	pruned int
-	saved  int
-}
-
-func (m *mockCursorPruner) Prune(olderThan time.Duration) int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.calls++
-	return m.pruned
-}
-
-func (m *mockCursorPruner) Save() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.saved++
-	return nil
-}
-
-func TestObserverPeriodicCursorPruning(t *testing.T) {
-	mp := &mockCursorPruner{pruned: 2}
-	ctx, cancel := context.WithCancel(context.Background())
-
-	done := make(chan struct{})
-	go func() {
-		startPeriodicCursorPruner(ctx, mp, 24*time.Hour, 10*time.Millisecond)
-		close(done)
-	}()
-
-	time.Sleep(45 * time.Millisecond)
-	cancel()
-
-	select {
-	case <-done:
-	case <-time.After(1 * time.Second):
-		t.Fatal("startPeriodicCursorPruner did not exit after context cancellation")
-	}
-
-	mp.mu.Lock()
-	defer mp.mu.Unlock()
-	if mp.calls == 0 {
-		t.Errorf("expected periodic pruner to call Prune, got 0 calls")
-	}
-	if mp.saved == 0 {
-		t.Errorf("expected periodic pruner to call Save when pruned > 0, got 0 calls")
-	}
-}
-
-func TestRunCursorPruneSweep(t *testing.T) {
-	t.Run("prunes and saves when entries removed", func(t *testing.T) {
-		mp := &mockCursorPruner{pruned: 3}
-		count := runCursorPruneSweep(mp, 24*time.Hour)
-		if count != 3 {
-			t.Errorf("runCursorPruneSweep = %d, want 3", count)
-		}
-		if mp.saved != 1 {
-			t.Errorf("expected Save to be called once, got %d", mp.saved)
-		}
-	})
-
-	t.Run("does not save when zero entries removed", func(t *testing.T) {
-		mp := &mockCursorPruner{pruned: 0}
-		count := runCursorPruneSweep(mp, 24*time.Hour)
-		if count != 0 {
-			t.Errorf("runCursorPruneSweep = %d, want 0", count)
-		}
-		if mp.saved != 0 {
-			t.Errorf("expected Save not to be called, got %d", mp.saved)
-		}
-	})
 }
 
 type mockProcessSnapshot struct {

@@ -32,6 +32,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 
 ## Shared gotchas
 
+- Watcher dependency -> observer/debug consume a tagged GitHub version of `agent-watcher`. Builds, tests, and lint must work without a sibling checkout; local workspace overrides are optional development choices.
 - Port collisions on 3000, 4501, or 4502 -> Run `just stop` to terminate orphaned processes and clean up `.tmp/dev-stack/pids.json`.
 - Dev stack execution -> Running `just start` directly in a synchronous tool call blocks indefinitely because `scripts/dev-stack.ts start` streams logs in the foreground and never exits; use background process management or let the user run it.
 - SQLite database concurrency -> `air-server` opens SQLite strictly in read-only mode (`?mode=ro`); all mutations occur through `air-ingester`.
@@ -42,6 +43,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 ## Shared boundaries
 
 - Always: automatically record all new instructions in the most appropriate `AGENTS.md` file immediately upon receipt (check with user if existing instructions conflict)
+- Always: keep `agent-watcher` published on GitHub and consume its tagged module version here; do not commit sibling-checkout requirements.
 - Always: when resolving GitHub issues, follow the `github-fix-issues` skill workflow (located in `alexgorbatchev/ai-registry` under `skills/agent/github-fix-issues` for coordinator lifecycle, worktree isolation, subagent delegation, and verification gates)
 - Always: design dashboard UX, activity summarization, and telemetry pipelines for long-running agent sessions rather than sub-second realtime mirroring (LLM inference latency of 1–3s and ~10s debounced summarization cadences are primary and intended; prioritize semantic stability, high-level intent, and stall detection over micro-second state churn)
 - Always: when designing or modifying UI presentation cards, update `air-debug session view` first as the canonical reference specification, and ensure frontend implementations sync to that output (#50, #51)
@@ -61,5 +63,6 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - Dev stack orchestrator: `scripts/dev-stack.ts`
 - Root task runner: `justfile`
 - Canonical harness log specs & parser: [`alexgorbatchev/agent-parser`](https://github.com/alexgorbatchev/agent-parser) (`docs/harness-logs/`)
+- Reusable watching pipeline: [`alexgorbatchev/agent-watcher`](https://github.com/alexgorbatchev/agent-watcher) (`watcher.Run`, `scanner/`, `tailer/`)
 - Standalone session transcript printer: [`alexgorbatchev/agent-print-session-cli`](https://github.com/alexgorbatchev/agent-print-session-cli) (`v1.0.0`)
 - GitHub issue fixing skill: [`github-fix-issues`](https://github.com/alexgorbatchev/ai-registry/tree/main/skills/agent/github-fix-issues) (`skills/agent/github-fix-issues` in `alexgorbatchev/ai-registry`)

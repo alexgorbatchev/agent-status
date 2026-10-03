@@ -18,7 +18,7 @@ A centralized monitoring dashboard and telemetry aggregation pipeline for AI cod
 
 # How it Really Works
 
-- `air-observer` tails JSONL logs and SQLite databases without holding file locks, applying tailer backpressure over a bounded dispatch queue and advancing persistent byte read offsets in `$XDG_CACHE_HOME/ai-registry/tailer-cursors.json` only after frame batches are acknowledged by `air-ingester`, with cursors flushed to disk on shutdown.
+- `air-observer` uses the standalone [`agent-watcher`](https://github.com/alexgorbatchev/agent-watcher) library to discover sessions, follow JSONL transcripts, and poll OpenCode's read-only SQLite database. It formats events and ships them over a bounded WebSocket queue, advancing transcript offsets only after ingester acknowledgements. Cursors live at `$XDG_CACHE_HOME/agent-status/observer-cursors.json` (or `~/.cache/agent-status/observer-cursors.json`); OpenCode event checkpoints live beside them with the `.opencode` suffix. Checkpoints flush periodically and on shutdown.
 - `air-ingester` receives WebSocket connections at `:4501/ws/ingest` with a 64 MiB read limit, computes token costs using a static model price registry, derives concise action descriptions via asynchronous per-agent queues and specialized prompt templates with Jaccard deduplication, and writes structured records into `$XDG_DATA_HOME/agent-status/agent-status.db` using WAL mode.
 - `air-server` opens the SQLite database strictly in read-only mode, listens for change signals on `$XDG_RUNTIME_DIR/agent-status/notify.sock`, and fans out events to browser clients over Server-Sent Events (`/api/v1/events/stream`) at `:4502`.
 - `air-debug` replays and validates agent session transcripts across Claude Code, Pi, OpenAI Codex, and OpenCode through the ingestion and query pipeline offline, running in-process against an ephemeral in-memory SQLite database without modifying active daemon logs or databases.
@@ -98,7 +98,7 @@ Sample Output:
 | `--token <token>`                    | (none) | `""`                                       | Bearer token for ingester authentication             |
 | `--env <label>`                      | (none) | `""`                                       | Environment label override                           |
 | `--scan-interval <duration>`         | (none) | `2s`                                       | Interval between harness session scans               |
-| `--cursor-path <path>`               | (none) | `~/.cache/ai-registry/tailer-cursors.json` | Path to persistent tailer cursor file                |
+| `--cursor-path <path>`               | (none) | `~/.cache/agent-status/observer-cursors.json` | Path to persistent tailer cursor file                |
 | `--cursor-retention <duration>`      | (none) | `24h`                                      | Retention duration for inactive cursor entries       |
 | `--cursor-prune-interval <duration>` | (none) | `1h`                                       | Interval between periodic cursor pruning sweeps      |
 | `--claude-sessions-dir <path>`       | (none) | `~/.claude/sessions`                       | Custom directory for Claude Code session metadata    |

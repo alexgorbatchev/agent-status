@@ -21,6 +21,19 @@ var (
 	hostnameFunc          = os.Hostname
 )
 
+// ObserverCachePath retains agent-status checkpoint locations independently of
+// the reusable watcher's own defaults.
+func ObserverCachePath(name string) string {
+	if cacheHome := os.Getenv("XDG_CACHE_HOME"); cacheHome != "" {
+		return filepath.Join(cacheHome, "agent-status", name)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(os.TempDir(), "agent-status", name)
+	}
+	return filepath.Join(home, ".cache", "agent-status", name)
+}
+
 type telemetryConfig struct {
 	Environment string `json:"environment"`
 	Env         string `json:"env"`

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/scanner"
-	observerscanner "github.com/alexgorbatchev/agent-status/packages/agent-observer/scanner"
+	observerscanner "github.com/alexgorbatchev/agent-watcher/scanner"
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
 
