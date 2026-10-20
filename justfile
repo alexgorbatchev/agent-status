@@ -1,3 +1,5 @@
+mod ui 'packages/ui-web/justfile'
+
 # Root Justfile for agent-status
 
 # Default recipe: list available tasks
@@ -6,7 +8,7 @@ default:
 
 # Start the full agent-status stack (ingester, server, observer, web UI)
 start *args:
-    bun run scripts/dev-stack.ts start {{args}}
+    bun run scripts/dev-stack.ts start {{ args }}
 
 # Stop the full agent-status stack and free ports
 stop:
@@ -22,7 +24,7 @@ logs:
 
 # Run in human-facing interactive mode
 run *args:
-    @just start
+    @just start {{ args }}
 
 # Run in agent-facing token-conservative mode
 run-ai *args:
@@ -30,15 +32,15 @@ run-ai *args:
 
 # Run air-debug CLI utility via go run
 debug *args:
-    go run ./packages/agent-debug/cmd/air-debug {{args}}
+    go run ./packages/agent-debug/cmd/air-debug {{ args }}
 
 # Alias for debug
 run-debug *args:
-    @just debug {{args}}
+    @just debug {{ args }}
 
 # Run print-session CLI utility via go run
 print-session *args:
-    go run github.com/alexgorbatchev/agent-print-session-cli/cmd/print-session@v1.0.0 {{args}}
+    go run github.com/alexgorbatchev/agent-print-session-cli/cmd/print-session@v1.0.0 {{ args }}
 
 # Build only dev stack binaries and bundle ui-web (omitting agent-debug)
 build-stack:
@@ -80,7 +82,7 @@ test-e2e:
 
 # Start Storybook component explorer for ui-web
 storybook-web *args:
-    cd packages/ui-web && just storybook {{args}}
+    cd packages/ui-web && just storybook {{ args }}
 
 # Run tests with short output / test summary
 test:
@@ -112,21 +114,25 @@ clean:
 
 # Replay a Claude Code session by session ID or file path
 session-replay-claude session_id *args:
-    just debug session replay --harness claude-code {{session_id}} {{args}}
+    just debug session replay --harness claude-code {{ session_id }} {{ args }}
 
 # Alias for session-replay-claude
 session-replay-claude-code session_id *args:
-    just session-replay-claude {{session_id}} {{args}}
+    just session-replay-claude {{ session_id }} {{ args }}
 
 # Replay a Pi session by session ID or file path
 session-replay-pi session_id *args:
-    just debug session replay --harness pi {{session_id}} {{args}}
+    just debug session replay --harness pi {{ session_id }} {{ args }}
 
 # Replay an OpenAI Codex session by session ID or file path
 session-replay-codex session_id *args:
-    just debug session replay --harness codex {{session_id}} {{args}}
+    just debug session replay --harness codex {{ session_id }} {{ args }}
 
 # Replay an OpenCode session by session ID or database path
 session-replay-opencode session_id *args:
-    just debug session replay --harness opencode {{session_id}} {{args}}
+    just debug session replay --harness opencode {{ session_id }} {{ args }}
 
+# Prepare dependencies for local development.
+setup:
+    go mod download
+    just ui setup

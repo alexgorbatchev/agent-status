@@ -18,7 +18,7 @@ build:
 
 # Start Storybook component explorer
 storybook *args:
-    bun run storybook {{args}}
+    bun run storybook {{ args }}
 
 # Run policy checks and TypeScript compiler check
 lint:
@@ -37,3 +37,6 @@ test-e2e:
 # Clean artifacts
 clean:
     rm -rf dist/
+
+setup:
+    bun install --frozen-lockfile

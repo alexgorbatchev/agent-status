@@ -4,6 +4,7 @@ Web frontend dashboard for agent-status built with React 19, Tailwind CSS v4, Lu
 
 ## Commands
 
+- Setup: `just setup`
 - Dev: `just run`
 - Storybook: `just storybook`
 - Build: `just build`
