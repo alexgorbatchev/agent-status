@@ -2,16 +2,16 @@
 
 # Default recipe: list available tasks
 default:
-    @just --list
+    @just --justfile "{{ module_directory() }}/justfile" --list
 
 # Run in human-facing interactive mode
 run *args:
     @mkdir -p bin
-    go run ./cmd/air-ingester {{args}}
+    go run ./cmd/air-ingester {{ args }}
 
 # Run in agent-facing token-conservative mode
 run-ai *args:
-    AGENT=1 just run {{args}}
+    AGENT=1 just run {{ args }}
 
 # Build compiled binary into bin/
 build:
@@ -32,3 +32,7 @@ lint:
 # Clean build artifacts
 clean:
     rm -rf bin/
+
+# Download module dependencies
+setup:
+    go mod download

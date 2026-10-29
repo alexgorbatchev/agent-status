@@ -2,7 +2,7 @@
 
 # Default recipe: list available tasks
 default:
-    @just --list
+    @just --justfile "{{ module_directory() }}/justfile" --list
 
 # Run in human-facing interactive mode
 run:
@@ -31,3 +31,7 @@ lint:
 # Clean build artifacts
 clean:
     rm -rf bin/
+
+# Download module dependencies
+setup:
+    go mod download

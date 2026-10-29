@@ -1,0 +1,67 @@
+# Task automation for air-debug CLI
+
+# Default recipe: list available tasks
+default:
+    @just --justfile "{{ module_directory() }}/justfile" --list
+
+# Build compiled binary into bin/
+build:
+    @mkdir -p bin
+    go build -o bin/air-debug ./cmd/air-debug
+
+# Run all unit tests with race detector and verify >= 90% coverage
+test *args:
+    ../../scripts/check-coverage.sh -race {{ if args == "" { "./..." } else { args } }}
+
+# Check module hygiene and run vet + linter
+lint:
+    @out="$(gofmt -l .)"; if [ -n "$out" ]; then echo "Unformatted Go files:"; echo "$out"; exit 1; fi
+    go mod tidy -diff
+    go vet ./...
+    golangci-lint run
+
+# Run in human-facing interactive mode
+[working-directory('../..')]
+run *args:
+    go run ./packages/agent-debug/cmd/air-debug {{ args }}
+
+# Run in agent-facing token-conservative mode
+[working-directory('../..')]
+run-ai *args:
+    AGENT=1 go run ./packages/agent-debug/cmd/air-debug {{ args }}
+
+# Clean build artifacts
+clean:
+    rm -rf bin/
+
+# Download module dependencies
+setup:
+    go mod download
+
+# Print a session transcript with the standalone printer
+[working-directory('../..')]
+print-session *args:
+    go run github.com/alexgorbatchev/agent-print-session-cli/cmd/print-session@v1.0.0 {{ args }}
+
+# Replay a Claude Code session by ID or path
+[working-directory('../..')]
+session-replay-claude session_id *args:
+    just --justfile packages/agent-debug/justfile run session replay --harness claude-code {{ session_id }} {{ args }}
+
+# Replay a Pi session by ID or path
+[working-directory('../..')]
+session-replay-pi session_id *args:
+    just --justfile packages/agent-debug/justfile run session replay --harness pi {{ session_id }} {{ args }}
+
+# Replay an OpenAI Codex session by ID or path
+[working-directory('../..')]
+session-replay-codex session_id *args:
+    just --justfile packages/agent-debug/justfile run session replay --harness codex {{ session_id }} {{ args }}
+
+# Replay an OpenCode session by ID or path
+[working-directory('../..')]
+session-replay-opencode session_id *args:
+    just --justfile packages/agent-debug/justfile run session replay --harness opencode {{ session_id }} {{ args }}
+
+# Alias for session-replay-claude
+alias session-replay-claude-code := session-replay-claude

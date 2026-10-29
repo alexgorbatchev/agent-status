@@ -58,8 +58,8 @@ just stop
 just logs
 
 # Replay an agent session transcript or session ID offline
-just session-replay-pi <session-id>
-just debug session replay <path-to-transcript.jsonl>
+just debug session-replay-pi <session-id>
+just debug run session replay <path-to-transcript.jsonl>
 ```
 
 The dev stack writes nothing outside the repository. Everything it produces lives under `.tmp/dev-stack/`: `data/` (SQLite database), `cache/` (observer cursors and session state), `logs/` (daemon logs), `run/` (runtime directory holding the notify socket), and `pids.json`.
@@ -138,7 +138,7 @@ Sample Output:
 | `--version`               | `-v`   | `false`                                       | Print version information and exit                 |
 | `--help`                  | `-h`   | `false`                                       | Print command line help                            |
 
-### `air-debug` / `just debug`
+### `air-debug` / `just debug run`
 
 | Flag                   | Short  | Default | Description                                                          |
 | :--------------------- | :----- | :------ | :------------------------------------------------------------------- |

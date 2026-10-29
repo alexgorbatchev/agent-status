@@ -12,7 +12,7 @@ Web frontend dashboard for agent-status built with React 19, Tailwind CSS v4, Lu
 - Test E2E: `just test-e2e`
 - Check Go coverage (repo root): `just check-coverage` (verifies >= 90% statement coverage across Go packages)
 - Lint: `just lint`
-- Guidance: `bun x typescript-ai-policy guidance`
+- Guidance: `bun run typescript-ai-policy guidance`
 
 ## Local conventions
 
@@ -44,12 +44,12 @@ Web frontend dashboard for agent-status built with React 19, Tailwind CSS v4, Lu
 - Real-time SSE updates are consumed via `src/hooks/useEventStream.ts` with exponential backoff and random jitter (`src/utils/calculateReconnectDelay.ts`), resetting attempt count on successful open.
 - LogDrawer uses `logDrawerMachine` with external `LogBuffer` store consumed via `useSyncExternalStore`.
 - ANSI color escape sequences (16-color, 256-color, 24-bit RGB truecolor) and text styles are parsed and rendered via custom `src/utils/ansiUtils.ts`, `src/utils/rehypeAnsi.ts`, and `src/components/AnsiText.tsx` rather than external packages (`ansi-to-react` / `anser`) because off-the-shelf libraries cannot maintain ANSI color state across `react-markdown` AST blocks (e.g. thinking frames wrapping multi-paragraph markdown in truecolor spans) and fail to handle stripped/bare escape codes (`[38;2;...m` without `\x1b`).
-- LogDrawer renders log events via markdown using `remark-breaks` to preserve soft line breaks, and includes a debug button copying `just debug session replay --harness <harness> <session-id>` (`getAgentDebugCommand`).
+- LogDrawer renders log events via markdown using `remark-breaks` to preserve soft line breaks, and includes a debug button copying `just debug run session replay --harness <harness> <session-id>` (`getAgentDebugCommand`).
 
 ## Boundaries
 
 - Always: automatically record all new user instructions in the most appropriate `AGENTS.md` file immediately upon receipt (check with user if existing instructions conflict)
-- Always: read typescript-ai-policy guidelines (`bun x typescript-ai-policy guidance`) before making changes
+- Always: read typescript-ai-policy guidelines (`bun run typescript-ai-policy guidance`) before making changes
 - Always: run `just test` and `just lint` before committing changes
 - Always (code-based projects only): any time code is changed such that results from running that code are changed, a test file must be changed as well; 90% statement coverage is required (scripts/ folder is excluded from this rule)
 - Ask first: adding UI state management libraries or changing top-level component architecture
@@ -66,4 +66,4 @@ Web frontend dashboard for agent-status built with React 19, Tailwind CSS v4, Lu
 - Log buffer store: `src/utils/LogBuffer.ts`
 - Relative time hook: `src/hooks/useRelativeTime.ts`
 - Dev server: `src/server.ts`
-- Policy guidance: `bun x typescript-ai-policy guidance`
+- Policy guidance: `bun run typescript-ai-policy guidance`

@@ -2,7 +2,7 @@
 
 # Default recipe: list available tasks
 default:
-    @just --list
+    @just --justfile "{{ module_directory() }}/justfile" --list
 
 # Run all unit tests with race detector and verify >= 90% coverage
 test *args:
@@ -14,3 +14,11 @@ lint:
     go mod tidy -diff
     go vet ./...
     golangci-lint run
+
+# Download module dependencies
+setup:
+    go mod download
+
+# Clean build artifacts
+clean:
+    rm -rf bin/

@@ -11,15 +11,15 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - Stop dev stack: `just stop`
 - Check status: `just status`
 - Tail dev stack logs: `just logs` (or `tail -f .tmp/dev-stack/logs/*.log`)
-- Run debug CLI: `just debug <args>`
-- Replay session offline: `just session-replay-[claude|pi|codex|opencode] <session-id>`
-- Print session transcript: `just print-session [claude|pi] [print|summary|handoff] <session-id>`
+- Run debug CLI: `just debug run <args>`
+- Replay session offline: `just debug session-replay-[claude|pi|codex|opencode] <session-id>`
+- Print session transcript: `just debug print-session [claude|pi] [print|summary|handoff] <session-id>`
 - Build all: `just build-all`
 - Test all: `just test-all`
 - Check coverage: `just check-coverage` (enforces >= 90% statement coverage across all Go packages via `scripts/check-coverage.sh`)
 - Lint all: `just lint-all`
-- Run Playwright E2E: `just test-e2e`
-- Start Storybook: `just storybook-web`
+- Run Playwright E2E: `just ui test-e2e`
+- Start Storybook: `just ui storybook`
 
 ## Workspace map
 
@@ -42,6 +42,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 
 ## Shared boundaries
 
+- Always: keep package-specific commands in each package's lowercase `justfile`; register packages with root `mod` declarations and keep the root justfile focused on workspace orchestration.
 - Always: automatically record all new instructions in the most appropriate `AGENTS.md` file immediately upon receipt (check with user if existing instructions conflict)
 - Always: keep `agent-watcher` published on GitHub and consume its tagged module version here; do not commit sibling-checkout requirements.
 - Always: when resolving GitHub issues, follow the `github-fix-issues` skill workflow (located in `alexgorbatchev/ai-registry` under `skills/agent/github-fix-issues` for coordinator lifecycle, worktree isolation, subagent delegation, and verification gates)

@@ -430,7 +430,7 @@ describe("agentUtils", () => {
         harness: "claude-code",
         sessionId: "sess-claude-123",
       });
-      expect(getAgentDebugCommand(agent)).toBe("just debug session replay --harness claude-code sess-claude-123");
+      expect(getAgentDebugCommand(agent)).toBe("just debug run session replay --harness claude-code sess-claude-123");
     });
 
     it("builds the correct CLI command for pi", () => {
@@ -438,7 +438,7 @@ describe("agentUtils", () => {
         harness: "pi",
         sessionId: "sess-pi-456",
       });
-      expect(getAgentDebugCommand(agent)).toBe("just debug session replay --harness pi sess-pi-456");
+      expect(getAgentDebugCommand(agent)).toBe("just debug run session replay --harness pi sess-pi-456");
     });
 
     it("builds the correct CLI command for codex", () => {
@@ -446,7 +446,7 @@ describe("agentUtils", () => {
         harness: "codex",
         sessionId: "sess-codex-789",
       });
-      expect(getAgentDebugCommand(agent)).toBe("just debug session replay --harness codex sess-codex-789");
+      expect(getAgentDebugCommand(agent)).toBe("just debug run session replay --harness codex sess-codex-789");
     });
 
     it("builds the correct CLI command for opencode", () => {
@@ -454,7 +454,7 @@ describe("agentUtils", () => {
         harness: "opencode",
         sessionId: "sess-opencode-012",
       });
-      expect(getAgentDebugCommand(agent)).toBe("just debug session replay --harness opencode sess-opencode-012");
+      expect(getAgentDebugCommand(agent)).toBe("just debug run session replay --harness opencode sess-opencode-012");
     });
   });
 

@@ -2,7 +2,7 @@
 
 # Default recipe
 default:
-    @just --list
+    @just --justfile "{{ module_directory() }}/justfile" --list
 
 # Run dev server
 run:

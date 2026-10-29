@@ -132,7 +132,7 @@ describe("LogDrawer Component", () => {
       assert(debugBtn);
       debugBtn.click();
 
-      expect(copiedText).toBe("just debug session replay --harness claude-code session-1");
+      expect(copiedText).toBe("just debug run session replay --harness claude-code session-1");
       await unmount();
     } finally {
       cleanup();

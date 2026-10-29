@@ -241,7 +241,7 @@ export function formatExactTime(timestamp: number): string {
 }
 
 export function getAgentDebugCommand(agent: IAgentState): string {
-  return `just debug session replay --harness ${agent.harness} ${agent.sessionId}`;
+  return `just debug run session replay --harness ${agent.harness} ${agent.sessionId}`;
 }
 
 function extractProjectCandidates(projectName?: string): string[] {

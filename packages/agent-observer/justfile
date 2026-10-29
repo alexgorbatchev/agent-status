@@ -1,6 +1,6 @@
 # Default recipe: list available tasks
 default:
-    @just --list
+    @just --justfile "{{ module_directory() }}/justfile" --list
 
 # Build air-observer binary strictly into bin/
 build:
@@ -21,3 +21,7 @@ lint:
 # Clean build artifacts
 clean:
     rm -rf bin/
+
+# Download module dependencies
+setup:
+    go mod download
