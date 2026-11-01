@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree"
+	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree/v4"
 	"github.com/spf13/cobra"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"

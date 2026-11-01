@@ -6,7 +6,7 @@ require (
 	github.com/alexgorbatchev/agent-parser v1.0.0
 	github.com/alexgorbatchev/agent-status/packages/agent-common v0.0.0-00010101000000-000000000000
 	github.com/alexgorbatchev/agent-watcher v1.0.1
-	github.com/alexgorbatchev/cobra-help-tree v1.1.0
+	github.com/alexgorbatchev/cobra-help-tree/v4 v4.0.0
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/coder/websocket v1.8.15
 	github.com/ncruces/go-sqlite3 v0.35.5
@@ -14,11 +14,13 @@ require (
 )
 
 require (
+	github.com/clipperhouse/uax29/v2 v2.2.0 // indirect
 	github.com/ebitengine/purego v0.10.2 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
+	github.com/mattn/go-runewidth v0.0.30 // indirect
 	github.com/ncruces/go-sqlite3-wasm/v6 v6.2.35304 // indirect
 	github.com/ncruces/julianday v1.0.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect

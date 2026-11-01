@@ -14,7 +14,7 @@ import (
 	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/output"
 	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/replay"
 	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/scanner"
-	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree"
+	cobrahelptree "github.com/alexgorbatchev/cobra-help-tree/v4"
 	"github.com/spf13/cobra"
 )
 

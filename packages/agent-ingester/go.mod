@@ -4,7 +4,7 @@ go 1.26.2
 
 require (
 	github.com/alexgorbatchev/agent-status/packages/agent-common v0.0.0-00010101000000-000000000000
-	github.com/alexgorbatchev/cobra-help-tree v1.1.0
+	github.com/alexgorbatchev/cobra-help-tree/v4 v4.0.0
 	github.com/coder/websocket v1.8.15
 	github.com/mozilla-ai/any-llm-go v0.9.0
 	github.com/ncruces/go-sqlite3 v0.35.5
@@ -19,6 +19,7 @@ require (
 	cloud.google.com/go/compute/metadata v0.5.0 // indirect
 	github.com/alexgorbatchev/agent-parser v1.0.0 // indirect
 	github.com/anthropics/anthropic-sdk-go v1.26.0 // indirect
+	github.com/clipperhouse/uax29/v2 v2.2.0 // indirect
 	github.com/ebitengine/purego v0.10.2 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
@@ -28,6 +29,7 @@ require (
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
+	github.com/mattn/go-runewidth v0.0.30 // indirect
 	github.com/ncruces/go-sqlite3-wasm/v6 v6.2.35304 // indirect
 	github.com/ncruces/julianday v1.0.0 // indirect
 	github.com/openai/openai-go v1.12.0 // indirect
