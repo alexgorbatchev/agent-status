@@ -8,8 +8,6 @@ use std::{
     path::PathBuf,
 };
 
-pub const SKILL_POINTER: &str = "Install the agent-server skill using the Skills CLI:\n\n  npx skills add alexgorbatchev/agent-status --skill agent-server\n\nSkill:\n\n  https://github.com/alexgorbatchev/agent-status/tree/main/skills/agent-server\n";
-
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("{0}")]
@@ -48,7 +46,10 @@ impl Paths {
 
 pub fn help_options() -> HelpOptions {
     HelpOptions {
-        skill: Some(SKILL_POINTER.into()),
+        skill: Some(
+            cli_command_kit::SkillSource::new("alexgorbatchev/agent-status", "main")
+                .expect("the fixed skill source names a GitHub repository"),
+        ),
         ..Default::default()
     }
 }
@@ -175,7 +176,7 @@ pub fn parse_with_env(
             return Err(error.into());
         }
     };
-    if cli_command_kit::write_skill(&matches, &help_options(), &mut output)? {
+    if cli_command_kit::write_skill(&command(mode), &matches, &help_options(), &mut output)? {
         return Ok(Action::Printed);
     }
     if let Some(("completion", matches)) = matches.subcommand() {

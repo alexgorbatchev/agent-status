@@ -24,7 +24,7 @@ fn offline_help_version_completion_and_skill_use_the_live_native_command_tree() 
         );
         assert_eq!(
             parse(&["agent-ingester", "skill"], mode).unwrap().1,
-            cli::SKILL_POINTER
+            INSTALL_TEXT
         );
         for path in [
             vec!["--help"],
@@ -156,9 +156,11 @@ fn logging_and_console_fold_display_paths_without_changing_filesystem_options() 
 fn operational_skill_matches_every_live_command_and_option() {
     let skill = include_str!("../../../skills/agent-ingester/SKILL.md");
     assert!(skill.contains("name: agent-ingester\n"));
-    assert!(cli::SKILL_POINTER.contains("--skill agent-ingester"));
-    assert!(cli::SKILL_POINTER.contains("/skills/agent-ingester\n"));
+    assert!(INSTALL_TEXT.contains("--skill agent-ingester"));
+    assert!(INSTALL_TEXT.contains("/skills/agent-ingester\n"));
     let omissions =
         cli_command_kit::skill_omissions(&cli::command(Mode::Agent), &cli::help_options(), skill);
     assert!(omissions.is_empty(), "skill omissions: {omissions:?}");
 }
+
+const INSTALL_TEXT: &str = "Install the agent-ingester skill using the Skills CLI:\n\n  npx skills add alexgorbatchev/agent-status --skill agent-ingester\n\nSkill:\n\n  https://github.com/alexgorbatchev/agent-status/tree/main/skills/agent-ingester\n";

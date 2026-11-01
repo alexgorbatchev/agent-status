@@ -251,7 +251,7 @@ async fn native_help_skill_version_and_argument_errors_are_complete() {
             .await,
             0
         );
-        assert_eq!(String::from_utf8(out).unwrap(), cli::SKILL_POINTER);
+        assert_eq!(String::from_utf8(out).unwrap(), INSTALL_TEXT);
     }
     for args in [
         vec!["agent-debug", "skill", "extra"],
@@ -307,3 +307,5 @@ async fn native_help_skill_version_and_argument_errors_are_complete() {
     assert_eq!(out, b"0.1.0\n");
     assert!(err.is_empty());
 }
+
+const INSTALL_TEXT: &str = "Install the agent-debug skill using the Skills CLI:\n\n  npx skills add alexgorbatchev/agent-status --skill agent-debug\n\nSkill:\n\n  https://github.com/alexgorbatchev/agent-status/tree/main/skills/agent-debug\n";

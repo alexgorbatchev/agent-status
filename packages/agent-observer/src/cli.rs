@@ -14,8 +14,6 @@ use std::{
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
-pub const SKILL_POINTER: &str = "Install the agent-observer skill using the Skills CLI:\n\n  npx skills add alexgorbatchev/agent-status --skill agent-observer\n\nSkill:\n\n  https://github.com/alexgorbatchev/agent-status/tree/main/skills/agent-observer\n";
-
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("{0}")]
@@ -43,7 +41,10 @@ pub enum Action {
 
 pub fn help_options() -> HelpOptions {
     let mut options = HelpOptions {
-        skill: Some(SKILL_POINTER.into()),
+        skill: Some(
+            cli_command_kit::SkillSource::new("alexgorbatchev/agent-status", "main")
+                .expect("the fixed skill source names a GitHub repository"),
+        ),
         ..Default::default()
     };
     options
@@ -182,7 +183,7 @@ pub fn parse_with_env(
         }
         Err(error) => return Err(error.into()),
     };
-    if cli_command_kit::write_skill(&matches, &help_options(), &mut output)? {
+    if cli_command_kit::write_skill(&command(mode), &matches, &help_options(), &mut output)? {
         return Ok(Action::Printed);
     }
     if let Some(("completion", matches)) = matches.subcommand() {

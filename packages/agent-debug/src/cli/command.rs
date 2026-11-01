@@ -1,9 +1,11 @@
 use clap::{Arg, ArgAction, Command};
 use cli_command_kit::{HelpOptions, Mode};
-pub const SKILL_POINTER: &str = "Install the agent-debug skill using the Skills CLI:\n\n  npx skills add alexgorbatchev/agent-status --skill agent-debug\n\nSkill:\n\n  https://github.com/alexgorbatchev/agent-status/tree/main/skills/agent-debug\n";
 pub fn help_options() -> HelpOptions {
     HelpOptions {
-        skill: Some(SKILL_POINTER.into()),
+        skill: Some(
+            cli_command_kit::SkillSource::new("alexgorbatchev/agent-status", "main")
+                .expect("the fixed skill source names a GitHub repository"),
+        ),
         ..Default::default()
     }
 }

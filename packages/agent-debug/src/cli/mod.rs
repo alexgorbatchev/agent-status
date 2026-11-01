@@ -8,7 +8,7 @@ use crate::{
     output::Format,
 };
 use clap::ArgMatches;
-pub use command::{SKILL_POINTER, command, help_options};
+pub use command::{command, help_options};
 use std::{
     ffi::OsString,
     io::{self, Write},
@@ -134,7 +134,7 @@ pub fn parse(
             "--server-url requires --all=true".into(),
         ));
     }
-    if cli_command_kit::write_skill(&matches, &help_options(), out)? {
+    if cli_command_kit::write_skill(&root, &matches, &help_options(), out)? {
         return Ok(None);
     }
     if let Some(("completion", m)) = matches.subcommand() {

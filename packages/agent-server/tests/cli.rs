@@ -157,7 +157,7 @@ fn skill_help_version_completion_and_invalid_values_use_native_offline_paths() {
             ));
             let text = String::from_utf8(output).unwrap();
             if args.contains(&"skill") {
-                assert_eq!(text, cli::SKILL_POINTER);
+                assert_eq!(text, INSTALL_TEXT);
             } else if args.contains(&"--version") {
                 assert_eq!(text, concat!(env!("CARGO_PKG_VERSION"), "\n"));
             } else if args.contains(&"--help") || args.contains(&"help") || args.len() == 2 {
@@ -208,7 +208,7 @@ fn metadata_write_failure_propagates_and_skill_covers_the_live_interface() {
     let omissions =
         cli_command_kit::skill_omissions(&cli::command(Mode::Agent), &cli::help_options(), text);
     assert!(omissions.is_empty(), "{omissions:?}");
-    assert!(cli::SKILL_POINTER.contains("/skills/agent-server"));
+    assert!(INSTALL_TEXT.contains("/skills/agent-server"));
 }
 
 #[cfg(unix)]
@@ -290,3 +290,5 @@ fn origin_csv_does_not_impose_document_limits_on_a_valid_single_flag_record() {
     };
     assert_eq!(options.api.cors_origins.len(), 1100);
 }
+
+const INSTALL_TEXT: &str = "Install the agent-server skill using the Skills CLI:\n\n  npx skills add alexgorbatchev/agent-status --skill agent-server\n\nSkill:\n\n  https://github.com/alexgorbatchev/agent-status/tree/main/skills/agent-server\n";

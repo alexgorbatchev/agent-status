@@ -26,7 +26,7 @@ fn operational_skill_tracks_live_commands_flags_and_installation_pointer() {
                 .unwrap()
                 .is_none()
         );
-        assert_eq!(output, cli::SKILL_POINTER.as_bytes());
+        assert_eq!(output, INSTALL_TEXT.as_bytes());
         assert!(cli::parse(["agent-debug", "skill", "extra"], &format, &mut Vec::new()).is_err());
     }
 }
@@ -106,3 +106,5 @@ async fn every_help_path_and_bare_subject_uses_the_native_agent_alert() {
         assert!(err.is_empty());
     }
 }
+
+const INSTALL_TEXT: &str = "Install the agent-debug skill using the Skills CLI:\n\n  npx skills add alexgorbatchev/agent-status --skill agent-debug\n\nSkill:\n\n  https://github.com/alexgorbatchev/agent-status/tree/main/skills/agent-debug\n";

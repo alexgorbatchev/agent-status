@@ -32,7 +32,7 @@ fn offline_metadata_and_all_help_paths() {
         );
         assert_eq!(
             parse(&["agent-observer", "skill"], mode, &[]).1,
-            cli::SKILL_POINTER
+            INSTALL_TEXT
         );
         for path in [
             vec!["--help"],
@@ -68,8 +68,8 @@ fn offline_metadata_and_all_help_paths() {
 fn operational_skill_matches_live_command_tree_and_pointer_location() {
     let skill = std::fs::read_to_string("../../skills/agent-observer/SKILL.md").unwrap();
     assert!(skill.contains("name: agent-observer\n"));
-    assert!(cli::SKILL_POINTER.contains("--skill agent-observer"));
-    assert!(cli::SKILL_POINTER.contains("/skills/agent-observer\n"));
+    assert!(INSTALL_TEXT.contains("--skill agent-observer"));
+    assert!(INSTALL_TEXT.contains("/skills/agent-observer\n"));
     let omissions =
         cli_command_kit::skill_omissions(&cli::command(Mode::Agent), &cli::help_options(), &skill);
     assert!(omissions.is_empty(), "{omissions:#?}");
@@ -313,3 +313,5 @@ async fn observation_with_cancelled_token_resolves_identity_without_state_writes
     token.cancel();
     cli::observe(&token, *options).await.unwrap();
 }
+
+const INSTALL_TEXT: &str = "Install the agent-observer skill using the Skills CLI:\n\n  npx skills add alexgorbatchev/agent-status --skill agent-observer\n\nSkill:\n\n  https://github.com/alexgorbatchev/agent-status/tree/main/skills/agent-observer\n";
