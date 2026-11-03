@@ -12,9 +12,45 @@ import (
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
 
+// isolateHarnessHome points HOME at an empty temporary directory and clears every
+// harness location override, so resolution never reads the developer's real sessions.
+func isolateHarnessHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for _, key := range []string{
+		"XDG_DATA_HOME",
+		"CLAUDE_PROJECTS_DIR",
+		"CLAUDE_SESSIONS_DIR",
+		"PI_SESSIONS_DIR",
+		"CODEX_SESSIONS_DIR",
+		"OPENCODE_DB_PATH",
+	} {
+		t.Setenv(key, "")
+	}
+	return home
+}
+
 func TestResolveSessionTarget(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
+	home := isolateHarnessHome(t)
+
+	t.Run("resolve session ID in default Claude projects dir under HOME", func(t *testing.T) {
+		projDir := filepath.Join(home, ".claude", "projects", "-repo")
+		_ = os.MkdirAll(projDir, 0755)
+		_ = os.WriteFile(filepath.Join(projDir, "claude-home-555.meta.json"), []byte("{}\n"), 0644)
+		sessFile := filepath.Join(projDir, "claude-home-555.jsonl")
+		_ = os.WriteFile(sessFile, []byte(`{"type":"session","sessionId":"claude-home-555"}`+"\n"), 0644)
+
+		res, err := ResolveSessionTarget(ctx, "claude-home-555", "")
+		if err != nil {
+			t.Fatalf("resolve failed: %v", err)
+		}
+		if res.FilePath != sessFile || res.Harness != types.HarnessClaudeCode || res.SessionID != "claude-home-555" {
+			t.Errorf("unexpected resolution: %+v", res)
+		}
+	})
 
 	t.Run("empty target returns error", func(t *testing.T) {
 		_, err := ResolveSessionTarget(ctx, "   ", "")
@@ -98,52 +134,46 @@ func TestResolveSessionTarget(t *testing.T) {
 
 	t.Run("resolve session ID in OpenCode database", func(t *testing.T) {
 		dbPath := filepath.Join(tmpDir, "test-opencode.db")
-		db, err := sql.Open("sqlite3", "file:"+dbPath)
-		if err != nil {
-			t.Fatalf("opening sqlite: %v", err)
-		}
-		schema := `
-			CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT NOT NULL);
-			CREATE TABLE session (
-				id TEXT PRIMARY KEY,
-				project_id TEXT,
-				parent_id TEXT,
-				slug TEXT,
-				directory TEXT NOT NULL,
-				title TEXT,
-				version TEXT,
-				agent TEXT,
-				model TEXT,
-				cost REAL,
-				tokens_input INTEGER NOT NULL DEFAULT 0,
-				tokens_output INTEGER NOT NULL DEFAULT 0,
-				tokens_reasoning INTEGER NOT NULL DEFAULT 0,
-				tokens_cache_read INTEGER NOT NULL DEFAULT 0,
-				tokens_cache_write INTEGER NOT NULL DEFAULT 0,
-				time_created INTEGER NOT NULL,
-				time_updated INTEGER NOT NULL,
-				time_archived INTEGER,
-				metadata TEXT
-			);
-			CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, data TEXT NOT NULL);
-			CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, data TEXT NOT NULL);
-		`
-		_, _ = db.Exec(schema)
-		_, _ = db.Exec(`
-			INSERT INTO session (id, directory, time_created, time_updated)
-			VALUES ('ses_resolved_1', '/repo', 1000, 2000)
-		`)
-		_ = db.Close()
-
-		orig := os.Getenv("OPENCODE_DB_PATH")
-		_ = os.Setenv("OPENCODE_DB_PATH", dbPath)
-		defer func() { _ = os.Setenv("OPENCODE_DB_PATH", orig) }()
+		createOpencodeSessionDB(t, dbPath, "ses_resolved_1")
+		t.Setenv("OPENCODE_DB_PATH", dbPath)
 
 		res, err := ResolveSessionTarget(ctx, "ses_resolved_1", types.HarnessOpencode)
 		if err != nil {
 			t.Fatalf("resolve failed: %v", err)
 		}
 		if res.FilePath != dbPath || res.SessionID != "ses_resolved_1" {
+			t.Errorf("unexpected resolution: %+v", res)
+		}
+	})
+
+	t.Run("resolve session ID in OpenCode database under XDG_DATA_HOME", func(t *testing.T) {
+		xdgDir := filepath.Join(tmpDir, "xdg_opencode")
+		dbPath := filepath.Join(xdgDir, "opencode", "opencode.db")
+		_ = os.MkdirAll(filepath.Dir(dbPath), 0755)
+		createOpencodeSessionDB(t, dbPath, "ses_xdg_1")
+		t.Setenv("XDG_DATA_HOME", xdgDir)
+
+		res, err := ResolveSessionTarget(ctx, "ses_xdg_1", types.HarnessOpencode)
+		if err != nil {
+			t.Fatalf("resolve failed: %v", err)
+		}
+		if res.FilePath != dbPath || res.Harness != types.HarnessOpencode || res.SessionID != "ses_xdg_1" {
+			t.Errorf("unexpected resolution: %+v", res)
+		}
+	})
+
+	t.Run("resolve session ID in CLAUDE_SESSIONS_DIR", func(t *testing.T) {
+		sessionsDir := filepath.Join(tmpDir, "custom-claude-sessions")
+		_ = os.MkdirAll(sessionsDir, 0755)
+		sessFile := filepath.Join(sessionsDir, "claude-sessions-24680.jsonl")
+		_ = os.WriteFile(sessFile, []byte(`{"type":"session","sessionId":"claude-sessions-24680"}`+"\n"), 0644)
+		t.Setenv("CLAUDE_SESSIONS_DIR", sessionsDir)
+
+		res, err := ResolveSessionTarget(ctx, "claude-sessions-24680", types.HarnessClaudeCode)
+		if err != nil {
+			t.Fatalf("resolve failed: %v", err)
+		}
+		if res.FilePath != sessFile || res.Harness != types.HarnessClaudeCode {
 			t.Errorf("unexpected resolution: %+v", res)
 		}
 	})
@@ -205,4 +235,46 @@ func TestResolveSessionTarget(t *testing.T) {
 			t.Errorf("expected helpful multi-harness error message, got: %v", err)
 		}
 	})
+}
+
+// createOpencodeSessionDB writes a minimal OpenCode database containing one session.
+func createOpencodeSessionDB(t *testing.T, dbPath, sessionID string) {
+	t.Helper()
+	db, err := sql.Open("sqlite3", "file:"+dbPath)
+	if err != nil {
+		t.Fatalf("opening sqlite: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	schema := `
+		CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+		CREATE TABLE session (
+			id TEXT PRIMARY KEY,
+			project_id TEXT,
+			parent_id TEXT,
+			slug TEXT,
+			directory TEXT NOT NULL,
+			title TEXT,
+			version TEXT,
+			agent TEXT,
+			model TEXT,
+			cost REAL,
+			tokens_input INTEGER NOT NULL DEFAULT 0,
+			tokens_output INTEGER NOT NULL DEFAULT 0,
+			tokens_reasoning INTEGER NOT NULL DEFAULT 0,
+			tokens_cache_read INTEGER NOT NULL DEFAULT 0,
+			tokens_cache_write INTEGER NOT NULL DEFAULT 0,
+			time_created INTEGER NOT NULL,
+			time_updated INTEGER NOT NULL,
+			time_archived INTEGER,
+			metadata TEXT
+		);
+		CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, data TEXT NOT NULL);
+		CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, data TEXT NOT NULL);
+	`
+	if _, err := db.Exec(schema); err != nil {
+		t.Fatalf("creating opencode schema: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO session (id, directory, time_created, time_updated) VALUES (?, '/repo', 1000, 2000)`, sessionID); err != nil {
+		t.Fatalf("inserting opencode session: %v", err)
+	}
 }
