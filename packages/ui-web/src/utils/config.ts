@@ -12,6 +12,9 @@ export function resolveApiBaseUrl(overrideUrl?: string): string {
     if (windowWithStatus.__AGENT_STATUS_API_URL__) {
       return windowWithStatus.__AGENT_STATUS_API_URL__;
     }
+    if (window.location?.protocol === "https:") {
+      return window.location.origin;
+    }
   }
   return DEFAULT_API_BASE_URL;
 }

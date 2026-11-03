@@ -37,6 +37,40 @@ describe("config", () => {
     expect(resolved).toBe("http://injected-host:9999");
   });
 
+  it("uses the page origin for HTTPS so API requests stay on the routed host", () => {
+    Object.defineProperty(globalThis, "window", {
+      value: { location: new URL("https://dashboard.example.test/") },
+      configurable: true,
+      writable: true,
+    });
+
+    expect(resolveApiBaseUrl()).toBe("https://dashboard.example.test");
+  });
+
+  it("keeps explicit API overrides ahead of the HTTPS page origin", () => {
+    Object.defineProperty(globalThis, "window", {
+      value: {
+        location: new URL("https://dashboard.example.test/"),
+        __AGENT_STATUS_API_URL__: "https://api.example.test",
+      },
+      configurable: true,
+      writable: true,
+    });
+
+    expect(resolveApiBaseUrl()).toBe("https://api.example.test");
+    expect(resolveApiBaseUrl("https://override.example.test")).toBe("https://override.example.test");
+  });
+
+  it("keeps the localhost API default for plain HTTP development", () => {
+    Object.defineProperty(globalThis, "window", {
+      value: { location: new URL("http://localhost:3000/") },
+      configurable: true,
+      writable: true,
+    });
+
+    expect(resolveApiBaseUrl()).toBe("http://localhost:4502");
+  });
+
   it("falls back to DEFAULT_API_BASE_URL when window property is absent", () => {
     const mockWindow: IWindowWithAgentStatus = {};
     Object.defineProperty(globalThis, "window", {
