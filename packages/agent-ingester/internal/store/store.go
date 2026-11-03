@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,9 @@ import (
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
+
+// ErrAgentNotFound indicates that an agent mutation did not match a stored agent.
+var ErrAgentNotFound = errors.New("agent not found")
 
 type Store struct {
 	db *sql.DB
@@ -493,7 +497,7 @@ func (s *Store) SetAgentVisibility(id string, isHidden bool, hiddenAt *int64) (*
 		return nil, fmt.Errorf("checking rows affected for %s: %w", id, err)
 	}
 	if rowsAffected == 0 {
-		return nil, fmt.Errorf("agent %s not found", id)
+		return nil, fmt.Errorf("%w: %s", ErrAgentNotFound, id)
 	}
 	return s.GetAgent(id)
 }
@@ -512,7 +516,7 @@ func (s *Store) DismissAgentCompletion(id string) (*types.IAgentState, error) {
 		return nil, fmt.Errorf("checking rows affected for %s: %w", id, err)
 	}
 	if rowsAffected == 0 {
-		return nil, fmt.Errorf("agent %s not found", id)
+		return nil, fmt.Errorf("%w: %s", ErrAgentNotFound, id)
 	}
 	return s.GetAgent(id)
 }

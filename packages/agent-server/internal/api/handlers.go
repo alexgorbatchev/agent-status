@@ -224,9 +224,8 @@ func (s *Server) handlePatchAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		IsHidden              *bool `json:"isHidden"`
-		DismissCompletion     *bool `json:"dismissCompletion"`
-		AcknowledgeCompletion *bool `json:"acknowledgeCompletion"`
+		IsHidden          *bool `json:"isHidden"`
+		DismissCompletion *bool `json:"dismissCompletion"`
 	}
 	if err := json.Unmarshal(payload, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -234,8 +233,7 @@ func (s *Server) handlePatchAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if body.IsHidden == nil &&
-		(body.DismissCompletion == nil || !*body.DismissCompletion) &&
-		(body.AcknowledgeCompletion == nil || !*body.AcknowledgeCompletion) {
+		(body.DismissCompletion == nil || !*body.DismissCompletion) {
 		writeError(w, http.StatusBadRequest, "no recognized patch fields")
 		return
 	}
