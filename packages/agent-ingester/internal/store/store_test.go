@@ -761,6 +761,9 @@ func TestStore_Open_DiskFile(t *testing.T) {
 }
 
 func TestStore_Open_Errors(t *testing.T) {
+	// Catch relative-path pollution without touching the source tree or its contents.
+	t.Chdir(t.TempDir())
+
 	// 1. Error creating database directory
 	if _, err := Open("/dev/null/impossible/db.sqlite"); err == nil {
 		t.Errorf("expected error from Open with impossible directory, got nil")
@@ -771,14 +774,8 @@ func TestStore_Open_Errors(t *testing.T) {
 	if err := os.WriteFile(blocker, []byte("data"), 0644); err != nil {
 		t.Fatalf("creating blocker file failed: %v", err)
 	}
-	_ = os.RemoveAll("file:")
-	t.Cleanup(func() { _ = os.RemoveAll("file:") })
 	if _, err := Open(filepath.Join(blocker, "test.db")); err == nil {
 		t.Errorf("expected error from Open when parent directory creation fails, got nil")
-	}
-	if _, err := os.Stat("file:"); !os.IsNotExist(err) {
-		_ = os.RemoveAll("file:")
-		t.Errorf("store test created persistent 'file:' directory in working tree")
 	}
 
 	// 2. Error during Migrate in Open
@@ -794,6 +791,13 @@ func TestStore_Open_Errors(t *testing.T) {
 
 	if _, err := Open(dbPath); err == nil {
 		t.Errorf("expected error from Open when Migrate fails, got nil")
+	}
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("reading isolated working directory: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("store error tests created files in the working directory: %v", entries)
 	}
 }
 

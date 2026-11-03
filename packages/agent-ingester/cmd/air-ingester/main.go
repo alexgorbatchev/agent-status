@@ -62,7 +62,7 @@ func newRootCmd(cfg *config.Config) *cobra.Command {
 	rootCmd.Flags().StringVar(&cfg.LogFile, "log-file", cfg.LogFile, "Custom path for rotating log file on disk")
 	rootCmd.Flags().DurationVar(&cfg.IdleGracePeriod, "idle-grace-period", cfg.IdleGracePeriod, "Grace period before transitioning from BUSY to IDLE on turn end")
 
-	cobrahelptree.Setup(rootCmd)
+	_ = cobrahelptree.Setup(rootCmd) // Setup only rejects nil; rootCmd is allocated above.
 
 	return rootCmd
 }

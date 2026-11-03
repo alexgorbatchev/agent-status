@@ -1460,6 +1460,8 @@ func TestReceiver_FramesBatchReceivedAndFrameIngestedLogLevel(t *testing.T) {
 }
 
 func TestReceiver_HandleFocusAgent(t *testing.T) {
+	t.Setenv("HERDR_TERMINAL_APP", "TestTerminal")
+	t.Setenv("TERM_PROGRAM", "")
 	var calledExecCmd string
 	restoreExec := herdr.MockExecCommand(func(ctx context.Context, name string, args ...string) *exec.Cmd {
 		calledExecCmd = name

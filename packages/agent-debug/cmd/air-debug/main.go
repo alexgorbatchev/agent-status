@@ -775,7 +775,7 @@ func newRootCmd() *cobra.Command {
 	processCmd.AddCommand(processListCmd)
 	rootCmd.AddCommand(processCmd)
 
-	cobrahelptree.Setup(rootCmd)
+	_ = cobrahelptree.Setup(rootCmd) // Setup only rejects nil; rootCmd is allocated above.
 	return rootCmd
 }
 

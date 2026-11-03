@@ -108,7 +108,7 @@ func newRootCmd() (*cobra.Command, *observerOptions) {
 	flags.StringVar(&opts.logDir, "log-dir", "", "Custom directory for rotating log files on disk (default: $XDG_STATE_HOME/agent-status/logs)")
 	flags.StringVar(&opts.logFile, "log-file", "", "Custom path for rotating log file on disk")
 
-	cobrahelptree.Setup(rootCmd)
+	_ = cobrahelptree.Setup(rootCmd) // Setup only rejects nil; rootCmd is allocated above.
 	return rootCmd, opts
 }
 
