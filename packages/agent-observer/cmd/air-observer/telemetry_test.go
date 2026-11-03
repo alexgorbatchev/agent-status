@@ -37,3 +37,30 @@ func TestTelemetryFramePreservesWatcherEvent(t *testing.T) {
 		t.Fatalf("workspace metadata lost: %+v", frame.Workspace)
 	}
 }
+
+func TestTelemetryFramePreservesCodexToolOutput(t *testing.T) {
+	for _, kind := range []string{"function_call_output", "custom_tool_call_output"} {
+		for _, output := range []string{`"completed"`, `[{"type":"input_text","text":"first"},{"type":"input_text","text":"second"}]`} {
+			t.Run(kind+"/"+output, func(t *testing.T) {
+				line := []byte(`{"timestamp":"2026-10-29T23:08:21Z","type":"response_item","payload":{"type":"` + kind + `","call_id":"call-1","output":` + output + `}}`)
+				events, err := parser.NewCodexParser().ParseLine(line)
+				if err != nil {
+					t.Fatalf("parsing Codex tool output: %v", err)
+				}
+				if len(events) != 1 {
+					t.Fatalf("got %d events, want one tool result", len(events))
+				}
+				frame := telemetryFrame(context.Background(), types.IEnvironmentInfo{ID: "machine"}, git.NewResolver(time.Minute), watcher.Event{
+					Harness: watcher.HarnessCodex, SessionID: "session", ParsedEvent: events[0],
+				})
+				want := output
+				if output == `"completed"` {
+					want = "completed"
+				}
+				if frame.EventType != "tool_result" || frame.Data.ToolCallID == nil || *frame.Data.ToolCallID != "call-1" || frame.Data.ToolOutput == nil || *frame.Data.ToolOutput != want {
+					t.Fatalf("tool result lost or changed: %+v", frame.Data)
+				}
+			})
+		}
+	}
+}

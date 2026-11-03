@@ -1,5 +1,5 @@
-github.com/alexgorbatchev/agent-parser v1.0.0 h1:zhOczmvtWOl0yqLCtpB/vjVYFSdqbU7RCCpLTcUgFUo=
-github.com/alexgorbatchev/agent-parser v1.0.0/go.mod h1:cG4RiNFr4hlmop0DKAY914Q2nu1n8lltaZQgkyRgz8o=
+github.com/alexgorbatchev/agent-parser v1.0.1 h1:F562KYoiWdGc5gkyftTuKo54A2kcBvytoF28hgXSH1M=
+github.com/alexgorbatchev/agent-parser v1.0.1/go.mod h1:cG4RiNFr4hlmop0DKAY914Q2nu1n8lltaZQgkyRgz8o=
 github.com/alexgorbatchev/agent-watcher v1.0.1 h1:NqbJkK4qMAQ3ZROmJHkx055ZGEdIe7KJI1j6EF0phyM=
 github.com/alexgorbatchev/agent-watcher v1.0.1/go.mod h1:+uLReLosF5GHp1iBlehmoaERWHU0Qs0ZyzGUFZ5ZuAo=
 github.com/alexgorbatchev/cobra-help-tree/v4 v4.0.0 h1:lsgP09cFsQq25htGjEYvh8ATiBE7t7R7ECfJBe01QVU=
