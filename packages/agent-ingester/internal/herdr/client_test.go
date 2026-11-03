@@ -489,3 +489,72 @@ func TestMockExecCommand_Restore(t *testing.T) {
 	restore()
 	restore() // idempotent restore
 }
+
+// pipeDialer serves one JSON-RPC request per dial, answering each method with the
+// result returned by respond.
+func pipeDialer(t *testing.T, respond func(method string) interface{}) func(ctx context.Context) (net.Conn, error) {
+	t.Helper()
+	return func(ctx context.Context) (net.Conn, error) {
+		clientConn, serverConn := net.Pipe()
+		go func() {
+			defer func() { _ = serverConn.Close() }()
+			line, err := bufio.NewReader(serverConn).ReadBytes('\n')
+			if err != nil {
+				return
+			}
+			var req struct {
+				ID     string `json:"id"`
+				Method string `json:"method"`
+			}
+			if err := json.Unmarshal(line, &req); err != nil {
+				return
+			}
+			data, _ := json.Marshal(map[string]interface{}{"id": req.ID, "result": respond(req.Method)})
+			_, _ = serverConn.Write(append(data, '\n'))
+		}()
+		return clientConn, nil
+	}
+}
+
+func TestClient_FindPaneByPID_LegacyResponseShapes(t *testing.T) {
+	client := NewClientWithDialer(pipeDialer(t, func(method string) interface{} {
+		switch method {
+		case "pane.list":
+			// Older herdr versions return the pane array directly instead of {"panes": [...]}.
+			return []map[string]interface{}{
+				{"pane_id": "w2:p1", "workspace_id": "w2", "tab_id": "w2:t1", "title": "Legacy Pane"},
+			}
+		case "pane.process_info":
+			// Older herdr versions also put foreground_processes at the top level.
+			return map[string]interface{}{
+				"foreground_processes": []map[string]interface{}{
+					{"pid": 4242, "name": "claude", "argv0": "claude", "cwd": "/Users/dev/legacy"},
+				},
+			}
+		}
+		return map[string]interface{}{}
+	}))
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	pane, err := client.FindPaneByPID(ctx, 4242, "", "")
+	if err != nil {
+		t.Fatalf("expected legacy responses to resolve the pane, got: %v", err)
+	}
+	if pane.ID != "w2:p1" || pane.WorkspaceID != "w2" || pane.TabID != "w2:t1" || pane.Title != "Legacy Pane" {
+		t.Errorf("unexpected pane: %+v", pane)
+	}
+}
+
+func TestClient_FindPaneByPID_EmptyPaneList(t *testing.T) {
+	client := NewClientWithDialer(pipeDialer(t, func(method string) interface{} {
+		return map[string]interface{}{"panes": []interface{}{}}
+	}))
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	_, err := client.FindPaneByPID(ctx, 4242, "/Users/dev/project", "claude")
+	if !errors.Is(err, ErrPaneNotFound) {
+		t.Errorf("expected ErrPaneNotFound for an empty pane list, got: %v", err)
+	}
+}
