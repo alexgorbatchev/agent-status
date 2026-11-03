@@ -226,3 +226,78 @@ func TestClassifier_DismissCompletion_ConcurrentFrame(t *testing.T) {
 		})
 	}
 }
+
+func TestClassifier_DismissCompletion_BeforeFramePublishesCache(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		failDismissal bool
+		newCompletion bool
+	}{
+		{name: "dismissed_completion"},
+		{name: "failed_dismissal", failDismissal: true},
+		{name: "new_completion", newCompletion: true},
+		{name: "new_completion_after_failed_dismissal", failDismissal: true, newCompletion: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			c, st, frame := completedAgent(t, ":memory:")
+			previousCompletion := frame.Timestamp
+			if tt.newCompletion {
+				frame.Seq++
+				frame.Timestamp += 1000
+				frame.EventType = "turn_start"
+				if _, err := c.ProcessFrame(frame); err != nil {
+					t.Fatal(err)
+				}
+				previousCompletion = 0
+			}
+			if tt.failDismissal {
+				if _, err := st.DB().Exec(`CREATE TRIGGER reject_dismissal BEFORE UPDATE OF has_unseen_completion ON agents
+					WHEN NEW.has_unseen_completion = 0 BEGIN SELECT RAISE(ABORT, 'dismissal rejected'); END`); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			// Pause after the frame copied completion and classified its event, but
+			// before it can overwrite cached completion with that local snapshot.
+			started, resume, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			c.beforeFramePublishHook = func(string) { close(started); <-resume }
+			frame.Seq++
+			frame.Timestamp += 1000
+			frame.EventType = "text"
+			if tt.newCompletion {
+				frame.EventType = "turn_end"
+			}
+			processed := make(chan error, 1)
+			go func() {
+				defer close(done)
+				_, err := c.ProcessFrame(frame)
+				processed <- err
+			}()
+			t.Cleanup(func() { close(resume); <-done })
+			<-started
+
+			_, err := c.DismissCompletion(frame.AgentID)
+			if tt.failDismissal {
+				if err == nil || !strings.Contains(err.Error(), "dismissal rejected") {
+					t.Fatalf("expected database rejection, got %v", err)
+				}
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				previousCompletion = 0
+			}
+			assertCompletion(t, c, st, frame.AgentID, previousCompletion)
+			resume <- struct{}{}
+			<-done
+			if err := <-processed; err != nil {
+				t.Fatal(err)
+			}
+			wantCompletion := previousCompletion
+			if tt.newCompletion {
+				wantCompletion = frame.Timestamp
+			}
+			assertCompletion(t, c, st, frame.AgentID, wantCompletion)
+		})
+	}
+}

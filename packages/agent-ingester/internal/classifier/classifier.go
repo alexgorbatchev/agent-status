@@ -123,6 +123,8 @@ type Classifier struct {
 	beforeIdleSaveHook          func(agentID string)
 	beforeSilenceSaveHook       func(agentID string)
 	beforeSummarySaveHook       func(agentID string)
+	beforeFramePublishHook      func(agentID string)
+	afterFrameReadHook          func(agentID string)
 	beforeSubagentDwellSaveHook func(agentID, subagentID string)
 	afterSubagentDwellHook      func(agentID, subagentID string)
 }
@@ -260,21 +262,29 @@ func (c *Classifier) SetSyncMode(sync bool) {
 
 // DismissCompletion persists dismissal before clearing cached completion and broadcasting the updated agent.
 func (c *Classifier) DismissCompletion(agentID string) (*types.IAgentState, error) {
+	if c.store == nil {
+		return nil, fmt.Errorf("classifier store is nil")
+	}
 	var persistMu *sync.Mutex
 	c.mu.Lock()
 	targetCtx := c.agentCtx[agentID]
+	c.mu.Unlock()
+	if targetCtx == nil {
+		agent, err := c.store.GetAgent(agentID)
+		if err != nil {
+			return nil, err
+		}
+		if agent != nil {
+			targetCtx = c.getOrCreateAgentContext(agent)
+		}
+	}
 	if targetCtx != nil {
 		persistMu = &targetCtx.persistMu
 	}
-	c.mu.Unlock()
 
 	if persistMu != nil {
 		persistMu.Lock()
 		defer persistMu.Unlock()
-	}
-
-	if c.store == nil {
-		return nil, fmt.Errorf("classifier store is nil")
 	}
 
 	c.mu.Lock()
@@ -594,19 +604,26 @@ func (c *Classifier) flushTrailingCandidateLocked(agentID string) {
 	if isSync {
 		c.mu.Unlock()
 		res := c.summarizer.Summarize(context.Background(), input)
+		if c.beforeSummarySaveHook != nil {
+			c.beforeSummarySaveHook(agentID)
+		}
+		actx.persistMu.Lock()
 		agent, err := c.store.GetAgent(agentID)
+		var cb func(*types.IAgentState)
 		if err == nil && agent != nil && agent.Activity.Lifecycle != types.LifecycleExited && (agent.Activity.CurrentRun == nil || agent.Activity.CurrentRun.EndedAt == nil) {
 			if shouldApplySummary(&agent.Activity, res) {
 				applySummary(&agent.Activity, res)
 			}
 			agent.Activity.ActionStale = false
+			c.syncCompletionToAgentActivity(agentID, agent)
 			_ = c.store.SaveAgentState(*agent)
 			c.mu.Lock()
-			cb := c.onUpdate
+			cb = c.onUpdate
 			c.mu.Unlock()
-			if cb != nil {
-				cb(agent)
-			}
+		}
+		actx.persistMu.Unlock()
+		if cb != nil {
+			cb(agent)
 		}
 		c.mu.Lock()
 		return
@@ -664,6 +681,9 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 	agent, err := c.store.GetAgent(frame.AgentID)
 	if err != nil {
 		return nil, fmt.Errorf("getting existing agent: %w", err)
+	}
+	if c.afterFrameReadHook != nil {
+		c.afterFrameReadHook(frame.AgentID)
 	}
 
 	now := frame.Timestamp
@@ -803,95 +823,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		agent.Activity.Title = strings.TrimSpace(*frame.Data.Title)
 	}
 
-	// Update Prompt Context if provided
-	c.mu.Lock()
-	actx, exists := c.agentCtx[agent.ID]
-	c.mu.Unlock()
-
-	if !exists {
-		preloaded := make(map[string]struct{})
-		if c.store != nil && agent.Activity.SubagentCount > 0 {
-			if ids, err := c.store.GetDistinctSubagentIDs(agent.ID); err == nil {
-				for _, id := range ids {
-					preloaded[id] = struct{}{}
-				}
-			}
-		}
-		c.mu.Lock()
-		actx, exists = c.agentCtx[agent.ID]
-		if !exists {
-			subagentsMap := make(map[string]*subagentState)
-			for _, summary := range agent.Activity.ActiveSubagents {
-				st := summary.Status
-				if st == "" {
-					if summary.Activity == types.ActivityBusy {
-						st = types.SubagentRunning
-					} else {
-						st = types.SubagentCompleted
-					}
-				}
-				var rlResetAt *int64
-				var rlRetrySec *int64
-				if summary.Activity == types.ActivityRateLimited && agent.Activity.Activity == types.ActivityRateLimited {
-					rlResetAt = agent.Activity.RateLimitResetAt
-					rlRetrySec = agent.Activity.RetryAfterSeconds
-				}
-				subagentsMap[summary.ID] = &subagentState{
-					id:                summary.ID,
-					activity:          summary.Activity,
-					activeTool:        summary.ActiveTool,
-					action:            summary.Action,
-					lastError:         summary.LastError,
-					rateLimitResetAt:  rlResetAt,
-					retryAfterSeconds: rlRetrySec,
-					startedAt:         summary.StartedAt,
-					completedAt:       summary.CompletedAt,
-					status:            st,
-				}
-				preloaded[summary.ID] = struct{}{}
-			}
-			initialRootActivity := agent.Activity.Activity
-			initialRootAction := agent.Activity.Action
-			initialRootQuestion := agent.Activity.Question
-			initialRootLastError := agent.Activity.LastError
-			if len(subagentsMap) > 0 && agent.Activity.ActiveTool == nil {
-				hasSubBusy := false
-				for _, sub := range subagentsMap {
-					if sub.activity == types.ActivityBusy {
-						hasSubBusy = true
-						break
-					}
-				}
-				if hasSubBusy && initialRootActivity == types.ActivityBusy {
-					initialRootActivity = types.ActivityIdle
-					if strings.HasPrefix(initialRootAction, "Running subagent ") {
-						initialRootAction = "Idle"
-					}
-				}
-			}
-			var initialRootRateLimitResetAt *int64
-			var initialRootRetryAfterSeconds *int64
-			if initialRootActivity == types.ActivityRateLimited {
-				initialRootRateLimitResetAt = agent.Activity.RateLimitResetAt
-				initialRootRetryAfterSeconds = agent.Activity.RetryAfterSeconds
-			}
-			actx = &agentContext{
-				seenSubagents:         preloaded,
-				subagents:             subagentsMap,
-				rootActivity:          initialRootActivity,
-				rootAction:            initialRootAction,
-				rootQuestion:          initialRootQuestion,
-				rootLastError:         initialRootLastError,
-				rootRateLimitResetAt:  initialRootRateLimitResetAt,
-				rootRetryAfterSeconds: initialRootRetryAfterSeconds,
-				hasUnseenCompletion:   agent.Activity.HasUnseenCompletion,
-				completedAt:           agent.Activity.CompletedAt,
-			}
-			c.agentCtx[agent.ID] = actx
-		}
-		c.mu.Unlock()
-	}
-
+	actx := c.getOrCreateAgentContext(agent)
 	c.mu.Lock()
 	actx.saveGeneration++
 	actx.lastEventTimestamp = now
@@ -911,8 +843,10 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			agent.Activity.RetryAfterSeconds = nil
 		}
 	}
-	agent.Activity.HasUnseenCompletion = actx.hasUnseenCompletion
-	agent.Activity.CompletedAt = actx.completedAt
+	initialCompletion := actx.hasUnseenCompletion
+	initialCompletedAt := actx.completedAt
+	agent.Activity.HasUnseenCompletion = initialCompletion
+	agent.Activity.CompletedAt = initialCompletedAt
 	if actx.seenSubagents == nil {
 		actx.seenSubagents = make(map[string]struct{})
 	}
@@ -1456,7 +1390,17 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		}
 	}
 
+	if c.beforeFramePublishHook != nil {
+		c.beforeFramePublishHook(agent.ID)
+	}
 	c.mu.Lock()
+	// An unchanged completion belongs to the cache, not this frame's snapshot.
+	// Reconcile it before publishing so dismissal during classification cannot
+	// be undone. New completions allocated by this frame remain authoritative.
+	if agent.Activity.HasUnseenCompletion == initialCompletion && agent.Activity.CompletedAt == initialCompletedAt {
+		agent.Activity.HasUnseenCompletion = actx.hasUnseenCompletion
+		agent.Activity.CompletedAt = actx.completedAt
+	}
 	if !isSubagent && agent.Activity.Lifecycle != types.LifecycleExited {
 		actx.rootActivity = agent.Activity.Activity
 		actx.rootAction = agent.Activity.Action
