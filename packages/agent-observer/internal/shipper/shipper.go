@@ -20,8 +20,9 @@ const (
 	DefaultDispatchBufferSize = 100
 )
 
-var (
-	ErrShipperStopped       = errors.New("shipper stopped")
+var ErrShipperStopped = errors.New("shipper stopped")
+
+const (
 	heartbeatInterval       = 10 * time.Second
 	initialBackoff          = 500 * time.Millisecond
 	sustainedHealthDuration = 5 * time.Second
@@ -45,6 +46,11 @@ type Config struct {
 type Shipper struct {
 	cfg Config
 
+	heartbeatInterval       time.Duration
+	initialBackoff          time.Duration
+	sustainedHealthDuration time.Duration
+	backoffRandomization    float64
+
 	mu           sync.Mutex
 	lastSeq      int64
 	lastAckedSeq int64
@@ -61,10 +67,14 @@ func NewShipper(cfg Config) *Shipper {
 		bufSize = DefaultDispatchBufferSize
 	}
 	return &Shipper{
-		cfg:          cfg,
-		ackCallbacks: make(map[int64]AckCallback),
-		incomingCh:   make(chan inFlightItem, bufSize),
-		stopCh:       make(chan struct{}),
+		cfg:                     cfg,
+		heartbeatInterval:       heartbeatInterval,
+		initialBackoff:          initialBackoff,
+		sustainedHealthDuration: sustainedHealthDuration,
+		backoffRandomization:    backoffRandomization,
+		ackCallbacks:            make(map[int64]AckCallback),
+		incomingCh:              make(chan inFlightItem, bufSize),
+		stopCh:                  make(chan struct{}),
 	}
 }
 
@@ -135,10 +145,10 @@ func (s *Shipper) Stop() {
 
 func (s *Shipper) runConnectionLoop(ctx context.Context) {
 	expBackoff := backoff.NewExponentialBackOff()
-	expBackoff.InitialInterval = initialBackoff
+	expBackoff.InitialInterval = s.initialBackoff
 	expBackoff.Multiplier = 2.0
 	expBackoff.MaxInterval = 30 * time.Second
-	expBackoff.RandomizationFactor = backoffRandomization
+	expBackoff.RandomizationFactor = s.backoffRandomization
 	expBackoff.Reset()
 
 	var backoffMu sync.Mutex
@@ -277,12 +287,12 @@ func (s *Shipper) connectAndStream(ctx context.Context, onConnected func()) erro
 		}
 	}()
 
-	heartbeatTicker := time.NewTicker(heartbeatInterval)
+	heartbeatTicker := time.NewTicker(s.heartbeatInterval)
 	defer heartbeatTicker.Stop()
 
 	var healthTimerCh <-chan time.Time
-	if sustainedHealthDuration > 0 {
-		healthTimer := time.NewTimer(sustainedHealthDuration)
+	if s.sustainedHealthDuration > 0 {
+		healthTimer := time.NewTimer(s.sustainedHealthDuration)
 		defer healthTimer.Stop()
 		healthTimerCh = healthTimer.C
 	} else {

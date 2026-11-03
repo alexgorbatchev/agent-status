@@ -167,10 +167,6 @@ func TestShipperSendAndAck(t *testing.T) {
 }
 
 func TestShipperHeartbeat(t *testing.T) {
-	origHeartbeat := heartbeatInterval
-	heartbeatInterval = 50 * time.Millisecond
-	defer func() { heartbeatInterval = origHeartbeat }()
-
 	var mu sync.Mutex
 	var receivedHeartbeats int
 
@@ -207,6 +203,7 @@ func TestShipperHeartbeat(t *testing.T) {
 	}
 
 	s := NewShipper(cfg)
+	s.heartbeatInterval = 50 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -233,10 +230,6 @@ func TestShipperHeartbeat(t *testing.T) {
 }
 
 func TestShipperReconnectStreamsPendingFrames(t *testing.T) {
-	origBackoff := initialBackoff
-	initialBackoff = 20 * time.Millisecond
-	defer func() { initialBackoff = origBackoff }()
-
 	var serverMu sync.Mutex
 	var connectionAttempts int32
 	var allReceivedFrames []types.ITelemetryFrame
@@ -288,6 +281,7 @@ func TestShipperReconnectStreamsPendingFrames(t *testing.T) {
 		IngesterURL: wsURL,
 		Environment: env,
 	})
+	s.initialBackoff = 20 * time.Millisecond
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -337,15 +331,12 @@ func TestShipperReconnectStreamsPendingFrames(t *testing.T) {
 }
 
 func TestShipperConnectionFailureRetry(t *testing.T) {
-	origBackoff := initialBackoff
-	initialBackoff = 10 * time.Millisecond
-	defer func() { initialBackoff = origBackoff }()
-
 	// Connect to closed/invalid port to trigger connection error and retry
 	s := NewShipper(Config{
 		IngesterURL: "ws://127.0.0.1:1/nonexistent",
 		Environment: types.IEnvironmentInfo{ID: "fail-env"},
 	})
+	s.initialBackoff = 10 * time.Millisecond
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -692,11 +683,8 @@ func TestShipperLoggingOnDisconnect(t *testing.T) {
 		Environment: types.IEnvironmentInfo{ID: "env-log-disc", Label: "log-disc-test"},
 	}
 
-	origBackoff := initialBackoff
-	initialBackoff = 20 * time.Millisecond
-	defer func() { initialBackoff = origBackoff }()
-
 	s := NewShipper(cfg)
+	s.initialBackoff = 20 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -718,18 +706,6 @@ func TestShipperLoggingOnDisconnect(t *testing.T) {
 }
 
 func TestShipperBackoffSuccessivelyIncreasesOnImmediateDisconnect(t *testing.T) {
-	origBackoff := initialBackoff
-	initialBackoff = 30 * time.Millisecond
-	defer func() { initialBackoff = origBackoff }()
-
-	origRandomization := backoffRandomization
-	backoffRandomization = 0
-	defer func() { backoffRandomization = origRandomization }()
-
-	origSustained := sustainedHealthDuration
-	sustainedHealthDuration = 10 * time.Second
-	defer func() { sustainedHealthDuration = origSustained }()
-
 	var mu sync.Mutex
 	var connectTimes []time.Time
 
@@ -761,6 +737,9 @@ func TestShipperBackoffSuccessivelyIncreasesOnImmediateDisconnect(t *testing.T) 
 	}
 
 	s := NewShipper(cfg)
+	s.initialBackoff = 30 * time.Millisecond
+	s.backoffRandomization = 0
+	s.sustainedHealthDuration = 10 * time.Second
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -814,18 +793,6 @@ func TestShipperBackoffSuccessivelyIncreasesOnImmediateDisconnect(t *testing.T) 
 }
 
 func TestShipperBackoffResetsOnAck(t *testing.T) {
-	origBackoff := initialBackoff
-	initialBackoff = 30 * time.Millisecond
-	defer func() { initialBackoff = origBackoff }()
-
-	origRandomization := backoffRandomization
-	backoffRandomization = 0
-	defer func() { backoffRandomization = origRandomization }()
-
-	origSustained := sustainedHealthDuration
-	sustainedHealthDuration = 10 * time.Second
-	defer func() { sustainedHealthDuration = origSustained }()
-
 	var mu sync.Mutex
 	var connectTimes []time.Time
 	attempt := 0
@@ -871,6 +838,9 @@ func TestShipperBackoffResetsOnAck(t *testing.T) {
 	}
 
 	s := NewShipper(cfg)
+	s.initialBackoff = 30 * time.Millisecond
+	s.backoffRandomization = 0
+	s.sustainedHealthDuration = 10 * time.Second
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -914,18 +884,6 @@ func TestShipperBackoffResetsOnAck(t *testing.T) {
 }
 
 func TestShipperBackoffResetsOnSustainedHealth(t *testing.T) {
-	origBackoff := initialBackoff
-	initialBackoff = 30 * time.Millisecond
-	defer func() { initialBackoff = origBackoff }()
-
-	origRandomization := backoffRandomization
-	backoffRandomization = 0
-	defer func() { backoffRandomization = origRandomization }()
-
-	origSustained := sustainedHealthDuration
-	sustainedHealthDuration = 40 * time.Millisecond
-	defer func() { sustainedHealthDuration = origSustained }()
-
 	var mu sync.Mutex
 	var connectTimes []time.Time
 	attempt := 0
@@ -963,6 +921,9 @@ func TestShipperBackoffResetsOnSustainedHealth(t *testing.T) {
 	}
 
 	s := NewShipper(cfg)
+	s.initialBackoff = 30 * time.Millisecond
+	s.backoffRandomization = 0
+	s.sustainedHealthDuration = 40 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -1004,10 +965,6 @@ func TestShipperBackoffResetsOnSustainedHealth(t *testing.T) {
 }
 
 func TestShipperOnConnectedInvokedOncePerConnection(t *testing.T) {
-	origSustained := sustainedHealthDuration
-	sustainedHealthDuration = 30 * time.Millisecond
-	defer func() { sustainedHealthDuration = origSustained }()
-
 	var onConnectedCalls int
 	var callMu sync.Mutex
 	onConnected := func() {
@@ -1043,6 +1000,7 @@ func TestShipperOnConnectedInvokedOncePerConnection(t *testing.T) {
 	}
 
 	s := NewShipper(cfg)
+	s.sustainedHealthDuration = 30 * time.Millisecond
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
