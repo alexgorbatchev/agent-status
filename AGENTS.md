@@ -9,7 +9,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - Install: `bun install --cwd packages/ui-web`
 - Start dev stack: `just run` (or `just start`; native devhost services)
 - Stop dev stack: `just stop`
-- Check status: `just status`
+- Check status: `just status` (this checkout's devhost stack; `devhost stack list` shows all stacks)
 - Tail dev stack logs: `just logs` (or `tail -f .tmp/dev-stack/logs/*.log`)
 - Run debug CLI: `just debug run <args>`
 - Replay session offline: `just debug session-replay-[claude|pi|codex|opencode] <session-id>`

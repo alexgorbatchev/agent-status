@@ -24,7 +24,6 @@ Local observer daemon (`air-observer`) that consumes `agent-watcher`, formats te
 ## Local gotchas
 
 - Keep `agent-parser` at least `v1.0.1` across workspace modules; Codex tool outputs may be content arrays, and task timestamps may be numeric. Older decoders reject these records.
-
 - Watcher shutdown joins tailers and flushes cursors, database checkpoints, and session state before shipper shutdown.
 - Transcript files remain the durable queue when the bounded shipper buffer fills up.
 - Claude Code compaction replaces or truncates transcripts; file generation checks belong to the library.

@@ -23,9 +23,9 @@ start *args:
 stop:
     devhost stop
 
-# List running devhost stacks
+# Show whether this checkout's devhost stack is running
 status:
-    devhost stack list
+    devhost stack find "{{ justfile_directory() }}/devhost.toml"
 
 # Tail rotating daemon logs on disk
 logs:
