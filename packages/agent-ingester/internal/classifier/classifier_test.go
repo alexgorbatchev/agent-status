@@ -1869,11 +1869,18 @@ func TestClassifier_WorkerCleanupOnRunExited(t *testing.T) {
 
 func TestClassifier_DiscardStaleSummaryOnStateTransition(t *testing.T) {
 	var mu sync.Mutex
-	updateCount := 0
+	var updates []string
+	var requests atomic.Int32
+	serverStarted := make(chan struct{})
 	serverHold := make(chan struct{})
 
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		<-serverHold // hold response until frame transition occurs
+		content := `{"action":"Do you want to apply this change?","phase":"planning"}`
+		if requests.Add(1) == 1 {
+			close(serverStarted)
+			<-serverHold // hold the old tool response until frame transition occurs
+			content = `{"action":"Old slow tool summary","phase":"editing","activeTarget":"old.go"}`
+		}
 		w.Header().Set("Content-Type", "application/json")
 		resp := map[string]interface{}{
 			"id":     "chatcmpl-stale",
@@ -1883,7 +1890,7 @@ func TestClassifier_DiscardStaleSummaryOnStateTransition(t *testing.T) {
 					"index": 0,
 					"message": map[string]interface{}{
 						"role":    "assistant",
-						"content": `{"action":"Old slow tool summary","phase":"editing","activeTarget":"old.go"}`,
+						"content": content,
 					},
 					"finish_reason": "stop",
 				},
@@ -1922,7 +1929,7 @@ func TestClassifier_DiscardStaleSummaryOnStateTransition(t *testing.T) {
 
 	c.SetOnUpdate(func(a *types.IAgentState) {
 		mu.Lock()
-		updateCount++
+		updates = append(updates, a.Activity.Action)
 		mu.Unlock()
 	})
 
@@ -1968,6 +1975,11 @@ func TestClassifier_DiscardStaleSummaryOnStateTransition(t *testing.T) {
 	if _, err := c.ProcessFrame(f1); err != nil {
 		t.Fatalf("ProcessFrame 1 failed: %v", err)
 	}
+	select {
+	case <-serverStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("old tool summary request did not start")
+	}
 
 	// 2. Question prompt transitions agent to WAITING_QUESTION before background job completes
 	q := "Do you want to apply this change?"
@@ -1998,6 +2010,14 @@ func TestClassifier_DiscardStaleSummaryOnStateTransition(t *testing.T) {
 
 	// Flush queue
 	c.Flush(agentID)
+	if got := requests.Load(); got != 2 {
+		t.Errorf("summary requests = %d, want both tool and question generations", got)
+	}
+	mu.Lock()
+	if len(updates) != 0 {
+		t.Errorf("summary broadcasts = %q, want stale tool rejected and identical question deduplicated", updates)
+	}
+	mu.Unlock()
 
 	// Verify agent remains in WAITING_QUESTION and was not overwritten by stale tool summary
 	agent, err := s.GetAgent(agentID)
