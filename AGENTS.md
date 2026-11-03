@@ -18,7 +18,6 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - Test all: `just test-all`
 - Check coverage: `just check-coverage` (enforces >= 90% statement coverage across all Go packages via `scripts/check-coverage.sh`)
 - Lint all: `just lint-all`
-- CI: `.github/workflows/ci.yml` runs `just lint-all`, `just test-all`, and `just build-all` on hosted Ubuntu for pull requests and pushes to `main`; Playwright E2E is not part of CI
 - Run Playwright E2E: `just ui test-e2e`
 - Start Storybook: `just ui storybook`
 
@@ -48,7 +47,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - Always: keep package-specific commands in each package's lowercase `justfile`; register packages with root `mod` declarations and keep the root justfile focused on workspace orchestration.
 - Always: automatically record all new instructions in the most appropriate `AGENTS.md` file immediately upon receipt (check with user if existing instructions conflict)
 - Always: keep `agent-watcher` published on GitHub and consume its tagged module version here; do not commit sibling-checkout requirements.
-- Always: when resolving GitHub issues, follow the `github-fix-issues` skill workflow (located in `alexgorbatchev/ai-registry` under `skills/agent/github-fix-issues` for coordinator lifecycle, worktree isolation, subagent delegation, and verification gates)
+- Always: when resolving tickets, follow the `github-issues` skill workflow (`skills/agent/github-issues` in the private AI registry overlay) for claims, worktree isolation, independent PR review, CI gates, and fast-forward integration
 - Always: design dashboard UX, activity summarization, and telemetry pipelines for long-running agent sessions rather than sub-second realtime mirroring (LLM inference latency of 1–3s and ~10s debounced summarization cadences are primary and intended; prioritize semantic stability, high-level intent, and stall detection over micro-second state churn)
 - Always: when designing or modifying UI presentation cards, update `air-debug session view` first as the canonical reference specification, and ensure frontend implementations sync to that output (#50, #51)
 - Always: use structured logging via `packages/agent-common/logging` with concise snake_case actions (e.g. `action=hello_received`, no prose, no emojis) and support dual-mode output via `AGENT=1` (prefer human names over opaque IDs in human mode)
@@ -69,4 +68,5 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - Canonical harness log specs & parser: [`alexgorbatchev/agent-parser`](https://github.com/alexgorbatchev/agent-parser) (`docs/harness-logs/`)
 - Reusable watching pipeline: [`alexgorbatchev/agent-watcher`](https://github.com/alexgorbatchev/agent-watcher) (`watcher.Run`, `scanner/`, `tailer/`)
 - Standalone session transcript printer: [`alexgorbatchev/agent-print-session-cli`](https://github.com/alexgorbatchev/agent-print-session-cli) (`v1.0.0`)
-- GitHub issue fixing skill: [`github-fix-issues`](https://github.com/alexgorbatchev/ai-registry/tree/main/skills/agent/github-fix-issues) (`skills/agent/github-fix-issues` in `alexgorbatchev/ai-registry`)
+- CI workflow: `.github/workflows/ci.yml` runs `just lint-all`, `just test-all`, and `just build-all` on hosted Ubuntu for pull requests and pushes to `main`; Playwright E2E is not part of CI
+- Ticket workflow skill: `github-issues` (`skills/agent/github-issues` in the private AI registry overlay)
