@@ -591,9 +591,8 @@ func TestPatchAgent(t *testing.T) {
 		}
 
 		var body struct {
-			IsHidden              *bool `json:"isHidden"`
-			DismissCompletion     *bool `json:"dismissCompletion"`
-			AcknowledgeCompletion *bool `json:"acknowledgeCompletion"`
+			IsHidden          *bool `json:"isHidden"`
+			DismissCompletion *bool `json:"dismissCompletion"`
 		}
 		if err := json.Unmarshal(bodyBytes, &body); err != nil {
 			w.WriteHeader(http.StatusBadRequest)
@@ -610,7 +609,7 @@ func TestPatchAgent(t *testing.T) {
 		if body.IsHidden != nil {
 			agent.IsHidden = *body.IsHidden
 		}
-		if (body.DismissCompletion != nil && *body.DismissCompletion) || (body.AcknowledgeCompletion != nil && *body.AcknowledgeCompletion) {
+		if body.DismissCompletion != nil && *body.DismissCompletion {
 			agent.Activity.HasUnseenCompletion = &tFalse
 		}
 
@@ -680,26 +679,18 @@ func TestPatchAgent(t *testing.T) {
 		}
 	})
 
-	t.Run("success dismiss completion via acknowledgeCompletion", func(t *testing.T) {
+	t.Run("reject completion alias without forwarding", func(t *testing.T) {
+		lastReceivedPath = ""
 		body := strings.NewReader(`{"acknowledgeCompletion":true}`)
 		req := httptest.NewRequest("PATCH", "/api/v1/agents/agent-1", body)
 		req.Header.Set("Authorization", "Bearer secret-token")
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, req)
-
-		if w.Code != http.StatusOK {
-			t.Fatalf("status = %d, want %d", w.Code, http.StatusOK)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400", w.Code)
 		}
-
-		var agent types.IAgentState
-		if err := json.NewDecoder(w.Body).Decode(&agent); err != nil {
-			t.Fatalf("decoding json: %v", err)
-		}
-		if agent.ID != "agent-1" {
-			t.Errorf("expected agent.ID == agent-1, got %s", agent.ID)
-		}
-		if lastReceivedPath != "/api/v1/internal/agents/agent-1" {
-			t.Errorf("expected forwarded path to be /api/v1/internal/agents/agent-1, got %s", lastReceivedPath)
+		if lastReceivedPath != "" {
+			t.Errorf("unrecognized alias forwarded to %s", lastReceivedPath)
 		}
 	})
 

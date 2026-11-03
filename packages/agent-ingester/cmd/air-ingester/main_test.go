@@ -1004,25 +1004,48 @@ func TestRunServer(t *testing.T) {
 			t.Errorf("expected 'ok\\n', got %q", string(body))
 		}
 
-		// Also verify internal endpoints routed through rcv
-		visURL := fmt.Sprintf("http://%s/api/v1/internal/agents/agent-123/visibility", boundAddr)
-		req, _ := http.NewRequest(http.MethodPatch, visURL, strings.NewReader(`{"isHidden":true}`))
-		req.Header.Set("Authorization", "Bearer test-secret-token")
-		visResp, err := http.DefaultClient.Do(req)
+		st, err := store.Open(dbPath)
 		if err != nil {
-			t.Logf("PATCH visibility failed: %v", err)
-		} else {
-			_ = visResp.Body.Close()
+			t.Fatal(err)
+		}
+		defer func() { _ = st.Close() }()
+		if err := st.SaveAgentState(types.IAgentState{
+			ID: "existing", Harness: types.HarnessClaudeCode,
+			Environment: types.IEnvironmentInfo{ID: "env", Platform: "darwin"},
+			Activity:    types.IAgentActivity{Activity: types.ActivityIdle},
+		}); err != nil {
+			t.Fatal(err)
 		}
 
-		focusURL := fmt.Sprintf("http://%s/api/v1/internal/agents/agent-123/focus", boundAddr)
-		focusReq, _ := http.NewRequest(http.MethodPost, focusURL, nil)
-		focusReq.Header.Set("Authorization", "Bearer test-secret-token")
-		focusResp, err := http.DefaultClient.Do(focusReq)
-		if err != nil {
-			t.Logf("POST focus failed: %v", err)
-		} else {
-			_ = focusResp.Body.Close()
+		for _, tc := range []struct {
+			name, method, path, auth, body string
+			want                           int
+		}{
+			{"patch route", "PATCH", "/api/v1/internal/agents/missing", "Bearer test-secret-token", `{"isHidden":true}`, http.StatusNotFound},
+			{"focus route", "POST", "/api/v1/internal/agents/missing/focus", "Bearer test-secret-token", "", http.StatusNotFound},
+			{"visibility removed", "PATCH", "/api/v1/internal/agents/missing/visibility", "Bearer test-secret-token", `{invalid`, http.StatusNotFound},
+			{"patch dismissal removed", "PATCH", "/api/v1/internal/agents/existing/dismiss-completion", "Bearer test-secret-token", "", http.StatusNotFound},
+			{"post dismissal removed", "POST", "/api/v1/internal/agents/existing/dismiss-completion", "Bearer test-secret-token", "", http.StatusNotFound},
+			{"unknown route requires auth", "PATCH", "/api/v1/internal/unknown", "", "", http.StatusUnauthorized},
+			{"patch requires auth", "PATCH", "/api/v1/internal/agents/missing", "", `{}`, http.StatusUnauthorized},
+			{"focus requires auth", "POST", "/api/v1/internal/agents/missing/focus", "Bearer wrong-token", "", http.StatusUnauthorized},
+			{"patch rejects post", "POST", "/api/v1/internal/agents/missing", "Bearer test-secret-token", `{"isHidden":true}`, http.StatusMethodNotAllowed},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				req, err := http.NewRequest(tc.method, "http://"+boundAddr+tc.path, strings.NewReader(tc.body))
+				if err != nil {
+					t.Fatal(err)
+				}
+				req.Header.Set("Authorization", tc.auth)
+				resp, err := http.DefaultClient.Do(req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer func() { _ = resp.Body.Close() }()
+				if resp.StatusCode != tc.want {
+					t.Errorf("status = %d, want %d", resp.StatusCode, tc.want)
+				}
+			})
 		}
 
 		// Cancel context to initiate graceful shutdown

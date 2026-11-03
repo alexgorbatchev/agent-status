@@ -2,12 +2,10 @@ package receiver
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -74,13 +72,7 @@ func (r *Receiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	authHeader := req.Header.Get("Authorization")
-	if !strings.HasPrefix(authHeader, "Bearer ") {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-	providedToken := strings.TrimPrefix(authHeader, "Bearer ")
-	if subtle.ConstantTimeCompare([]byte(providedToken), []byte(r.bearerToken)) != 1 {
+	if !r.authorized(req) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -270,25 +262,10 @@ func (r *Receiver) sendError(ctx context.Context, conn *websocket.Conn, code, ms
 	_ = conn.Write(ctx, websocket.MessageText, bytes)
 }
 
-type visibilityRequest struct {
-	IsHidden bool `json:"isHidden"`
-}
-
 func (r *Receiver) HandleFocusAgent(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
-	}
-
-	if r.bearerToken != "" {
-		auth := req.Header.Get("Authorization")
-		const prefix = "Bearer "
-		if !strings.HasPrefix(auth, prefix) || subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(auth, prefix)), []byte(r.bearerToken)) != 1 {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{"error": "unauthorized"})
-			return
-		}
 	}
 
 	id := req.PathValue("id")
@@ -300,10 +277,12 @@ func (r *Receiver) HandleFocusAgent(w http.ResponseWriter, req *http.Request) {
 	}
 
 	agent, err := r.store.GetAgent(id)
-	if err != nil || agent == nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{"error": "agent not found"})
+	if err != nil {
+		writeAgentError(w, err)
+		return
+	}
+	if agent == nil {
+		writeAgentError(w, store.ErrAgentNotFound)
 		return
 	}
 
@@ -364,134 +343,15 @@ func (r *Receiver) HandleFocusAgent(w http.ResponseWriter, req *http.Request) {
 	})
 }
 
-func (r *Receiver) HandleSetVisibility(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodPatch && req.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	if r.bearerToken != "" {
-		authHeader := req.Header.Get("Authorization")
-		if !strings.HasPrefix(authHeader, "Bearer ") {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-		token := strings.TrimPrefix(authHeader, "Bearer ")
-		if subtle.ConstantTimeCompare([]byte(token), []byte(r.bearerToken)) != 1 {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-	}
-
-	id := req.PathValue("id")
-	if id == "" {
-		http.Error(w, "missing agent id", http.StatusBadRequest)
-		return
-	}
-
-	var body visibilityRequest
-	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	now := time.Now().UnixMilli()
-	var hiddenAt *int64
-	if body.IsHidden {
-		hiddenAt = &now
-	}
-
-	agent, err := r.store.SetAgentVisibility(id, body.IsHidden, hiddenAt)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
-		return
-	}
-
-	if r.publisher != nil && agent != nil {
-		r.publisher.Publish(types.IServerEvent{
-			Type:  "agent_upsert",
-			At:    now,
-			Agent: agent,
-		})
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(agent)
-}
-
-func (r *Receiver) HandleDismissCompletion(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodPatch && req.Method != http.MethodPost {
-		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	if r.bearerToken != "" {
-		authHeader := req.Header.Get("Authorization")
-		if !strings.HasPrefix(authHeader, "Bearer ") {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-		token := strings.TrimPrefix(authHeader, "Bearer ")
-		if subtle.ConstantTimeCompare([]byte(token), []byte(r.bearerToken)) != 1 {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-	}
-
-	id := req.PathValue("id")
-	if id == "" {
-		http.Error(w, "missing agent id", http.StatusBadRequest)
-		return
-	}
-
-	var agent *types.IAgentState
-	var err error
-	if r.classifier != nil {
-		agent, err = r.classifier.DismissCompletion(id)
-	} else {
-		agent, err = r.store.DismissAgentCompletion(id)
-		if err == nil && r.publisher != nil && agent != nil {
-			r.publisher.Broadcast(&types.IServerEvent{
-				Type:  "agent_upsert",
-				At:    time.Now().UnixMilli(),
-				Agent: agent,
-			})
-		}
-	}
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(agent)
-}
-
 type patchAgentRequest struct {
-	IsHidden              *bool `json:"isHidden"`
-	DismissCompletion     *bool `json:"dismissCompletion"`
-	AcknowledgeCompletion *bool `json:"acknowledgeCompletion"`
+	IsHidden          *bool `json:"isHidden"`
+	DismissCompletion *bool `json:"dismissCompletion"`
 }
 
 func (r *Receiver) HandlePatchAgent(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodPatch && req.Method != http.MethodPost {
+	if req.Method != http.MethodPatch {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
-	}
-
-	if r.bearerToken != "" {
-		authHeader := req.Header.Get("Authorization")
-		if !strings.HasPrefix(authHeader, "Bearer ") {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
-		token := strings.TrimPrefix(authHeader, "Bearer ")
-		if subtle.ConstantTimeCompare([]byte(token), []byte(r.bearerToken)) != 1 {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
 	}
 
 	id := req.PathValue("id")
@@ -509,7 +369,7 @@ func (r *Receiver) HandlePatchAgent(w http.ResponseWriter, req *http.Request) {
 	var agent *types.IAgentState
 	var err error
 
-	if (body.DismissCompletion != nil && *body.DismissCompletion) || (body.AcknowledgeCompletion != nil && *body.AcknowledgeCompletion) {
+	if body.DismissCompletion != nil && *body.DismissCompletion {
 		if r.classifier != nil {
 			agent, err = r.classifier.DismissCompletion(id)
 		} else {
@@ -523,7 +383,7 @@ func (r *Receiver) HandlePatchAgent(w http.ResponseWriter, req *http.Request) {
 			}
 		}
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			writeAgentError(w, err)
 			return
 		}
 	}
@@ -536,7 +396,7 @@ func (r *Receiver) HandlePatchAgent(w http.ResponseWriter, req *http.Request) {
 		}
 		agent, err = r.store.SetAgentVisibility(id, *body.IsHidden, hiddenAt)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			writeAgentError(w, err)
 			return
 		}
 		if r.publisher != nil {
