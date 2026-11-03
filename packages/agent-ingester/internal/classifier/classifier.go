@@ -258,12 +258,13 @@ func (c *Classifier) SetSyncMode(sync bool) {
 	c.syncMode = sync
 }
 
-// DismissCompletion clears in-memory unseen completion status, updates SQLite, and broadcasts the updated agent.
+// DismissCompletion persists dismissal before clearing cached completion and broadcasting the updated agent.
 func (c *Classifier) DismissCompletion(agentID string) (*types.IAgentState, error) {
 	var persistMu *sync.Mutex
 	c.mu.Lock()
-	if actx, ok := c.agentCtx[agentID]; ok {
-		persistMu = &actx.persistMu
+	targetCtx := c.agentCtx[agentID]
+	if targetCtx != nil {
+		persistMu = &targetCtx.persistMu
 	}
 	c.mu.Unlock()
 
@@ -272,22 +273,34 @@ func (c *Classifier) DismissCompletion(agentID string) (*types.IAgentState, erro
 		defer persistMu.Unlock()
 	}
 
-	c.mu.Lock()
-	if actx, ok := c.agentCtx[agentID]; ok {
-		actx.hasUnseenCompletion = nil
-		actx.completedAt = nil
-	}
-	cb := c.onUpdate
-	c.mu.Unlock()
-
 	if c.store == nil {
 		return nil, fmt.Errorf("classifier store is nil")
 	}
+
+	c.mu.Lock()
+	var unseen *bool
+	var completedAt *int64
+	if targetCtx != nil {
+		unseen = targetCtx.hasUnseenCompletion
+		completedAt = targetCtx.completedAt
+	}
+	c.mu.Unlock()
 
 	agent, err := c.store.DismissAgentCompletion(agentID)
 	if err != nil {
 		return nil, err
 	}
+
+	c.mu.Lock()
+	// Frames prepare state before taking persistMu. Only clear the completion
+	// observed before the database write, never a newer turn's completion.
+	if actx := c.agentCtx[agentID]; actx != nil && actx == targetCtx &&
+		actx.hasUnseenCompletion == unseen && actx.completedAt == completedAt {
+		actx.hasUnseenCompletion = nil
+		actx.completedAt = nil
+	}
+	cb := c.onUpdate
+	c.mu.Unlock()
 
 	if cb != nil && agent != nil {
 		cb(agent)
@@ -1481,6 +1494,10 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 
 	if persistMu != nil {
 		persistMu.Lock()
+	}
+	if agent.Activity.Lifecycle != types.LifecycleExited {
+		// A dismissal may have committed after this frame prepared its snapshot.
+		c.syncCompletionToAgentActivity(agent.ID, agent)
 	}
 	saveErr := c.store.SaveAgentState(*agent)
 	if persistMu != nil {

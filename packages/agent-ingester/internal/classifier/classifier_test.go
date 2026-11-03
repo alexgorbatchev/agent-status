@@ -9520,6 +9520,7 @@ func TestClassifier_ProcessSummaryJob_DoesNotRestoreDismissedCompletion(t *testi
 	}
 
 	c := New(st, nil, sum)
+	defer func() { _ = c.Close() }()
 	c.SetIdleGracePeriod(0)
 
 	env := types.IEnvironmentInfo{ID: "env-1", Hostname: "host", Platform: "linux"}
@@ -9589,6 +9590,7 @@ func TestClassifier_ProcessSummaryJob_DoesNotRestoreDismissedCompletion(t *testi
 	c.mu.Lock()
 	actx := c.agentCtx[agentID]
 	if actx == nil || actx.hasUnseenCompletion != nil {
+		c.mu.Unlock()
 		t.Fatalf("expected actx.hasUnseenCompletion to be nil after DismissCompletion")
 	}
 	c.mu.Unlock()
@@ -9597,13 +9599,10 @@ func TestClassifier_ProcessSummaryJob_DoesNotRestoreDismissedCompletion(t *testi
 	// Even though the DB previously had has_unseen_completion=1,
 	// processSummaryJob must sync with actx under lock before saving so that
 	// has_unseen_completion is cleared in the saved agent.
-	activeTool := "bash"
-	activeTarget := "run tests"
 	c.processSummaryJob(agentID, summaryJob{
 		input: summarizer.SummaryInput{
-			Activity:     types.ActivityIdle,
-			ActiveTool:   &activeTool,
-			ActiveTarget: &activeTarget,
+			Activity:              types.ActivityIdle,
+			LastAssistantResponse: "Work is complete",
 		},
 	})
 
@@ -9616,6 +9615,9 @@ func TestClassifier_ProcessSummaryJob_DoesNotRestoreDismissedCompletion(t *testi
 	}
 	if savedAgent.Activity.CompletedAt != nil {
 		t.Errorf("expected savedAgent.Activity.CompletedAt to be nil after processSummaryJob, got %v", *savedAgent.Activity.CompletedAt)
+	}
+	if savedAgent.Activity.Action != "Responded to user" {
+		t.Errorf("summary did not persist: action = %q", savedAgent.Activity.Action)
 	}
 }
 
@@ -9650,38 +9652,50 @@ func TestClassifier_ConcurrentDismissAndProcessSummaryJob(t *testing.T) {
 	}
 
 	stopReason := "end_turn"
+	fStart := baseFrame
+	fStart.Seq = 2
+	fStart.Timestamp = 1500
+	fStart.EventType = "turn_start"
+	if _, err := c.ProcessFrame(fStart); err != nil {
+		t.Fatal(err)
+	}
 	fEnd := baseFrame
-	fEnd.Seq = 2
+	fEnd.Seq = 3
 	fEnd.Timestamp = 2000
 	fEnd.EventType = "turn_end"
 	fEnd.Data = types.TelemetryFrameData{StopReason: &stopReason}
-	if _, err := c.ProcessFrame(fEnd); err != nil {
+	agent, err := c.ProcessFrame(fEnd)
+	if err != nil {
 		t.Fatalf("ProcessFrame(fEnd) failed: %v", err)
 	}
-
-	activeTool := "bash"
-	activeTarget := "run tests"
+	if agent.Activity.HasUnseenCompletion == nil || !*agent.Activity.HasUnseenCompletion {
+		t.Fatal("expected unseen completion before concurrent dismissal")
+	}
+	dismissErr := make(chan error, 1)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 
 	go func() {
 		defer wg.Done()
-		_, _ = c.DismissCompletion(agentID)
+		_, err := c.DismissCompletion(agentID)
+		dismissErr <- err
 	}()
 
 	go func() {
 		defer wg.Done()
 		c.processSummaryJob(agentID, summaryJob{
 			input: summarizer.SummaryInput{
-				Activity:     types.ActivityIdle,
-				ActiveTool:   &activeTool,
-				ActiveTarget: &activeTarget,
+				Activity:              types.ActivityIdle,
+				LastAssistantResponse: "Work is complete",
 			},
 		})
 	}()
 
 	wg.Wait()
+	if err := <-dismissErr; err != nil {
+		t.Fatal(err)
+	}
 
 	savedAgent, err := st.GetAgent(agentID)
 	if err != nil {
@@ -9689,6 +9703,9 @@ func TestClassifier_ConcurrentDismissAndProcessSummaryJob(t *testing.T) {
 	}
 	if savedAgent.Activity.HasUnseenCompletion != nil && *savedAgent.Activity.HasUnseenCompletion {
 		t.Errorf("expected HasUnseenCompletion to be nil after concurrent dismiss and summary, got %v", *savedAgent.Activity.HasUnseenCompletion)
+	}
+	if savedAgent.Activity.CompletedAt != nil || savedAgent.Activity.Action != "Responded to user" {
+		t.Errorf("concurrent summary result: completedAt=%v action=%q", savedAgent.Activity.CompletedAt, savedAgent.Activity.Action)
 	}
 }
 
