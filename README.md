@@ -20,7 +20,7 @@ A centralized monitoring dashboard and telemetry aggregation pipeline for AI cod
 
 - `air-observer` uses the standalone [`agent-watcher`](https://github.com/alexgorbatchev/agent-watcher) library to discover sessions, follow JSONL transcripts, and poll OpenCode's read-only SQLite database. It formats events and ships them over a bounded WebSocket queue, advancing transcript offsets only after ingester acknowledgements. Cursors live at `$XDG_CACHE_HOME/agent-status/observer-cursors.json` (or `~/.cache/agent-status/observer-cursors.json`); OpenCode event checkpoints live beside them with the `.opencode` suffix. Checkpoints flush periodically and on shutdown.
 - `air-ingester` receives WebSocket connections at `:4501/ws/ingest` with a 64 MiB read limit, computes token costs using a static model price registry, derives concise action descriptions via asynchronous per-agent queues and specialized prompt templates with Jaccard deduplication, and writes structured records into `$XDG_DATA_HOME/agent-status/agent-status.db` using WAL mode.
-- `air-server` opens the SQLite database strictly in read-only mode, listens for change signals on `$XDG_RUNTIME_DIR/agent-status/notify.sock`, and fans out events to browser clients over Server-Sent Events (`/api/v1/events/stream`) at `:4502`.
+- `air-server` opens the SQLite database strictly in read-only mode, listens for change signals on `$XDG_RUNTIME_DIR/agent-status/notify.sock`, and fans out events to browser clients over Server-Sent Events (`/api/v1/events`) at `:4502`.
 - `air-debug` replays and validates agent session transcripts across Claude Code, Pi, OpenAI Codex, and OpenCode through the ingestion and query pipeline offline, running in-process against an ephemeral in-memory SQLite database without modifying active daemon logs or databases.
 - `ui-web` serves a React 19 dashboard on port `3000`, grouping agents by upstream git project repository and observing environment rather than machine-local folder paths, reconnecting to the SSE stream using exponential backoff with jitter to prevent reconnect storms.
 - Inactive agents and old event streams are automatically pruned every hour from SQLite according to a 48-hour event and 30-day exited session retention policy.
@@ -28,9 +28,11 @@ A centralized monitoring dashboard and telemetry aggregation pipeline for AI cod
 
 # Prerequisites
 
-- [Bun](https://bun.sh) (v1.2+) - Required for running the web server, bundling frontend assets, and orchestrating the dev stack.
+- [Bun](https://bun.sh) (v1.2+) - Required for running the web server and bundling frontend assets.
 - [Go](https://go.dev) (v1.24+) - Required for compiling `air-observer`, `air-ingester`, and `air-server` daemons.
 - [Just](https://github.com/casey/just) - Command runner used for build, test, and lifecycle recipes.
+- [devhost](https://github.com/alexgorbatchev/devhost) - Native service supervision and shared HTTPS proxy; complete its Caddy download and certificate trust setup first.
+- [direnv](https://direnv.net) - Loads the hostname suffix from `.envrc` and optional ignored `.envrc.local`.
 - [Git](https://git-scm.com) - Used by observer to resolve project identity, branches, and linked worktrees.
 
 # Installation
@@ -44,51 +46,18 @@ curl -sSL https://github.com/alexgorbatchev/agent-status/releases/latest/downloa
 
 # Quick Start
 
-```bash
-# Start the full agent-status stack (ingester, server, observer, web UI)
-just start
+1. Install the prerequisites, run `just setup`, and complete devhost's Caddy download and certificate trust setup.
+2. Run `direnv allow .`. The dashboard defaults to `https://agent-status.localhost`. For a machine-specific hostname, set `export DEVHOST_DEV_EXT='<suffix>'` in ignored `.envrc.local`; the hostname is `agent-status` followed by that suffix.
+3. Run `just run` (or `just start`). This starts the shared proxy and all four native devhost services. Each Go service builds before launch. Ctrl+C or `just stop` stops this stack.
+4. Use `just status` to list running devhost stacks and `just logs` to tail rotating daemon logs. Devhost also exposes service status and logs in its dashboard toolbar.
 
-# Check status of running processes
-just status
+Devhost allocates loopback ports and starts services in dependency order. UI and `/api/*` share the HTTPS hostname. Application state stays under `.tmp/dev-stack/`: `data/` (SQLite), `cache/` (observer checkpoints), `logs/`, and `run/` (notify socket). Devhost stores its own supervisor and shared proxy state in its standard locations.
 
-# Stop the stack and release ports
-just stop
+Use `AIR_NO_SUMMARIZE=1 just run` to disable external summarization calls. Arguments to `just run` are passed to `devhost start`, for example `just run api` starts the API and its ingester dependency. The old stack script and its flags are retired.
 
-# Tail the dev stack's rotating daemon logs
-just logs
-
-# Replay an agent session transcript or session ID offline
-just debug session-replay-pi <session-id>
-just debug run session replay <path-to-transcript.jsonl>
-```
-
-The dev stack writes nothing outside the repository. Everything it produces lives under `.tmp/dev-stack/`: `data/` (SQLite database), `cache/` (observer cursors and session state), `logs/` (daemon logs), `run/` (runtime directory holding the notify socket), and `pids.json`.
-
-Sample Output:
-
-```
-[OK] Stack stopped.
-[INFO] Starting agent-status stack (ingester, server, observer, ui)...
-[INFO] Building Go binaries...
-   [1/4] Starting air-ingester (:4501)...
-   [2/4] Starting air-server (:4502)...
-   [3/4] Starting air-observer...
-   [4/4] Starting ui-web (http://localhost:3000)...
-
-[INFO] agent-status is running at http://localhost:3000
-       Press Ctrl+C to stop or run: just stop
-```
+Replay sessions offline with `just debug session-replay-pi <session-id>` or `just debug run session replay <path-to-transcript.jsonl>`.
 
 # Options & Flags
-
-### `just start` / `scripts/dev-stack.ts`
-
-| Flag                  | Short  | Default | Description                                                                |
-| :-------------------- | :----- | :------ | :------------------------------------------------------------------------- |
-| `--debug`             | `-d`   | `false` | Enable debug logging across all stack services                             |
-| `--log-level <level>` | (none) | `info`  | Log level for services (`debug`, `info`, `warn`, `error`)                  |
-| `--no-build`          | (none) | `false` | Skip binary builds on dev stack start                                      |
-| `--no-summarize`      | (none) | `false` | Run with deterministic fallback heuristics without AI action summarization |
 
 ### `air-observer`
 

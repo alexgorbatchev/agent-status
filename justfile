@@ -10,29 +10,30 @@ mod ui 'packages/ui-web/justfile'
 default:
     @just --list --list-submodules
 
-# Start the full agent-status stack (ingester, server, observer, web UI)
+# Start the devhost-managed stack and shared HTTPS proxy
+run *args:
+    devhost caddy start
+    devhost start {{ args }}
+
+# Start the full stack
 start *args:
-    bun run scripts/dev-stack.ts start {{ args }}
+    @just run {{ args }}
 
-# Stop the full agent-status stack and free ports
+# Stop this devhost stack
 stop:
-    bun run scripts/dev-stack.ts stop
+    devhost stop
 
-# Check status of running dev stack
+# List running devhost stacks
 status:
-    bun run scripts/dev-stack.ts status
+    devhost stack list
 
-# Tail rotating dev stack daemon logs on disk
+# Tail rotating daemon logs on disk
 logs:
     @tail -f .tmp/dev-stack/logs/*.log
 
-# Run in human-facing interactive mode
-run *args:
-    @just start {{ args }}
-
-# Run in agent-facing token-conservative mode
+# Run with token-conservative output
 run-ai *args:
-    AGENT=1 just start {{ args }}
+    AGENT=1 just run {{ args }}
 
 # Build only dev stack binaries and bundle ui-web (omitting agent-debug)
 build-stack:
@@ -63,10 +64,6 @@ check-coverage:
 test:
     @just test-all
 
-# Typecheck dev stack scripts
-lint-scripts:
-    bun x tsc -p scripts/tsconfig.json
-
 # Lint all packages (Go vet + golangci-lint, Bun typecheck + linter)
 lint-all:
     just common lint
@@ -75,7 +72,6 @@ lint-all:
     just server lint
     just debug lint
     just ui lint
-    just lint-scripts
 
 # Typecheck and lint
 lint:

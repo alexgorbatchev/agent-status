@@ -1,0 +1,43 @@
+name = "agent-status"
+
+[services.ingester]
+command = ["just", "ingester", "dev"]
+port = "auto"
+
+[services.ingester.health]
+timeout = 120000
+
+[services.api]
+command = ["just", "server", "dev"]
+port = "auto"
+host = "agent-status{{ env.DEVHOST_DEV_EXT }}"
+path = "/api/*"
+dependsOn = ["ingester"]
+
+[services.api.env]
+AGENT_INGESTER_URL = "{{ services.ingester.url }}"
+
+[services.api.health]
+timeout = 120000
+
+[services.observer]
+command = ["just", "observer", "dev"]
+dependsOn = ["ingester"]
+
+[services.observer.env]
+AGENT_INGESTER_URL = "ws://{{ services.ingester.bindHost }}:{{ services.ingester.port }}/ws/ingest"
+
+[services.observer.health]
+process = true
+timeout = 120000
+
+[services.ui]
+primary = true
+command = ["just", "ui", "run"]
+port = "auto"
+host = "agent-status{{ env.DEVHOST_DEV_EXT }}"
+proxyLocalOrigin = true
+dependsOn = ["api", "observer"]
+
+[services.ui.health]
+timeout = 120000

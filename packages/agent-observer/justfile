@@ -25,3 +25,12 @@ clean:
 # Download module dependencies
 setup:
     go mod download
+
+# Run the devhost service with repository-local application state
+dev: build
+    #!/usr/bin/env sh
+    set -eu
+    cd "{{ module_directory() }}/../.."
+    mkdir -p .tmp/dev-stack/data .tmp/dev-stack/cache .tmp/dev-stack/logs .tmp/dev-stack/run
+    unset AIR_LOG_FILE AIR_SESSION_STATE_PATH
+    exec packages/agent-observer/bin/air-observer --ingester-url "$AGENT_INGESTER_URL" --token dev-secret-token --cursor-path .tmp/dev-stack/cache/observer-cursors.json --session-state-path .tmp/dev-stack/cache/session-state.json --log-dir .tmp/dev-stack/logs

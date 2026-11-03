@@ -36,3 +36,12 @@ clean:
 # Download module dependencies
 setup:
     go mod download
+
+# Run the devhost service with repository-local application state
+dev: build
+    #!/usr/bin/env sh
+    set -eu
+    cd "{{ module_directory() }}/../.."
+    mkdir -p .tmp/dev-stack/data .tmp/dev-stack/cache .tmp/dev-stack/logs .tmp/dev-stack/run
+    unset AIR_LOG_FILE AIR_SESSION_STATE_PATH
+    exec packages/agent-ingester/bin/air-ingester --addr "$DEVHOST_BIND_HOST:$PORT" --token dev-secret-token --db .tmp/dev-stack/data/agent-status.db --notify-sock .tmp/dev-stack/run/notify.sock --log-dir .tmp/dev-stack/logs

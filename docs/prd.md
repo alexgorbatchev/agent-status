@@ -354,7 +354,7 @@ Subagent events update parent token usage and cost roll-ups, track active subage
       "activeTarget": "packages/registry-cli/src/commands/buildCommand.ts"
     }
     ```
-  - Flag `--no-summarize` (or environment variable `AIR_NO_SUMMARIZE=1`) disables external LLM calls, falling back to deterministic tool descriptions (`"Editing build.ts"`). Dev stack also supports `--no-build` to skip binary compilation.
+  - Flag `--no-summarize` (or environment variable `AIR_NO_SUMMARIZE=1`) disables external LLM calls, falling back to deterministic tool descriptions (`"Editing build.ts"`).
 
 #### 4.2.5. SQLite Persistence & Retention
 

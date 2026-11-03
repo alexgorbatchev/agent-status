@@ -7,7 +7,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 ## Shared commands
 
 - Install: `bun install --cwd packages/ui-web`
-- Start dev stack: `just start`
+- Start dev stack: `just run` (or `just start`; native devhost services)
 - Stop dev stack: `just stop`
 - Check status: `just status`
 - Tail dev stack logs: `just logs` (or `tail -f .tmp/dev-stack/logs/*.log`)
@@ -34,15 +34,17 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 ## Shared gotchas
 
 - Watcher dependency -> observer/debug consume a tagged GitHub version of `agent-watcher`. Builds, tests, and lint must work without a sibling checkout; local workspace overrides are optional development choices.
-- Port collisions on 3000, 4501, or 4502 -> Run `just stop` to terminate orphaned processes and clean up `.tmp/dev-stack/pids.json`.
-- Dev stack execution -> Running `just start` directly in a synchronous tool call blocks indefinitely because `scripts/dev-stack.ts start` streams logs in the foreground and never exits; use background process management or let the user run it.
+- Dev stack ports -> devhost allocates loopback ports automatically and routes UI and `/api/*` through the same HTTPS hostname.
+- Dev stack execution -> `just run` starts the shared devhost proxy and runs devhost in the foreground; use background process management in tools.
 - SQLite database concurrency -> `air-server` opens SQLite strictly in read-only mode (`?mode=ro`); all mutations occur through `air-ingester`.
 - Unix domain socket binding -> `air-ingester` creates `$XDG_RUNTIME_DIR/agent-status/notify.sock`; `air-server` reconnects automatically when the socket becomes available.
 - Daemon disk logs -> Installed daemons write `~/.local/state/agent-status/logs/{observer,ingester,server}.log` (or `$AIR_LOG_DIR`); the dev stack writes `.tmp/dev-stack/logs/`. Active logs rotate at 10 MB with 5 backups, 14-day retention, and gzip compression. Tail dev stack logs with `just logs`.
-- Dev stack file layout -> `scripts/dev-stack.ts` keeps everything under `.tmp/dev-stack/`: `data/` (SQLite), `cache/` (observer cursors and session state), `logs/`, `run/` (`XDG_RUNTIME_DIR`, notify socket), and `pids.json`. Deep checkout paths fail fast because Unix socket paths are capped at 103 bytes.
+- Dev stack file layout -> package `dev` recipes keep daemon data, cache, logs, and the notify socket under `.tmp/dev-stack/`. Daemons run from the repository root with relative socket `.tmp/dev-stack/run/notify.sock`, avoiding Unix socket address limits in deep checkouts. Devhost owns supervisor and shared Caddy state in its standard locations.
+- Devhost routing -> `devhost.toml` reads `DEVHOST_DEV_EXT` inherited from the shell. Direnv automatically loads `.envrc`; invoke devhost directly in recipes without `direnv exec` wrappers. `.envrc` defaults to `.localhost`; ignored `.envrc.local` supplies machine-specific suffixes. Keep private hostnames out of tracked files.
 
 ## Shared boundaries
 
+- Always: route `just run` through native devhost services; do not introduce a second stack supervisor.
 - Always: keep package-specific commands in each package's lowercase `justfile`; register packages with root `mod` declarations and keep the root justfile focused on workspace orchestration.
 - Always: automatically record all new instructions in the most appropriate `AGENTS.md` file immediately upon receipt (check with user if existing instructions conflict)
 - Always: keep `agent-watcher` published on GitHub and consume its tagged module version here; do not commit sibling-checkout requirements.
@@ -53,8 +55,8 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - Always (code-based projects only): any time code is changed such that results from running that code are changed, a test file must be changed as well; 90% statement coverage is required and enforced on `just test` and `just check-coverage` via `scripts/check-coverage.sh` (scripts/ folder is excluded from this rule)
 - Always: run `just test-all` and `just lint-all` before committing changes
 - Ask first: adding database migrations in `packages/agent-ingester/internal/store/migrations.go` or modifying shared types in `packages/agent-common/types/types.go`
-- Never: run the full dev stack (`just start` or `scripts/dev-stack.ts start`) in a synchronous tool call; it runs in the foreground and never exits
-- Never: let the dev stack write files outside the repository; every database, cache, log, socket, and PID file it produces belongs under `.tmp/dev-stack/`
+- Never: run `just run` or `just start` in a synchronous tool call; devhost runs in the foreground.
+- Never: let dev stack daemons write application data outside the repository; databases, caches, logs, and sockets belong under `.tmp/dev-stack/`. Devhost manages its own shared proxy and supervisor state.
 - Never: publish releases automatically without explicit user authorization
 - Never: parse or transmit credentials, API keys, or session auth tokens from agent harnesses
 - Never: write directly to agent harness storage directories or mutate active harness logs
@@ -62,7 +64,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 ## References
 
 - Architecture & concepts: `CONTEXT.md`
-- Dev stack orchestrator: `scripts/dev-stack.ts`
+- Dev stack manifest: `devhost.toml`
 - Root task runner: `justfile`
 - Canonical harness log specs & parser: [`alexgorbatchev/agent-parser`](https://github.com/alexgorbatchev/agent-parser) (`docs/harness-logs/`)
 - Reusable watching pipeline: [`alexgorbatchev/agent-watcher`](https://github.com/alexgorbatchev/agent-watcher) (`watcher.Run`, `scanner/`, `tailer/`)

@@ -158,7 +158,7 @@ All development must be strictly grounded in:
     - Anthropic Claude via `any-llm-go/providers/anthropic` (`ANTHROPIC_API_KEY`).
   - Handles fallback on 429, 5xx, or 10-second timeout with jittered backoff.
   - `--no-summarize` CLI flag (and `AIR_NO_SUMMARIZE=1` environment variable) to bypass external LLM calls completely.
-  - Dev stack support for `--no-build` and `--no-summarize` flags.
+  - Native devhost service supervision with automatic ports; `AIR_NO_SUMMARIZE=1` disables external summarization.
 
 ---
 
