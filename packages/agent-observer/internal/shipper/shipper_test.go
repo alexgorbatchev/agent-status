@@ -330,6 +330,51 @@ func TestShipperReconnectStreamsPendingFrames(t *testing.T) {
 	}
 }
 
+func TestShipperStopReturnsWithoutWaitingAndLoopExits(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		// Read like the ingester does, so the shipper's close handshake is answered.
+		for {
+			if _, _, err := conn.Read(r.Context()); err != nil {
+				return
+			}
+		}
+	}))
+	defer server.Close()
+
+	s := NewShipper(Config{
+		IngesterURL: "ws" + strings.TrimPrefix(server.URL, "http"),
+		Environment: types.IEnvironmentInfo{ID: "env-stop"},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := s.Start(ctx); err != nil {
+		t.Fatalf("s.Start error: %v", err)
+	}
+
+	stopped := make(chan struct{})
+	go func() {
+		s.Stop()
+		s.Stop() // repeated calls are safe
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("Stop blocked instead of signaling and returning")
+	}
+
+	select {
+	case <-s.loopDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("connection loop did not exit after Stop")
+	}
+}
+
 func TestShipperConnectionFailureRetry(t *testing.T) {
 	// Connect to closed/invalid port to trigger connection error and retry
 	s := NewShipper(Config{

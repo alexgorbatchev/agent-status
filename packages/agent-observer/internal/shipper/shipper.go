@@ -59,6 +59,8 @@ type Shipper struct {
 	incomingCh chan inFlightItem
 	stopCh     chan struct{}
 	once       sync.Once
+	// loopDone closes when the connection loop started by Start returns.
+	loopDone chan struct{}
 }
 
 func NewShipper(cfg Config) *Shipper {
@@ -75,6 +77,7 @@ func NewShipper(cfg Config) *Shipper {
 		ackCallbacks:            make(map[int64]AckCallback),
 		incomingCh:              make(chan inFlightItem, bufSize),
 		stopCh:                  make(chan struct{}),
+		loopDone:                make(chan struct{}),
 	}
 }
 
@@ -133,10 +136,17 @@ func (s *Shipper) UnackedCount() int {
 }
 
 func (s *Shipper) Start(ctx context.Context) error {
-	go s.runConnectionLoop(ctx)
+	go func() {
+		defer close(s.loopDone)
+		s.runConnectionLoop(ctx)
+	}()
 	return nil
 }
 
+// Stop signals the connection loop to close its connection and exit, and returns
+// without waiting. The loop exits once an in-progress dial or write returns, so
+// callers that must finish work first, such as flushing cursors, do so before
+// calling Stop. Repeated calls are safe.
 func (s *Shipper) Stop() {
 	s.once.Do(func() {
 		close(s.stopCh)
