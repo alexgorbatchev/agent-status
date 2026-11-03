@@ -285,6 +285,8 @@ func TestClient_FindPaneByPID_NotFound(t *testing.T) {
 }
 
 func TestClient_FocusPane_Success(t *testing.T) {
+	t.Setenv("HERDR_TERMINAL_APP", "TestTerminal")
+	t.Setenv("TERM_PROGRAM", "")
 	srv := startMockHerdrServer(t)
 	defer srv.close()
 

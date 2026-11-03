@@ -432,6 +432,7 @@ func TestRenderAgentView_HumanMode_EmojiWidthAlignment(t *testing.T) {
 }
 
 func TestRenderAgentView_HumanMode_AnsiColorWidthAlignment(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
 	agent := types.IAgentState{
 		ID:        "env-1:custom:ses-ansi",
 		SessionID: "ses-ansi",
@@ -587,6 +588,7 @@ func TestRenderFleetView_TrimsProjectPrefixUnderProjectHeader(t *testing.T) {
 }
 
 func TestRenderAgentView_HumanMode_SemanticPrecedence_Question(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
 	q := "Should we apply migration?"
 	agent := types.IAgentState{
 		ID:        "env-1:claude-code:ses-q",
@@ -624,6 +626,7 @@ func TestRenderAgentView_HumanMode_SemanticPrecedence_Question(t *testing.T) {
 }
 
 func TestRenderAgentView_HumanMode_SemanticPrecedence_Error(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
 	errMsg := "connection refused on port 5432"
 	agent := types.IAgentState{
 		ID:        "env-1:pi:ses-err",
@@ -661,6 +664,7 @@ func TestRenderAgentView_HumanMode_SemanticPrecedence_Error(t *testing.T) {
 }
 
 func TestRenderAgentView_HumanMode_VendorBadge_WorkingState(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
 	agent := types.IAgentState{
 		ID:        "env-1:claude-code:ses-busy",
 		SessionID: "ses-busy",
@@ -691,6 +695,7 @@ func TestRenderAgentView_HumanMode_VendorBadge_WorkingState(t *testing.T) {
 }
 
 func TestRenderAgentView_HumanMode_VendorBadge_Pi_WorkingState(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
 	agent := types.IAgentState{
 		ID:        "env-1:pi:ses-pi-work",
 		SessionID: "ses-pi-work",
@@ -721,6 +726,7 @@ func TestRenderAgentView_HumanMode_VendorBadge_Pi_WorkingState(t *testing.T) {
 }
 
 func TestRenderAgentView_HumanMode_VendorBadge_Codex_WorkingState(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
 	agent := types.IAgentState{
 		ID:        "env-1:codex:ses-codex-work",
 		SessionID: "ses-codex-work",
@@ -751,6 +757,7 @@ func TestRenderAgentView_HumanMode_VendorBadge_Codex_WorkingState(t *testing.T) 
 }
 
 func TestRenderAgentView_HumanMode_VendorBadge_OpenCode_WorkingState(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
 	agent := types.IAgentState{
 		ID:        "env-1:opencode:ses-opencode-work",
 		SessionID: "ses-opencode-work",
@@ -789,6 +796,7 @@ func TestFormatHarnessBadge_RateLimited(t *testing.T) {
 }
 
 func TestRenderAgentView_RateLimited(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
 	rlMsg := "HTTP 429: Rate limit exceeded"
 	agent := types.IAgentState{
 		ID:        "env-1:claude-code:ses-rl",
@@ -832,6 +840,7 @@ func TestRenderAgentView_RateLimited(t *testing.T) {
 }
 
 func TestRenderAgentView_HumanMode_SemanticPrecedence_RateLimited(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
 	rlMsg := "Too Many Requests: Retry in 30s"
 	agent := types.IAgentState{
 		ID:        "env-1:pi:ses-rl-pi",
@@ -1244,6 +1253,7 @@ func TestGetIdleFreshness(t *testing.T) {
 }
 
 func TestRenderAgentView_HumanMode_IdleStaleDimmed(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
 	agent := types.IAgentState{
 		Harness: types.HarnessClaudeCode,
 		Activity: types.IAgentActivity{
@@ -1656,6 +1666,7 @@ func TestRenderFleetView_HumanMode_Completed(t *testing.T) {
 }
 
 func TestRenderFleetView_HumanMode_IdleStaleDimmed(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
 	nowMs := int64(10_000_000)
 	agent := types.IAgentState{
 		ID:        "env-1:claude-code:ses-stale",

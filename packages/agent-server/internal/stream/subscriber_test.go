@@ -706,7 +706,9 @@ func TestSubscriber_ReadLoop_NoGoroutineLeak(t *testing.T) {
 func TestSubscriber_Reconnect_NoGoroutineLeak(t *testing.T) {
 	baseline := runtime.NumGoroutine()
 
-	sockPath := filepath.Join(t.TempDir(), "notify.sock")
+	// A relative socket path stays within macOS's Unix socket name limit.
+	t.Chdir(t.TempDir())
+	sockPath := "notify.sock"
 
 	listener, err := net.Listen("unix", sockPath)
 	if err != nil {
