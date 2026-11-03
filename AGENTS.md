@@ -18,6 +18,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - Test all: `just test-all`
 - Check coverage: `just check-coverage` (enforces >= 90% statement coverage across all Go packages via `scripts/check-coverage.sh`)
 - Lint all: `just lint-all`
+- CI: `.github/workflows/ci.yml` runs `just lint-all`, `just test-all`, and `just build-all` on hosted Ubuntu for pull requests and pushes to `main`; Playwright E2E is not part of CI
 - Run Playwright E2E: `just ui test-e2e`
 - Start Storybook: `just ui storybook`
 
