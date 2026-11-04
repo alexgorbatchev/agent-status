@@ -944,14 +944,17 @@ func TestShipperBackoffResetsOnSustainedHealth(t *testing.T) {
 			if currentAttempt == 3 {
 				// Stay connected until the shipper counts the connection as
 				// healthy, which resets the backoff, then fail it.
+				resetsBefore := recorder.resetCount()
 				deadline := time.Now().Add(3 * time.Second)
-				for recorder.resetCount() == 0 && time.Now().Before(deadline) {
+				for recorder.resetCount() == resetsBefore && time.Now().Before(deadline) && r.Context().Err() == nil {
 					time.Sleep(5 * time.Millisecond)
 				}
 			}
 			_ = conn.Close(websocket.StatusInternalError, "closing connection")
 		}
-	}, 40*time.Millisecond)
+		// Long enough that the immediately failed connections 1 and 2 never
+		// count as healthy; connection 3 waits for the reset, not for a timer.
+	}, 500*time.Millisecond)
 
 	got := recorder.waitForDelays(t, 3)
 	// Two failures back off to 60ms; the healthy third connection resets the
