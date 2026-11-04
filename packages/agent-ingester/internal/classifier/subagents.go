@@ -96,6 +96,7 @@ func (c *Classifier) handleSubagentDwellExpired(agentID, subID string) {
 			return false
 		}
 		c.rollupActivityLocked(agent, actx, now)
+		captureCompletionLocked(actx, &agent.Activity)
 		return true
 	})
 	if err != nil {

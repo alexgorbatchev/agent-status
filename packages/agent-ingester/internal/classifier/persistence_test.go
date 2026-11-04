@@ -4,6 +4,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/summarizer"
@@ -220,4 +221,68 @@ func TestClassifier_ConcurrentFramesForOneAgentAreSerialized(t *testing.T) {
 	if remaining != 0 {
 		t.Errorf("frame locks left after both frames finished: %d", remaining)
 	}
+}
+
+func TestClassifier_SubagentDwellExpiryCachesSavedCompletion(t *testing.T) {
+	c, st, frame := completedAgent(t, ":memory:")
+	c.SetSubagentDwell(time.Hour)
+	for _, step := range []struct{ sub, event string }{
+		{"first", "tool_call"}, {"second", "tool_call"}, {"first", "turn_end"}, {"second", "turn_end"},
+	} {
+		sub := step.sub
+		f := frame
+		f.Seq += 10
+		frame.Seq = f.Seq
+		f.Timestamp += 1000
+		frame.Timestamp = f.Timestamp
+		f.SubagentID = &sub
+		f.EventType = step.event
+		f.Data = types.TelemetryFrameData{}
+		if step.event == "tool_call" {
+			tool := "Read"
+			f.Data.ToolName = &tool
+		}
+		if _, err := c.ProcessFrame(f); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Give dwell expiry a different rollup than the last frame saw: the row is
+	// still BUSY with no completion while both subagents and the root are idle.
+	agent, err := st.GetAgent(frame.AgentID)
+	if err != nil || agent == nil {
+		t.Fatalf("GetAgent = %v, %v", agent, err)
+	}
+	agent.Activity.Activity = types.ActivityBusy
+	clearCompletion(&agent.Activity)
+	if err := st.SaveAgentState(*agent); err != nil {
+		t.Fatal(err)
+	}
+	c.mu.Lock()
+	actx := c.agentCtx[frame.AgentID]
+	actx.hasUnseenCompletion, actx.completedAt = nil, nil
+	actx.subagents["first"].startedAt = time.Now().Add(-2 * time.Hour).UnixMilli()
+	c.mu.Unlock()
+
+	c.handleSubagentDwellExpired(frame.AgentID, "first")
+
+	saved, err := st.GetAgent(frame.AgentID)
+	if err != nil || saved == nil {
+		t.Fatalf("GetAgent = %v, %v", saved, err)
+	}
+	if saved.Activity.HasUnseenCompletion == nil || !*saved.Activity.HasUnseenCompletion || saved.Activity.CompletedAt == nil {
+		t.Fatalf("dwell expiry did not save the rolled-up completion: %+v", saved.Activity)
+	}
+	assertCompletion(t, c, st, frame.AgentID, *saved.Activity.CompletedAt)
+
+	// The next frame starts from the cache and must keep that completion.
+	frame.Seq++
+	frame.Timestamp += 1000
+	frame.EventType = "text"
+	frame.SubagentID = nil
+	frame.Data = types.TelemetryFrameData{}
+	if _, err := c.ProcessFrame(frame); err != nil {
+		t.Fatal(err)
+	}
+	assertCompletion(t, c, st, frame.AgentID, *saved.Activity.CompletedAt)
 }
