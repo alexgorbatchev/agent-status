@@ -1,7 +1,7 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess, type StdioOptions } from "node:child_process";
 import { createServer } from "node:net";
-import { existsSync, mkdirSync, rmSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve, dirname, relative } from "node:path";
+import { existsSync, mkdirSync, openSync, rmSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, resolve, dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
@@ -50,6 +50,13 @@ export async function createTestStack(testId: string): Promise<ITestStack> {
     rmSync(testDir, { recursive: true, force: true });
   }
   mkdirSync(testDir, { recursive: true });
+  // Daemon output outlives stop() so a failed run can be diagnosed.
+  const logDir = resolve(rootDir, ".tmp", "e2e-logs", basename(testDir));
+  mkdirSync(logDir, { recursive: true });
+  const daemonOutput = (name: string): StdioOptions => {
+    const fd = openSync(resolve(logDir, `${name}.log`), "a");
+    return ["ignore", fd, fd];
+  };
 
   const dbPath = resolve(testDir, "db.sqlite");
   // Unix socket addresses are limited to about 104 bytes, which an absolute path
@@ -93,16 +100,17 @@ export async function createTestStack(testId: string): Promise<ITestStack> {
         token,
         "--no-summarize",
         "--log-level",
-        "error",
+        "info",
       ],
       {
         cwd: rootDir,
         env: {
           ...process.env,
           XDG_DATA_HOME: testDir,
+          XDG_STATE_HOME: testDir,
           XDG_RUNTIME_DIR: testDir,
         },
-        stdio: "ignore",
+        stdio: daemonOutput("ingester"),
       },
     );
     procs.push(ingester);
@@ -123,16 +131,17 @@ export async function createTestStack(testId: string): Promise<ITestStack> {
         "--cors-origin",
         `http://localhost:${uiPort}`,
         "--log-level",
-        "error",
+        "info",
       ],
       {
         cwd: rootDir,
         env: {
           ...process.env,
           XDG_DATA_HOME: testDir,
+          XDG_STATE_HOME: testDir,
           XDG_RUNTIME_DIR: testDir,
         },
-        stdio: "ignore",
+        stdio: daemonOutput("server"),
       },
     );
     procs.push(server);
@@ -159,7 +168,7 @@ export async function createTestStack(testId: string): Promise<ITestStack> {
         "--pi-sessions-dir",
         piSessionsDir,
         "--log-level",
-        "error",
+        "info",
       ],
       {
         cwd: rootDir,
@@ -172,7 +181,7 @@ export async function createTestStack(testId: string): Promise<ITestStack> {
           XDG_STATE_HOME: testDir,
           XDG_RUNTIME_DIR: testDir,
         },
-        stdio: "ignore",
+        stdio: daemonOutput("observer"),
       },
     );
     procs.push(observer);
