@@ -8,33 +8,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/testenv"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
 
-// isolateHarnessHome points HOME at an empty temporary directory and clears every
-// harness location override, so resolution never reads the developer's real sessions.
-func isolateHarnessHome(t *testing.T) string {
-	t.Helper()
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	for _, key := range []string{
-		"XDG_DATA_HOME",
-		"CLAUDE_PROJECTS_DIR",
-		"CLAUDE_SESSIONS_DIR",
-		"PI_SESSIONS_DIR",
-		"CODEX_SESSIONS_DIR",
-		"OPENCODE_DB_PATH",
-	} {
-		t.Setenv(key, "")
-	}
-	return home
-}
-
 func TestResolveSessionTarget(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
-	home := isolateHarnessHome(t)
+	home := testenv.IsolateHarnessHome(t)
 
 	t.Run("resolve session ID in default Claude projects dir under HOME", func(t *testing.T) {
 		projDir := filepath.Join(home, ".claude", "projects", "-repo")

@@ -5,16 +5,42 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/testenv"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/db"
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
+
+// TestMain keeps every command test away from the developer's real state and
+// sessions: commands that resolve a session ID or a missing path search the
+// harness directories under HOME and open the default agent-status database.
+func TestMain(m *testing.M) {
+	dir, cleanup, err := testenv.IsolateStateDirs("agent-debug-test-state")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if err := testenv.IsolateHarnessEnv(filepath.Join(dir, "home")); err != nil {
+		cleanup()
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	code := m.Run()
+	cleanup()
+	os.Exit(code)
+}
+
+// TestStateDirsAreIsolated fails if TestMain stops isolating state directories.
+func TestStateDirsAreIsolated(t *testing.T) {
+	testenv.RequireIsolated(t)
+}
 
 func createTestClaudeTranscript(t *testing.T, dir string) string {
 	t.Helper()
