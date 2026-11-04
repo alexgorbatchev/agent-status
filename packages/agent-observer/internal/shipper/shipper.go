@@ -50,6 +50,8 @@ type Shipper struct {
 	initialBackoff          time.Duration
 	sustainedHealthDuration time.Duration
 	backoffRandomization    float64
+	// newBackOff returns the reconnect delay policy for one connection loop.
+	newBackOff func() backoff.BackOff
 
 	mu           sync.Mutex
 	lastSeq      int64
@@ -68,7 +70,7 @@ func NewShipper(cfg Config) *Shipper {
 	if bufSize <= 0 {
 		bufSize = DefaultDispatchBufferSize
 	}
-	return &Shipper{
+	s := &Shipper{
 		cfg:                     cfg,
 		heartbeatInterval:       heartbeatInterval,
 		initialBackoff:          initialBackoff,
@@ -79,6 +81,8 @@ func NewShipper(cfg Config) *Shipper {
 		stopCh:                  make(chan struct{}),
 		loopDone:                make(chan struct{}),
 	}
+	s.newBackOff = s.exponentialBackOff
+	return s
 }
 
 // EnqueueWithAck enqueues a frame for delivery, applying backpressure if the dispatch channel is full.
@@ -153,13 +157,20 @@ func (s *Shipper) Stop() {
 	})
 }
 
-func (s *Shipper) runConnectionLoop(ctx context.Context) {
+// exponentialBackOff waits initialBackoff before the first reconnect and
+// doubles each delay up to 30s, jittered by backoffRandomization.
+func (s *Shipper) exponentialBackOff() backoff.BackOff {
 	expBackoff := backoff.NewExponentialBackOff()
 	expBackoff.InitialInterval = s.initialBackoff
 	expBackoff.Multiplier = 2.0
 	expBackoff.MaxInterval = 30 * time.Second
 	expBackoff.RandomizationFactor = s.backoffRandomization
 	expBackoff.Reset()
+	return expBackoff
+}
+
+func (s *Shipper) runConnectionLoop(ctx context.Context) {
+	expBackoff := s.newBackOff()
 
 	var backoffMu sync.Mutex
 	resetBackoff := func() {

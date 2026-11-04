@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
+	"github.com/cenkalti/backoff/v4"
 	"github.com/coder/websocket"
 )
 
@@ -750,181 +752,120 @@ func TestShipperLoggingOnDisconnect(t *testing.T) {
 	}
 }
 
-func TestShipperBackoffSuccessivelyIncreasesOnImmediateDisconnect(t *testing.T) {
-	var mu sync.Mutex
-	var connectTimes []time.Time
+// recordingBackOff wraps the shipper's real reconnect policy and records every
+// delay it hands out, so tests check the chosen backoff instead of timing
+// reconnects, which scheduler load stretches.
+type recordingBackOff struct {
+	backoff.BackOff
+	mu     sync.Mutex
+	delays []time.Duration
+}
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func (r *recordingBackOff) NextBackOff() time.Duration {
+	delay := r.BackOff.NextBackOff()
+	r.mu.Lock()
+	r.delays = append(r.delays, delay)
+	r.mu.Unlock()
+	return delay
+}
+
+// waitForDelays returns the first n recorded delays, failing after 3 seconds.
+func (r *recordingBackOff) waitForDelays(t *testing.T, n int) []time.Duration {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		r.mu.Lock()
+		got := append([]time.Duration(nil), r.delays...)
+		r.mu.Unlock()
+		if len(got) >= n {
+			return got[:n]
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected %d reconnect delays, got %v", n, got)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// startRecordingShipper starts a shipper against handler with a 30ms initial
+// backoff and no jitter, recording the reconnect delays it chooses.
+func startRecordingShipper(t *testing.T, handler http.HandlerFunc) *recordingBackOff {
+	t.Helper()
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	s := NewShipper(Config{
+		IngesterURL: "ws" + strings.TrimPrefix(server.URL, "http"),
+		Environment: types.IEnvironmentInfo{ID: "env-backoff-test", Label: "backoff-test"},
+	})
+	s.initialBackoff = 30 * time.Millisecond
+	s.backoffRandomization = 0
+	s.sustainedHealthDuration = 10 * time.Second
+	recorder := &recordingBackOff{BackOff: s.exponentialBackOff()}
+	s.newBackOff = func() backoff.BackOff { return recorder }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	if err := s.Start(ctx); err != nil {
+		t.Fatalf("s.Start error: %v", err)
+	}
+	t.Cleanup(s.Stop)
+	return recorder
+}
+
+func TestShipperBackoffSuccessivelyIncreasesOnImmediateDisconnect(t *testing.T) {
+	recorder := startRecordingShipper(t, func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			return
 		}
-		// Read the hello frame
-		_, _, err = conn.Read(r.Context())
-		if err != nil {
+		// Read the hello frame, then fail the stream at once: a successful
+		// handshake alone must not count as a healthy connection.
+		if _, _, err := conn.Read(r.Context()); err != nil {
 			_ = conn.Close(websocket.StatusInternalError, "read error")
 			return
 		}
-
-		mu.Lock()
-		connectTimes = append(connectTimes, time.Now())
-		mu.Unlock()
-
-		// Immediately close connection with error after reading hello frame
 		_ = conn.Close(websocket.StatusInternalError, "immediate streaming failure")
-	}))
-	defer server.Close()
+	})
 
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	cfg := Config{
-		IngesterURL: wsURL,
-		Environment: types.IEnvironmentInfo{ID: "env-backoff-test", Label: "backoff-test"},
-	}
-
-	s := NewShipper(cfg)
-	s.initialBackoff = 30 * time.Millisecond
-	s.backoffRandomization = 0
-	s.sustainedHealthDuration = 10 * time.Second
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	if err := s.Start(ctx); err != nil {
-		t.Fatalf("s.Start error: %v", err)
-	}
-	defer s.Stop()
-
-	// Wait for at least 4 connections
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		mu.Lock()
-		count := len(connectTimes)
-		mu.Unlock()
-		if count >= 4 {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	mu.Lock()
-	times := make([]time.Time, len(connectTimes))
-	copy(times, connectTimes)
-	mu.Unlock()
-
-	if len(times) < 4 {
-		t.Fatalf("expected at least 4 connection attempts, got %d", len(times))
-	}
-
-	interval1 := times[1].Sub(times[0])
-	interval2 := times[2].Sub(times[1])
-	interval3 := times[3].Sub(times[2])
-
-	t.Logf("intervals: 1=%v, 2=%v, 3=%v", interval1, interval2, interval3)
-
-	// In the buggy implementation, onConnected() is called on hello frame,
-	// which resets backoff so interval2 and interval3 are each ~30ms (initialBackoff).
-	// With the fix, backoff increases exponentially: ~30ms -> ~60ms -> ~120ms.
-	if interval2 <= interval1 {
-		t.Errorf("expected interval2 (%v) > interval1 (%v)", interval2, interval1)
-	}
-	if interval3 <= interval2 {
-		t.Errorf("expected interval3 (%v) > interval2 (%v)", interval3, interval2)
-	}
-	if interval2 < 45*time.Millisecond {
-		t.Errorf("expected interval2 (%v) >= 45ms (backed off from 30ms)", interval2)
-	}
-	if interval3 < 90*time.Millisecond {
-		t.Errorf("expected interval3 (%v) >= 90ms (backed off from 60ms)", interval3)
+	got := recorder.waitForDelays(t, 3)
+	want := []time.Duration{30 * time.Millisecond, 60 * time.Millisecond, 120 * time.Millisecond}
+	if !slices.Equal(got, want) {
+		t.Errorf("reconnect delays = %v, want %v", got, want)
 	}
 }
 
 func TestShipperBackoffResetsOnAck(t *testing.T) {
 	var mu sync.Mutex
-	var connectTimes []time.Time
 	attempt := 0
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	recorder := startRecordingShipper(t, func(w http.ResponseWriter, r *http.Request) {
 		conn, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			return
 		}
-		// Read hello
-		_, _, err = conn.Read(r.Context())
-		if err != nil {
+		if _, _, err := conn.Read(r.Context()); err != nil {
 			_ = conn.Close(websocket.StatusInternalError, "read error")
 			return
 		}
-
 		mu.Lock()
 		attempt++
 		currentAttempt := attempt
-		connectTimes = append(connectTimes, time.Now())
 		mu.Unlock()
 
 		if currentAttempt == 2 {
-			// Attempt 2: send an ACK to reset backoff before closing
-			ackMsg := types.IIngesterMessage{
-				Type: "ack",
-				UpTo: 1,
-			}
-			ackBytes, _ := json.Marshal(ackMsg)
+			// The second connection is acknowledged before it fails, which
+			// proves it healthy and resets the backoff.
+			ackBytes, _ := json.Marshal(types.IIngesterMessage{Type: "ack", UpTo: 1})
 			_ = conn.Write(r.Context(), websocket.MessageText, ackBytes)
-			time.Sleep(10 * time.Millisecond)
 		}
-
-		// Close connection
 		_ = conn.Close(websocket.StatusInternalError, "closing connection")
-	}))
-	defer server.Close()
+	})
 
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	cfg := Config{
-		IngesterURL: wsURL,
-		Environment: types.IEnvironmentInfo{ID: "env-ack-reset", Label: "ack-reset"},
-	}
-
-	s := NewShipper(cfg)
-	s.initialBackoff = 30 * time.Millisecond
-	s.backoffRandomization = 0
-	s.sustainedHealthDuration = 10 * time.Second
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	if err := s.Start(ctx); err != nil {
-		t.Fatalf("s.Start error: %v", err)
-	}
-	defer s.Stop()
-
-	// Wait for 3 connections:
-	// 1: initial -> fail (next backoff = 30ms)
-	// 2: reconnect after 30ms -> receives ACK -> backoff resets! -> fail (next backoff = 30ms, not 60ms)
-	// 3: reconnect after 30ms (because reset!)
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		mu.Lock()
-		count := len(connectTimes)
-		mu.Unlock()
-		if count >= 3 {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	mu.Lock()
-	times := make([]time.Time, len(connectTimes))
-	copy(times, connectTimes)
-	mu.Unlock()
-
-	if len(times) < 3 {
-		t.Fatalf("expected at least 3 connection attempts, got %d", len(times))
-	}
-
-	intervalAfterAck := times[2].Sub(times[1])
-	t.Logf("interval after ACK reset: %v", intervalAfterAck)
-
-	// If backoff was not reset on ACK, intervalAfterAck would be ~60ms.
-	// Since it was reset to initialBackoff (30ms), it should be around 30-45ms (< 55ms).
-	if intervalAfterAck > 55*time.Millisecond {
-		t.Errorf("expected interval after ACK to reset to initialBackoff (~30ms), got %v", intervalAfterAck)
+	got := recorder.waitForDelays(t, 3)
+	// Without the reset the delays would be 30ms, 60ms, 120ms.
+	want := []time.Duration{30 * time.Millisecond, 30 * time.Millisecond, 60 * time.Millisecond}
+	if !slices.Equal(got, want) {
+		t.Errorf("reconnect delays = %v, want %v", got, want)
 	}
 }
 
