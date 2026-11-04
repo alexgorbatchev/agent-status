@@ -486,23 +486,17 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		actx.rootRateLimitResetAt = nil
 		actx.rootRetryAfterSeconds = nil
 	}
-	var persistMu *sync.Mutex
-	if actx != nil {
-		persistMu = &actx.persistMu
-	}
 	c.mu.Unlock()
 
-	if persistMu != nil {
-		persistMu.Lock()
-	}
+	actx.persistMu.Lock()
 	if agent.Activity.Lifecycle != types.LifecycleExited {
 		// A dismissal may have committed after this frame prepared its snapshot.
-		c.syncCompletionToAgentActivity(agent.ID, agent)
+		c.mu.Lock()
+		syncCompletionLocked(actx, agent)
+		c.mu.Unlock()
 	}
 	saveErr := c.store.SaveAgentState(*agent)
-	if persistMu != nil {
-		persistMu.Unlock()
-	}
+	actx.persistMu.Unlock()
 	if saveErr != nil {
 		return nil, fmt.Errorf("saving agent state: %w", saveErr)
 	}

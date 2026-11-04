@@ -68,42 +68,6 @@ func (c *Classifier) DismissCompletion(agentID string) (*types.IAgentState, erro
 	return agent, nil
 }
 
-// syncCompletionToAgentActivity synchronizes completion state from actx (or store fallback) to agent.Activity.
-// Must be called with persistMu held, but outside c.mu.
-func (c *Classifier) syncCompletionToAgentActivity(agentID string, agent *types.IAgentState) {
-	var hasActx bool
-	var actxHasUnseen *bool
-	var actxCompletedAt *int64
-
-	c.mu.Lock()
-	if actx, ok := c.agentCtx[agentID]; ok {
-		hasActx = true
-		actxHasUnseen = actx.hasUnseenCompletion
-		actxCompletedAt = actx.completedAt
-	}
-	c.mu.Unlock()
-
-	if hasActx {
-		if actxHasUnseen == nil || !*actxHasUnseen {
-			agent.Activity.HasUnseenCompletion = nil
-			agent.Activity.CompletedAt = nil
-		} else {
-			agent.Activity.HasUnseenCompletion = actxHasUnseen
-			agent.Activity.CompletedAt = actxCompletedAt
-		}
-	} else if c.store != nil {
-		if fresh, err := c.store.GetAgent(agentID); err == nil && fresh != nil {
-			if fresh.Activity.HasUnseenCompletion == nil || !*fresh.Activity.HasUnseenCompletion {
-				agent.Activity.HasUnseenCompletion = nil
-				agent.Activity.CompletedAt = nil
-			} else {
-				agent.Activity.HasUnseenCompletion = fresh.Activity.HasUnseenCompletion
-				agent.Activity.CompletedAt = fresh.Activity.CompletedAt
-			}
-		}
-	}
-}
-
 // persistAgent is the single load-mutate-save path for writers that run outside
 // ProcessFrame: summary jobs, idle and silence transitions, and subagent dwell
 // expiry. Holding the agent's writer lock, it re-reads the agent row and calls
