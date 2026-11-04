@@ -69,9 +69,33 @@ jobs:
       - name: Build
         run: just build-all
 
+  playwright-version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # The e2e container's browsers must match @playwright/test, which
+      # package.json pins to an exact version.
+      - id: version
+        run: |
+          version="$(jq -r '.devDependencies["@playwright/test"]' packages/ui-web/package.json)"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "@playwright/test must be pinned to an exact version, got '$version'" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
   e2e:
+    needs: playwright-version
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Playwright's image ships Chromium and its system dependencies.
+    container:
+      image: mcr.microsoft.com/playwright:v${{ needs.playwright-version.outputs.version }}-noble
+      options: --user 1001
     steps:
       - uses: actions/checkout@v7
 
@@ -88,10 +112,6 @@ jobs:
 
       - name: Setup
         run: just setup
-
-      - name: Install Chromium
-        working-directory: packages/ui-web
-        run: bun x playwright install --with-deps chromium
 
       - name: End-to-end tests
         run: just ui test-e2e

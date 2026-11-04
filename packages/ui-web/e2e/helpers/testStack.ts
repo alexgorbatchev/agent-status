@@ -1,6 +1,6 @@
-import { spawn, type ChildProcess, type StdioOptions } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
-import { existsSync, mkdirSync, openSync, rmSync, readFileSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, resolve, dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -53,10 +53,6 @@ export async function createTestStack(testId: string): Promise<ITestStack> {
   // Daemon output outlives stop() so a failed run can be diagnosed.
   const logDir = resolve(rootDir, ".tmp", "e2e-logs", basename(testDir));
   mkdirSync(logDir, { recursive: true });
-  const daemonOutput = (name: string): StdioOptions => {
-    const fd = openSync(resolve(logDir, `${name}.log`), "a");
-    return ["ignore", fd, fd];
-  };
 
   const dbPath = resolve(testDir, "db.sqlite");
   // Unix socket addresses are limited to about 104 bytes, which an absolute path
@@ -85,9 +81,25 @@ export async function createTestStack(testId: string): Promise<ITestStack> {
 
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+  // Each daemon runs from rootDir and writes stdout and stderr to its own log
+  // under logDir. spawn hands the child its own copy of the descriptor, so the
+  // parent closes its copy right away.
+  const spawnDaemon = (name: string, bin: string, args: string[], env: NodeJS.ProcessEnv): ChildProcess => {
+    const log = openSync(resolve(logDir, `${name}.log`), "w");
+    try {
+      const child = spawn(bin, args, { cwd: rootDir, env: { ...process.env, ...env }, stdio: ["ignore", log, log] });
+      procs.push(child);
+      return child;
+    } finally {
+      closeSync(log);
+    }
+  };
+
   const start = async () => {
-    // 1. Ingester
-    const ingester = spawn(
+    const stateEnv = { XDG_DATA_HOME: testDir, XDG_STATE_HOME: testDir, XDG_RUNTIME_DIR: testDir };
+
+    spawnDaemon(
+      "ingester",
       ingesterBin,
       [
         "--addr",
@@ -102,22 +114,12 @@ export async function createTestStack(testId: string): Promise<ITestStack> {
         "--log-level",
         "info",
       ],
-      {
-        cwd: rootDir,
-        env: {
-          ...process.env,
-          XDG_DATA_HOME: testDir,
-          XDG_STATE_HOME: testDir,
-          XDG_RUNTIME_DIR: testDir,
-        },
-        stdio: daemonOutput("ingester"),
-      },
+      stateEnv,
     );
-    procs.push(ingester);
     await sleep(600);
 
-    // 2. Server
-    const server = spawn(
+    spawnDaemon(
+      "server",
       serverBin,
       [
         "--addr",
@@ -133,22 +135,12 @@ export async function createTestStack(testId: string): Promise<ITestStack> {
         "--log-level",
         "info",
       ],
-      {
-        cwd: rootDir,
-        env: {
-          ...process.env,
-          XDG_DATA_HOME: testDir,
-          XDG_STATE_HOME: testDir,
-          XDG_RUNTIME_DIR: testDir,
-        },
-        stdio: daemonOutput("server"),
-      },
+      stateEnv,
     );
-    procs.push(server);
     await sleep(600);
 
-    // 3. Observer
-    const observer = spawn(
+    spawnDaemon(
+      "observer",
       observerBin,
       [
         "--ingester-url",
@@ -170,21 +162,10 @@ export async function createTestStack(testId: string): Promise<ITestStack> {
         "--log-level",
         "info",
       ],
-      {
-        cwd: rootDir,
-        env: {
-          ...process.env,
-          // Harness defaults without a flag (Codex, OpenCode) resolve under HOME;
-          // keep the observer away from the developer's real sessions.
-          HOME: testDir,
-          XDG_DATA_HOME: testDir,
-          XDG_STATE_HOME: testDir,
-          XDG_RUNTIME_DIR: testDir,
-        },
-        stdio: daemonOutput("observer"),
-      },
+      // Harness defaults without a flag (Codex, OpenCode) resolve under HOME;
+      // keep the observer away from the developer's real sessions.
+      { ...stateEnv, HOME: testDir },
     );
-    procs.push(observer);
     await sleep(600);
   };
 
