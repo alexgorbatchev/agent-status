@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
 import { existsSync, mkdirSync, rmSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { resolve, dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
@@ -20,7 +20,7 @@ export interface ITestStack {
   token: string;
   start: () => Promise<void>;
   stop: () => Promise<void>;
-  createClaudeSession: (sessionId: string, pid: number, cwd: string) => Promise<string>;
+  createClaudeSession: (sessionId: string, cwd: string) => Promise<string>;
   appendClaudeTranscript: (sessionId: string, cwd: string, lineObj: Record<string, unknown>) => Promise<void>;
   createPiSession: (sessionId: string, cwd: string) => Promise<string>;
   appendPiTranscript: (filePath: string, lineObj: Record<string, unknown>) => Promise<void>;
@@ -52,7 +52,10 @@ export async function createTestStack(testId: string): Promise<ITestStack> {
   mkdirSync(testDir, { recursive: true });
 
   const dbPath = resolve(testDir, "db.sqlite");
-  const notifySock = resolve(testDir, "n.sock");
+  // Unix socket addresses are limited to about 104 bytes, which an absolute path
+  // inside a deep checkout exceeds. The daemons run from rootDir, so pass the
+  // socket relative to it, as the dev stack does.
+  const notifySock = relative(rootDir, resolve(testDir, "n.sock"));
   const claudeSessionsDir = resolve(testDir, "claude-sessions");
   const claudeProjectsDir = resolve(testDir, "claude-projects");
   const piSessionsDir = resolve(testDir, "pi-sessions");
@@ -162,7 +165,12 @@ export async function createTestStack(testId: string): Promise<ITestStack> {
         cwd: rootDir,
         env: {
           ...process.env,
-          AGENT_STATUS_TEST_MOCK_PROC: "1",
+          // Harness defaults without a flag (Codex, OpenCode) resolve under HOME;
+          // keep the observer away from the developer's real sessions.
+          HOME: testDir,
+          XDG_DATA_HOME: testDir,
+          XDG_STATE_HOME: testDir,
+          XDG_RUNTIME_DIR: testDir,
         },
         stdio: "ignore",
       },
@@ -188,12 +196,36 @@ export async function createTestStack(testId: string): Promise<ITestStack> {
     return cwd.replace(/[/.]/g, "-");
   };
 
-  const createClaudeSession = async (sessionId: string, pid: number, cwd: string) => {
+  // The observer reports a session only while a matching harness process is
+  // alive: Claude Code needs the descriptor's PID started at its startedAt, and
+  // Pi needs a process whose command ends in /pi running in the session's cwd.
+  // An idle script named after the harness stands in for it, so the observer's
+  // production liveness checks apply unchanged.
+  const startHarnessStandIn = async (harnessCommand: string, cwd: string) => {
+    const binDir = resolve(testDir, "harness-bin");
+    mkdirSync(binDir, { recursive: true });
+    mkdirSync(cwd, { recursive: true });
+    const script = resolve(binDir, harnessCommand);
+    writeFileSync(script, "setInterval(() => {}, 1 << 30);\n");
+    const standIn = spawn(process.execPath, [script], { cwd, stdio: "ignore" });
+    procs.push(standIn);
+    await new Promise<void>((res, rej) => {
+      standIn.once("spawn", res);
+      standIn.once("error", rej);
+    });
+    if (standIn.pid === undefined) {
+      throw new Error("harness stand-in process has no PID");
+    }
+    return { pid: standIn.pid, startedAt: Date.now() };
+  };
+
+  const createClaudeSession = async (sessionId: string, cwd: string) => {
+    const { pid, startedAt } = await startHarnessStandIn("claude", cwd);
     const desc = {
       pid,
       sessionId,
       cwd,
-      startedAt: Date.now(),
+      startedAt,
       status: "busy",
       version: "2.1.277",
     };
@@ -216,6 +248,7 @@ export async function createTestStack(testId: string): Promise<ITestStack> {
   };
 
   const createPiSession = async (sessionId: string, cwd: string) => {
+    await startHarnessStandIn("pi", cwd);
     // Encoded CWD for Pi: strip leading slash, replace separators and colons with dash
     const clean = cwd.replace(/^[/\\]+/, "").replace(/[/\\:]/g, "-");
     const folder = `--${clean}--`;
