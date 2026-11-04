@@ -8,8 +8,8 @@ cloud.google.com/go/compute/metadata v0.5.0/go.mod h1:aHnloV2TPI38yx4s9+wAZhHykW
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
 github.com/alexgorbatchev/agent-parser v1.1.0 h1:MuQipZT8G7YoClM3y1oWgr7GPb0kOk53wB912Ol0hRA=
 github.com/alexgorbatchev/agent-parser v1.1.0/go.mod h1:QH1Y/KN0flNQ6keLonkAcjlq6EvYJxrkUYFIW6f8hvk=
-github.com/alexgorbatchev/agent-watcher v1.1.0 h1:ldg0evxvQOhqEDCIl9M5kWUzWgGJBq0sxf3Ga9Ij+mM=
-github.com/alexgorbatchev/agent-watcher v1.1.0/go.mod h1:o7ChEQQIKdTB6tSYDx+LyhcaU5sh/RWMdn7PpqoSfpY=
+github.com/alexgorbatchev/agent-watcher v1.1.1 h1:OKO/IWGrN3xS2PoVF5nJf/WgFMSNUZ5f29Gm0PKCmNU=
+github.com/alexgorbatchev/agent-watcher v1.1.1/go.mod h1:o7ChEQQIKdTB6tSYDx+LyhcaU5sh/RWMdn7PpqoSfpY=
 github.com/alexgorbatchev/cobra-help-tree/v4 v4.0.0 h1:lsgP09cFsQq25htGjEYvh8ATiBE7t7R7ECfJBe01QVU=
 github.com/alexgorbatchev/cobra-help-tree/v4 v4.0.0/go.mod h1:iW2OKycMBhufRu+sBuCIqV8uwzqLfLzz24zyP65j/cY=
 github.com/anthropics/anthropic-sdk-go v1.26.0 h1:oUTzFaUpAevfuELAP1sjL6CQJ9HHAfT7CoSYSac11PY=
