@@ -61,38 +61,38 @@ Replay sessions offline with `just debug session-replay-pi <session-id>` or `jus
 
 ### `agent-observer`
 
-| Flag                                 | Short  | Default                                    | Description                                          |
-| :----------------------------------- | :----- | :----------------------------------------- | :--------------------------------------------------- |
-| `--ingester-url <url>`               | (none) | `ws://127.0.0.1:4501/ws/ingest`            | Ingester WebSocket endpoint URL                      |
-| `--token <token>`                    | (none) | `""`                                       | Bearer token for ingester authentication             |
-| `--env <label>`                      | (none) | `""`                                       | Environment label override                           |
-| `--scan-interval <duration>`         | (none) | `2s`                                       | Interval between harness session scans               |
+| Flag                                 | Short  | Default                                       | Description                                          |
+| :----------------------------------- | :----- | :-------------------------------------------- | :--------------------------------------------------- |
+| `--ingester-url <url>`               | (none) | `ws://127.0.0.1:4501/ws/ingest`               | Ingester WebSocket endpoint URL                      |
+| `--token <token>`                    | (none) | `""`                                          | Bearer token for ingester authentication             |
+| `--env <label>`                      | (none) | `""`                                          | Environment label override                           |
+| `--scan-interval <duration>`         | (none) | `2s`                                          | Interval between harness session scans               |
 | `--cursor-path <path>`               | (none) | `~/.cache/agent-status/observer-cursors.json` | Path to persistent tailer cursor file                |
-| `--cursor-retention <duration>`      | (none) | `24h`                                      | Retention duration for inactive cursor entries       |
-| `--cursor-prune-interval <duration>` | (none) | `1h`                                       | Interval between periodic cursor pruning sweeps      |
-| `--claude-sessions-dir <path>`       | (none) | `~/.claude/sessions`                       | Custom directory for Claude Code session metadata    |
-| `--claude-projects-dir <path>`       | (none) | `~/.claude/projects`                       | Custom directory for Claude Code project transcripts |
-| `--pi-sessions-dir <path>`           | (none) | `~/.pi/agent/sessions`                     | Custom directory for Pi session logs                 |
-| `--log-level <level>`                | (none) | `info`                                     | Log level (`debug`, `info`, `warn`, `error`)         |
-| `--version`                          | `-v`   | `false`                                    | Print version information and exit                   |
-| `--help`                             | `-h`   | `false`                                    | Print command line help                              |
+| `--cursor-retention <duration>`      | (none) | `24h`                                         | Retention duration for inactive cursor entries       |
+| `--cursor-prune-interval <duration>` | (none) | `1h`                                          | Interval between periodic cursor pruning sweeps      |
+| `--claude-sessions-dir <path>`       | (none) | `~/.claude/sessions`                          | Custom directory for Claude Code session metadata    |
+| `--claude-projects-dir <path>`       | (none) | `~/.claude/projects`                          | Custom directory for Claude Code project transcripts |
+| `--pi-sessions-dir <path>`           | (none) | `~/.pi/agent/sessions`                        | Custom directory for Pi session logs                 |
+| `--log-level <level>`                | (none) | `info`                                        | Log level (`debug`, `info`, `warn`, `error`)         |
+| `--version`                          | `-v`   | `false`                                       | Print version information and exit                   |
+| `--help`                             | `-h`   | `false`                                       | Print command line help                              |
 
 ### `agent-ingester`
 
-| Flag                        | Short  | Default                                       | Description                                     |
-| :-------------------------- | :----- | :-------------------------------------------- | :---------------------------------------------- |
-| `--addr <addr>`             | (none) | `:4501`                                       | HTTP and WebSocket listen address               |
-| `--token <token>`           | (none) | `dev-secret-token`                            | Bearer authentication token                     |
-| `--db <path>`               | (none) | `~/.local/share/agent-status/agent-status.db` | SQLite database file path                       |
-| `--notify-sock <path>`      | (none) | `/tmp/agent-status/notify.sock`               | Unix domain socket path for event notifications |
-| `--no-summarize`            | (none) | `false`                                       | Disable LLM-based action summarization          |
-| `--litellm-url <url>`       | (none) | `""`                                          | Base URL for OpenAI-compatible or LiteLLM proxy |
-| `--litellm-key <key>`       | (none) | `""`                                          | API key for OpenAI-compatible or LiteLLM proxy  |
-| `--summarizer-model <name>` | (none) | `""`                                          | Model identifier used for action summarization  |
-| `--log-level <level>`       | (none) | `info`                                        | Log level (`debug`, `info`, `warn`, `error`)    |
+| Flag                        | Short  | Default                                       | Description                                                     |
+| :-------------------------- | :----- | :-------------------------------------------- | :-------------------------------------------------------------- |
+| `--addr <addr>`             | (none) | `:4501`                                       | HTTP and WebSocket listen address                               |
+| `--token <token>`           | (none) | `dev-secret-token`                            | Bearer authentication token                                     |
+| `--db <path>`               | (none) | `~/.local/share/agent-status/agent-status.db` | SQLite database file path                                       |
+| `--notify-sock <path>`      | (none) | `/tmp/agent-status/notify.sock`               | Unix domain socket path for event notifications                 |
+| `--no-summarize`            | (none) | `false`                                       | Disable LLM-based action summarization                          |
+| `--litellm-url <url>`       | (none) | `""`                                          | Base URL for OpenAI-compatible or LiteLLM proxy                 |
+| `--litellm-key <key>`       | (none) | `""`                                          | API key for OpenAI-compatible or LiteLLM proxy                  |
+| `--summarizer-model <name>` | (none) | `""`                                          | Model identifier used for action summarization                  |
+| `--log-level <level>`       | (none) | `info`                                        | Log level (`debug`, `info`, `warn`, `error`)                    |
 | `--idle-grace-period <dur>` | (none) | `5s`                                          | Grace period before transitioning from BUSY to IDLE on turn end |
-| `--version`                 | `-v`   | `false`                                       | Print version information and exit              |
-| `--help`                    | `-h`   | `false`                                       | Print command line help                         |
+| `--version`                 | `-v`   | `false`                                       | Print version information and exit                              |
+| `--help`                    | `-h`   | `false`                                       | Print command line help                                         |
 
 ### `agent-server`
 
@@ -129,25 +129,25 @@ Replay sessions offline with `just debug session-replay-pi <session-id>` or `jus
 
 The table below lists environment variables read by the system, in precedence and resolution order:
 
-| Variable               | Precedence / Default                             | Description                                                                              |
-| :--------------------- | :----------------------------------------------- | :--------------------------------------------------------------------------------------- |
-| `LITELLM_BASE_URL`     | Fallback: `OPENAI_BASE_URL`                      | Base URL for OpenAI-compatible or LiteLLM proxy endpoint                                 |
-| `OPENAI_BASE_URL`      | (none)                                           | Fallback endpoint URL when `LITELLM_BASE_URL` is unset                                   |
-| `LITELLM_API_KEY`      | Alias: `LITELLM_KEY`, fallback: `OPENAI_API_KEY` | Primary API authentication key for LiteLLM or OpenAI-compatible proxy                    |
-| `LITELLM_KEY`          | Fallback: `OPENAI_API_KEY`                       | Alias for `LITELLM_API_KEY`                                                              |
-| `OPENAI_API_KEY`       | (none)                                           | Fallback API authentication key when LiteLLM keys are unset                              |
-| `GEMINI_API_KEY`       | (none)                                           | API key for Google Gemini action summarization provider                                  |
-| `ANTHROPIC_API_KEY`    | (none)                                           | API key for Anthropic Claude action summarization provider                               |
-| `AGENT_STATUS_SUMMARIZER_MODEL`  | Provider default                                 | Custom model identifier override for action summarization                                |
-| `AGENT_STATUS_NO_SUMMARIZE`      | `0`                                              | Set to `1` to disable LLM action summarization and use deterministic fallback heuristics |
-| `AGENT_STATUS_IDLE_GRACE_PERIOD` | `5s`                                             | Grace period to debounce BUSY -> IDLE transitions after turn end                         |
-| `AGENT_STATUS_INGESTER_ADDR`     | `:4501`                                          | Listen address for `agent-ingester` WebSocket server                                       |
-| `AGENT_STATUS_INGESTER_URL`      | `http://127.0.0.1:4501`                          | HTTP URL of `agent-ingester` service for `agent-server` mutation proxying                    |
-| `AGENT_STATUS_INGESTER_URL`    | `ws://127.0.0.1:4501/ws/ingest`                  | WebSocket ingestion endpoint URL of `agent-ingester` for `agent-observer` telemetry streaming |
-| `AGENT_STATUS_BEARER_TOKEN`      | `dev-secret-token`                               | Shared bearer token for telemetry ingestion authentication                               |
-| `AGENT_STATUS_TOKEN`    | (none)                                           | Shared bearer authentication token used by `agent-observer` and `agent-server`               |
-| `AGENT_STATUS_LOG_DIR`           | `~/.local/state/agent-status/logs`               | Directory path for rotating daemon disk logs                                             |
-| `AGENT_STATUS_LOG_FILE`         | (none)                                           | Explicit file path override for daemon disk logging                                      |
+| Variable                         | Precedence / Default                             | Description                                                                                   |
+| :------------------------------- | :----------------------------------------------- | :-------------------------------------------------------------------------------------------- |
+| `LITELLM_BASE_URL`               | Fallback: `OPENAI_BASE_URL`                      | Base URL for OpenAI-compatible or LiteLLM proxy endpoint                                      |
+| `OPENAI_BASE_URL`                | (none)                                           | Fallback endpoint URL when `LITELLM_BASE_URL` is unset                                        |
+| `LITELLM_API_KEY`                | Alias: `LITELLM_KEY`, fallback: `OPENAI_API_KEY` | Primary API authentication key for LiteLLM or OpenAI-compatible proxy                         |
+| `LITELLM_KEY`                    | Fallback: `OPENAI_API_KEY`                       | Alias for `LITELLM_API_KEY`                                                                   |
+| `OPENAI_API_KEY`                 | (none)                                           | Fallback API authentication key when LiteLLM keys are unset                                   |
+| `GEMINI_API_KEY`                 | (none)                                           | API key for Google Gemini action summarization provider                                       |
+| `ANTHROPIC_API_KEY`              | (none)                                           | API key for Anthropic Claude action summarization provider                                    |
+| `AGENT_STATUS_SUMMARIZER_MODEL`  | Provider default                                 | Custom model identifier override for action summarization                                     |
+| `AGENT_STATUS_NO_SUMMARIZE`      | `0`                                              | Set to `1` to disable LLM action summarization and use deterministic fallback heuristics      |
+| `AGENT_STATUS_IDLE_GRACE_PERIOD` | `5s`                                             | Grace period to debounce BUSY -> IDLE transitions after turn end                              |
+| `AGENT_STATUS_INGESTER_ADDR`     | `:4501`                                          | Listen address for `agent-ingester` WebSocket server                                          |
+| `AGENT_STATUS_INGESTER_URL`      | `http://127.0.0.1:4501`                          | HTTP URL of `agent-ingester` service for `agent-server` mutation proxying                     |
+| `AGENT_STATUS_INGESTER_WS_URL`   | `ws://127.0.0.1:4501/ws/ingest`                  | WebSocket ingestion endpoint URL of `agent-ingester` for `agent-observer` telemetry streaming |
+| `AGENT_STATUS_BEARER_TOKEN`      | `dev-secret-token`                               | Shared bearer token for telemetry ingestion authentication                                    |
+| `AGENT_STATUS_TOKEN`             | (none)                                           | Shared bearer authentication token used by `agent-observer` and `agent-server`                |
+| `AGENT_STATUS_LOG_DIR`           | `~/.local/state/agent-status/logs`               | Directory path for rotating daemon disk logs                                                  |
+| `AGENT_STATUS_LOG_FILE`          | (none)                                           | Explicit file path override for daemon disk logging                                           |
 
 # License
 

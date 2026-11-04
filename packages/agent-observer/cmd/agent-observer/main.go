@@ -53,7 +53,7 @@ func newRootCmd() (*cobra.Command, *observerOptions) {
 		logLevel:            "info",
 	}
 
-	if envURL := os.Getenv("AGENT_STATUS_INGESTER_URL"); envURL != "" {
+	if envURL := os.Getenv("AGENT_STATUS_INGESTER_WS_URL"); envURL != "" {
 		opts.ingesterURL = envURL
 	}
 	if envToken := os.Getenv("AGENT_STATUS_TOKEN"); envToken != "" {
@@ -98,7 +98,7 @@ func newRootCmd() (*cobra.Command, *observerOptions) {
 	flags.DurationVar(&opts.cursorRetention, "cursor-retention", opts.cursorRetention, "Retention duration for inactive cursor entries (default 24h)")
 	flags.DurationVar(&opts.cursorPruneInterval, "cursor-prune-interval", opts.cursorPruneInterval, "Interval between periodic cursor pruning sweeps (default 1h)")
 	flags.DurationVar(&opts.cursorFlushInterval, "cursor-flush-interval", opts.cursorFlushInterval, "Interval between periodic cursor store flushes (default 2s)")
-	flags.StringVar(&opts.sessionStatePath, "session-state-path", "", "Custom path for persistent session state tracking file")
+	flags.StringVar(&opts.sessionStatePath, "session-state-path", opts.sessionStatePath, "Custom path for persistent session state tracking file")
 	flags.StringVar(&opts.claudeSessionsDir, "claude-sessions-dir", "", "Custom directory for Claude Code sessions")
 	flags.StringVar(&opts.claudeProjectsDir, "claude-projects-dir", "", "Custom directory for Claude Code projects/transcripts")
 	flags.StringVar(&opts.piSessionsDir, "pi-sessions-dir", "", "Custom directory for Pi sessions")

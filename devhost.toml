@@ -25,7 +25,7 @@ command = ["just", "observer", "dev"]
 dependsOn = ["ingester"]
 
 [services.observer.env]
-AGENT_STATUS_INGESTER_URL = "ws://{{ services.ingester.bindHost }}:{{ services.ingester.port }}/ws/ingest"
+AGENT_STATUS_INGESTER_WS_URL = "ws://{{ services.ingester.bindHost }}:{{ services.ingester.port }}/ws/ingest"
 
 [services.observer.health]
 process = true

@@ -232,7 +232,8 @@ func TestObserverCommandFlagParsing(t *testing.T) {
 }
 
 func TestObserverCommandEnvFallbacks(t *testing.T) {
-	t.Setenv("AGENT_STATUS_INGESTER_URL", "ws://env-ingester:8080/ws/ingest")
+	t.Setenv("AGENT_STATUS_INGESTER_WS_URL", "ws://env-ingester:8080/ws/ingest")
+	t.Setenv("AGENT_STATUS_SESSION_STATE_PATH", "/tmp/env-state/session-state.json")
 	t.Setenv("AGENT_STATUS_TOKEN", "env-token-xyz")
 	t.Setenv("AGENT_STATUS_CURSOR_RETENTION", "72h")
 	t.Setenv("AGENT_STATUS_CURSOR_PRUNE_INTERVAL", "2h")
@@ -245,6 +246,9 @@ func TestObserverCommandEnvFallbacks(t *testing.T) {
 	}
 	if opts.token != "env-token-xyz" {
 		t.Errorf("token from env = %q, want env-token-xyz", opts.token)
+	}
+	if opts.sessionStatePath != "/tmp/env-state/session-state.json" {
+		t.Errorf("sessionStatePath from env = %q, want /tmp/env-state/session-state.json", opts.sessionStatePath)
 	}
 	if opts.cursorRetention != 72*time.Hour {
 		t.Errorf("cursorRetention from env = %v, want 72h", opts.cursorRetention)
