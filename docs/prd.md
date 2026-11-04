@@ -25,7 +25,7 @@ It answers five questions without the engineer cycling through terminals:
 - Harnesses: **Claude Code** and **Pi**.
 - Host platforms: **darwin** and **linux**.
 - Four packages: `agent-observer`, `agent-ingester`, `agent-server`, `ui-web`.
-- Core Go implementation built with verified ecosystem libraries (`gopsutil/v4`, `coder/websocket`, `go-chi/chi/v5`, `ncruces/go-sqlite3`, `github.com/mozilla-ai/any-llm-go`, `spf13/cobra`).
+- Core Go implementation built with verified ecosystem libraries (`gopsutil/v4`, `coder/websocket`, `go-chi/chi/v5`, `modernc.org/sqlite`, `github.com/mozilla-ai/any-llm-go`, `spf13/cobra`).
 - Multi-provider LLM Action Summarization supporting OpenAI-compatible endpoints (including self-hosted LiteLLM proxies e.g. `https://litellm.example.com` via `LITELLM_BASE_URL` / `LITELLM_API_KEY` or `LITELLM_KEY`), direct Google Gemini, and direct Anthropic Claude.
 - Live token usage (5-way breakdown: input, output, cache read, cache write, reasoning) and cost computation using a centrally synced model pricing map.
 - Live cost roll-ups across Agent cards, Project groups, Environment groups, and the Fleet header.
@@ -168,7 +168,7 @@ Entries form a tree via `{id, parentId}`. The first record is the header:
 │  3. Model pricing calculator — vendored LiteLLM pricing + daily refresh                 │
 │  4. Debounced AI summarizer — github.com/mozilla-ai/any-llm-go                          │
 │     (Supports OpenAI/LiteLLM proxy, Gemini 2.5 Flash, Claude Haiku 4.5)                 │
-│  5. SQLite writer (WAL, sole writer) — ncruces/go-sqlite3 (Cgo-free, pure-Wasm)        │
+│  5. SQLite writer (WAL, sole writer) — modernc.org/sqlite (Cgo-free, pure Go)          │
 │  6. Notify publisher — net.Listen("unix", notify.sock) (0600)                           │
 └──────────────┬──────────────────────────────────────────────┬───────────────────────────┘
                │                                              │
@@ -358,24 +358,21 @@ Subagent events update parent token usage and cost roll-ups, track active subage
 
 #### 4.2.5. SQLite Persistence & Retention
 
-- Driver: `github.com/ncruces/go-sqlite3` (Cgo-free, pure-Wasm embed driver via `github.com/ncruces/go-sqlite3/driver` and `github.com/ncruces/go-sqlite3/embed`). Supports native cross-compilation without Cgo toolchain dependencies while delivering full WAL performance.
+- Driver: `modernc.org/sqlite` (Cgo-free pure Go, driver name `sqlite`), the same SQLite engine agent-parser and agent-watcher use. Supports native cross-compilation without Cgo toolchain dependencies, with full WAL support.
 - Database path: `${XDG_DATA_HOME:-~/.local/share}/agent-status/agent-status.db`.
 - Connection string & pragmas:
   ```go
-  import (
-      _ "github.com/ncruces/go-sqlite3/driver"
-      _ "github.com/ncruces/go-sqlite3/embed"
-  )
+  import _ "modernc.org/sqlite"
 
   dsn := "file:" + dbPath + "?" +
       "_pragma=journal_mode(wal)&" +
       "_pragma=synchronous(normal)&" +
       "_pragma=busy_timeout(5000)&" +
-      "_pragma=foreign_keys(on)&" +
-      "_pragma=auto_vacuum(incremental)"
+      "_pragma=foreign_keys(on)"
 
-  db, err := sql.Open("sqlite3", dsn)
+  db, err := sql.Open("sqlite", dsn)
   ```
+  `auto_vacuum` is a file-level setting: `Migrate` sets it once when it creates the database. Setting it in the DSN would take a write lock on every new connection.
 - Connection pool limits:
   ```go
   db.SetMaxOpenConns(max(4, runtime.GOMAXPROCS(0)))
@@ -560,7 +557,7 @@ agent-status/
 | `agent-ingester` | WebSocket Server            | `github.com/coder/websocket`                                    | High-throughput server binding with bearer token auth on connection upgrade.                                                                  |
 | `agent-ingester` | Unified LLM Summarizer      | `github.com/mozilla-ai/any-llm-go`                              | Unified completion client wrapping OpenAI-compatible APIs (LiteLLM proxy `https://litellm.example.com`), Google Gemini, and Anthropic Claude. |
 | `agent-ingester` | Rate Limiter                | `golang.org/x/time/rate`                                        | 12-second debouncing token bucket per active agent.                                                                                           |
-| `agent-ingester` | SQLite Store & Migrations   | `github.com/ncruces/go-sqlite3`                                 | Pure-Go, Cgo-free Wasm-based SQLite driver with WAL mode, `PRAGMA user_version` migrations, and cross-compilation support.                    |
+| `agent-ingester` | SQLite Store & Migrations   | `modernc.org/sqlite`                                            | Pure-Go, Cgo-free SQLite driver with WAL mode, `PRAGMA user_version` migrations, and cross-compilation support.                    |
 | `agent-server`   | HTTP Routing & Middleware   | `github.com/go-chi/chi/v5` + `github.com/rs/cors`               | 100% standard library `net/http` router with zero external abstraction overhead.                                                              |
 | `agent-server`   | SSE & WebSockets            | `github.com/tmaxmax/go-sse` + `github.com/coder/websocket`      | Native HTTP event flushing and WebSocket multiplexing.                                                                                        |
 | All CLIs         | CLI & Documentation         | `github.com/spf13/cobra` + `github.com/spf13/pflag`             | Industry-standard CLI structure with `doc.GenMarkdownTree` for automated command docs.                                                        |
@@ -894,7 +891,7 @@ CREATE TABLE IF NOT EXISTS observer_cursors (
 - [ ] Ingester: Gateway receiver with `coder/websocket`, constant-time token validator, deduplicator on `(envId, seq)`.
 - [ ] Ingester: Deterministic classifier (`(lifecycle, activity)` state machine).
 - [ ] Ingester: Pricing calculator computing cost across main and subagent usage.
-- [ ] Ingester: SQLite store (`ncruces/go-sqlite3` pure-Wasm driver) with WAL mode, `user_version` migrations, and foreign keys.
+- [ ] Ingester: SQLite store (`modernc.org/sqlite` pure-Go driver) with WAL mode, `user_version` migrations, and foreign keys.
 - [ ] Ingester: Unix socket notify publisher via `net.Listen("unix", ...)`.
 - [ ] Server: REST `/api/v1/agents` (`go-chi/chi/v5`), SSE `/api/v1/events`, notify subscriber with initial SQLite snapshot resync.
 - [ ] UI: Bun + React dashboard rendering live agent cards from SSE stream.

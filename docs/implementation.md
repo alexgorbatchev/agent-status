@@ -26,7 +26,7 @@ All development must be strictly grounded in:
    - Every feature must have automated tests written first or alongside implementation.
    - For all newly added tests, verify their sensitivity by temporarily disabling the implementation change and confirming the test fails.
 3. **Pure-Go / Cgo-Free Invariant**:
-   - Use `github.com/ncruces/go-sqlite3` for SQLite (never introduce Cgo requirements).
+   - Use `modernc.org/sqlite` for SQLite, the driver agent-parser and agent-watcher use (never introduce Cgo requirements or a second SQLite driver).
    - Use `github.com/shirou/gopsutil/v4/process` for process CWD resolution on Darwin (`libproc` purego) and Linux (`/proc`).
 4. **Zero-Vite Invariant**:
    - `packages/ui-web` must use Bun native bundling and dev server (`Bun.serve`, `@import "tailwindcss";` in `src/theme.css`). No Vite config or dependencies.
@@ -89,7 +89,7 @@ All development must be strictly grounded in:
 #### 1.2. `packages/agent-ingester` Gateway & Store
 
 - [ ] Initialize Go module `packages/agent-ingester/go.mod`.
-- [ ] Implement `internal/store/store.go` and `internal/store/migrations.go` using `github.com/ncruces/go-sqlite3`:
+- [ ] Implement `internal/store/store.go` and `internal/store/migrations.go` using `modernc.org/sqlite`:
   - Runs pragmas: WAL mode, synchronous NORMAL, busy timeout 5000, foreign keys ON, incremental auto vacuum.
   - Implements tables: `environments`, `agents`, `runs`, `telemetry_events`, `observer_cursors`.
 - [ ] Implement `internal/classifier/classifier.go`:

@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
@@ -22,9 +21,6 @@ var ErrAgentNotFound = errors.New("agent not found")
 type Store struct {
 	db *sql.DB
 }
-
-// memoryDBs numbers the in-memory databases opened in this process.
-var memoryDBs atomic.Uint64
 
 func Open(dbPath string) (*Store, error) {
 	if dbPath != ":memory:" {
@@ -40,9 +36,9 @@ func Open(dbPath string) (*Store, error) {
 		"_pragma=foreign_keys(on)"
 	dsn := "file:" + dbPath + "?" + pragmas
 	if dbPath == ":memory:" {
-		// A shared-cache in-memory database is visible process-wide under its
-		// name, so each store gets its own name.
-		dsn = fmt.Sprintf("file:agent-status-memory-%d?mode=memory&cache=shared&%s", memoryDBs.Add(1), pragmas)
+		// A private in-memory database lives as long as its one connection
+		// (see SetMaxOpenConns below), so stores never see each other's data.
+		dsn = "file::memory:?" + pragmas
 	}
 
 	db, err := sql.Open("sqlite", dsn)

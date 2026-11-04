@@ -214,26 +214,23 @@ The following source checkouts are retained on disk:
 
 ### 3.3. SQLite Store & Migrations
 
-#### Chosen Building Block: `github.com/ncruces/go-sqlite3`
+#### Chosen Building Block: `modernc.org/sqlite`
 
-- **Adoption**: Modern pure-Go / Wasm-based SQLite driver providing complete Cgo-free execution across Darwin and Linux.
+- **Adoption**: Pure-Go SQLite (a translation of the C sources) providing Cgo-free execution across Darwin and Linux. agent-parser and agent-watcher use the same driver, so every binary links one SQLite engine.
 - **Why Chosen**: Eliminates Cgo build toolchain requirements and cross-compilation headaches while supporting native WAL mode, high concurrency, and standard `database/sql` interfaces.
 - **Connection Configuration**:
   ```go
-  import (
-      _ "github.com/ncruces/go-sqlite3/driver"
-      _ "github.com/ncruces/go-sqlite3/embed"
-  )
+  import _ "modernc.org/sqlite"
 
   dsn := "file:" + dbPath + "?" +
       "_pragma=journal_mode(wal)&" +
       "_pragma=synchronous(normal)&" +
       "_pragma=busy_timeout(5000)&" +
-      "_pragma=foreign_keys(on)&" +
-      "_pragma=auto_vacuum(incremental)"
+      "_pragma=foreign_keys(on)"
 
-  db, err := sql.Open("sqlite3", dsn)
+  db, err := sql.Open("sqlite", dsn)
   ```
+  `auto_vacuum` is a file-level setting: `Migrate` sets it once when it creates the database. Setting it in the DSN would take a write lock on every new connection.
 - **Connection Pool Tuning**:
   ```go
   db.SetMaxOpenConns(max(4, runtime.GOMAXPROCS(0)))
