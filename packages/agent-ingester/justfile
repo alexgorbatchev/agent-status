@@ -24,7 +24,7 @@ test *args:
 
 # Lint and check module hygiene
 lint:
-    @out="$(gofmt -l .)"; if [ -n "$out" ]; then echo "Unformatted Go files:"; echo "$out"; exit 1; fi
+    ../../scripts/check-format.sh
     go mod tidy -diff
     go vet ./...
     golangci-lint run
