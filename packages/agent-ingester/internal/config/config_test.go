@@ -11,7 +11,7 @@ func TestLoad_Defaults(t *testing.T) {
 	// Clear all relevant environment variables
 	envKeys := []string{
 		"AGENT_STATUS_INGESTER_ADDR",
-		"AGENT_STATUS_BEARER_TOKEN",
+		"AGENT_STATUS_TOKEN",
 		"XDG_DATA_HOME",
 		"XDG_RUNTIME_DIR",
 		"AGENT_STATUS_NO_SUMMARIZE",
@@ -72,7 +72,7 @@ func TestLoad_Defaults(t *testing.T) {
 
 func TestLoad_EnvironmentOverrides(t *testing.T) {
 	t.Setenv("AGENT_STATUS_INGESTER_ADDR", "0.0.0.0:9999")
-	t.Setenv("AGENT_STATUS_BEARER_TOKEN", "custom-token-xyz")
+	t.Setenv("AGENT_STATUS_TOKEN", "custom-token-xyz")
 	t.Setenv("XDG_DATA_HOME", "/custom/data")
 	t.Setenv("XDG_RUNTIME_DIR", "/custom/run")
 	t.Setenv("AGENT_STATUS_NO_SUMMARIZE", "1")
@@ -134,7 +134,7 @@ func TestLoad_EnvironmentOverrides(t *testing.T) {
 
 func TestLoad_OpenAIFallbacks(t *testing.T) {
 	t.Setenv("AGENT_STATUS_INGESTER_ADDR", "")
-	t.Setenv("AGENT_STATUS_BEARER_TOKEN", "")
+	t.Setenv("AGENT_STATUS_TOKEN", "")
 	t.Setenv("LITELLM_BASE_URL", "")
 	t.Setenv("LITELLM_API_KEY", "")
 	t.Setenv("LITELLM_KEY", "")
@@ -152,7 +152,7 @@ func TestLoad_OpenAIFallbacks(t *testing.T) {
 
 func TestLoad_LiteLLMKeyAlias(t *testing.T) {
 	t.Setenv("AGENT_STATUS_INGESTER_ADDR", "")
-	t.Setenv("AGENT_STATUS_BEARER_TOKEN", "")
+	t.Setenv("AGENT_STATUS_TOKEN", "")
 	t.Setenv("LITELLM_BASE_URL", "https://litellm.custom/v1")
 	t.Setenv("LITELLM_API_KEY", "")
 	t.Setenv("LITELLM_KEY", "litellm-alias-key-999")

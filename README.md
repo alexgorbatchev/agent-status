@@ -144,8 +144,7 @@ The table below lists environment variables read by the system, in precedence an
 | `AGENT_STATUS_INGESTER_ADDR`     | `:4501`                                          | Listen address for `agent-ingester` WebSocket server                                          |
 | `AGENT_STATUS_INGESTER_URL`      | `http://127.0.0.1:4501`                          | HTTP URL of `agent-ingester` service for `agent-server` mutation proxying                     |
 | `AGENT_STATUS_INGESTER_WS_URL`   | `ws://127.0.0.1:4501/ws/ingest`                  | WebSocket ingestion endpoint URL of `agent-ingester` for `agent-observer` telemetry streaming |
-| `AGENT_STATUS_BEARER_TOKEN`      | `dev-secret-token`                               | Shared bearer token for telemetry ingestion authentication                                    |
-| `AGENT_STATUS_TOKEN`             | (none)                                           | Shared bearer authentication token used by `agent-observer` and `agent-server`                |
+| `AGENT_STATUS_TOKEN`             | `dev-secret-token` (ingester), none (others)     | Shared bearer token for `agent-observer`, `agent-ingester`, and `agent-server`                |
 | `AGENT_STATUS_LOG_DIR`           | `~/.local/state/agent-status/logs`               | Directory path for rotating daemon disk logs                                                  |
 | `AGENT_STATUS_LOG_FILE`          | (none)                                           | Explicit file path override for daemon disk logging                                           |
 

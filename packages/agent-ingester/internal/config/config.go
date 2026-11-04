@@ -61,7 +61,7 @@ func Load() *Config {
 		addr = ":4501"
 	}
 
-	token := os.Getenv("AGENT_STATUS_BEARER_TOKEN")
+	token := os.Getenv("AGENT_STATUS_TOKEN")
 	if token == "" {
 		token = "dev-secret-token"
 	}
