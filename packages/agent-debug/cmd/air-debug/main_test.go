@@ -1096,3 +1096,38 @@ func TestCLI_SessionFleet(t *testing.T) {
 		}
 	})
 }
+
+// TestCLI_CommandsShareDatabaseResolution runs events, db inspect, and fleet without --db
+// where no database exists: every command must report the same search, proving they share
+// one resolver.
+func TestCLI_CommandsShareDatabaseResolution(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("AIR_DB_PATH", "")
+	t.Chdir(t.TempDir())
+
+	var messages []string
+	for _, args := range [][]string{
+		{"events", "ses-1"},
+		{"db", "inspect", "ses-1"},
+		{"fleet"},
+	} {
+		cmd := newRootCmd()
+		cmd.SetOut(new(bytes.Buffer))
+		cmd.SetErr(new(bytes.Buffer))
+		cmd.SetArgs(args)
+		err := cmd.Execute()
+		if err == nil {
+			t.Fatalf("%v found a database where none exists", args)
+		}
+		messages = append(messages, err.Error())
+	}
+	for _, message := range messages[1:] {
+		if message != messages[0] {
+			t.Fatalf("commands resolved the database differently:\n%s", strings.Join(messages, "\n"))
+		}
+	}
+	if !strings.Contains(messages[0], "agent-status database not found in") {
+		t.Errorf("unexpected resolution error: %s", messages[0])
+	}
+}

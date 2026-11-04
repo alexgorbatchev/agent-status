@@ -5,9 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	_ "github.com/ncruces/go-sqlite3/driver"
@@ -31,66 +28,6 @@ type SessionRecord struct {
 	EventCount          int                `json:"eventCount"`
 	FirstEventTimestamp *int64             `json:"firstEventTimestamp,omitempty"`
 	LastEventTimestamp  *int64             `json:"lastEventTimestamp,omitempty"`
-}
-
-// FindDefaultDBPath searches standard locations for agent-status.db.
-func FindDefaultDBPath() string {
-	if p := os.Getenv("AIR_DB_PATH"); p != "" {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-		return ""
-	}
-
-	xdgData := os.Getenv("XDG_DATA_HOME")
-	if xdgData == "" {
-		if home, err := os.UserHomeDir(); err == nil {
-			xdgData = filepath.Join(home, ".local", "share")
-		}
-	}
-	if xdgData != "" {
-		p := filepath.Join(xdgData, "agent-status", "agent-status.db")
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-
-	devStackPath := filepath.Join(".tmp", "dev-stack", "data", "agent-status", "agent-status.db")
-	if _, err := os.Stat(devStackPath); err == nil {
-		return devStackPath
-	}
-
-	if home, err := os.UserHomeDir(); err == nil {
-		statePath := filepath.Join(home, ".local", "state", "agent-status", "agent-status.db")
-		if _, err := os.Stat(statePath); err == nil {
-			return statePath
-		}
-	}
-
-	return ""
-}
-
-// ResolveDBPath resolves a user-supplied flag or auto-locates agent-status.db.
-func ResolveDBPath(flagVal string) (string, error) {
-	if flagVal == "" || flagVal == "auto" {
-		found := FindDefaultDBPath()
-		if found == "" {
-			return "", fmt.Errorf("agent-status SQLite database not found; specify --db <path>")
-		}
-		return found, nil
-	}
-
-	path := flagVal
-	if strings.HasPrefix(path, "~/") {
-		if home, err := os.UserHomeDir(); err == nil {
-			path = filepath.Join(home, path[2:])
-		}
-	}
-	path = filepath.Clean(path)
-	if _, err := os.Stat(path); err != nil {
-		return "", fmt.Errorf("sqlite database not found at %q: %w", path, err)
-	}
-	return path, nil
 }
 
 const selectAgentQuery = `

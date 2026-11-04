@@ -592,7 +592,7 @@ func newRootCmd() *cobra.Command {
 				return fmt.Errorf("session ID argument or --id flag is required")
 			}
 
-			dbPath, err := db.ResolveDatabasePath(eFlags.dbPath)
+			dbPath, err := db.ResolveDBPath(eFlags.dbPath)
 			if err != nil {
 				return err
 			}

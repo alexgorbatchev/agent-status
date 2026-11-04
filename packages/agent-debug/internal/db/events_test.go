@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -129,90 +128,6 @@ func createTestAgentStatusDB(t *testing.T, dir string) string {
 		VALUES (7, 'env-1:claude-code:ses-2', NULL, 'run_started', 1500, ?)`, string(d1))
 
 	return p
-}
-
-func TestResolveDatabasePath(t *testing.T) {
-	tmpDir := t.TempDir()
-	dbPath := filepath.Join(tmpDir, "agent-status.db")
-	if err := os.WriteFile(dbPath, []byte("sqlite"), 0644); err != nil {
-		t.Fatalf("writing file: %v", err)
-	}
-
-	t.Run("explicit path exists", func(t *testing.T) {
-		got, err := ResolveDatabasePath(dbPath)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got != dbPath {
-			t.Errorf("got %q, want %q", got, dbPath)
-		}
-	})
-
-	t.Run("explicit path missing", func(t *testing.T) {
-		missing := filepath.Join(tmpDir, "missing.db")
-		_, err := ResolveDatabasePath(missing)
-		if err == nil {
-			t.Fatalf("expected error for missing database path")
-		}
-	})
-
-	t.Run("auto via AIR_DATA_DIR", func(t *testing.T) {
-		orig := os.Getenv("AIR_DATA_DIR")
-		defer func() { _ = os.Setenv("AIR_DATA_DIR", orig) }()
-
-		_ = os.Setenv("AIR_DATA_DIR", tmpDir)
-		got, err := ResolveDatabasePath("auto")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got != dbPath {
-			t.Errorf("got %q, want %q", got, dbPath)
-		}
-	})
-
-	t.Run("auto via XDG_DATA_HOME", func(t *testing.T) {
-		origAir := os.Getenv("AIR_DATA_DIR")
-		origXdg := os.Getenv("XDG_DATA_HOME")
-		defer func() {
-			_ = os.Setenv("AIR_DATA_DIR", origAir)
-			_ = os.Setenv("XDG_DATA_HOME", origXdg)
-		}()
-		_ = os.Unsetenv("AIR_DATA_DIR")
-		xdgDir := t.TempDir()
-		sub := filepath.Join(xdgDir, "agent-status")
-		_ = os.MkdirAll(sub, 0755)
-		xdgDB := filepath.Join(sub, "agent-status.db")
-		_ = os.WriteFile(xdgDB, []byte("xdg"), 0644)
-		_ = os.Setenv("XDG_DATA_HOME", xdgDir)
-
-		got, err := ResolveDatabasePath("")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got != xdgDB {
-			t.Errorf("got %q, want %q", got, xdgDB)
-		}
-	})
-
-	t.Run("auto not found returns error", func(t *testing.T) {
-		origAir := os.Getenv("AIR_DATA_DIR")
-		origXdg := os.Getenv("XDG_DATA_HOME")
-		origHome := os.Getenv("HOME")
-		defer func() {
-			_ = os.Setenv("AIR_DATA_DIR", origAir)
-			_ = os.Setenv("XDG_DATA_HOME", origXdg)
-			_ = os.Setenv("HOME", origHome)
-		}()
-		_ = os.Unsetenv("AIR_DATA_DIR")
-		_ = os.Unsetenv("XDG_DATA_HOME")
-		emptyHome := t.TempDir()
-		_ = os.Setenv("HOME", emptyHome)
-
-		_, err := ResolveDatabasePath("auto")
-		if err == nil {
-			t.Fatalf("expected error when DB not found")
-		}
-	})
 }
 
 func TestGetTelemetryEvents(t *testing.T) {

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
@@ -35,61 +34,6 @@ type EventQueryOptions struct {
 	IncludeSubagents *bool  // if false, only subagent_id IS NULL or empty
 	Desc             bool   // if true, ORDER BY te.id DESC; if false, ASC
 	EventID          int64  // if > 0, filter by te.id = ?
-}
-
-// ResolveDatabasePath finds agent-status.db based on explicit path, env vars, or defaults.
-func ResolveDatabasePath(customPath string) (string, error) {
-	if customPath != "" && customPath != "auto" {
-		if _, err := os.Stat(customPath); err != nil {
-			return "", fmt.Errorf("database file %s not found: %w", customPath, err)
-		}
-		return customPath, nil
-	}
-
-	// Candidates in order
-	var candidates []string
-
-	// Local dev-stack data
-	candidates = append(candidates,
-		filepath.Join(".tmp", "dev-stack", "data", "agent-status", "agent-status.db"),
-		filepath.Join(".tmp", "dev-stack", "data", "agent-status.db"),
-	)
-
-	// Environment variable AIR_DATA_DIR
-	if envDir := os.Getenv("AIR_DATA_DIR"); envDir != "" {
-		candidates = append(candidates,
-			filepath.Join(envDir, "agent-status.db"),
-			filepath.Join(envDir, "agent-status", "agent-status.db"),
-		)
-	}
-
-	// Environment variable XDG_DATA_HOME
-	if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
-		candidates = append(candidates,
-			filepath.Join(xdg, "agent-status", "agent-status.db"),
-			filepath.Join(xdg, "agent-status.db"),
-		)
-	}
-
-	// User home directory
-	if home, err := os.UserHomeDir(); err == nil {
-		candidates = append(candidates,
-			filepath.Join(home, ".local", "share", "agent-status", "agent-status.db"),
-		)
-	}
-
-	for _, c := range candidates {
-		if _, err := os.Stat(c); err == nil {
-			return c, nil
-		}
-	}
-
-	if home, err := os.UserHomeDir(); err == nil {
-		defaultPath := filepath.Join(home, ".local", "share", "agent-status", "agent-status.db")
-		return "", fmt.Errorf("agent-status database not found in default paths (%s, .tmp/dev-stack/data/agent-status/agent-status.db); specify path using --db", defaultPath)
-	}
-
-	return "", fmt.Errorf("agent-status database not found; specify path using --db")
 }
 
 // GetTelemetryEvents queries telemetry_events from SQLite database in read-only mode.

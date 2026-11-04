@@ -25,6 +25,7 @@ An offline debugging and transcript replay utility for AI coding agent sessions.
 - Sibling subagent directories (`<session_id>/subagents/*.jsonl` or `subagents/*.jsonl`) are automatically discovered and interleaved into the event stream by timestamp.
 - Intermediate state inspection is controlled via breakpoints: `--until-line <N>`, `--until-event <type>`, and `--stop-on-error`.
 - Dual-mode output (`AGENT=1`) switches from aligned terminal tables and ASCII tree glyphs to token-conservative key-value lines.
+- Every command that reads the agent-status database finds it the same way when `--db` is omitted or `auto`: `AIR_DB_PATH` if set, then the dev stack's `.tmp/dev-stack/data/agent-status/agent-status.db` under the current directory, then the installed ingester's `$XDG_DATA_HOME/agent-status/agent-status.db` (default `~/.local/share/agent-status/agent-status.db`). An explicit `--db` may start with `~/`.
 
 # Prerequisites
 
@@ -72,7 +73,7 @@ air-debug session view session-abc.jsonl
 
 # View hierarchical fleet tree across transcripts or SQLite database
 air-debug session fleet ~/.claude/sessions/*.jsonl
-air-debug session fleet .tmp/dev-stack/data/agent-status.db
+air-debug session fleet .tmp/dev-stack/data/agent-status/agent-status.db
 
 # List sessions inside an OpenCode SQLite database
 air-debug session list ~/.local/share/opencode/opencode.db
@@ -166,7 +167,7 @@ Session Replay Summary (pi)
 
 | Flag                  | Short  | Default | Description                                                           |
 | :-------------------- | :----- | :------ | :-------------------------------------------------------------------- |
-| `--db <path>`         | (none) | `auto`  | Path to `agent-status.db` (or auto-detect)                            |
+| `--db <path>`         | (none) | `auto`  | Path to `agent-status.db` (auto-detects if omitted)                   |
 | `--limit <N>`         | (none) | `20`    | Maximum number of telemetry events to retrieve                        |
 | `--type <types>`      | (none) | `""`    | Filter by comma-separated event types (e.g. `run_started,run_exited`) |
 | `--subagent-id <id>`  | (none) | `""`    | Filter by specific subagent ID                                        |
