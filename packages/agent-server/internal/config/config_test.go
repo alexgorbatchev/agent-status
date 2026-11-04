@@ -53,6 +53,7 @@ func TestDefaultConfig(t *testing.T) {
 		t.Setenv("XDG_RUNTIME_DIR", "/custom/runtime")
 		t.Setenv("AGENT_STATUS_LOG_DIR", "/custom/logs")
 		t.Setenv("AGENT_STATUS_LOG_FILE", "/custom/logs/server.log")
+		t.Setenv("AGENT_STATUS_INGESTER_URL", "http://ingester.test:9000")
 
 		cfg := DefaultConfig()
 		if cfg.Addr != ":4502" {
@@ -76,6 +77,9 @@ func TestDefaultConfig(t *testing.T) {
 		if cfg.LogDir != "/custom/logs" {
 			t.Errorf("cfg.LogDir = %q, want '/custom/logs'", cfg.LogDir)
 		}
+		if cfg.IngesterURL != "http://ingester.test:9000" {
+			t.Errorf("cfg.IngesterURL = %q, want 'http://ingester.test:9000'", cfg.IngesterURL)
+		}
 		if cfg.LogFile != "/custom/logs/server.log" {
 			t.Errorf("cfg.LogFile = %q, want '/custom/logs/server.log'", cfg.LogFile)
 		}
@@ -83,10 +87,14 @@ func TestDefaultConfig(t *testing.T) {
 
 	t.Run("with token unset", func(t *testing.T) {
 		t.Setenv("AGENT_STATUS_TOKEN", "")
+		t.Setenv("AGENT_STATUS_INGESTER_URL", "")
 
 		cfg := DefaultConfig()
 		if cfg.AuthToken != "" {
 			t.Errorf("cfg.AuthToken = %q, want empty string", cfg.AuthToken)
+		}
+		if cfg.IngesterURL != "http://127.0.0.1:4501" {
+			t.Errorf("cfg.IngesterURL = %q, want the local ingester default", cfg.IngesterURL)
 		}
 	})
 }

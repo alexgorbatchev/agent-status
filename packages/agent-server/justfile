@@ -42,5 +42,5 @@ dev: build
     set -eu
     cd "{{ module_directory() }}/../.."
     mkdir -p .tmp/dev-stack/data/agent-status .tmp/dev-stack/cache .tmp/dev-stack/logs .tmp/dev-stack/run
-    unset AGENT_STATUS_LOG_FILE AGENT_STATUS_SESSION_STATE_PATH
+    unset AGENT_STATUS_LOG_FILE
     exec packages/agent-server/bin/agent-server --addr "$DEVHOST_BIND_HOST:$PORT" --token dev-secret-token --db .tmp/dev-stack/data/agent-status/agent-status.db --socket .tmp/dev-stack/run/notify.sock --ingester-url "$AGENT_STATUS_INGESTER_URL" --log-dir .tmp/dev-stack/logs
