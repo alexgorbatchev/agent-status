@@ -37,9 +37,11 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// TestStateDirsAreIsolated fails if TestMain stops isolating state directories.
-func TestStateDirsAreIsolated(t *testing.T) {
+// TestStateAndHarnessAreIsolated fails if TestMain stops isolating state
+// directories or harness locations.
+func TestStateAndHarnessAreIsolated(t *testing.T) {
 	testenv.RequireIsolated(t)
+	testenv.RequireHarnessIsolated(t)
 }
 
 func createTestClaudeTranscript(t *testing.T, dir string) string {
@@ -1147,10 +1149,7 @@ func TestCLI_CommandsShareDatabaseResolution(t *testing.T) {
 
 	for i, level := range levels {
 		t.Run(level.name, func(t *testing.T) {
-			home := t.TempDir()
-			t.Setenv("HOME", home)
-			t.Setenv("XDG_DATA_HOME", "")
-			t.Setenv("AGENT_STATUS_DB_PATH", "")
+			home := testenv.IsolateHarnessHome(t)
 			t.Chdir(t.TempDir())
 
 			override := filepath.Join(home, "override.db")
@@ -1201,9 +1200,7 @@ func TestCLI_CommandsShareDatabaseResolution(t *testing.T) {
 	}
 
 	t.Run("nothing found", func(t *testing.T) {
-		t.Setenv("HOME", t.TempDir())
-		t.Setenv("XDG_DATA_HOME", "")
-		t.Setenv("AGENT_STATUS_DB_PATH", "")
+		testenv.IsolateHarnessHome(t)
 		t.Chdir(t.TempDir())
 
 		var messages []string

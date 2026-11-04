@@ -3,6 +3,8 @@ package testenv
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -19,6 +21,9 @@ var harnessEnv = []string{
 	"OPENCODE_DB_PATH",
 	"AGENT_STATUS_DB_PATH",
 }
+
+// isolatedHome is the HOME the last successful IsolateHarnessEnv call set.
+var isolatedHome string
 
 // IsolateHarnessHome gives the calling test an empty HOME, unsets XDG_DATA_HOME,
 // and clears every harness location override, so session discovery and
@@ -52,5 +57,26 @@ func IsolateHarnessEnv(home string) error {
 			return fmt.Errorf("clearing %s: %w", name, err)
 		}
 	}
+	isolatedHome = home
 	return nil
+}
+
+// RequireHarnessIsolated fails the test unless IsolateHarnessEnv ran in this
+// process, HOME is still inside the isolated home, and no harness location
+// override is set. Call it from a test in each package whose TestMain isolates
+// harness locations, so removing that isolation fails the package instead of
+// silently reading the developer's sessions.
+func RequireHarnessIsolated(t testing.TB) {
+	t.Helper()
+	if isolatedHome == "" {
+		t.Fatalf("harness locations are not isolated: call testenv.IsolateHarnessEnv from TestMain")
+	}
+	if home := os.Getenv("HOME"); home != isolatedHome && !strings.HasPrefix(home, isolatedHome+string(filepath.Separator)) {
+		t.Fatalf("HOME = %q is outside the isolated home %q", home, isolatedHome)
+	}
+	for _, name := range harnessEnv {
+		if value := os.Getenv(name); value != "" {
+			t.Fatalf("%s = %q relocates harness storage outside the isolated home", name, value)
+		}
+	}
 }

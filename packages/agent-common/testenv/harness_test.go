@@ -65,3 +65,47 @@ func TestIsolateHarnessEnvReportsUncreatableHome(t *testing.T) {
 		t.Error("HOME was changed although the directory could not be created")
 	}
 }
+
+func TestRequireHarnessIsolated(t *testing.T) {
+	t.Setenv("HOME", os.Getenv("HOME"))
+	for _, name := range harnessEnv {
+		t.Setenv(name, os.Getenv(name))
+	}
+	origHome := isolatedHome
+	defer func() { isolatedHome = origHome }()
+
+	failsRequire := func() bool {
+		rec := &fatalRecorder{}
+		RequireHarnessIsolated(rec)
+		return rec.failed
+	}
+
+	isolatedHome = ""
+	if !failsRequire() {
+		t.Error("RequireHarnessIsolated passed although IsolateHarnessEnv never ran")
+	}
+
+	home := filepath.Join(t.TempDir(), "home")
+	if err := IsolateHarnessEnv(home); err != nil {
+		t.Fatal(err)
+	}
+	if failsRequire() {
+		t.Error("RequireHarnessIsolated failed right after IsolateHarnessEnv")
+	}
+
+	t.Setenv("HOME", filepath.Join(home, "nested"))
+	if failsRequire() {
+		t.Error("RequireHarnessIsolated failed for a HOME inside the isolated home")
+	}
+
+	t.Setenv("HOME", t.TempDir())
+	if !failsRequire() {
+		t.Error("RequireHarnessIsolated passed although HOME left the isolated home")
+	}
+
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", "/real/codex")
+	if !failsRequire() {
+		t.Error("RequireHarnessIsolated passed although CODEX_HOME relocates harness storage")
+	}
+}
