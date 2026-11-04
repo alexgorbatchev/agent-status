@@ -110,7 +110,7 @@ test.describe.serial("Token Count Ingestion E2E (Full-Stack Rig)", () => {
       sessionId,
       cwd: testCwd,
       gitBranch: "feat/token-tracking",
-      timestamp: Date.now(),
+      timestamp: new Date().toISOString(),
       toolUseResult: null,
       message: {
         role: "user",
@@ -122,7 +122,7 @@ test.describe.serial("Token Count Ingestion E2E (Full-Stack Rig)", () => {
       type: "ai-title",
       sessionId,
       aiTitle: "Token Tracking Analysis",
-      timestamp: Date.now(),
+      timestamp: new Date().toISOString(),
     });
 
     // 3. First assistant turn with usage: 1500 + 250 + 4000 + 1000 = 6,750 tokens
@@ -132,7 +132,7 @@ test.describe.serial("Token Count Ingestion E2E (Full-Stack Rig)", () => {
       sessionId,
       cwd: testCwd,
       gitBranch: "feat/token-tracking",
-      timestamp: Date.now(),
+      timestamp: new Date().toISOString(),
       message: {
         role: "assistant",
         model: "claude-sonnet-5",
@@ -165,7 +165,7 @@ test.describe.serial("Token Count Ingestion E2E (Full-Stack Rig)", () => {
       sessionId,
       cwd: testCwd,
       gitBranch: "feat/token-tracking",
-      timestamp: Date.now(),
+      timestamp: new Date().toISOString(),
       message: {
         role: "assistant",
         model: "claude-sonnet-5",

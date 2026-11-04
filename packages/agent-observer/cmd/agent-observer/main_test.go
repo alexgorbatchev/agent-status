@@ -313,7 +313,6 @@ func TestObserverRunLogging(t *testing.T) {
 }
 
 func TestObserverContextCancellationFlushesCursorStore(t *testing.T) {
-
 	buf := &testSyncBuffer{}
 	logger := logging.NewWithMode(buf, "observer", "info", false)
 	logging.SetDefault(logger)
@@ -581,7 +580,6 @@ func TestObserverEnvScannerDirs(t *testing.T) {
 }
 
 func TestObserverPiSessionIngestionWithThinkingLevelChange(t *testing.T) {
-
 	buf := &testSyncBuffer{}
 	logger := logging.NewWithMode(buf, "observer", "info", false)
 	logging.SetDefault(logger)
@@ -736,7 +734,6 @@ func TestObserverPiSessionIngestionWithThinkingLevelChange(t *testing.T) {
 }
 
 func TestObserverTranscriptMalformedLineAdvance(t *testing.T) {
-
 	tmpDir := t.TempDir()
 	cursorPath := filepath.Join(tmpDir, "cursors.json")
 	piSessionsDir := filepath.Join(tmpDir, "pi-sessions")
@@ -846,7 +843,6 @@ func TestObserverTranscriptMalformedLineAdvance(t *testing.T) {
 }
 
 func TestObserverClaudeSubagentRunStartedEmission(t *testing.T) {
-
 	buf := &testSyncBuffer{}
 	logger := logging.NewWithMode(buf, "observer", "info", false)
 	logging.SetDefault(logger)
@@ -1036,7 +1032,6 @@ func TestObserverClaudeSubagentRunStartedEmission(t *testing.T) {
 }
 
 func TestObserverPiAndCodexDormantSessionTimestamp(t *testing.T) {
-
 	tmpDir := t.TempDir()
 	cursorPath := filepath.Join(tmpDir, "cursors.json")
 	claudeDir := filepath.Join(tmpDir, "claude-sessions")
@@ -1346,7 +1341,6 @@ func TestObserver_StartupSessionReconciliation(t *testing.T) {
 }
 
 func TestObserverTranscriptRunStartedOnlyCommitsCursorOffset(t *testing.T) {
-
 	tmpDir := t.TempDir()
 	cursorPath := filepath.Join(tmpDir, "cursors.json")
 	piSessionsDir := filepath.Join(tmpDir, "pi-sessions")
@@ -1457,7 +1451,6 @@ func TestObserverTranscriptRunStartedOnlyCommitsCursorOffset(t *testing.T) {
 }
 
 func TestAttachTailer(t *testing.T) {
-
 	buf := &testSyncBuffer{}
 	logger := logging.NewWithMode(buf, "observer", "info", false)
 	logging.SetDefault(logger)
@@ -1594,7 +1587,6 @@ func TestAttachTailer(t *testing.T) {
 }
 
 func TestObserverStartupPrunesCursors(t *testing.T) {
-
 	tmpDir := t.TempDir()
 	cursorPath := filepath.Join(tmpDir, "cursors.json")
 

@@ -43,7 +43,7 @@ test.describe.serial("Full-Stack Rigged Ingestion E2E", () => {
       sessionId,
       cwd: testCwd,
       gitBranch: "feat/search",
-      timestamp: Date.now(),
+      timestamp: new Date().toISOString(),
       toolUseResult: null,
       message: {
         role: "user",
@@ -55,7 +55,7 @@ test.describe.serial("Full-Stack Rigged Ingestion E2E", () => {
       type: "ai-title",
       sessionId,
       aiTitle: "Investigate database query performance",
-      timestamp: Date.now(),
+      timestamp: new Date().toISOString(),
     });
 
     // 3. UI automatically detects new agent without page reload
@@ -71,7 +71,7 @@ test.describe.serial("Full-Stack Rigged Ingestion E2E", () => {
       sessionId,
       cwd: testCwd,
       gitBranch: "feat/search",
-      timestamp: Date.now(),
+      timestamp: new Date().toISOString(),
       message: {
         role: "assistant",
         model: "claude-sonnet-5",
@@ -107,7 +107,7 @@ test.describe.serial("Full-Stack Rigged Ingestion E2E", () => {
       sessionId,
       cwd: testCwd,
       gitBranch: "feat/search",
-      timestamp: Date.now(),
+      timestamp: new Date().toISOString(),
       message: {
         role: "assistant",
         model: "claude-sonnet-5",
@@ -167,7 +167,7 @@ test.describe.serial("Full-Stack Rigged Ingestion E2E", () => {
       type: "model_change",
       provider: "anthropic",
       modelId: "claude-sonnet-5",
-      timestamp: Date.now(),
+      timestamp: new Date().toISOString(),
     });
 
     // Realistic intermediate lines that produce 0 events (ensuring no tailer deadlocks)
@@ -175,7 +175,7 @@ test.describe.serial("Full-Stack Rigged Ingestion E2E", () => {
       type: "thinking_level_change",
       id: "pi-tl-1",
       parentId: null,
-      timestamp: Date.now(),
+      timestamp: new Date().toISOString(),
       thinkingLevel: "medium",
     });
 
@@ -186,14 +186,14 @@ test.describe.serial("Full-Stack Rigged Ingestion E2E", () => {
       display: true,
       id: "pi-cm-1",
       parentId: "pi-tl-1",
-      timestamp: Date.now(),
+      timestamp: new Date().toISOString(),
     });
 
     await stack.appendPiTranscript(piTranscriptPath, {
       type: "message",
       id: "pi-msg-1",
       parentId: "pi-cm-1",
-      timestamp: Date.now(),
+      timestamp: new Date().toISOString(),
       message: {
         role: "user",
         content: [{ type: "text", text: "Refactor API server router" }],
@@ -204,7 +204,7 @@ test.describe.serial("Full-Stack Rigged Ingestion E2E", () => {
       type: "message",
       id: "pi-msg-2",
       parentId: "pi-msg-1",
-      timestamp: Date.now(),
+      timestamp: new Date().toISOString(),
       message: {
         role: "assistant",
         stopReason: "toolUse",
