@@ -92,11 +92,14 @@ jobs:
     needs: playwright-version
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # Playwright's image ships Chromium and its system dependencies.
+    # Playwright's image ships Chromium and its system dependencies. The job
+    # runs as the image's root user so it can add unzip, which setup-bun needs.
     container:
       image: mcr.microsoft.com/playwright:v${{ needs.playwright-version.outputs.version }}-noble
-      options: --user 1001
     steps:
+      - name: Install unzip
+        run: apt-get update && apt-get install -y --no-install-recommends unzip
+
       - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v7
