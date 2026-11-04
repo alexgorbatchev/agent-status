@@ -1,13 +1,17 @@
 package classifier
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 )
 
 // getOrCreateAgentContext shares hydrated state and its writer lock between frames and dismissal.
-func (c *Classifier) getOrCreateAgentContext(agent *types.IAgentState) *agentContext {
+// A context is cached only once every subagent the agent has ever reported is
+// known; otherwise a returning subagent would be counted again. When that
+// history cannot be read, nothing is cached and the next call retries.
+func (c *Classifier) getOrCreateAgentContext(agent *types.IAgentState) (*agentContext, error) {
 	c.mu.Lock()
 	actx, exists := c.agentCtx[agent.ID]
 	c.mu.Unlock()
@@ -15,10 +19,12 @@ func (c *Classifier) getOrCreateAgentContext(agent *types.IAgentState) *agentCon
 	if !exists {
 		preloaded := make(map[string]struct{})
 		if c.store != nil && agent.Activity.SubagentCount > 0 {
-			if ids, err := c.store.GetDistinctSubagentIDs(agent.ID); err == nil {
-				for _, id := range ids {
-					preloaded[id] = struct{}{}
-				}
+			ids, err := c.store.GetDistinctSubagentIDs(agent.ID)
+			if err != nil {
+				return nil, fmt.Errorf("loading subagent history: %w", err)
+			}
+			for _, id := range ids {
+				preloaded[id] = struct{}{}
 			}
 		}
 		c.mu.Lock()
@@ -96,5 +102,5 @@ func (c *Classifier) getOrCreateAgentContext(agent *types.IAgentState) *agentCon
 		c.mu.Unlock()
 	}
 
-	return actx
+	return actx, nil
 }

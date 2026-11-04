@@ -52,24 +52,18 @@ func (c *Classifier) flushTrailingCandidateLocked(agentID string) {
 		if c.beforeSummarySaveHook != nil {
 			c.beforeSummarySaveHook(agentID)
 		}
-		actx.persistMu.Lock()
-		agent, err := c.store.GetAgent(agentID)
-		var cb func(*types.IAgentState)
-		if err == nil && agent != nil && agent.Activity.Lifecycle != types.LifecycleExited && (agent.Activity.CurrentRun == nil || agent.Activity.CurrentRun.EndedAt == nil) {
+		agent, err := c.persistAgent(agentID, actx, func(agent *types.IAgentState) bool {
+			if (cand.saveGen != 0 && actx.saveGeneration != cand.saveGen) || !runIsActive(agent) {
+				return false
+			}
 			if shouldApplySummary(&agent.Activity, res) {
 				applySummary(&agent.Activity, res)
 			}
 			agent.Activity.ActionStale = false
-			c.syncCompletionToAgentActivity(agentID, agent)
-			_ = c.store.SaveAgentState(*agent)
-			c.mu.Lock()
-			cb = c.onUpdate
-			c.mu.Unlock()
-		}
-		actx.persistMu.Unlock()
-		if cb != nil {
-			cb(agent)
-		}
+			syncCompletionLocked(actx, agent)
+			return true
+		})
+		c.broadcastWrite(agentID, agent, err, "saving_trailing_summary_error")
 		c.mu.Lock()
 		return
 	}
@@ -123,7 +117,14 @@ func (c *Classifier) FlushAll() {
 
 func (c *Classifier) prepareSummaryInput(agent *types.IAgentState) (summarizer.SummaryInput, string) {
 	c.mu.Lock()
-	actx := c.agentCtx[agent.ID]
+	defer c.mu.Unlock()
+	return prepareSummaryInputLocked(agent, c.agentCtx[agent.ID])
+}
+
+// prepareSummaryInputLocked builds the summarizer input from agent and the
+// context's recent prompt and tools, and applies the deterministic fallback
+// action to agent so its state is valid before any LLM summary arrives.
+func prepareSummaryInputLocked(agent *types.IAgentState, actx *agentContext) (summarizer.SummaryInput, string) {
 	var lastPrompt string
 	var lastAssistantResponse string
 	var lastToolArgs string
@@ -135,7 +136,6 @@ func (c *Classifier) prepareSummaryInput(agent *types.IAgentState) (summarizer.S
 		recentTools = make([]summarizer.ToolExecution, len(actx.recentTools))
 		copy(recentTools, actx.recentTools)
 	}
-	c.mu.Unlock()
 
 	var thinking string
 	if agent.Activity.LastThinkingExcerpt != nil {
@@ -184,13 +184,7 @@ func (c *Classifier) prepareSummaryInput(agent *types.IAgentState) (summarizer.S
 
 func (c *Classifier) dispatchSummaryLocked(agent *types.IAgentState, actx *agentContext, input summarizer.SummaryInput, currentToolKey string, forceTrigger bool) *summaryJob {
 	if agent.Activity.Activity == types.ActivityRateLimited {
-		agent.Activity.Action = "Rate limit reached — backoff/retry in progress"
-		agent.Activity.Phase = nil
-		agent.Activity.ActionStale = false
-		c.cancelTrailingTimerLocked(agent.ID)
-		if actx != nil {
-			actx.pendingCandidate = nil
-		}
+		c.showRateLimitActionLocked(agent, actx)
 		return nil
 	}
 
@@ -296,14 +290,8 @@ func (c *Classifier) updateSummarization(agent *types.IAgentState, forceTrigger 
 	input, currentToolKey := c.prepareSummaryInput(agent)
 
 	if agent.Activity.Activity == types.ActivityRateLimited {
-		agent.Activity.Action = "Rate limit reached — backoff/retry in progress"
-		agent.Activity.Phase = nil
-		agent.Activity.ActionStale = false
 		c.mu.Lock()
-		c.cancelTrailingTimerLocked(agent.ID)
-		if actx := c.agentCtx[agent.ID]; actx != nil {
-			actx.pendingCandidate = nil
-		}
+		c.showRateLimitActionLocked(agent, c.agentCtx[agent.ID])
 		c.mu.Unlock()
 		return nil
 	}
@@ -397,6 +385,8 @@ func (c *Classifier) runWorker(agentID string, w *agentWorker) {
 	}
 }
 
+// processSummaryJob runs one queued LLM summary and saves it unless a newer
+// frame arrived or the agent's state no longer matches the summarized input.
 func (c *Classifier) processSummaryJob(agentID string, job summaryJob) {
 	if job.input.Activity == types.ActivityRateLimited {
 		return
@@ -413,7 +403,6 @@ func (c *Classifier) processSummaryJob(agentID string, job summaryJob) {
 		c.mu.Unlock()
 		return
 	}
-	targetActx := actx
 	scheduledSaveGen := job.saveGen
 	if scheduledSaveGen == 0 {
 		scheduledSaveGen = actx.saveGeneration
@@ -422,7 +411,6 @@ func (c *Classifier) processSummaryJob(agentID string, job summaryJob) {
 		c.mu.Unlock()
 		return
 	}
-	persistMu := &actx.persistMu
 	c.mu.Unlock()
 
 	res := c.summarizer.Summarize(context.Background(), job.input)
@@ -434,101 +422,52 @@ func (c *Classifier) processSummaryJob(agentID string, job summaryJob) {
 		c.beforeSummarySaveHook(agentID)
 	}
 
-	persistMu.Lock()
-
-	c.mu.Lock()
-	actx, ok = c.agentCtx[agentID]
-	if !ok || c.closed || actx != targetActx || actx.saveGeneration != scheduledSaveGen {
-		c.mu.Unlock()
-		persistMu.Unlock()
-		return
-	}
-	c.mu.Unlock()
-
-	if c.store == nil {
-		persistMu.Unlock()
-		return
-	}
-	agent, err := c.store.GetAgent(agentID)
-	if err != nil || agent == nil {
-		persistMu.Unlock()
-		return
-	}
-
-	if agent.Activity.Activity == types.ActivityRateLimited {
-		persistMu.Unlock()
-		return
-	}
-
-	// Discard stale summary if agent has exited or transitioned to another activity state
-	if agent.Activity.Lifecycle == types.LifecycleExited || (agent.Activity.CurrentRun != nil && agent.Activity.CurrentRun.EndedAt != nil) {
-		persistMu.Unlock()
-		return
-	}
-	if agent.Activity.Activity != job.input.Activity {
-		persistMu.Unlock()
-		return
-	}
-	if !equalPtr(agent.Activity.ActiveTool, job.input.ActiveTool) {
-		persistMu.Unlock()
-		return
-	}
-
-	c.mu.Lock()
-	actx, ok = c.agentCtx[agentID]
-	if !ok || c.closed || actx != targetActx || actx.saveGeneration != scheduledSaveGen {
-		c.mu.Unlock()
-		persistMu.Unlock()
-		return
-	}
-	c.mu.Unlock()
-
-	// Deduplication check: reject near-duplicates when phase and target are unchanged
-	if !shouldApplySummary(&agent.Activity, res) {
-		if agent.Activity.ActionStale {
-			agent.Activity.ActionStale = false
-
-			c.syncCompletionToAgentActivity(agentID, agent)
-
-			c.mu.Lock()
-			cb := c.onUpdate
-			c.mu.Unlock()
-
-			saveErr := c.store.SaveAgentState(*agent)
-			persistMu.Unlock()
-
-			if saveErr != nil {
-				logging.Error("saving_async_summary_dedup_error", "err", saveErr, "agentId", agentID)
-				return
-			}
-			if cb != nil {
-				cb(agent)
-			}
-		} else {
-			persistMu.Unlock()
+	agent, err := c.persistAgent(agentID, actx, func(agent *types.IAgentState) bool {
+		if actx.saveGeneration != scheduledSaveGen || !summaryStillApplies(agent, job.input) {
+			return false
 		}
+		if shouldApplySummary(&agent.Activity, res) {
+			applySummary(&agent.Activity, res)
+			agent.Activity.UpdatedAt = time.Now().UnixMilli()
+		} else if !agent.Activity.ActionStale {
+			// A near-duplicate of a current action changes nothing.
+			return false
+		}
+		agent.Activity.ActionStale = false
+		syncCompletionLocked(actx, agent)
+		return true
+	})
+	c.broadcastWrite(agentID, agent, err, "saving_async_summary_error")
+}
+
+// summaryStillApplies reports whether a summary of input still describes agent:
+// the run is active, not rate limited, and in the same activity and tool.
+func summaryStillApplies(agent *types.IAgentState, input summarizer.SummaryInput) bool {
+	return runIsActive(agent) &&
+		agent.Activity.Activity != types.ActivityRateLimited &&
+		agent.Activity.Activity == input.Activity &&
+		equalPtr(agent.Activity.ActiveTool, input.ActiveTool)
+}
+
+// runIsActive reports whether the agent has not exited and its current run has not ended.
+func runIsActive(agent *types.IAgentState) bool {
+	return agent.Activity.Lifecycle != types.LifecycleExited &&
+		(agent.Activity.CurrentRun == nil || agent.Activity.CurrentRun.EndedAt == nil)
+}
+
+// broadcastWrite logs a failed background write, or publishes a saved agent.
+// A write that saved nothing publishes nothing.
+func (c *Classifier) broadcastWrite(agentID string, agent *types.IAgentState, err error, failedAction string) {
+	if err != nil {
+		logging.Error(failedAction, "err", err, "agentId", agentID)
 		return
 	}
-
-	// Apply updated summary
-	applySummary(&agent.Activity, res)
-	agent.Activity.ActionStale = false
-	agent.Activity.UpdatedAt = time.Now().UnixMilli()
-
-	c.syncCompletionToAgentActivity(agentID, agent)
-
+	if agent == nil {
+		return
+	}
 	c.mu.Lock()
 	cb := c.onUpdate
 	c.mu.Unlock()
-
-	saveErr := c.store.SaveAgentState(*agent)
-	persistMu.Unlock()
-
-	if saveErr != nil {
-		logging.Error("saving_async_summary_error", "err", saveErr, "agentId", agentID)
-		return
-	}
-
 	if cb != nil {
 		cb(agent)
 	}
@@ -552,5 +491,20 @@ func applySummary(current *types.IAgentActivity, res summarizer.SummaryResult) {
 	current.Phase = res.Phase
 	if current.ActiveTool != nil && res.ActiveTarget != nil && *res.ActiveTarget != "" {
 		current.ActiveTarget = res.ActiveTarget
+	}
+}
+
+// rateLimitAction is the deterministic action shown while an agent is rate limited.
+const rateLimitAction = "Rate limit reached — backoff/retry in progress"
+
+// showRateLimitActionLocked replaces the action with rateLimitAction and drops any
+// pending summary, because rate-limited agents are never sent to the summarizer.
+func (c *Classifier) showRateLimitActionLocked(agent *types.IAgentState, actx *agentContext) {
+	agent.Activity.Action = rateLimitAction
+	agent.Activity.Phase = nil
+	agent.Activity.ActionStale = false
+	c.cancelTrailingTimerLocked(agent.ID)
+	if actx != nil {
+		actx.pendingCandidate = nil
 	}
 }

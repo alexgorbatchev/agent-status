@@ -22,7 +22,9 @@ func (c *Classifier) DismissCompletion(agentID string) (*types.IAgentState, erro
 			return nil, err
 		}
 		if agent != nil {
-			targetCtx = c.getOrCreateAgentContext(agent)
+			if targetCtx, err = c.getOrCreateAgentContext(agent); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if targetCtx != nil {
@@ -99,5 +101,93 @@ func (c *Classifier) syncCompletionToAgentActivity(agentID string, agent *types.
 				agent.Activity.CompletedAt = fresh.Activity.CompletedAt
 			}
 		}
+	}
+}
+
+// persistAgent is the single load-mutate-save path for writers that run outside
+// ProcessFrame: summary jobs, idle and silence transitions, and subagent dwell
+// expiry. Holding the agent's writer lock, it re-reads the agent row and calls
+// mutate with c.mu held, but only while target is still the agent's context.
+// mutate re-checks its own generations and returns false to skip the save.
+// It returns the saved agent, nil when nothing was saved, or the store error.
+func (c *Classifier) persistAgent(agentID string, target *agentContext, mutate func(agent *types.IAgentState) bool) (*types.IAgentState, error) {
+	if c.store == nil {
+		return nil, nil
+	}
+	target.persistMu.Lock()
+	defer target.persistMu.Unlock()
+
+	if !c.isCurrentContext(agentID, target) {
+		return nil, nil
+	}
+	agent, err := c.store.GetAgent(agentID)
+	if err != nil {
+		return nil, fmt.Errorf("loading agent: %w", err)
+	}
+	if agent == nil {
+		return nil, nil
+	}
+
+	c.mu.Lock()
+	apply := !c.closed && c.agentCtx[agentID] == target && mutate(agent)
+	c.mu.Unlock()
+	if !apply {
+		return nil, nil
+	}
+	if err := c.store.SaveAgentState(*agent); err != nil {
+		return nil, fmt.Errorf("saving agent: %w", err)
+	}
+	return agent, nil
+}
+
+func (c *Classifier) isCurrentContext(agentID string, target *agentContext) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return !c.closed && c.agentCtx[agentID] == target
+}
+
+// syncCompletionLocked copies the cached completion onto agent so a background
+// write cannot restore a completion that dismissal already cleared.
+func syncCompletionLocked(actx *agentContext, agent *types.IAgentState) {
+	if actx.hasUnseenCompletion == nil || !*actx.hasUnseenCompletion {
+		clearCompletion(&agent.Activity)
+		return
+	}
+	agent.Activity.HasUnseenCompletion = actx.hasUnseenCompletion
+	agent.Activity.CompletedAt = actx.completedAt
+}
+
+// frameLock serializes ProcessFrame for one agent. It is reference counted so
+// the entry disappears once no frame holds or waits for it.
+type frameLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+// lockFrames blocks until no other frame for agentID is being classified and
+// returns the matching unlock. Frames read the full agent row and save it back,
+// so two frames for one agent (for example from an old and a reconnected
+// observer connection) must not interleave, or one frame's usage and state is
+// overwritten by the other's stale copy. Dismissal and background writers do not
+// take this lock; they use the agent context's persistMu.
+func (c *Classifier) lockFrames(agentID string) func() {
+	c.mu.Lock()
+	lock := c.frameLocks[agentID]
+	if lock == nil {
+		lock = &frameLock{}
+		c.frameLocks[agentID] = lock
+	}
+	lock.refs++
+	c.mu.Unlock()
+
+	lock.mu.Lock()
+	return func() {
+		lock.mu.Unlock()
+		c.mu.Lock()
+		lock.refs--
+		if lock.refs == 0 {
+			delete(c.frameLocks, agentID)
+		}
+		c.mu.Unlock()
 	}
 }

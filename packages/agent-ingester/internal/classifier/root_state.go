@@ -16,10 +16,7 @@ func (c *Classifier) applyRootEvent(agent *types.IAgentState, actx *agentContext
 		c.mu.Lock()
 		c.cancelIdleTimerLocked(agent.ID)
 		c.cancelSilenceTimerLocked(agent.ID)
-		actx.inFlightTool = false
-		actx.inFlightToolName = ""
-		actx.inTurn = false
-		actx.turnFloorUntil = 0
+		resetTurnLocked(actx)
 		c.mu.Unlock()
 
 		// Handle run_started idempotently: if an active run already exists with matching PID and unended lifecycle,
@@ -36,8 +33,7 @@ func (c *Classifier) applyRootEvent(agent *types.IAgentState, actx *agentContext
 
 		agent.Activity.Lifecycle = types.LifecycleRunning
 		agent.Activity.Activity = types.ActivityIdle
-		agent.Activity.HasUnseenCompletion = nil
-		agent.Activity.CompletedAt = nil
+		clearCompletion(&agent.Activity)
 		runID := fmt.Sprintf("%s:%d:%d", agent.ID, frame.PID, now)
 		agent.Activity.CurrentRun = &types.IRunInfo{
 			ID:             runID,
@@ -54,18 +50,12 @@ func (c *Classifier) applyRootEvent(agent *types.IAgentState, actx *agentContext
 		c.cancelTrailingTimerLocked(agent.ID)
 		c.cancelSilenceTimerLocked(agent.ID)
 		c.cancelAllSubagentTimersLocked(agent.ID)
-		actx.inFlightTool = false
-		actx.inFlightToolName = ""
-		actx.inTurn = false
-		actx.turnFloorUntil = 0
+		resetTurnLocked(actx)
 		c.mu.Unlock()
 
 		agent.Activity.Lifecycle = types.LifecycleExited
-		agent.Activity.HasUnseenCompletion = nil
-		agent.Activity.CompletedAt = nil
-		agent.Activity.ActiveTool = nil
-		agent.Activity.ActiveTarget = nil
-		agent.Activity.ActiveToolStartedAt = nil
+		clearCompletion(&agent.Activity)
+		clearActiveTool(&agent.Activity)
 		agent.Activity.ActiveSubagents = nil
 		if err := c.store.EndCurrentRun(agent.ID, now); err != nil {
 			return nil, fmt.Errorf("ending current run: %w", err)
@@ -87,16 +77,9 @@ func (c *Classifier) applyRootEvent(agent *types.IAgentState, actx *agentContext
 		c.cancelIdleTimerLocked(agent.ID)
 		c.cancelSilenceTimerLocked(agent.ID)
 		c.mu.Unlock()
-		agent.Activity.Activity = types.ActivityWaitingQuestion
-		agent.Activity.HasUnseenCompletion = nil
-		agent.Activity.CompletedAt = nil
+		enterWaitingQuestion(&agent.Activity, frame.Data.Question)
 		agent.Activity.ActiveTool = nil
 		agent.Activity.ActiveTarget = nil
-		agent.Activity.RateLimitResetAt = nil
-		agent.Activity.RetryAfterSeconds = nil
-		if frame.Data.Question != nil {
-			agent.Activity.Question = frame.Data.Question
-		}
 		pendingJob = c.updateSummarization(agent, true)
 
 	case "error":
@@ -115,14 +98,10 @@ func (c *Classifier) applyRootEvent(agent *types.IAgentState, actx *agentContext
 			agent.Activity.RetryAfterSeconds = frame.Data.RetryAfterSeconds
 		} else {
 			agent.Activity.Activity = types.ActivityError
-			agent.Activity.RateLimitResetAt = nil
-			agent.Activity.RetryAfterSeconds = nil
+			clearRateLimit(&agent.Activity)
 		}
-		agent.Activity.HasUnseenCompletion = nil
-		agent.Activity.CompletedAt = nil
-		agent.Activity.ActiveTool = nil
-		agent.Activity.ActiveTarget = nil
-		agent.Activity.ActiveToolStartedAt = nil
+		clearCompletion(&agent.Activity)
+		clearActiveTool(&agent.Activity)
 		if frame.Data.Content != nil {
 			errStr := truncateRunes(*frame.Data.Content, 2000)
 			agent.Activity.LastError = &errStr
@@ -139,13 +118,10 @@ func (c *Classifier) applyRootEvent(agent *types.IAgentState, actx *agentContext
 		// Tool results (even non-zero exits) are a normal part of shell/agent workflows;
 		// the agent remains busy processing the result, not in an error state.
 		agent.Activity.Activity = types.ActivityBusy
-		agent.Activity.RateLimitResetAt = nil
-		agent.Activity.RetryAfterSeconds = nil
+		clearRateLimit(&agent.Activity)
 		agent.Activity.HasUnseenCompletion = nil
 		agent.Activity.LastError = nil
-		agent.Activity.ActiveTool = nil
-		agent.Activity.ActiveTarget = nil
-		agent.Activity.ActiveToolStartedAt = nil
+		clearActiveTool(&agent.Activity)
 		pendingJob = c.updateSummarization(agent, false)
 
 	case "tool_call":
@@ -159,8 +135,7 @@ func (c *Classifier) applyRootEvent(agent *types.IAgentState, actx *agentContext
 		c.scheduleSilenceTimerLocked(agent.ID, actx.rootGeneration)
 		c.mu.Unlock()
 		agent.Activity.Activity = types.ActivityBusy
-		agent.Activity.HasUnseenCompletion = nil
-		agent.Activity.CompletedAt = nil
+		clearCompletion(&agent.Activity)
 		agent.Activity.LastError = nil
 		agent.Activity.ActiveToolStartedAt = &now
 		if frame.Data.ToolName != nil {
@@ -191,14 +166,7 @@ func (c *Classifier) applyRootEvent(agent *types.IAgentState, actx *agentContext
 			c.mu.Unlock()
 
 			if toolName == "AskUserQuestion" {
-				agent.Activity.Activity = types.ActivityWaitingQuestion
-				agent.Activity.HasUnseenCompletion = nil
-				agent.Activity.CompletedAt = nil
-				agent.Activity.RateLimitResetAt = nil
-				agent.Activity.RetryAfterSeconds = nil
-				if frame.Data.Question != nil {
-					agent.Activity.Question = frame.Data.Question
-				}
+				enterWaitingQuestion(&agent.Activity, frame.Data.Question)
 				pendingJob = c.updateSummarization(agent, true)
 			} else {
 				// Continuous tool activity: summarize if debounce allows, otherwise mark stale
@@ -215,24 +183,14 @@ func (c *Classifier) applyRootEvent(agent *types.IAgentState, actx *agentContext
 		actx.recentTools = nil
 		actx.lastSummarizedToolKey = ""
 		actx.pendingCandidate = nil
-		actx.inFlightTool = false
-		actx.inFlightToolName = ""
+		resetTurnLocked(actx)
 		actx.inTurn = true
 		actx.turnFloorUntil = now + c.turnFloor.Milliseconds()
 		c.scheduleSilenceTimerLocked(agent.ID, actx.rootGeneration)
 		c.mu.Unlock()
-		agent.Activity.Activity = types.ActivityBusy
-		agent.Activity.HasUnseenCompletion = nil
-		agent.Activity.CompletedAt = nil
-		agent.Activity.LastError = nil
-		agent.Activity.RateLimitResetAt = nil
-		agent.Activity.RetryAfterSeconds = nil
-		agent.Activity.ActiveTool = nil
-		agent.Activity.ActiveTarget = nil
-		agent.Activity.ActiveToolStartedAt = nil
-		agent.Activity.Action = "Thinking"
-		p := types.PhasePlanning
-		agent.Activity.Phase = &p
+		enterBusy(&agent.Activity)
+		clearActiveTool(&agent.Activity)
+		markThinking(&agent.Activity)
 
 	case "thinking":
 		c.mu.Lock()
@@ -240,20 +198,13 @@ func (c *Classifier) applyRootEvent(agent *types.IAgentState, actx *agentContext
 		hasRecentTools := len(actx.recentTools) > 0
 		c.scheduleSilenceTimerLocked(agent.ID, actx.rootGeneration)
 		c.mu.Unlock()
-		agent.Activity.Activity = types.ActivityBusy
-		agent.Activity.HasUnseenCompletion = nil
-		agent.Activity.CompletedAt = nil
-		agent.Activity.LastError = nil
-		agent.Activity.RateLimitResetAt = nil
-		agent.Activity.RetryAfterSeconds = nil
+		enterBusy(&agent.Activity)
 		if frame.Data.Content != nil {
 			agent.Activity.LastThinkingExcerpt = frame.Data.Content
 		}
 		// Action = "Thinking" is only for initial turn start before tools have run
 		if !hasRecentTools && agent.Activity.ActiveTool == nil && (agent.Activity.Action == "" || agent.Activity.Action == "Thinking") {
-			agent.Activity.Action = "Thinking"
-			p := types.PhasePlanning
-			agent.Activity.Phase = &p
+			markThinking(&agent.Activity)
 		}
 
 	case "turn_end":
@@ -334,9 +285,7 @@ func (c *Classifier) applyRootEvent(agent *types.IAgentState, actx *agentContext
 			if isWithinTurnFloor {
 				agent.Activity.Activity = types.ActivityBusy
 				agent.Activity.HasUnseenCompletion = nil
-				agent.Activity.Action = "Thinking"
-				p := types.PhasePlanning
-				agent.Activity.Phase = &p
+				markThinking(&agent.Activity)
 				c.mu.Lock()
 				c.cancelIdleTimerLocked(agent.ID)
 				c.scheduleSilenceTimerLocked(agent.ID, actx.rootGeneration)
@@ -346,9 +295,7 @@ func (c *Classifier) applyRootEvent(agent *types.IAgentState, actx *agentContext
 				// Turn ended without tool use.
 				// If the agent is BUSY and an idle grace period is configured, debounce the transition
 				// so pauses between API calls do not cause BUSY/IDLE flipping.
-				agent.Activity.ActiveTool = nil
-				agent.Activity.ActiveTarget = nil
-				agent.Activity.ActiveToolStartedAt = nil
+				clearActiveTool(&agent.Activity)
 				agent.Activity.Question = nil
 
 				c.mu.Lock()
@@ -374,14 +321,12 @@ func (c *Classifier) applyRootEvent(agent *types.IAgentState, actx *agentContext
 						agent.Activity.CompletedAt = int64Ptr(now)
 					}
 					agent.Activity.Activity = types.ActivityIdle
-					agent.Activity.RateLimitResetAt = nil
-					agent.Activity.RetryAfterSeconds = nil
+					clearRateLimit(&agent.Activity)
 					pendingJob = c.updateSummarization(agent, true)
 				} else {
 					// Keep agent BUSY during grace period and schedule transition to IDLE if no new events arrive.
 					agent.Activity.Activity = types.ActivityBusy
-					agent.Activity.RateLimitResetAt = nil
-					agent.Activity.RetryAfterSeconds = nil
+					clearRateLimit(&agent.Activity)
 					c.mu.Lock()
 					actx.turnEndTimestamp = now
 					c.scheduleIdleTransitionLocked(agent.ID, actx.rootGeneration, gracePeriod)
@@ -392,4 +337,77 @@ func (c *Classifier) applyRootEvent(agent *types.IAgentState, actx *agentContext
 		}
 	}
 	return pendingJob, nil
+}
+
+// recordRootStateLocked caches the root's classified state so later frames and
+// timers start from it. Reset targets are kept only while the root is rate limited.
+func recordRootStateLocked(actx *agentContext, activity *types.IAgentActivity) {
+	actx.rootActivity = activity.Activity
+	actx.rootAction = activity.Action
+	actx.rootQuestion = activity.Question
+	if activity.Activity == types.ActivityRateLimited {
+		actx.rootRateLimitResetAt = activity.RateLimitResetAt
+		actx.rootRetryAfterSeconds = activity.RetryAfterSeconds
+	} else {
+		actx.rootRateLimitResetAt = nil
+		actx.rootRetryAfterSeconds = nil
+	}
+	captureCompletionLocked(actx, activity)
+}
+
+// captureCompletionLocked makes the activity's completion the cached completion.
+func captureCompletionLocked(actx *agentContext, activity *types.IAgentActivity) {
+	actx.hasUnseenCompletion = activity.HasUnseenCompletion
+	actx.completedAt = activity.CompletedAt
+}
+
+// resetTurnLocked forgets the in-flight tool and the thinking floor.
+func resetTurnLocked(actx *agentContext) {
+	actx.inFlightTool = false
+	actx.inFlightToolName = ""
+	actx.inTurn = false
+	actx.turnFloorUntil = 0
+}
+
+// enterBusy marks the root busy and drops completion, error, and reset targets.
+func enterBusy(activity *types.IAgentActivity) {
+	activity.Activity = types.ActivityBusy
+	clearCompletion(activity)
+	activity.LastError = nil
+	clearRateLimit(activity)
+}
+
+// enterWaitingQuestion marks the root as waiting for the user, keeping the
+// current question when the frame does not carry one.
+func enterWaitingQuestion(activity *types.IAgentActivity, question *string) {
+	activity.Activity = types.ActivityWaitingQuestion
+	clearCompletion(activity)
+	clearRateLimit(activity)
+	if question != nil {
+		activity.Question = question
+	}
+}
+
+// markThinking shows model inference before any tool has run.
+func markThinking(activity *types.IAgentActivity) {
+	activity.Action = "Thinking"
+	phase := types.PhasePlanning
+	activity.Phase = &phase
+}
+
+func clearCompletion(activity *types.IAgentActivity) {
+	activity.HasUnseenCompletion = nil
+	activity.CompletedAt = nil
+}
+
+// clearRateLimit drops reset targets, which only RATE_LIMITED agents carry.
+func clearRateLimit(activity *types.IAgentActivity) {
+	activity.RateLimitResetAt = nil
+	activity.RetryAfterSeconds = nil
+}
+
+func clearActiveTool(activity *types.IAgentActivity) {
+	activity.ActiveTool = nil
+	activity.ActiveTarget = nil
+	activity.ActiveToolStartedAt = nil
 }

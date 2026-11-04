@@ -45,6 +45,9 @@ func (c *Classifier) scheduleSubagentDwellTimerLocked(agentID, subID string, sub
 	})
 }
 
+// handleSubagentDwellExpired removes a completed subagent once its minimum
+// visibility dwell has passed and saves the re-rolled agent, unless a newer
+// frame arrived in the meantime.
 func (c *Classifier) handleSubagentDwellExpired(agentID, subID string) {
 	c.mu.Lock()
 	if c.closed {
@@ -73,75 +76,33 @@ func (c *Classifier) handleSubagentDwellExpired(agentID, subID string) {
 		c.mu.Unlock()
 		return
 	}
-	if c.store == nil {
-		c.mu.Unlock()
-		return
-	}
-	targetActx := actx
 	scheduledSaveGen := actx.saveGeneration
-	persistMu := &actx.persistMu
+	hook := c.afterSubagentDwellHook
 	c.mu.Unlock()
+	if hook != nil {
+		defer hook(agentID, subID)
+	}
 
 	if c.beforeSubagentDwellSaveHook != nil {
 		c.beforeSubagentDwellSaveHook(agentID, subID)
 	}
 
-	persistMu.Lock()
-
-	c.mu.Lock()
-	actx, ok = c.agentCtx[agentID]
-	if !ok || c.closed || actx != targetActx || actx.saveGeneration != scheduledSaveGen {
-		c.mu.Unlock()
-		persistMu.Unlock()
-		if hook := c.afterSubagentDwellHook; hook != nil {
-			hook(agentID, subID)
+	agent, err := c.persistAgent(agentID, actx, func(agent *types.IAgentState) bool {
+		if actx.saveGeneration != scheduledSaveGen {
+			return false
 		}
+		delete(actx.subagents, subID)
+		if agent.Activity.Lifecycle == types.LifecycleExited {
+			return false
+		}
+		c.rollupActivityLocked(agent, actx, now)
+		return true
+	})
+	if err != nil {
+		logging.Error("saving_subagent_dwell_expired_failed", "err", err, "agentId", agentID, "subagentId", subID)
 		return
 	}
-	delete(actx.subagents, subID)
-	c.mu.Unlock()
-
-	agent, err := c.store.GetAgent(agentID)
-	if err != nil || agent == nil || agent.Activity.Lifecycle == types.LifecycleExited {
-		persistMu.Unlock()
-		if hook := c.afterSubagentDwellHook; hook != nil {
-			hook(agentID, subID)
-		}
-		return
-	}
-
-	c.mu.Lock()
-	actx, ok = c.agentCtx[agentID]
-	if !ok || c.closed || actx != targetActx || actx.saveGeneration != scheduledSaveGen {
-		c.mu.Unlock()
-		persistMu.Unlock()
-		if hook := c.afterSubagentDwellHook; hook != nil {
-			hook(agentID, subID)
-		}
-		return
-	}
-	c.rollupActivityLocked(agent, actx, now)
-	cb := c.onUpdate
-	hook := c.afterSubagentDwellHook
-	c.mu.Unlock()
-
-	saveErr := c.store.SaveAgentState(*agent)
-	persistMu.Unlock()
-
-	if saveErr != nil {
-		logging.Error("saving_subagent_dwell_expired_failed", "err", saveErr, "agentId", agentID, "subagentId", subID)
-		if hook != nil {
-			hook(agentID, subID)
-		}
-		return
-	}
-
-	if cb != nil {
-		cb(agent)
-	}
-	if hook != nil {
-		hook(agentID, subID)
-	}
+	c.broadcastWrite(agentID, agent, nil, "")
 }
 
 func (c *Classifier) pruneExpiredSubagentsLocked(agentID string, actx *agentContext, now int64) {
@@ -185,8 +146,7 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 
 	if len(actx.subagents) == 0 {
 		if agent.Activity.Activity != types.ActivityRateLimited {
-			agent.Activity.RateLimitResetAt = nil
-			agent.Activity.RetryAfterSeconds = nil
+			clearRateLimit(&agent.Activity)
 		}
 		return
 	}
@@ -217,14 +177,12 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 		agent.Activity.Activity = types.ActivityError
 		agent.Activity.LastError = actx.rootLastError
 		agent.Activity.HasUnseenCompletion = nil
-		agent.Activity.RateLimitResetAt = nil
-		agent.Activity.RetryAfterSeconds = nil
+		clearRateLimit(&agent.Activity)
 		return
 	} else if subError != nil {
 		agent.Activity.Activity = types.ActivityError
 		agent.Activity.HasUnseenCompletion = nil
-		agent.Activity.RateLimitResetAt = nil
-		agent.Activity.RetryAfterSeconds = nil
+		clearRateLimit(&agent.Activity)
 		if subError.LastError != nil {
 			errStr := fmt.Sprintf("[Subagent %s] %s", subError.ID, *subError.LastError)
 			agent.Activity.LastError = &errStr
@@ -239,14 +197,12 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 		agent.Activity.Activity = types.ActivityWaitingQuestion
 		agent.Activity.Question = actx.rootQuestion
 		agent.Activity.HasUnseenCompletion = nil
-		agent.Activity.RateLimitResetAt = nil
-		agent.Activity.RetryAfterSeconds = nil
+		clearRateLimit(&agent.Activity)
 		return
 	} else if subQuestion != nil {
 		agent.Activity.Activity = types.ActivityWaitingQuestion
 		agent.Activity.HasUnseenCompletion = nil
-		agent.Activity.RateLimitResetAt = nil
-		agent.Activity.RetryAfterSeconds = nil
+		clearRateLimit(&agent.Activity)
 		if sub, ok := actx.subagents[subQuestion.ID]; ok && sub.question != nil {
 			qStr := fmt.Sprintf("[Subagent %s] %s", subQuestion.ID, *sub.question)
 			agent.Activity.Question = &qStr
@@ -277,8 +233,7 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 		return
 	} else {
 		if agent.Activity.Activity == types.ActivityRateLimited {
-			agent.Activity.RateLimitResetAt = nil
-			agent.Activity.RetryAfterSeconds = nil
+			clearRateLimit(&agent.Activity)
 		}
 	}
 
@@ -287,13 +242,11 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 		agent.Activity.Activity = types.ActivityBusy
 		agent.Activity.Action = actx.rootAction
 		agent.Activity.HasUnseenCompletion = nil
-		agent.Activity.RateLimitResetAt = nil
-		agent.Activity.RetryAfterSeconds = nil
+		clearRateLimit(&agent.Activity)
 	} else if subBusy != nil {
 		agent.Activity.Activity = types.ActivityBusy
 		agent.Activity.HasUnseenCompletion = nil
-		agent.Activity.RateLimitResetAt = nil
-		agent.Activity.RetryAfterSeconds = nil
+		clearRateLimit(&agent.Activity)
 		if subBusy.ActiveTool != nil && *subBusy.ActiveTool != "" {
 			agent.Activity.Action = fmt.Sprintf("Running subagent %s: %s", subBusy.ID, *subBusy.ActiveTool)
 		} else if subBusy.Action != "" {
@@ -308,8 +261,7 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 			agent.Activity.CompletedAt = int64Ptr(now)
 		}
 		agent.Activity.Activity = types.ActivityIdle
-		agent.Activity.RateLimitResetAt = nil
-		agent.Activity.RetryAfterSeconds = nil
+		clearRateLimit(&agent.Activity)
 		if actx.rootAction != "" && actx.rootAction != "Thinking" {
 			agent.Activity.Action = actx.rootAction
 		} else {
@@ -318,8 +270,7 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 	}
 
 	if agent.Activity.Activity != types.ActivityRateLimited {
-		agent.Activity.RateLimitResetAt = nil
-		agent.Activity.RetryAfterSeconds = nil
+		clearRateLimit(&agent.Activity)
 	}
 }
 

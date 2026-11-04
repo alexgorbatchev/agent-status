@@ -3,7 +3,6 @@ package classifier
 import (
 	"time"
 
-	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 )
 
@@ -107,6 +106,9 @@ func (c *Classifier) scheduleTrailingTimerLocked(agentID string, delay time.Dura
 	})
 }
 
+// handleIdleTransition ends the turn-end grace period: a root still BUSY from
+// the scheduled turn becomes IDLE with an unseen completion. A newer root frame
+// cancels the transition; a newer subagent frame postpones it.
 func (c *Classifier) handleIdleTransition(agentID string, scheduledGen uint64) {
 	c.mu.Lock()
 	if c.closed {
@@ -134,126 +136,52 @@ func (c *Classifier) handleIdleTransition(agentID string, scheduledGen uint64) {
 	}
 
 	scheduledSaveGen := actx.saveGeneration
-	targetActx := actx
 	completedAtTs := actx.turnEndTimestamp
 	if completedAtTs == 0 {
 		completedAtTs = actx.lastEventTimestamp
 	}
 	c.mu.Unlock()
 
-	agent, err := c.store.GetAgent(agentID)
-	if err != nil || agent == nil {
-		return
-	}
-
-	// Only transition to IDLE if agent is still running
-	if agent.Activity.Lifecycle != types.LifecycleRunning {
-		return
-	}
-
-	now := time.Now().UnixMilli()
-	if completedAtTs == 0 {
-		completedAtTs = now
-	}
-	if agent.Activity.Activity == types.ActivityBusy {
-		agent.Activity.HasUnseenCompletion = boolPtr(true)
-		agent.Activity.CompletedAt = int64Ptr(completedAtTs)
-	}
-	agent.Activity.Activity = types.ActivityIdle
-	agent.Activity.ActiveTool = nil
-	agent.Activity.ActiveTarget = nil
-	agent.Activity.Question = nil
-	agent.Activity.RateLimitResetAt = nil
-	agent.Activity.RetryAfterSeconds = nil
-	agent.Activity.UpdatedAt = now
-
-	// Compute fallback summary purely without mutating agentContext or cancelling trailing timers
-	input, currentToolKey := c.prepareSummaryInput(agent)
-
 	if c.beforeIdleSummarizeHook != nil {
 		c.beforeIdleSummarizeHook(agentID)
 	}
-
-	c.mu.Lock()
-	actx, ok = c.agentCtx[agentID]
-	if !ok || actx != targetActx || actx.rootGeneration != scheduledGen || actx.rootActivity != types.ActivityBusy {
-		c.mu.Unlock()
-		return
-	}
-	if actx.saveGeneration != scheduledSaveGen {
-		c.scheduleIdleTransitionLocked(agentID, actx.rootGeneration, 100*time.Millisecond)
-		c.mu.Unlock()
-		return
-	}
-	persistMu := &actx.persistMu
-	c.mu.Unlock()
-
 	if c.beforeIdleSaveHook != nil {
 		c.beforeIdleSaveHook(agentID)
 	}
 
-	persistMu.Lock()
-
-	c.mu.Lock()
-	actx, ok = c.agentCtx[agentID]
-	if !ok || actx != targetActx || actx.rootGeneration != scheduledGen || actx.rootActivity != types.ActivityBusy {
-		c.mu.Unlock()
-		persistMu.Unlock()
-		return
-	}
-	if actx.saveGeneration != scheduledSaveGen {
-		c.scheduleIdleTransitionLocked(agentID, actx.rootGeneration, 100*time.Millisecond)
-		c.mu.Unlock()
-		persistMu.Unlock()
-		return
-	}
-
-	c.cancelSilenceTimerLocked(agentID)
-	actx.inFlightTool = false
-	actx.inFlightToolName = ""
-	actx.inTurn = false
-	actx.turnFloorUntil = 0
-
 	var job *summaryJob
-	if !c.summarizer.IsNoSummarize() {
-		job = c.dispatchSummaryLocked(agent, actx, input, currentToolKey, true)
-	} else {
-		agent.Activity.ActionStale = false
-	}
+	agent, err := c.persistAgent(agentID, actx, func(agent *types.IAgentState) bool {
+		if actx.rootGeneration != scheduledGen || actx.rootActivity != types.ActivityBusy ||
+			agent.Activity.Lifecycle != types.LifecycleRunning {
+			return false
+		}
+		if actx.saveGeneration != scheduledSaveGen {
+			// A subagent frame arrived after scheduling; try again once it settles.
+			c.scheduleIdleTransitionLocked(agentID, actx.rootGeneration, 100*time.Millisecond)
+			return false
+		}
 
-	actx.rootActivity = types.ActivityIdle
-	actx.rootRateLimitResetAt = nil
-	actx.rootRetryAfterSeconds = nil
-	actx.rootAction = agent.Activity.Action
-	actx.rootQuestion = nil
-	actx.hasUnseenCompletion = agent.Activity.HasUnseenCompletion
-	actx.completedAt = agent.Activity.CompletedAt
-	c.rollupActivityLocked(agent, actx, now)
-	actx.hasUnseenCompletion = agent.Activity.HasUnseenCompletion
-	actx.completedAt = agent.Activity.CompletedAt
-	c.mu.Unlock()
-
-	saveErr := c.store.SaveAgentState(*agent)
-	persistMu.Unlock()
-
-	if saveErr != nil {
-		logging.Error("saving_idle_agent_failed", "err", saveErr, "agentId", agentID)
-		return
-	}
-
-	if job != nil {
-		c.enqueueJob(agent.ID, job.input, job.timestamp, job.force, job.saveGen)
-	}
-
-	c.mu.Lock()
-	cb := c.onUpdate
-	c.mu.Unlock()
-
-	if cb != nil {
-		cb(agent)
-	}
+		now := time.Now().UnixMilli()
+		if completedAtTs == 0 {
+			completedAtTs = now
+		}
+		if agent.Activity.Activity == types.ActivityBusy {
+			agent.Activity.HasUnseenCompletion = boolPtr(true)
+			agent.Activity.CompletedAt = int64Ptr(completedAtTs)
+		}
+		c.settleIdleLocked(agent, actx, now)
+		job = c.summarizeIdleLocked(agent, actx)
+		recordRootStateLocked(actx, &agent.Activity)
+		c.rollupActivityLocked(agent, actx, now)
+		captureCompletionLocked(actx, &agent.Activity)
+		return true
+	})
+	c.finishTransition(agentID, agent, job, err, "saving_idle_agent_failed")
 }
 
+// handleSilenceTransition idles an agent that has produced no root frame for the
+// silence timeout, whether it was BUSY, rate limited, or had a rate-limited
+// subagent, and marks every subagent completed.
 func (c *Classifier) handleSilenceTransition(agentID string, scheduledGen uint64) {
 	c.mu.Lock()
 	if c.closed {
@@ -273,123 +201,91 @@ func (c *Classifier) handleSilenceTransition(agentID string, scheduledGen uint64
 			}
 		}
 	}
-	if !ok || actx.rootGeneration != scheduledGen || (actx.rootActivity != types.ActivityBusy && actx.rootActivity != types.ActivityRateLimited && !hasRateLimitedSub) {
+	if !ok || actx.rootGeneration != scheduledGen || (!silenceCanIdle(actx.rootActivity) && !hasRateLimitedSub) {
 		c.mu.Unlock()
 		return
 	}
 	scheduledSaveGen := actx.saveGeneration
 	scheduledRootActivity := actx.rootActivity
-	targetActx := actx
-	c.mu.Unlock()
-
-	agent, err := c.store.GetAgent(agentID)
-	if err != nil || agent == nil {
-		return
-	}
-
-	// Only transition to IDLE if agent is still running
-	if agent.Activity.Lifecycle != types.LifecycleRunning {
-		return
-	}
-
-	if scheduledRootActivity != types.ActivityBusy && scheduledRootActivity != types.ActivityRateLimited && agent.Activity.Activity != types.ActivityRateLimited {
-		return
-	}
-
-	origAgentActivity := agent.Activity.Activity
-
-	now := time.Now().UnixMilli()
-	agent.Activity.HasUnseenCompletion = nil
-	agent.Activity.CompletedAt = nil
-	agent.Activity.Activity = types.ActivityIdle
-	agent.Activity.ActiveTool = nil
-	agent.Activity.ActiveTarget = nil
-	agent.Activity.Question = nil
-	agent.Activity.RateLimitResetAt = nil
-	agent.Activity.RetryAfterSeconds = nil
-	agent.Activity.UpdatedAt = now
-
-	input, currentToolKey := c.prepareSummaryInput(agent)
-
-	c.mu.Lock()
-	actx, ok = c.agentCtx[agentID]
-	if !ok || actx != targetActx || actx.rootGeneration != scheduledGen || actx.saveGeneration != scheduledSaveGen || (actx.rootActivity != types.ActivityBusy && actx.rootActivity != types.ActivityRateLimited && origAgentActivity != types.ActivityRateLimited) {
-		c.mu.Unlock()
-		return
-	}
-	persistMu := &actx.persistMu
 	c.mu.Unlock()
 
 	if c.beforeSilenceSaveHook != nil {
 		c.beforeSilenceSaveHook(agentID)
 	}
 
-	persistMu.Lock()
-
-	c.mu.Lock()
-	actx, ok = c.agentCtx[agentID]
-	if !ok || actx != targetActx || actx.rootGeneration != scheduledGen || actx.saveGeneration != scheduledSaveGen || (actx.rootActivity != types.ActivityBusy && actx.rootActivity != types.ActivityRateLimited && origAgentActivity != types.ActivityRateLimited) {
-		c.mu.Unlock()
-		persistMu.Unlock()
-		return
-	}
-
-	actx.inFlightTool = false
-	actx.inFlightToolName = ""
-	actx.inTurn = false
-	actx.turnFloorUntil = 0
-
 	var job *summaryJob
-	if !c.summarizer.IsNoSummarize() {
-		job = c.dispatchSummaryLocked(agent, actx, input, currentToolKey, true)
-	} else {
-		agent.Activity.ActionStale = false
-	}
-
-	actx.rootActivity = types.ActivityIdle
-	actx.rootRateLimitResetAt = nil
-	actx.rootRetryAfterSeconds = nil
-	actx.rootAction = agent.Activity.Action
-	actx.rootQuestion = nil
-	actx.hasUnseenCompletion = agent.Activity.HasUnseenCompletion
-	actx.completedAt = agent.Activity.CompletedAt
-
-	for subID, sub := range actx.subagents {
-		sub.activity = types.ActivityIdle
-		sub.activeTool = nil
-		sub.inFlightTool = false
-		sub.rateLimitResetAt = nil
-		sub.retryAfterSeconds = nil
-		if sub.completedAt == nil {
-			comp := now
-			sub.completedAt = &comp
+	agent, err := c.persistAgent(agentID, actx, func(agent *types.IAgentState) bool {
+		agentRateLimited := agent.Activity.Activity == types.ActivityRateLimited
+		if agent.Activity.Lifecycle != types.LifecycleRunning ||
+			(!silenceCanIdle(scheduledRootActivity) && !agentRateLimited) ||
+			actx.rootGeneration != scheduledGen || actx.saveGeneration != scheduledSaveGen ||
+			(!silenceCanIdle(actx.rootActivity) && !agentRateLimited) {
+			return false
 		}
-		sub.status = types.SubagentCompleted
-		c.scheduleSubagentDwellTimerLocked(agentID, subID, sub, now)
+
+		now := time.Now().UnixMilli()
+		clearCompletion(&agent.Activity)
+		c.settleIdleLocked(agent, actx, now)
+		job = c.summarizeIdleLocked(agent, actx)
+		recordRootStateLocked(actx, &agent.Activity)
+		for subID, sub := range actx.subagents {
+			sub.activity = types.ActivityIdle
+			sub.activeTool = nil
+			sub.inFlightTool = false
+			sub.rateLimitResetAt = nil
+			sub.retryAfterSeconds = nil
+			if sub.completedAt == nil {
+				comp := now
+				sub.completedAt = &comp
+			}
+			sub.status = types.SubagentCompleted
+			c.scheduleSubagentDwellTimerLocked(agentID, subID, sub, now)
+		}
+		c.rollupActivityLocked(agent, actx, now)
+		captureCompletionLocked(actx, &agent.Activity)
+		return true
+	})
+	c.finishTransition(agentID, agent, job, err, "saving_silent_idle_agent_failed")
+}
+
+// silenceCanIdle reports whether the silence timeout applies to a root in this activity.
+func silenceCanIdle(activity types.ActivityState) bool {
+	return activity == types.ActivityBusy || activity == types.ActivityRateLimited
+}
+
+// settleIdleLocked moves the root to IDLE: no tool, question, reset targets,
+// in-flight tool, thinking floor, or silence timer.
+func (c *Classifier) settleIdleLocked(agent *types.IAgentState, actx *agentContext, now int64) {
+	agent.Activity.Activity = types.ActivityIdle
+	agent.Activity.ActiveTool = nil
+	agent.Activity.ActiveTarget = nil
+	agent.Activity.Question = nil
+	clearRateLimit(&agent.Activity)
+	agent.Activity.UpdatedAt = now
+	c.cancelSilenceTimerLocked(agent.ID)
+	resetTurnLocked(actx)
+}
+
+// summarizeIdleLocked applies the fallback action for the newly idle agent and
+// returns the forced summary job to enqueue once the transition is saved.
+func (c *Classifier) summarizeIdleLocked(agent *types.IAgentState, actx *agentContext) *summaryJob {
+	input, currentToolKey := prepareSummaryInputLocked(agent, actx)
+	if c.summarizer.IsNoSummarize() {
+		agent.Activity.ActionStale = false
+		return nil
 	}
+	return c.dispatchSummaryLocked(agent, actx, input, currentToolKey, true)
+}
 
-	c.rollupActivityLocked(agent, actx, now)
-	actx.hasUnseenCompletion = agent.Activity.HasUnseenCompletion
-	actx.completedAt = agent.Activity.CompletedAt
-	c.mu.Unlock()
-
-	saveErr := c.store.SaveAgentState(*agent)
-	persistMu.Unlock()
-
-	if saveErr != nil {
-		logging.Error("saving_silent_idle_agent_failed", "err", saveErr, "agentId", agentID)
+// finishTransition enqueues the transition's summary job and publishes the saved
+// agent, or logs the failed write.
+func (c *Classifier) finishTransition(agentID string, agent *types.IAgentState, job *summaryJob, err error, failedAction string) {
+	if err != nil || agent == nil {
+		c.broadcastWrite(agentID, agent, err, failedAction)
 		return
 	}
-
 	if job != nil {
 		c.enqueueJob(agent.ID, job.input, job.timestamp, job.force, job.saveGen)
 	}
-
-	c.mu.Lock()
-	cb := c.onUpdate
-	c.mu.Unlock()
-
-	if cb != nil {
-		cb(agent)
-	}
+	c.broadcastWrite(agentID, agent, nil, failedAction)
 }

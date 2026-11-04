@@ -106,6 +106,7 @@ type Classifier struct {
 	silenceTimers         map[string]*time.Timer
 	silenceTimerDurations map[string]time.Duration
 	subagentTimers        map[string]*time.Timer
+	frameLocks            map[string]*frameLock
 	idleGracePeriod       time.Duration
 	debounceWindow        time.Duration
 	turnFloor             time.Duration
@@ -143,6 +144,7 @@ func New(s *store.Store, p *pricing.Engine, sum *summarizer.Summarizer) *Classif
 		silenceTimers:         make(map[string]*time.Timer),
 		silenceTimerDurations: make(map[string]time.Duration),
 		subagentTimers:        make(map[string]*time.Timer),
+		frameLocks:            make(map[string]*frameLock),
 		idleGracePeriod:       DefaultIdleGracePeriod,
 		debounceWindow:        debounce,
 		turnFloor:             DefaultTurnFloor,
@@ -253,6 +255,9 @@ func (c *Classifier) Close() error {
 
 // ProcessFrame applies 0-ms deterministic rules and schedules asynchronous action summarization.
 func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentState, error) {
+	unlockFrames := c.lockFrames(frame.AgentID)
+	defer unlockFrames()
+
 	agent, err := c.store.GetAgent(frame.AgentID)
 	if err != nil {
 		return nil, fmt.Errorf("getting existing agent: %w", err)
@@ -398,7 +403,10 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		agent.Activity.Title = strings.TrimSpace(*frame.Data.Title)
 	}
 
-	actx := c.getOrCreateAgentContext(agent)
+	actx, err := c.getOrCreateAgentContext(agent)
+	if err != nil {
+		return nil, err
+	}
 	c.mu.Lock()
 	actx.saveGeneration++
 	actx.lastEventTimestamp = now
@@ -414,8 +422,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 			agent.Activity.RateLimitResetAt = actx.rootRateLimitResetAt
 			agent.Activity.RetryAfterSeconds = actx.rootRetryAfterSeconds
 		} else {
-			agent.Activity.RateLimitResetAt = nil
-			agent.Activity.RetryAfterSeconds = nil
+			clearRateLimit(&agent.Activity)
 		}
 	}
 	initialCompletion := actx.hasUnseenCompletion
@@ -464,29 +471,16 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		agent.Activity.CompletedAt = actx.completedAt
 	}
 	if !isSubagent && agent.Activity.Lifecycle != types.LifecycleExited {
-		actx.rootActivity = agent.Activity.Activity
-		actx.rootAction = agent.Activity.Action
-		actx.rootQuestion = agent.Activity.Question
+		recordRootStateLocked(actx, &agent.Activity)
 		actx.rootLastError = agent.Activity.LastError
-		if actx.rootActivity == types.ActivityRateLimited {
-			actx.rootRateLimitResetAt = agent.Activity.RateLimitResetAt
-			actx.rootRetryAfterSeconds = agent.Activity.RetryAfterSeconds
-		} else {
-			actx.rootRateLimitResetAt = nil
-			actx.rootRetryAfterSeconds = nil
-		}
-		actx.hasUnseenCompletion = agent.Activity.HasUnseenCompletion
-		actx.completedAt = agent.Activity.CompletedAt
 	}
 	if agent.Activity.Lifecycle != types.LifecycleExited {
 		c.pruneExpiredSubagentsLocked(agent.ID, actx, now)
 		c.rollupActivityLocked(agent, actx, now)
-		actx.hasUnseenCompletion = agent.Activity.HasUnseenCompletion
-		actx.completedAt = agent.Activity.CompletedAt
+		captureCompletionLocked(actx, &agent.Activity)
 	} else {
 		agent.Activity.ActiveSubagents = nil
-		agent.Activity.RateLimitResetAt = nil
-		agent.Activity.RetryAfterSeconds = nil
+		clearRateLimit(&agent.Activity)
 		actx.hasUnseenCompletion = nil
 		actx.completedAt = nil
 		actx.rootRateLimitResetAt = nil
