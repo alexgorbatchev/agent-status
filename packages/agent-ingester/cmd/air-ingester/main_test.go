@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/testenv"
 	"io"
 	"net"
 	"net/http"
@@ -27,20 +28,14 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	tmpDir, err := os.MkdirTemp("", "air-ingester-test-logs-*")
+	_, cleanup, err := testenv.IsolateStateDirs("air-ingester-test-state")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to create test log dir: %v\n", err)
-		os.Exit(1)
-	}
-
-	if err := os.Setenv("AIR_LOG_DIR", tmpDir); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to set AIR_LOG_DIR: %v\n", err)
-		_ = os.RemoveAll(tmpDir)
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 
 	code := m.Run()
-	_ = os.RemoveAll(tmpDir)
+	cleanup()
 	os.Exit(code)
 }
 

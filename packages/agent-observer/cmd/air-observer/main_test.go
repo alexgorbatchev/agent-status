@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/testenv"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -30,19 +31,12 @@ type testSyncBuffer struct {
 }
 
 func TestMain(m *testing.M) {
-	tmpDir, err := os.MkdirTemp("", "air-observer-test-logs-*")
+	tmpDir, cleanup, err := testenv.IsolateStateDirs("air-observer-test-state")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to create test log dir: %v\n", err)
-		os.Exit(1)
-	}
-
-	if err := os.Setenv("AIR_LOG_DIR", tmpDir); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to set AIR_LOG_DIR: %v\n", err)
-		_ = os.RemoveAll(tmpDir)
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 	for name, path := range map[string]string{
-		"XDG_CACHE_HOME":      filepath.Join(tmpDir, "cache"),
 		"CLAUDE_SESSIONS_DIR": filepath.Join(tmpDir, "claude-sessions"),
 		"CLAUDE_PROJECTS_DIR": filepath.Join(tmpDir, "claude-projects"),
 		"PI_SESSIONS_DIR":     filepath.Join(tmpDir, "pi-sessions"),
@@ -56,7 +50,7 @@ func TestMain(m *testing.M) {
 	}
 
 	code := m.Run()
-	_ = os.RemoveAll(tmpDir)
+	cleanup()
 	os.Exit(code)
 }
 

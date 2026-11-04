@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/testenv"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -232,6 +234,19 @@ func TestAgentModeFormatting(t *testing.T) {
 	if !strings.Contains(out, "env=work-macbook") || !strings.Contains(out, "envId=885d9dd12b6d62a9") {
 		t.Errorf("expected both env and envId to be preserved in agent mode, got: %s", out)
 	}
+}
+
+// TestMain keeps tests that open the default log rotator, such as Setup, out of the
+// developer's real state directory.
+func TestMain(m *testing.M) {
+	_, cleanup, err := testenv.IsolateStateDirs("agent-common-logging-test-state")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	code := m.Run()
+	cleanup()
+	os.Exit(code)
 }
 
 func TestNewAndSetupFunctions(t *testing.T) {
