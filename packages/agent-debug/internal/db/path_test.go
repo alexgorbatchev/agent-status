@@ -35,7 +35,7 @@ func TestResolveDBPathSearchOrder(t *testing.T) {
 		home, _ := isolateDBLookup(t)
 		explicit := filepath.Join(home, "custom", "agent-status.db")
 		writeDB(t, explicit)
-		writeDB(t, devStackDBPath)
+		writeDB(t, DevStackDBPath)
 		got, err := ResolveDBPath("~/custom/agent-status.db")
 		if err != nil || got != explicit {
 			t.Fatalf("ResolveDBPath = %q, %v; want %q", got, err, explicit)
@@ -45,7 +45,7 @@ func TestResolveDBPathSearchOrder(t *testing.T) {
 		home, _ := isolateDBLookup(t)
 		override := filepath.Join(home, "override.db")
 		writeDB(t, override)
-		writeDB(t, devStackDBPath)
+		writeDB(t, DevStackDBPath)
 		t.Setenv("AGENT_STATUS_DB_PATH", override)
 		if got, err := ResolveDBPath("auto"); err != nil || got != override {
 			t.Fatalf("ResolveDBPath = %q, %v; want %q", got, err, override)
@@ -76,15 +76,15 @@ func TestResolveDBPathSearchOrder(t *testing.T) {
 		home, _ := isolateDBLookup(t)
 		want := filepath.Join(home, ".local/share/agent-status/agent-status.db")
 		writeDB(t, want)
-		writeDB(t, devStackDBPath)
+		writeDB(t, DevStackDBPath)
 		if got, err := ResolveDBPath(""); err != nil || got != want {
 			t.Fatalf("ResolveDBPath = %q, %v; want %q", got, err, want)
 		}
 	})
 	t.Run("dev stack when nothing is installed", func(t *testing.T) {
 		isolateDBLookup(t)
-		writeDB(t, devStackDBPath)
-		if got, err := ResolveDBPath("auto"); err != nil || got != devStackDBPath {
+		writeDB(t, DevStackDBPath)
+		if got, err := ResolveDBPath("auto"); err != nil || got != DevStackDBPath {
 			t.Fatalf("ResolveDBPath = %q, %v; want the dev stack", got, err)
 		}
 	})
@@ -117,7 +117,7 @@ func TestResolveDBPathErrors(t *testing.T) {
 	})
 	t.Run("missing AGENT_STATUS_DB_PATH does not fall back", func(t *testing.T) {
 		isolateDBLookup(t)
-		writeDB(t, devStackDBPath)
+		writeDB(t, DevStackDBPath)
 		t.Setenv("AGENT_STATUS_DB_PATH", "/nonexistent/override.db")
 		if _, err := ResolveDBPath("auto"); err == nil || !strings.Contains(err.Error(), "AGENT_STATUS_DB_PATH") {
 			t.Fatalf("err = %v", err)
@@ -126,7 +126,7 @@ func TestResolveDBPathErrors(t *testing.T) {
 	t.Run("nothing found names every place searched", func(t *testing.T) {
 		home, _ := isolateDBLookup(t)
 		_, err := ResolveDBPath("auto")
-		if err == nil || !strings.Contains(err.Error(), devStackDBPath) || !strings.Contains(err.Error(), filepath.Join(home, ".local/share/agent-status/agent-status.db")) {
+		if err == nil || !strings.Contains(err.Error(), DevStackDBPath) || !strings.Contains(err.Error(), filepath.Join(home, ".local/share/agent-status/agent-status.db")) {
 			t.Fatalf("err = %v", err)
 		}
 	})

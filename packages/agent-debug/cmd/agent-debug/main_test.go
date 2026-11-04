@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
+	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/db"
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
 
@@ -1101,7 +1102,6 @@ func TestCLI_SessionFleet(t *testing.T) {
 // search order and an unreadable decoy at every level that should lose to it, then
 // requires events, db inspect, and fleet to all read the real one.
 func TestCLI_CommandsShareDatabaseResolution(t *testing.T) {
-	devStack := filepath.Join(".tmp", "dev-stack", "data", "agent-status", "agent-status.db")
 	installed := func(home string) string {
 		return filepath.Join(home, ".local", "share", "agent-status", "agent-status.db")
 	}
@@ -1116,7 +1116,7 @@ func TestCLI_CommandsShareDatabaseResolution(t *testing.T) {
 		}},
 		{"AGENT_STATUS_DB_PATH", func(_, override string) (string, string) { return override, "" }},
 		{"installed ingester", func(home, _ string) (string, string) { return installed(home), "" }},
-		{"dev stack", func(_, _ string) (string, string) { return devStack, "" }},
+		{"dev stack", func(_, _ string) (string, string) { return db.DevStackDBPath, "" }},
 	}
 
 	for i, level := range levels {
@@ -1129,7 +1129,7 @@ func TestCLI_CommandsShareDatabaseResolution(t *testing.T) {
 
 			override := filepath.Join(home, "override.db")
 			seed, flag := level.place(home, override)
-			decoys := []string{override, installed(home), devStack}[max(i-1, 0):]
+			decoys := []string{override, installed(home), db.DevStackDBPath}[max(i-1, 0):]
 			if i <= 1 {
 				t.Setenv("AGENT_STATUS_DB_PATH", override)
 			}
@@ -1139,11 +1139,11 @@ func TestCLI_CommandsShareDatabaseResolution(t *testing.T) {
 				}
 				writeFile(t, decoy, "not a database")
 			}
-			real := createTestStatusDB(t, t.TempDir())
+			seeded := createTestStatusDB(t, t.TempDir())
 			if err := os.MkdirAll(filepath.Dir(seed), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.Rename(real, seed); err != nil {
+			if err := os.Rename(seeded, seed); err != nil {
 				t.Fatal(err)
 			}
 

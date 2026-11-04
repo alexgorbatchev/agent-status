@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-// devStackDBPath is where the dev stack's ingester writes, relative to the repository root.
-var devStackDBPath = filepath.Join(".tmp", "dev-stack", "data", "agent-status", "agent-status.db")
+// DevStackDBPath is where the dev stack's ingester writes, relative to the repository root.
+var DevStackDBPath = filepath.Join(".tmp", "dev-stack", "data", "agent-status", "agent-status.db")
 
 // ResolveDBPath returns the agent-status database every agent-debug command reads. An
 // explicit path (with a leading ~/ expanded) must exist. "" or "auto" searches, in order:
@@ -34,7 +34,7 @@ func ResolveDBPath(flagVal string) (string, error) {
 	if installed := ingesterDBPath(); installed != "" {
 		candidates = append(candidates, installed)
 	}
-	candidates = append(candidates, devStackDBPath)
+	candidates = append(candidates, DevStackDBPath)
 	for _, candidate := range candidates {
 		if _, err := os.Stat(candidate); err == nil {
 			return candidate, nil
