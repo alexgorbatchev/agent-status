@@ -5,13 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/alexgorbatchev/agent-status/packages/agent-common/testenv"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/testenv"
 )
 
 func TestParseLevel(t *testing.T) {
@@ -247,6 +248,12 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	cleanup()
 	os.Exit(code)
+}
+
+// TestStateDirsAreIsolated fails when TestMain no longer isolates this package's state,
+// so a test that opens the default log rotator cannot write into the home directory.
+func TestStateDirsAreIsolated(t *testing.T) {
+	testenv.RequireIsolated(t)
 }
 
 func TestNewAndSetupFunctions(t *testing.T) {

@@ -56,3 +56,45 @@ func TestIsolateStateDirsCleansUpWhenAVariableCannotBeSet(t *testing.T) {
 		t.Errorf("the temporary directory %q was not removed: %v", created, err)
 	}
 }
+
+// fatalRecorder records Fatalf instead of stopping the test.
+type fatalRecorder struct {
+	testing.TB
+	failed bool
+}
+
+func (f *fatalRecorder) Helper()                           {}
+func (f *fatalRecorder) Fatalf(format string, args ...any) { f.failed = true }
+
+func TestRequireIsolated(t *testing.T) {
+	for _, name := range []string{"AIR_LOG_DIR", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"} {
+		t.Setenv(name, os.Getenv(name))
+	}
+	origDir := isolatedDir
+	defer func() { isolatedDir = origDir }()
+
+	failsRequire := func() bool {
+		rec := &fatalRecorder{}
+		RequireIsolated(rec)
+		return rec.failed
+	}
+
+	isolatedDir = ""
+	if !failsRequire() {
+		t.Error("RequireIsolated passed although IsolateStateDirs never ran")
+	}
+
+	_, cleanup, err := IsolateStateDirs("testenv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if failsRequire() {
+		t.Error("RequireIsolated failed right after IsolateStateDirs")
+	}
+
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "elsewhere"))
+	if !failsRequire() {
+		t.Error("RequireIsolated passed although XDG_STATE_HOME left the isolated directory")
+	}
+}

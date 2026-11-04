@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"github.com/alexgorbatchev/agent-status/packages/agent-common/testenv"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +13,7 @@ import (
 
 	_ "github.com/ncruces/go-sqlite3/driver"
 
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/testenv"
 	"github.com/alexgorbatchev/agent-status/packages/agent-server/internal/config"
 )
 
@@ -257,6 +257,12 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	cleanup()
 	os.Exit(code)
+}
+
+// TestStateDirsAreIsolated fails when TestMain no longer isolates this package's state,
+// so a test that opens the default log rotator cannot write into the home directory.
+func TestStateDirsAreIsolated(t *testing.T) {
+	testenv.RequireIsolated(t)
 }
 
 func TestServerCommandHelp(t *testing.T) {

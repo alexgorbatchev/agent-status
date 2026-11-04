@@ -5,7 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"testing"
 )
+
+// isolatedDir is the directory the last successful IsolateStateDirs call created.
+var isolatedDir string
 
 // IsolateStateDirs points every location agent-status writes state to (the log
 // directory, and the XDG state, data, and cache homes it falls back to) at a new
@@ -24,7 +29,25 @@ func IsolateStateDirs(prefix string) (string, func(), error) {
 			return "", nil, fmt.Errorf("isolating %s: %w", name, err)
 		}
 	}
+	isolatedDir = dir
 	return dir, cleanup, nil
+}
+
+// RequireIsolated fails the test unless IsolateStateDirs ran in this process and every
+// state variable it sets still points inside the isolated directory. Call it from a test
+// in each package whose TestMain isolates state, so removing that isolation fails the
+// package instead of silently writing to the home directory.
+func RequireIsolated(t testing.TB) {
+	t.Helper()
+	if isolatedDir == "" {
+		t.Fatalf("state is not isolated: call testenv.IsolateStateDirs from TestMain")
+	}
+	for name := range stateEnv(isolatedDir) {
+		value := os.Getenv(name)
+		if value != isolatedDir && !strings.HasPrefix(value, isolatedDir+string(filepath.Separator)) {
+			t.Fatalf("%s = %q is outside the isolated directory %q", name, value, isolatedDir)
+		}
+	}
 }
 
 // stateEnv returns the variables IsolateStateDirs sets, pointing inside dir.

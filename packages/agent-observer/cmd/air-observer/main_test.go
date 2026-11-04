@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"github.com/alexgorbatchev/agent-status/packages/agent-common/testenv"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,6 +18,7 @@ import (
 	_ "github.com/ncruces/go-sqlite3/driver"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/testenv"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-watcher/scanner"
 	"github.com/alexgorbatchev/agent-watcher/tailer"
@@ -45,6 +45,7 @@ func TestMain(m *testing.M) {
 	} {
 		if err := os.Setenv(name, path); err != nil {
 			fmt.Fprintf(os.Stderr, "isolating harness paths: %v\n", err)
+			cleanup()
 			os.Exit(1)
 		}
 	}
@@ -52,6 +53,12 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	cleanup()
 	os.Exit(code)
+}
+
+// TestStateDirsAreIsolated fails when TestMain no longer isolates this package's state,
+// so a test that opens the default log rotator cannot write into the home directory.
+func TestStateDirsAreIsolated(t *testing.T) {
+	testenv.RequireIsolated(t)
 }
 
 func (s *testSyncBuffer) Write(p []byte) (n int, err error) {

@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/alexgorbatchev/agent-status/packages/agent-common/testenv"
 	"io"
 	"net"
 	"net/http"
@@ -20,6 +19,7 @@ import (
 	"github.com/mozilla-ai/any-llm-go/providers/openai"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/testenv"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/config"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/internal/reconciler"
@@ -37,6 +37,12 @@ func TestMain(m *testing.M) {
 	code := m.Run()
 	cleanup()
 	os.Exit(code)
+}
+
+// TestStateDirsAreIsolated fails when TestMain no longer isolates this package's state,
+// so a test that opens the default log rotator cannot write into the home directory.
+func TestStateDirsAreIsolated(t *testing.T) {
+	testenv.RequireIsolated(t)
 }
 
 func TestIngesterCommandHelp(t *testing.T) {
