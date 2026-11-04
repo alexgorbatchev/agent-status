@@ -2038,9 +2038,12 @@ func TestClassifier_DiscardStaleSummaryOnStateTransition(t *testing.T) {
 func TestClassifier_DiscardInFlightSummaryOnRunExited(t *testing.T) {
 	var mu sync.Mutex
 	var updates []*types.IAgentState
-	serverCalled := make(chan struct{})
+	// The handler signals with non-blocking sends, so each signal channel holds one value
+	// until the test receives it; an unbuffered channel would drop a signal sent before
+	// the test starts waiting.
+	serverCalled := make(chan struct{}, 1)
 	serverHold := make(chan struct{})
-	serverDone := make(chan struct{})
+	serverDone := make(chan struct{}, 1)
 
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
