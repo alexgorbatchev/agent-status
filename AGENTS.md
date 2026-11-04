@@ -18,7 +18,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - Test all: `just test-all`
 - Check coverage: `just check-coverage` (enforces >= 90% statement coverage across all Go packages via `scripts/check-coverage.sh`)
 - Lint all: `just lint-all`
-- Run Playwright E2E: `just ui test-e2e`
+- Run Playwright E2E: `just ui test-e2e` (builds the daemons first; run `bun x playwright install chromium` in `packages/ui-web` once)
 - Start Storybook: `just ui storybook`
 
 ## Workspace map
@@ -68,5 +68,5 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - Canonical harness log specs & parser: [`alexgorbatchev/agent-parser`](https://github.com/alexgorbatchev/agent-parser) (`docs/harness-logs/`)
 - Reusable watching pipeline: [`alexgorbatchev/agent-watcher`](https://github.com/alexgorbatchev/agent-watcher) (`watcher.Run`, `scanner/`, `tailer/`)
 - Standalone session transcript printer: [`alexgorbatchev/agent-print-session-cli`](https://github.com/alexgorbatchev/agent-print-session-cli) (`v1.0.0`)
-- CI workflow: `.github/workflows/ci.yml` runs `just lint-all`, `just test-all`, and `just build-all` on hosted Ubuntu for pull requests and pushes to `main`; Playwright E2E is not part of CI
+- CI workflow: `.github/workflows/ci.yml` runs `just lint-all`, `just test-all`, `just build-all`, and the Playwright E2E suite (`just ui test-e2e`) on hosted Ubuntu for pull requests and pushes to `main`
 - Ticket workflow skill: `github-issues` (`skills/agent/github-issues` in the private AI registry overlay)

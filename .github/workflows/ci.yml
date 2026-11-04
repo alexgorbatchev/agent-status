@@ -68,3 +68,30 @@ jobs:
 
       - name: Build
         run: just build-all
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.work
+          cache-dependency-path: packages/*/go.sum
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+
+      - uses: extractions/setup-just@v4
+
+      - name: Setup
+        run: just setup
+
+      - name: Install Chromium
+        working-directory: packages/ui-web
+        run: bun x playwright install --with-deps chromium
+
+      - name: End-to-end tests
+        run: just ui test-e2e

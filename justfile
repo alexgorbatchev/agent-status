@@ -37,10 +37,14 @@ run-ai *args:
 
 # Build only dev stack binaries and bundle ui-web (omitting agent-debug)
 build-stack:
+    just build-daemons
+    just ui build
+
+# Build the observer, ingester, and server binaries the E2E rig spawns
+build-daemons:
     just observer build
     just ingester build
     just server build
-    just ui build
 
 # Build all Go binaries and bundle ui-web
 build-all:

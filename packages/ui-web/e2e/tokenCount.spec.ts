@@ -102,7 +102,7 @@ test.describe.serial("Token Count Ingestion E2E (Full-Stack Rig)", () => {
     // 2. Start a Claude Code session
     const testCwd = resolve(stack.testDir, "workspaces", "token-app");
     const sessionId = "sess-token-e2e-1";
-    await stack.createClaudeSession(sessionId, 99992, testCwd);
+    await stack.createClaudeSession(sessionId, testCwd);
 
     await stack.appendClaudeTranscript(sessionId, testCwd, {
       type: "user",

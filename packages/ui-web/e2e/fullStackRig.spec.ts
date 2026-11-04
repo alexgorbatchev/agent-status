@@ -34,7 +34,7 @@ test.describe.serial("Full-Stack Rigged Ingestion E2E", () => {
     // 2. Simulate Claude Code starting in test directory
     const testCwd = resolve(stack.testDir, "workspaces", "my-app");
     const sessionId = "sess-e2e-1001";
-    await stack.createClaudeSession(sessionId, 99991, testCwd);
+    await stack.createClaudeSession(sessionId, testCwd);
 
     // Initial transcript lines: user prompt and AI title
     await stack.appendClaudeTranscript(sessionId, testCwd, {
