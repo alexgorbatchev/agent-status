@@ -7,7 +7,7 @@ import (
 	"fmt"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
-	_ "github.com/ncruces/go-sqlite3/driver"
+	_ "modernc.org/sqlite"
 )
 
 var ErrSessionNotFound = errors.New("session not found in database")
@@ -236,7 +236,7 @@ const selectAllAgentsQuery = `
 // ListAgents queries all agent records from the database ordered by updated_at descending.
 func ListAgents(ctx context.Context, dbPath string) ([]types.IAgentState, error) {
 	dsn := "file:" + dbPath + "?mode=ro&_pragma=busy_timeout(5000)"
-	db, err := sql.Open("sqlite3", dsn)
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("opening read-only sqlite database %q: %w", dbPath, err)
 	}
@@ -265,7 +265,7 @@ func ListAgents(ctx context.Context, dbPath string) ([]types.IAgentState, error)
 // InspectSession opens agent-status.db read-only and loads agent, runs, and event metrics.
 func InspectSession(ctx context.Context, dbPath string, sessionIDOrAgentID string) (*SessionRecord, error) {
 	dsn := "file:" + dbPath + "?mode=ro&_pragma=busy_timeout(5000)"
-	db, err := sql.Open("sqlite3", dsn)
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("opening read-only sqlite database %q: %w", dbPath, err)
 	}

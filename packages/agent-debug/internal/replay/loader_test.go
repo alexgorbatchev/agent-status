@@ -9,7 +9,7 @@ import (
 
 	"github.com/alexgorbatchev/agent-parser"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
-	_ "github.com/ncruces/go-sqlite3/driver"
+	_ "modernc.org/sqlite"
 )
 
 func TestLoadSession_EdgeCases(t *testing.T) {
@@ -36,7 +36,7 @@ func TestLoadSession_EdgeCases(t *testing.T) {
 
 	t.Run("opencode empty database", func(t *testing.T) {
 		dbFile := filepath.Join(tmpDir, "empty_opencode.db")
-		db, err := sql.Open("sqlite3", "file:"+dbFile)
+		db, err := sql.Open("sqlite", "file:"+dbFile)
 		if err != nil {
 			t.Fatalf("opening sqlite: %v", err)
 		}
@@ -57,7 +57,7 @@ func TestLoadSession_EdgeCases(t *testing.T) {
 
 	t.Run("opencode non-existent session ID", func(t *testing.T) {
 		dbFile := filepath.Join(tmpDir, "single_sess.db")
-		db, err := sql.Open("sqlite3", "file:"+dbFile)
+		db, err := sql.Open("sqlite", "file:"+dbFile)
 		if err != nil {
 			t.Fatalf("opening sqlite: %v", err)
 		}

@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/ncruces/go-sqlite3/driver"
+	_ "modernc.org/sqlite"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/testenv"
@@ -1820,7 +1820,7 @@ func TestObserver_ScanAllSharesProcessSnapshot(t *testing.T) {
 	_ = os.WriteFile(codexTranscript, []byte(codexLine), 0644)
 
 	// 4. OpenCode session
-	db, err := sql.Open("sqlite3", "file:"+opencodeDb+"?mode=rwc")
+	db, err := sql.Open("sqlite", "file:"+opencodeDb+"?mode=rwc")
 	if err != nil {
 		t.Fatalf("creating test opencode db: %v", err)
 	}
@@ -1941,7 +1941,7 @@ func TestObserver_ScanAllSkipsProcessSnapshotWhenNoSessions(t *testing.T) {
 	_ = os.MkdirAll(piDir, 0755)
 	_ = os.MkdirAll(codexDir, 0755)
 
-	db, err := sql.Open("sqlite3", "file:"+opencodeDb+"?mode=rwc")
+	db, err := sql.Open("sqlite", "file:"+opencodeDb+"?mode=rwc")
 	if err != nil {
 		t.Fatalf("creating test opencode db: %v", err)
 	}
@@ -2025,7 +2025,7 @@ func TestObserver_ScanAllSkipsProcessSnapshotWhenAllSessionsDead(t *testing.T) {
 	deadDesc := `{"pid": 99999999, "sessionId": "sess-dead", "cwd": "/tmp", "startedAt": 1000}`
 	_ = os.WriteFile(filepath.Join(claudeDir, "session.json"), []byte(deadDesc), 0600)
 
-	db, err := sql.Open("sqlite3", "file:"+opencodeDb+"?mode=rwc")
+	db, err := sql.Open("sqlite", "file:"+opencodeDb+"?mode=rwc")
 	if err != nil {
 		t.Fatalf("creating test opencode db: %v", err)
 	}

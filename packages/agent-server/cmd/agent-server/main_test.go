@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/ncruces/go-sqlite3/driver"
+	_ "modernc.org/sqlite"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/testenv"
 	"github.com/alexgorbatchev/agent-status/packages/agent-server/internal/config"
@@ -21,7 +21,7 @@ func createTestDB(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "agent-status-test.db")
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatalf("failed to open sqlite3 db: %v", err)
 	}

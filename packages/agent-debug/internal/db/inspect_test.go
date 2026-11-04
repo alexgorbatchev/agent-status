@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
-	_ "github.com/ncruces/go-sqlite3/driver"
+	_ "modernc.org/sqlite"
 )
 
 func setupTestDB(t *testing.T) (string, func()) {
@@ -17,7 +17,7 @@ func setupTestDB(t *testing.T) (string, func()) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "agent-status.db")
 
-	db, err := sql.Open("sqlite3", "file:"+dbPath)
+	db, err := sql.Open("sqlite", "file:"+dbPath)
 	if err != nil {
 		t.Fatalf("opening test sqlite db: %v", err)
 	}
@@ -303,7 +303,7 @@ func TestInspect_RateLimitMetadata(t *testing.T) {
 	dbPath, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
@@ -336,7 +336,7 @@ func TestInspect_CompletionMetadata(t *testing.T) {
 	dbPath, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}

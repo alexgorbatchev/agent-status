@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS telemetry_events (
 
 func setupTestDB(t *testing.T) *Store {
 	t.Helper()
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("opening in-memory sqlite: %v", err)
 	}
@@ -234,7 +234,7 @@ func TestStore_OpenReadOnlyAndDB(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "test.db")
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatalf("creating test db: %v", err)
 	}

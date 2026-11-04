@@ -9,10 +9,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
-	_ "github.com/ncruces/go-sqlite3/driver"
+	_ "modernc.org/sqlite"
 )
 
 // ErrAgentNotFound indicates that an agent mutation did not match a stored agent.
@@ -22,6 +23,9 @@ type Store struct {
 	db *sql.DB
 }
 
+// memoryDBs numbers the in-memory databases opened in this process.
+var memoryDBs atomic.Uint64
+
 func Open(dbPath string) (*Store, error) {
 	if dbPath != ":memory:" {
 		dir := filepath.Dir(dbPath)
@@ -30,17 +34,18 @@ func Open(dbPath string) (*Store, error) {
 		}
 	}
 
-	dsn := "file:" + dbPath + "?" +
-		"_pragma=journal_mode(wal)&" +
+	pragmas := "_pragma=journal_mode(wal)&" +
 		"_pragma=synchronous(normal)&" +
 		"_pragma=busy_timeout(5000)&" +
-		"_pragma=foreign_keys(on)&" +
-		"_pragma=auto_vacuum(incremental)"
+		"_pragma=foreign_keys(on)"
+	dsn := "file:" + dbPath + "?" + pragmas
 	if dbPath == ":memory:" {
-		dsn += "&cache=shared"
+		// A shared-cache in-memory database is visible process-wide under its
+		// name, so each store gets its own name.
+		dsn = fmt.Sprintf("file:agent-status-memory-%d?mode=memory&cache=shared&%s", memoryDBs.Add(1), pragmas)
 	}
 
-	db, err := sql.Open("sqlite3", dsn)
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("opening sqlite database: %w", err)
 	}

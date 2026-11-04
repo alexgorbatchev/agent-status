@@ -2,6 +2,8 @@ package store
 
 import (
 	"database/sql"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -14,7 +16,7 @@ func TestSchemaV1_OriginalV1Activities(t *testing.T) {
 		t.Errorf("schemaV1 must not contain 'RATE_LIMITED'; historical migration DDL must remain immutable")
 	}
 
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
@@ -42,7 +44,7 @@ func TestSchemaV1_OriginalV1Activities(t *testing.T) {
 }
 
 func TestTableColumns(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
@@ -91,7 +93,7 @@ func TestMigrate_CrashAfterV7PartialCommit(t *testing.T) {
 	// while user_version remained 6.
 	// Migrate(db) must succeed, skip duplicate column addition idempotently,
 	// and bring user_version to 8 with tables intact.
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
@@ -216,7 +218,7 @@ func TestMigrate_CrashAfterV7PartialCommit(t *testing.T) {
 
 func TestMigrate_CrashAfterV7SingleColumnCommit(t *testing.T) {
 	// Simulate crash when only the first column of v7 was committed
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
@@ -269,7 +271,7 @@ func TestMigrate_CrashAfterV8PartialCommit(t *testing.T) {
 	// while user_version remained 7.
 	// Migrate(db) must succeed, skip duplicate column addition idempotently,
 	// and bring user_version to 8 with tables intact.
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
@@ -386,7 +388,7 @@ func TestMigrate_CrashAfterV8PartialCommit(t *testing.T) {
 
 func TestMigrate_CrashAfterV8SingleColumnCommit(t *testing.T) {
 	// Simulate crash when only the first column of v8 was committed
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
@@ -446,7 +448,7 @@ func TestMigrate_RollbackOnErrorPreservesUserVersion(t *testing.T) {
 	// must remain at the pre-migration value, not incremented.
 
 	t.Run("rollback preserves user_version at 0 on v1 failure", func(t *testing.T) {
-		db, err := sql.Open("sqlite3", ":memory:")
+		db, err := sql.Open("sqlite", ":memory:")
 		if err != nil {
 			t.Fatalf("sql.Open failed: %v", err)
 		}
@@ -472,7 +474,7 @@ func TestMigrate_RollbackOnErrorPreservesUserVersion(t *testing.T) {
 	})
 
 	t.Run("rollback preserves user_version at 6 on v7 failure", func(t *testing.T) {
-		db, err := sql.Open("sqlite3", ":memory:")
+		db, err := sql.Open("sqlite", ":memory:")
 		if err != nil {
 			t.Fatalf("sql.Open failed: %v", err)
 		}
@@ -498,7 +500,7 @@ func TestMigrate_RollbackOnErrorPreservesUserVersion(t *testing.T) {
 	})
 
 	t.Run("rollback preserves user_version at 7 on v8 failure", func(t *testing.T) {
-		db, err := sql.Open("sqlite3", ":memory:")
+		db, err := sql.Open("sqlite", ":memory:")
 		if err != nil {
 			t.Fatalf("sql.Open failed: %v", err)
 		}
@@ -525,7 +527,7 @@ func TestMigrate_RollbackOnErrorPreservesUserVersion(t *testing.T) {
 }
 
 func TestMigrate_UserVersionTransactionalRollback(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
@@ -549,5 +551,22 @@ func TestMigrate_UserVersionTransactionalRollback(t *testing.T) {
 	}
 	if version != 0 {
 		t.Errorf("expected user_version to remain 0 after rollback, got %d", version)
+	}
+}
+
+func TestMigrate_ReportsUnwritableNewDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "readonly.db")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+
+	err = Migrate(db)
+	if err == nil || !strings.Contains(err.Error(), "enabling incremental auto-vacuum") {
+		t.Fatalf("Migrate on a read-only new database = %v, want the auto-vacuum setup error", err)
 	}
 }

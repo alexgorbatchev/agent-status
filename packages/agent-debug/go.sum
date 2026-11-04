@@ -91,14 +91,8 @@ github.com/mattn/go-runewidth v0.0.30 h1:+KUuiDA4fF0R1p5FeueHefjDm+GIM+kWfFnDjyb
 github.com/mattn/go-runewidth v0.0.30/go.mod h1:3qAiGCV4Koz/yuveO58qUefmUTRm8r0IGEXZ9jeHp/8=
 github.com/mozilla-ai/any-llm-go v0.9.0 h1:+pRG33idm22qcDTyaE97IqX9EGpWocfOUT6QIocnWjI=
 github.com/mozilla-ai/any-llm-go v0.9.0/go.mod h1:L86RiIeF62s1SzHbMr+tKUj9lZ7AgOPJTxpjveCZMnM=
-github.com/ncruces/go-sqlite3 v0.35.5 h1:fEXwTNa2UpmvDeuvla9dmryx83ibw6BNqV1UQgpWFV0=
-github.com/ncruces/go-sqlite3 v0.35.5/go.mod h1:tTbtWBtzqI1Nq/70YGA+iAXbeX/AEj3cOyIJnmBkcrg=
-github.com/ncruces/go-sqlite3-wasm/v6 v6.2.35304 h1:jmYAkmKh9vFD5GeRURV5ujMs00jYV+Us35cG6mOcYx0=
-github.com/ncruces/go-sqlite3-wasm/v6 v6.2.35304/go.mod h1:7jR6s8eAQOlU/21q/qWR2tQSQpkjV2NO0KH9vlIejiE=
 github.com/ncruces/go-strftime v1.1.0 h1:vtPmPWMkb539RGV9WpWT9EwJGvrOCKvMNI4obWL47Hk=
 github.com/ncruces/go-strftime v1.1.0/go.mod h1:yVaq7iwCN09vHRrKBrrflXT0M9tTMG2KmZ9Fj7xeG/g=
-github.com/ncruces/julianday v1.0.0 h1:fH0OKwa7NWvniGQtxdJRxAgkBMolni2BjDHaWTxqt7M=
-github.com/ncruces/julianday v1.0.0/go.mod h1:Dusn2KvZrrovOMJuOt0TNXL6tB7U2E8kvza5fFc9G7g=
 github.com/olekukonko/cat v0.0.0-20250911104152-50322a0618f6 h1:zrbMGy9YXpIeTnGj4EljqMiZsIcE09mmF8XsD5AYOJc=
 github.com/olekukonko/cat v0.0.0-20250911104152-50322a0618f6/go.mod h1:rEKTHC9roVVicUIfZK7DYrdIoM0EOr8mK1Hj5s3JjH0=
 github.com/olekukonko/errors v1.2.0 h1:10Zcn4GeV59t/EGqJc8fUjtFT/FuUh5bTMzZ1XwmCRo=

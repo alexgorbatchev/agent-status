@@ -15,7 +15,7 @@ import (
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/testenv"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/db"
-	_ "github.com/ncruces/go-sqlite3/driver"
+	_ "modernc.org/sqlite"
 )
 
 // TestMain keeps every command test away from the developer's real state and
@@ -60,7 +60,7 @@ func createTestClaudeTranscript(t *testing.T, dir string) string {
 func createTestOpencodeDB(t *testing.T, dir string) string {
 	t.Helper()
 	p := filepath.Join(dir, "test-opencode.db")
-	db, err := sql.Open("sqlite3", "file:"+p)
+	db, err := sql.Open("sqlite", "file:"+p)
 	if err != nil {
 		t.Fatalf("opening sqlite: %v", err)
 	}
@@ -606,7 +606,7 @@ func TestCLI_ErrorPaths(t *testing.T) {
 		// 4. session replay with valid db but session missing
 		emptyDBDir := t.TempDir()
 		emptyDB := filepath.Join(emptyDBDir, "empty.db")
-		edb, err := sql.Open("sqlite3", "file:"+emptyDB)
+		edb, err := sql.Open("sqlite", "file:"+emptyDB)
 		if err == nil {
 			_, _ = edb.Exec(`CREATE TABLE agents (id TEXT, session_id TEXT); CREATE TABLE runs (id TEXT); CREATE TABLE telemetry_events (id INTEGER); CREATE TABLE environments (id TEXT);`)
 			_ = edb.Close()
@@ -642,7 +642,7 @@ func TestCLI_ErrorPaths(t *testing.T) {
 func createTestStatusDB(t *testing.T, dir string) string {
 	t.Helper()
 	p := filepath.Join(dir, "test-agent-status.db")
-	db, err := sql.Open("sqlite3", "file:"+p)
+	db, err := sql.Open("sqlite", "file:"+p)
 	if err != nil {
 		t.Fatalf("opening sqlite: %v", err)
 	}
@@ -740,7 +740,7 @@ func createTestStatusDB(t *testing.T, dir string) string {
 func createTestEventsDB(t *testing.T, dir string) string {
 	t.Helper()
 	p := filepath.Join(dir, "test-agent-status.db")
-	db, err := sql.Open("sqlite3", "file:"+p)
+	db, err := sql.Open("sqlite", "file:"+p)
 	if err != nil {
 		t.Fatalf("opening sqlite: %v", err)
 	}
@@ -1000,7 +1000,7 @@ func TestCLI_SessionFleet(t *testing.T) {
 	t.Run("json output on empty session list returns empty array", func(t *testing.T) {
 		emptyDBPath := filepath.Join(tmpDir, "empty-fleet.db")
 		createTestOpencodeDB(t, tmpDir)
-		db, err := sql.Open("sqlite3", emptyDBPath)
+		db, err := sql.Open("sqlite", emptyDBPath)
 		if err != nil {
 			t.Fatalf("opening sqlite: %v", err)
 		}
@@ -1059,7 +1059,7 @@ func TestCLI_SessionFleet(t *testing.T) {
 		dbPath := filepath.Join(tmpDir, "test-fleet.db")
 		createTestOpencodeDB(t, tmpDir) // ensures sqlite driver is initialized
 		// Initialize minimal sqlite table for agents
-		db, err := sql.Open("sqlite3", dbPath)
+		db, err := sql.Open("sqlite", dbPath)
 		if err != nil {
 			t.Fatalf("opening sqlite: %v", err)
 		}

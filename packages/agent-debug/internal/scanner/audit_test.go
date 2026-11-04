@@ -11,7 +11,7 @@ import (
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/scanner"
 	observerscanner "github.com/alexgorbatchev/agent-watcher/scanner"
-	_ "github.com/ncruces/go-sqlite3/driver"
+	_ "modernc.org/sqlite"
 )
 
 func TestScannerAudit_PiPairing(t *testing.T) {
@@ -340,7 +340,7 @@ func TestScannerAudit_LiveFindersWithTempDirs(t *testing.T) {
 
 	// 4. OpenCode real SQLite DB
 	dbPath := filepath.Join(tmpDir, "opencode.db")
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatalf("failed to create sqlite db: %v", err)
 	}

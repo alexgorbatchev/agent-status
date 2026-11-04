@@ -11,7 +11,7 @@ import (
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/output"
-	_ "github.com/ncruces/go-sqlite3/driver"
+	_ "modernc.org/sqlite"
 )
 
 func TestReplay_ClaudeCode(t *testing.T) {
@@ -346,7 +346,7 @@ func TestReplay_Opencode(t *testing.T) {
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "opencode.db")
 
-	db, err := sql.Open("sqlite3", "file:"+dbPath+"?_pragma=busy_timeout(5000)")
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?_pragma=busy_timeout(5000)")
 	if err != nil {
 		t.Fatalf("opening sqlite: %v", err)
 	}
@@ -456,7 +456,7 @@ func TestReplay_Opencode(t *testing.T) {
 
 	t.Run("single session auto-selection in opencode", func(t *testing.T) {
 		singleDB := filepath.Join(tmpDir, "single_auto.db")
-		sdb, err := sql.Open("sqlite3", "file:"+singleDB)
+		sdb, err := sql.Open("sqlite", "file:"+singleDB)
 		if err != nil {
 			t.Fatalf("opening sqlite: %v", err)
 		}

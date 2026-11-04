@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
-	_ "github.com/ncruces/go-sqlite3/driver"
+	_ "modernc.org/sqlite"
 )
 
 // EventRecord captures an ingested telemetry frame persisted in telemetry_events.
@@ -43,7 +43,7 @@ func GetTelemetryEvents(ctx context.Context, dbPath string, sessionID string, op
 	}
 
 	dsn := fmt.Sprintf("file:%s?mode=ro", dbPath)
-	db, err := sql.Open("sqlite3", dsn)
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("opening sqlite database %s: %w", dbPath, err)
 	}

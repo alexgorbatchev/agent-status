@@ -34,6 +34,77 @@ func TestOpen_Memory(t *testing.T) {
 	}
 }
 
+func TestOpen_MemoryStoresAreIndependent(t *testing.T) {
+	first, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = first.Close() }()
+	second, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = second.Close() }()
+
+	if _, err := first.DB().Exec("CREATE TABLE only_in_first (id INTEGER)"); err != nil {
+		t.Fatal(err)
+	}
+	var tables int
+	if err := second.DB().QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE name = 'only_in_first'").Scan(&tables); err != nil {
+		t.Fatal(err)
+	}
+	if tables != 0 {
+		t.Error("a table created in one in-memory store is visible in another")
+	}
+}
+
+func TestOpen_NewDatabaseUsesIncrementalAutoVacuum(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "agents.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	var mode int
+	if err := st.DB().QueryRow("PRAGMA auto_vacuum;").Scan(&mode); err != nil {
+		t.Fatal(err)
+	}
+	if mode != 2 {
+		t.Errorf("auto_vacuum = %d, want 2 (incremental)", mode)
+	}
+}
+
+func TestOpen_NewConnectionReadsDuringWriteTransaction(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "agents.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	tx, err := st.DB().Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec("UPDATE observer_cursors SET last_seq = last_seq"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The open transaction holds the only idle connection, so this read opens
+	// a new one. WAL lets it read without waiting for the writer.
+	done := make(chan error, 1)
+	go func() {
+		var version int
+		done <- st.DB().QueryRow("PRAGMA user_version;").Scan(&version)
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("read during write transaction: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("a new connection waited for the open write transaction")
+	}
+}
+
 func TestOpen_DiskPath(t *testing.T) {
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "sub", "test.db")
@@ -75,7 +146,7 @@ func TestOpen_InvalidPath(t *testing.T) {
 func TestOpen_MigrationFailure(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "conflict.db")
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
@@ -91,7 +162,7 @@ func TestOpen_MigrationFailure(t *testing.T) {
 }
 
 func TestMigrate_ErrorCases(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
@@ -109,7 +180,7 @@ func TestMigrate_ErrorCases(t *testing.T) {
 	}
 
 	// Test v2 failure when agents table does not exist
-	db2, err := sql.Open("sqlite3", ":memory:")
+	db2, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
@@ -124,7 +195,7 @@ func TestMigrate_ErrorCases(t *testing.T) {
 	}
 
 	// Test v3 failure when agents table does not exist
-	db3, err := sql.Open("sqlite3", ":memory:")
+	db3, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
@@ -139,7 +210,7 @@ func TestMigrate_ErrorCases(t *testing.T) {
 	}
 
 	// Test v4 failure when agents table does not exist
-	db4, err := sql.Open("sqlite3", ":memory:")
+	db4, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
@@ -154,7 +225,7 @@ func TestMigrate_ErrorCases(t *testing.T) {
 	}
 
 	// Test v5 failure when agents table does not exist
-	db5, err := sql.Open("sqlite3", ":memory:")
+	db5, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
@@ -169,7 +240,7 @@ func TestMigrate_ErrorCases(t *testing.T) {
 	}
 
 	// Test v6 failure when agents table does not exist
-	db6, err := sql.Open("sqlite3", ":memory:")
+	db6, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
@@ -184,7 +255,7 @@ func TestMigrate_ErrorCases(t *testing.T) {
 	}
 
 	// Test v7 failure when agents table does not exist
-	db7, err := sql.Open("sqlite3", ":memory:")
+	db7, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
@@ -199,7 +270,7 @@ func TestMigrate_ErrorCases(t *testing.T) {
 	}
 
 	// Test v8 failure when agents table does not exist
-	db8, err := sql.Open("sqlite3", ":memory:")
+	db8, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
@@ -215,7 +286,7 @@ func TestMigrate_ErrorCases(t *testing.T) {
 }
 
 func TestMigrate_V2ToV4(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
@@ -251,7 +322,7 @@ func TestMigrate_V2ToV4(t *testing.T) {
 }
 
 func TestMigrate_V4ToV5(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
@@ -304,7 +375,7 @@ func TestMigrate_V4ToV5(t *testing.T) {
 func TestMigrate_V5ToV6(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "v5tov6.db")
 	dsn := "file:" + dbPath + "?_pragma=foreign_keys(on)&_pragma=busy_timeout(5000)"
-	db, err := sql.Open("sqlite3", dsn)
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
@@ -509,7 +580,7 @@ CREATE INDEX IF NOT EXISTS idx_events_ts       ON telemetry_events(timestamp);
 
 func TestMigrate_V6_ForeignKeyCheckFailure(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "fk_fail.db")
-	db, err := sql.Open("sqlite3", "file:"+dbPath)
+	db, err := sql.Open("sqlite", "file:"+dbPath)
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
@@ -555,7 +626,7 @@ func TestMigrate_V6_ForeignKeyCheckFailure(t *testing.T) {
 func TestMigrate_V5ToV6_PreservesTelemetryEventsWithForeignKeys(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	dsn := "file:" + dbPath + "?_pragma=foreign_keys(on)&_pragma=busy_timeout(5000)"
-	db, err := sql.Open("sqlite3", dsn)
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
@@ -669,7 +740,7 @@ func TestMigrate_V5ToV6_PreservesTelemetryEventsWithForeignKeys(t *testing.T) {
 }
 
 func TestMigrate_V6ToV7(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
@@ -696,7 +767,7 @@ func TestMigrate_V6ToV7(t *testing.T) {
 }
 
 func TestMigrate_V7ToV8(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
@@ -780,7 +851,7 @@ func TestStore_Open_Errors(t *testing.T) {
 
 	// 2. Error during Migrate in Open
 	dbPath := filepath.Join(t.TempDir(), "conflict.db")
-	rawDB, err := sql.Open("sqlite3", dbPath)
+	rawDB, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatalf("opening raw db failed: %v", err)
 	}
@@ -948,7 +1019,7 @@ func TestSaveAndGetAgent_RateLimitMetadata(t *testing.T) {
 }
 
 func TestMigrate_V3ToV4(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
@@ -984,7 +1055,7 @@ func TestMigrate_V3ToV4(t *testing.T) {
 }
 
 func TestMigrate_V1ToV2(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
@@ -2821,7 +2892,7 @@ func TestStore_EndCurrentRun_WithRun(t *testing.T) {
 }
 
 func TestMigrate_ClosedDB(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
@@ -2834,7 +2905,7 @@ func TestMigrate_ClosedDB(t *testing.T) {
 func TestStore_Migrate_ErrorPaths(t *testing.T) {
 	// 0. Error in v1 migration (e.g. conflicting table schema)
 	t.Run("v1 error on invalid schema", func(t *testing.T) {
-		db, err := sql.Open("sqlite3", ":memory:")
+		db, err := sql.Open("sqlite", ":memory:")
 		if err != nil {
 			t.Fatalf("sql.Open failed: %v", err)
 		}
@@ -2851,7 +2922,7 @@ func TestStore_Migrate_ErrorPaths(t *testing.T) {
 
 	// 1. Error in v2 migration (e.g. duplicate is_hidden column)
 	t.Run("v2 error on duplicate column", func(t *testing.T) {
-		db, err := sql.Open("sqlite3", ":memory:")
+		db, err := sql.Open("sqlite", ":memory:")
 		if err != nil {
 			t.Fatalf("sql.Open failed: %v", err)
 		}
@@ -2873,7 +2944,7 @@ func TestStore_Migrate_ErrorPaths(t *testing.T) {
 
 	// Error on v2 duplicate hidden_at
 	t.Run("v2 error on duplicate hidden_at", func(t *testing.T) {
-		db, err := sql.Open("sqlite3", ":memory:")
+		db, err := sql.Open("sqlite", ":memory:")
 		if err != nil {
 			t.Fatalf("sql.Open failed: %v", err)
 		}
@@ -2892,7 +2963,7 @@ func TestStore_Migrate_ErrorPaths(t *testing.T) {
 
 	// Error on v2 conflicting index name
 	t.Run("v2 error on conflicting index", func(t *testing.T) {
-		db, err := sql.Open("sqlite3", ":memory:")
+		db, err := sql.Open("sqlite", ":memory:")
 		if err != nil {
 			t.Fatalf("sql.Open failed: %v", err)
 		}
@@ -2914,7 +2985,7 @@ func TestStore_Migrate_ErrorPaths(t *testing.T) {
 
 	// 2. Error in v3 migration (e.g. duplicate active_tool_started_at column)
 	t.Run("v3 error on duplicate column", func(t *testing.T) {
-		db, err := sql.Open("sqlite3", ":memory:")
+		db, err := sql.Open("sqlite", ":memory:")
 		if err != nil {
 			t.Fatalf("sql.Open failed: %v", err)
 		}
@@ -2942,7 +3013,7 @@ func TestStore_Migrate_ErrorPaths(t *testing.T) {
 
 	// 3. Error in v4 migration (e.g. duplicate active_subagents column)
 	t.Run("v4 error on duplicate column", func(t *testing.T) {
-		db, err := sql.Open("sqlite3", ":memory:")
+		db, err := sql.Open("sqlite", ":memory:")
 		if err != nil {
 			t.Fatalf("sql.Open failed: %v", err)
 		}
@@ -2973,7 +3044,7 @@ func TestStore_Migrate_ErrorPaths(t *testing.T) {
 
 	// 4. Error in v5 migration (e.g. duplicate model column)
 	t.Run("v5 error on duplicate column", func(t *testing.T) {
-		db, err := sql.Open("sqlite3", ":memory:")
+		db, err := sql.Open("sqlite", ":memory:")
 		if err != nil {
 			t.Fatalf("sql.Open failed: %v", err)
 		}
@@ -3007,7 +3078,7 @@ func TestStore_Migrate_ErrorPaths(t *testing.T) {
 
 	// 5. Error in v5 migration on duplicate context_window
 	t.Run("v5 error on duplicate context_window", func(t *testing.T) {
-		db, err := sql.Open("sqlite3", ":memory:")
+		db, err := sql.Open("sqlite", ":memory:")
 		if err != nil {
 			t.Fatalf("sql.Open failed: %v", err)
 		}
@@ -3041,7 +3112,7 @@ func TestStore_Migrate_ErrorPaths(t *testing.T) {
 
 	// 6. Error in v5 migration on duplicate context_fullness
 	t.Run("v5 error on duplicate context_fullness", func(t *testing.T) {
-		db, err := sql.Open("sqlite3", ":memory:")
+		db, err := sql.Open("sqlite", ":memory:")
 		if err != nil {
 			t.Fatalf("sql.Open failed: %v", err)
 		}
@@ -3075,7 +3146,7 @@ func TestStore_Migrate_ErrorPaths(t *testing.T) {
 
 	// 7. Error in v6 migration on conflicting agents_new
 	t.Run("v6 error on conflicting agents_new", func(t *testing.T) {
-		db, err := sql.Open("sqlite3", ":memory:")
+		db, err := sql.Open("sqlite", ":memory:")
 		if err != nil {
 			t.Fatalf("sql.Open failed: %v", err)
 		}
@@ -3094,7 +3165,7 @@ func TestStore_Migrate_ErrorPaths(t *testing.T) {
 
 	// 8. Error in v6 migration on copy data failure
 	t.Run("v6 error on copy data failure", func(t *testing.T) {
-		db, err := sql.Open("sqlite3", ":memory:")
+		db, err := sql.Open("sqlite", ":memory:")
 		if err != nil {
 			t.Fatalf("sql.Open failed: %v", err)
 		}
@@ -3113,7 +3184,7 @@ func TestStore_Migrate_ErrorPaths(t *testing.T) {
 
 	// 9. Error in v6 migration on index conflict
 	t.Run("v6 error on index conflict", func(t *testing.T) {
-		db, err := sql.Open("sqlite3", ":memory:")
+		db, err := sql.Open("sqlite", ":memory:")
 		if err != nil {
 			t.Fatalf("sql.Open failed: %v", err)
 		}
@@ -3148,7 +3219,7 @@ func TestStore_Migrate_ErrorPaths(t *testing.T) {
 
 	// 10. Error in v7 migration on conflicting agents view (first column rate_limit_reset_at)
 	t.Run("v7 error on conflicting view", func(t *testing.T) {
-		db, err := sql.Open("sqlite3", ":memory:")
+		db, err := sql.Open("sqlite", ":memory:")
 		if err != nil {
 			t.Fatalf("sql.Open failed: %v", err)
 		}
@@ -3164,7 +3235,7 @@ func TestStore_Migrate_ErrorPaths(t *testing.T) {
 
 	// 11. Error in v7 migration on conflicting agents view (second column retry_after_seconds)
 	t.Run("v7 error on second column retry_after_seconds", func(t *testing.T) {
-		db, err := sql.Open("sqlite3", ":memory:")
+		db, err := sql.Open("sqlite", ":memory:")
 		if err != nil {
 			t.Fatalf("sql.Open failed: %v", err)
 		}
@@ -3180,7 +3251,7 @@ func TestStore_Migrate_ErrorPaths(t *testing.T) {
 
 	// 12. Error in v8 migration on conflicting agents view (first column has_unseen_completion)
 	t.Run("v8 error on conflicting view", func(t *testing.T) {
-		db, err := sql.Open("sqlite3", ":memory:")
+		db, err := sql.Open("sqlite", ":memory:")
 		if err != nil {
 			t.Fatalf("sql.Open failed: %v", err)
 		}
@@ -3196,7 +3267,7 @@ func TestStore_Migrate_ErrorPaths(t *testing.T) {
 
 	// 13. Error in v8 migration on conflicting agents view (second column completed_at)
 	t.Run("v8 error on second column completed_at", func(t *testing.T) {
-		db, err := sql.Open("sqlite3", ":memory:")
+		db, err := sql.Open("sqlite", ":memory:")
 		if err != nil {
 			t.Fatalf("sql.Open failed: %v", err)
 		}

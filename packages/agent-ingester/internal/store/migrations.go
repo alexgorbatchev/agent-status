@@ -97,6 +97,14 @@ func Migrate(db *sql.DB) error {
 	}
 
 	if version < 1 {
+		// auto_vacuum is stored in the database file. Setting it needs a write
+		// lock, so it is set once here rather than on every new connection,
+		// where it would block readers behind any open write transaction.
+		// Opening in WAL mode has already written page 1, so the setting only
+		// takes effect after VACUUM, which is instant on an empty database.
+		if _, err := db.Exec("PRAGMA auto_vacuum = INCREMENTAL; VACUUM;"); err != nil {
+			return fmt.Errorf("enabling incremental auto-vacuum: %w", err)
+		}
 		tx, err := db.Begin()
 		if err != nil {
 			return fmt.Errorf("beginning migration transaction: %w", err)

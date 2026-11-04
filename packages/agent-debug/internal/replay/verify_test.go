@@ -8,7 +8,7 @@ import (
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-ingester/store"
-	_ "github.com/ncruces/go-sqlite3/driver"
+	_ "modernc.org/sqlite"
 )
 
 func TestVerifyAgentState_DirectChecks(t *testing.T) {
@@ -169,7 +169,7 @@ func TestVerifyAgentState_DirectChecks(t *testing.T) {
 	})
 
 	t.Run("query failure on closed database", func(t *testing.T) {
-		db, _ := sql.Open("sqlite3", ":memory:")
+		db, _ := sql.Open("sqlite", ":memory:")
 		_ = db.Close()
 
 		report, err := VerifyAgentState(ctx, db, "any-agent")

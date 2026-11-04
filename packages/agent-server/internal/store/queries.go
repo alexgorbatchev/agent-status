@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/ncruces/go-sqlite3/driver"
+	_ "modernc.org/sqlite"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 )
@@ -32,7 +32,7 @@ func New(db *sql.DB) *Store {
 
 func OpenReadOnly(dbPath string) (*Store, error) {
 	dsn := "file:" + dbPath + "?mode=ro&_pragma=busy_timeout(5000)&_pragma=foreign_keys(on)"
-	db, err := sql.Open("sqlite3", dsn)
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("opening read-only sqlite db %q: %w", dbPath, err)
 	}

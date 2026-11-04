@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
-	_ "github.com/ncruces/go-sqlite3/driver"
+	_ "modernc.org/sqlite"
 )
 
 func strPtr(s string) *string {
@@ -18,7 +18,7 @@ func strPtr(s string) *string {
 func createTestAgentStatusDB(t *testing.T, dir string) string {
 	t.Helper()
 	p := filepath.Join(dir, "agent-status.db")
-	db, err := sql.Open("sqlite3", "file:"+p)
+	db, err := sql.Open("sqlite", "file:"+p)
 	if err != nil {
 		t.Fatalf("opening sqlite: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestGetTelemetryEvents(t *testing.T) {
 	})
 
 	t.Run("query orphaned event without agent row", func(t *testing.T) {
-		db, err := sql.Open("sqlite3", "file:"+dbPath)
+		db, err := sql.Open("sqlite", "file:"+dbPath)
 		if err != nil {
 			t.Fatalf("opening sqlite: %v", err)
 		}

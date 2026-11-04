@@ -36,6 +36,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - Dev stack ports -> devhost allocates loopback ports automatically and routes UI and `/api/*` through the same HTTPS hostname.
 - Dev stack execution -> `just run` starts the shared devhost proxy and runs devhost in the foreground; use background process management in tools.
 - SQLite database concurrency -> `agent-server` opens SQLite strictly in read-only mode (`?mode=ro`); all mutations occur through `agent-ingester`.
+- SQLite driver -> every module uses `modernc.org/sqlite` (driver name `sqlite`), the same pure-Go engine agent-parser and agent-watcher use. Do not add another SQLite driver.
 - Unix domain socket binding -> `agent-ingester` creates `$XDG_RUNTIME_DIR/agent-status/notify.sock`; `agent-server` reconnects automatically when the socket becomes available.
 - Daemon disk logs -> Installed daemons write `~/.local/state/agent-status/logs/{observer,ingester,server}.log` (or `$AGENT_STATUS_LOG_DIR`); the dev stack writes `.tmp/dev-stack/logs/`. Active logs rotate at 10 MB with 5 backups, 14-day retention, and gzip compression. Tail dev stack logs with `just logs`.
 - Dev stack file layout -> package `dev` recipes keep daemon data, cache, logs, and the notify socket under `.tmp/dev-stack/`. Daemons run from the repository root with relative socket `.tmp/dev-stack/run/notify.sock`, avoiding Unix socket address limits in deep checkouts. Devhost owns supervisor and shared Caddy state in its standard locations.

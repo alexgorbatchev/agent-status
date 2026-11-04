@@ -10,7 +10,7 @@ import (
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/testenv"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
-	_ "github.com/ncruces/go-sqlite3/driver"
+	_ "modernc.org/sqlite"
 )
 
 func TestResolveSessionTarget(t *testing.T) {
@@ -222,7 +222,7 @@ func TestResolveSessionTarget(t *testing.T) {
 // createOpencodeSessionDB writes a minimal OpenCode database containing one session.
 func createOpencodeSessionDB(t *testing.T, dbPath, sessionID string) {
 	t.Helper()
-	db, err := sql.Open("sqlite3", "file:"+dbPath)
+	db, err := sql.Open("sqlite", "file:"+dbPath)
 	if err != nil {
 		t.Fatalf("opening sqlite: %v", err)
 	}
