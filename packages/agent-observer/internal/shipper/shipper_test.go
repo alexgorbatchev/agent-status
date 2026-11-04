@@ -757,8 +757,24 @@ func TestShipperLoggingOnDisconnect(t *testing.T) {
 // reconnects, which scheduler load stretches.
 type recordingBackOff struct {
 	backoff.BackOff
-	mu     sync.Mutex
-	delays []time.Duration
+	mu       sync.Mutex
+	delays   []time.Duration
+	connects []time.Time
+	resets   int
+}
+
+func (r *recordingBackOff) Reset() {
+	r.BackOff.Reset()
+	r.mu.Lock()
+	r.resets++
+	r.mu.Unlock()
+}
+
+// resetCount reports how many times the shipper reset the backoff while running.
+func (r *recordingBackOff) resetCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.resets
 }
 
 func (r *recordingBackOff) NextBackOff() time.Duration {
@@ -787,11 +803,43 @@ func (r *recordingBackOff) waitForDelays(t *testing.T, n int) []time.Duration {
 	}
 }
 
-// startRecordingShipper starts a shipper against handler with a 30ms initial
-// backoff and no jitter, recording the reconnect delays it chooses.
-func startRecordingShipper(t *testing.T, handler http.HandlerFunc) *recordingBackOff {
+// requireWaited fails unless each of the first len(delays) reconnects came at
+// least the chosen delay after the previous connection attempt. A lower bound
+// holds under any scheduler load.
+func (r *recordingBackOff) requireWaited(t *testing.T, delays []time.Duration) {
 	t.Helper()
-	server := httptest.NewServer(handler)
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		r.mu.Lock()
+		connects := append([]time.Time(nil), r.connects...)
+		r.mu.Unlock()
+		if len(connects) > len(delays) {
+			for i, delay := range delays {
+				if gap := connects[i+1].Sub(connects[i]); gap < delay {
+					t.Errorf("reconnect %d came %v after the previous attempt, before its %v backoff", i+1, gap, delay)
+				}
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected %d connection attempts, got %d", len(delays)+1, len(connects))
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// startRecordingShipper starts a shipper against handler with a 30ms initial
+// backoff and no jitter, recording the reconnect delays it chooses and when
+// each connection attempt reaches the server.
+func startRecordingShipper(t *testing.T, handler func(*recordingBackOff) http.HandlerFunc, sustainedHealth time.Duration) *recordingBackOff {
+	t.Helper()
+	var recorder *recordingBackOff
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recorder.mu.Lock()
+		recorder.connects = append(recorder.connects, time.Now())
+		recorder.mu.Unlock()
+		handler(recorder)(w, r)
+	}))
 	t.Cleanup(server.Close)
 
 	s := NewShipper(Config{
@@ -800,8 +848,8 @@ func startRecordingShipper(t *testing.T, handler http.HandlerFunc) *recordingBac
 	})
 	s.initialBackoff = 30 * time.Millisecond
 	s.backoffRandomization = 0
-	s.sustainedHealthDuration = 10 * time.Second
-	recorder := &recordingBackOff{BackOff: s.exponentialBackOff()}
+	s.sustainedHealthDuration = sustainedHealth
+	recorder = &recordingBackOff{BackOff: s.exponentialBackOff()}
 	s.newBackOff = func() backoff.BackOff { return recorder }
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -814,52 +862,57 @@ func startRecordingShipper(t *testing.T, handler http.HandlerFunc) *recordingBac
 }
 
 func TestShipperBackoffSuccessivelyIncreasesOnImmediateDisconnect(t *testing.T) {
-	recorder := startRecordingShipper(t, func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, nil)
-		if err != nil {
-			return
+	recorder := startRecordingShipper(t, func(*recordingBackOff) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			conn, err := websocket.Accept(w, r, nil)
+			if err != nil {
+				return
+			}
+			// Read the hello frame, then fail the stream at once: a successful
+			// handshake alone must not count as a healthy connection.
+			if _, _, err := conn.Read(r.Context()); err != nil {
+				_ = conn.Close(websocket.StatusInternalError, "read error")
+				return
+			}
+			_ = conn.Close(websocket.StatusInternalError, "immediate streaming failure")
 		}
-		// Read the hello frame, then fail the stream at once: a successful
-		// handshake alone must not count as a healthy connection.
-		if _, _, err := conn.Read(r.Context()); err != nil {
-			_ = conn.Close(websocket.StatusInternalError, "read error")
-			return
-		}
-		_ = conn.Close(websocket.StatusInternalError, "immediate streaming failure")
-	})
+	}, 10*time.Second)
 
 	got := recorder.waitForDelays(t, 3)
 	want := []time.Duration{30 * time.Millisecond, 60 * time.Millisecond, 120 * time.Millisecond}
 	if !slices.Equal(got, want) {
 		t.Errorf("reconnect delays = %v, want %v", got, want)
 	}
+	recorder.requireWaited(t, got)
 }
 
 func TestShipperBackoffResetsOnAck(t *testing.T) {
 	var mu sync.Mutex
 	attempt := 0
-	recorder := startRecordingShipper(t, func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, nil)
-		if err != nil {
-			return
-		}
-		if _, _, err := conn.Read(r.Context()); err != nil {
-			_ = conn.Close(websocket.StatusInternalError, "read error")
-			return
-		}
-		mu.Lock()
-		attempt++
-		currentAttempt := attempt
-		mu.Unlock()
+	recorder := startRecordingShipper(t, func(*recordingBackOff) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			conn, err := websocket.Accept(w, r, nil)
+			if err != nil {
+				return
+			}
+			if _, _, err := conn.Read(r.Context()); err != nil {
+				_ = conn.Close(websocket.StatusInternalError, "read error")
+				return
+			}
+			mu.Lock()
+			attempt++
+			currentAttempt := attempt
+			mu.Unlock()
 
-		if currentAttempt == 2 {
-			// The second connection is acknowledged before it fails, which
-			// proves it healthy and resets the backoff.
-			ackBytes, _ := json.Marshal(types.IIngesterMessage{Type: "ack", UpTo: 1})
-			_ = conn.Write(r.Context(), websocket.MessageText, ackBytes)
+			if currentAttempt == 2 {
+				// The second connection is acknowledged before it fails, which
+				// proves it healthy and resets the backoff.
+				ackBytes, _ := json.Marshal(types.IIngesterMessage{Type: "ack", UpTo: 1})
+				_ = conn.Write(r.Context(), websocket.MessageText, ackBytes)
+			}
+			_ = conn.Close(websocket.StatusInternalError, "closing connection")
 		}
-		_ = conn.Close(websocket.StatusInternalError, "closing connection")
-	})
+	}, 10*time.Second)
 
 	got := recorder.waitForDelays(t, 3)
 	// Without the reset the delays would be 30ms, 60ms, 120ms.
@@ -867,87 +920,47 @@ func TestShipperBackoffResetsOnAck(t *testing.T) {
 	if !slices.Equal(got, want) {
 		t.Errorf("reconnect delays = %v, want %v", got, want)
 	}
+	recorder.requireWaited(t, got)
 }
 
 func TestShipperBackoffResetsOnSustainedHealth(t *testing.T) {
 	var mu sync.Mutex
-	var connectTimes []time.Time
 	attempt := 0
+	recorder := startRecordingShipper(t, func(recorder *recordingBackOff) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			conn, err := websocket.Accept(w, r, nil)
+			if err != nil {
+				return
+			}
+			if _, _, err := conn.Read(r.Context()); err != nil {
+				_ = conn.Close(websocket.StatusInternalError, "read error")
+				return
+			}
+			mu.Lock()
+			attempt++
+			currentAttempt := attempt
+			mu.Unlock()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, nil)
-		if err != nil {
-			return
+			if currentAttempt == 3 {
+				// Stay connected until the shipper counts the connection as
+				// healthy, which resets the backoff, then fail it.
+				deadline := time.Now().Add(3 * time.Second)
+				for recorder.resetCount() == 0 && time.Now().Before(deadline) {
+					time.Sleep(5 * time.Millisecond)
+				}
+			}
+			_ = conn.Close(websocket.StatusInternalError, "closing connection")
 		}
-		_, _, err = conn.Read(r.Context())
-		if err != nil {
-			_ = conn.Close(websocket.StatusInternalError, "read error")
-			return
-		}
+	}, 40*time.Millisecond)
 
-		mu.Lock()
-		attempt++
-		currentAttempt := attempt
-		connectTimes = append(connectTimes, time.Now())
-		mu.Unlock()
-
-		if currentAttempt == 1 {
-			// Hold connection open past sustainedHealthDuration (40ms)
-			time.Sleep(70 * time.Millisecond)
-		}
-
-		_ = conn.Close(websocket.StatusInternalError, "closing connection")
-	}))
-	defer server.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	cfg := Config{
-		IngesterURL: wsURL,
-		Environment: types.IEnvironmentInfo{ID: "env-sustained-reset", Label: "sustained-reset"},
+	got := recorder.waitForDelays(t, 3)
+	// Two failures back off to 60ms; the healthy third connection resets the
+	// next delay to 30ms instead of 120ms.
+	want := []time.Duration{30 * time.Millisecond, 60 * time.Millisecond, 30 * time.Millisecond}
+	if !slices.Equal(got, want) {
+		t.Errorf("reconnect delays = %v, want %v", got, want)
 	}
-
-	s := NewShipper(cfg)
-	s.initialBackoff = 30 * time.Millisecond
-	s.backoffRandomization = 0
-	s.sustainedHealthDuration = 40 * time.Millisecond
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	if err := s.Start(ctx); err != nil {
-		t.Fatalf("s.Start error: %v", err)
-	}
-	defer s.Stop()
-
-	deadline := time.Now().Add(3 * time.Second)
-	for time.Now().Before(deadline) {
-		mu.Lock()
-		count := len(connectTimes)
-		mu.Unlock()
-		if count >= 2 {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	mu.Lock()
-	times := make([]time.Time, len(connectTimes))
-	copy(times, connectTimes)
-	mu.Unlock()
-
-	if len(times) < 2 {
-		t.Fatalf("expected at least 2 connection attempts, got %d", len(times))
-	}
-
-	// Connection 1 held for 70ms, sustainedHealthDuration fired at 40ms and reset backoff.
-	// Connection 2 should occur ~30ms after connection 1 closes (total ~100ms after connect 1).
-	totalElapsed := times[1].Sub(times[0])
-	t.Logf("total elapsed from connect 1 to connect 2: %v", totalElapsed)
-
-	// Since connection was held 70ms, interval between disconnect and reconnect should be ~30ms.
-	disconnectInterval := totalElapsed - 70*time.Millisecond
-	if disconnectInterval > 55*time.Millisecond {
-		t.Errorf("expected disconnect interval to reset to initialBackoff (~30ms), got %v", disconnectInterval)
-	}
+	recorder.requireWaited(t, got)
 }
 
 func TestShipperOnConnectedInvokedOncePerConnection(t *testing.T) {
