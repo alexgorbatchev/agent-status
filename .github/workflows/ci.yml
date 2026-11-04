@@ -95,3 +95,13 @@ jobs:
 
       - name: End-to-end tests
         run: just ui test-e2e
+
+      - name: Upload E2E diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-diagnostics
+          path: |
+            .tmp/e2e-logs/
+            packages/ui-web/test-results/
+          if-no-files-found: ignore
