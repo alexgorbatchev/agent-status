@@ -10,7 +10,7 @@ import (
 )
 
 func TestIsolateStateDirsKeepsLogsOutOfHome(t *testing.T) {
-	for _, name := range []string{"AIR_LOG_DIR", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"} {
+	for _, name := range []string{"AGENT_STATUS_LOG_DIR", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"} {
 		t.Setenv(name, os.Getenv(name)) // restored after the test
 	}
 	dir, cleanup, err := IsolateStateDirs("testenv")
@@ -22,10 +22,10 @@ func TestIsolateStateDirsKeepsLogsOutOfHome(t *testing.T) {
 	if got := logging.DefaultLogDir(); got != dir {
 		t.Errorf("DefaultLogDir = %q, want the isolated directory %q", got, dir)
 	}
-	// A test that clears AIR_LOG_DIR still resolves logs inside the isolated directory.
-	t.Setenv("AIR_LOG_DIR", "")
+	// A test that clears AGENT_STATUS_LOG_DIR still resolves logs inside the isolated directory.
+	t.Setenv("AGENT_STATUS_LOG_DIR", "")
 	if got := logging.DefaultLogDir(); !strings.HasPrefix(got, dir+string(filepath.Separator)) {
-		t.Errorf("DefaultLogDir without AIR_LOG_DIR = %q, want it under %q", got, dir)
+		t.Errorf("DefaultLogDir without AGENT_STATUS_LOG_DIR = %q, want it under %q", got, dir)
 	}
 
 	cleanup()
@@ -67,7 +67,7 @@ func (f *fatalRecorder) Helper()                           {}
 func (f *fatalRecorder) Fatalf(format string, args ...any) { f.failed = true }
 
 func TestRequireIsolated(t *testing.T) {
-	for _, name := range []string{"AIR_LOG_DIR", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"} {
+	for _, name := range []string{"AGENT_STATUS_LOG_DIR", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME"} {
 		t.Setenv(name, os.Getenv(name))
 	}
 	origDir := isolatedDir

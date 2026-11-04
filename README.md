@@ -18,10 +18,10 @@ A centralized monitoring dashboard and telemetry aggregation pipeline for AI cod
 
 # How it Really Works
 
-- `air-observer` uses the standalone [`agent-watcher`](https://github.com/alexgorbatchev/agent-watcher) library to discover sessions, follow JSONL transcripts, and poll OpenCode's read-only SQLite database. It formats events and ships them over a bounded WebSocket queue, advancing transcript offsets only after ingester acknowledgements. Cursors live at `$XDG_CACHE_HOME/agent-status/observer-cursors.json` (or `~/.cache/agent-status/observer-cursors.json`); OpenCode event checkpoints live beside them with the `.opencode` suffix. Checkpoints flush periodically and on shutdown.
-- `air-ingester` receives WebSocket connections at `:4501/ws/ingest` with a 64 MiB read limit, computes token costs using a static model price registry, derives concise action descriptions via asynchronous per-agent queues and specialized prompt templates with Jaccard deduplication, and writes structured records into `$XDG_DATA_HOME/agent-status/agent-status.db` using WAL mode.
-- `air-server` opens the SQLite database strictly in read-only mode, listens for change signals on `$XDG_RUNTIME_DIR/agent-status/notify.sock`, and fans out events to browser clients over Server-Sent Events (`/api/v1/events`) at `:4502`.
-- `air-debug` replays and validates agent session transcripts across Claude Code, Pi, OpenAI Codex, and OpenCode through the ingestion and query pipeline offline, running in-process against an ephemeral in-memory SQLite database without modifying active daemon logs or databases.
+- `agent-observer` uses the standalone [`agent-watcher`](https://github.com/alexgorbatchev/agent-watcher) library to discover sessions, follow JSONL transcripts, and poll OpenCode's read-only SQLite database. It formats events and ships them over a bounded WebSocket queue, advancing transcript offsets only after ingester acknowledgements. Cursors live at `$XDG_CACHE_HOME/agent-status/observer-cursors.json` (or `~/.cache/agent-status/observer-cursors.json`); OpenCode event checkpoints live beside them with the `.opencode` suffix. Checkpoints flush periodically and on shutdown.
+- `agent-ingester` receives WebSocket connections at `:4501/ws/ingest` with a 64 MiB read limit, computes token costs using a static model price registry, derives concise action descriptions via asynchronous per-agent queues and specialized prompt templates with Jaccard deduplication, and writes structured records into `$XDG_DATA_HOME/agent-status/agent-status.db` using WAL mode.
+- `agent-server` opens the SQLite database strictly in read-only mode, listens for change signals on `$XDG_RUNTIME_DIR/agent-status/notify.sock`, and fans out events to browser clients over Server-Sent Events (`/api/v1/events`) at `:4502`.
+- `agent-debug` replays and validates agent session transcripts across Claude Code, Pi, OpenAI Codex, and OpenCode through the ingestion and query pipeline offline, running in-process against an ephemeral in-memory SQLite database without modifying active daemon logs or databases.
 - `ui-web` serves a React 19 dashboard on port `3000`, grouping agents by upstream git project repository and observing environment rather than machine-local folder paths, reconnecting to the SSE stream using exponential backoff with jitter to prevent reconnect storms.
 - Inactive agents and old event streams are automatically pruned every hour from SQLite according to a 48-hour event and 30-day exited session retention policy.
 - Running with `AGENT=1` enables token-conservative, agent-facing CLI output across dev stack orchestration.
@@ -29,7 +29,7 @@ A centralized monitoring dashboard and telemetry aggregation pipeline for AI cod
 # Prerequisites
 
 - [Bun](https://bun.sh) (v1.2+) - Required for running the web server and bundling frontend assets.
-- [Go](https://go.dev) (v1.24+) - Required for compiling `air-observer`, `air-ingester`, and `air-server` daemons.
+- [Go](https://go.dev) (v1.24+) - Required for compiling `agent-observer`, `agent-ingester`, and `agent-server` daemons.
 - [Just](https://github.com/casey/just) - Command runner used for build, test, and lifecycle recipes.
 - [devhost](https://github.com/alexgorbatchev/devhost) - Native service supervision and shared HTTPS proxy; complete its Caddy download and certificate trust setup first.
 - [direnv](https://direnv.net) - Loads the hostname suffix from `.envrc` and optional ignored `.envrc.local`.
@@ -53,13 +53,13 @@ curl -sSL https://github.com/alexgorbatchev/agent-status/releases/latest/downloa
 
 Devhost allocates loopback ports and starts services in dependency order. UI and `/api/*` share the HTTPS hostname. Application state stays under `.tmp/dev-stack/`: `data/` (SQLite), `cache/` (observer checkpoints), `logs/`, and `run/` (notify socket). Devhost stores its own supervisor and shared proxy state in its standard locations.
 
-Use `AIR_NO_SUMMARIZE=1 just run` to disable external summarization calls. Arguments to `just run` are passed to `devhost start`, for example `just run api` starts the API and its ingester dependency. The old stack script and its flags are retired.
+Use `AGENT_STATUS_NO_SUMMARIZE=1 just run` to disable external summarization calls. Arguments to `just run` are passed to `devhost start`, for example `just run api` starts the API and its ingester dependency. The old stack script and its flags are retired.
 
 Replay sessions offline with `just debug session-replay-pi <session-id>` or `just debug run session replay <path-to-transcript.jsonl>`.
 
 # Options & Flags
 
-### `air-observer`
+### `agent-observer`
 
 | Flag                                 | Short  | Default                                    | Description                                          |
 | :----------------------------------- | :----- | :----------------------------------------- | :--------------------------------------------------- |
@@ -77,7 +77,7 @@ Replay sessions offline with `just debug session-replay-pi <session-id>` or `jus
 | `--version`                          | `-v`   | `false`                                    | Print version information and exit                   |
 | `--help`                             | `-h`   | `false`                                    | Print command line help                              |
 
-### `air-ingester`
+### `agent-ingester`
 
 | Flag                        | Short  | Default                                       | Description                                     |
 | :-------------------------- | :----- | :-------------------------------------------- | :---------------------------------------------- |
@@ -94,7 +94,7 @@ Replay sessions offline with `just debug session-replay-pi <session-id>` or `jus
 | `--version`                 | `-v`   | `false`                                       | Print version information and exit              |
 | `--help`                    | `-h`   | `false`                                       | Print command line help                         |
 
-### `air-server`
+### `agent-server`
 
 | Flag                      | Short  | Default                                       | Description                                        |
 | :------------------------ | :----- | :-------------------------------------------- | :------------------------------------------------- |
@@ -107,7 +107,7 @@ Replay sessions offline with `just debug session-replay-pi <session-id>` or `jus
 | `--version`               | `-v`   | `false`                                       | Print version information and exit                 |
 | `--help`                  | `-h`   | `false`                                       | Print command line help                            |
 
-### `air-debug` / `just debug run`
+### `agent-debug` / `just debug run`
 
 | Flag                   | Short  | Default | Description                                                          |
 | :--------------------- | :----- | :------ | :------------------------------------------------------------------- |
@@ -138,16 +138,16 @@ The table below lists environment variables read by the system, in precedence an
 | `OPENAI_API_KEY`       | (none)                                           | Fallback API authentication key when LiteLLM keys are unset                              |
 | `GEMINI_API_KEY`       | (none)                                           | API key for Google Gemini action summarization provider                                  |
 | `ANTHROPIC_API_KEY`    | (none)                                           | API key for Anthropic Claude action summarization provider                               |
-| `AIR_SUMMARIZER_MODEL`  | Provider default                                 | Custom model identifier override for action summarization                                |
-| `AIR_NO_SUMMARIZE`      | `0`                                              | Set to `1` to disable LLM action summarization and use deterministic fallback heuristics |
-| `AIR_IDLE_GRACE_PERIOD` | `5s`                                             | Grace period to debounce BUSY -> IDLE transitions after turn end                         |
-| `AIR_INGESTER_ADDR`     | `:4501`                                          | Listen address for `air-ingester` WebSocket server                                       |
-| `AIR_INGESTER_URL`      | `http://127.0.0.1:4501`                          | HTTP URL of `air-ingester` service for `air-server` mutation proxying                    |
-| `AGENT_INGESTER_URL`    | `ws://127.0.0.1:4501/ws/ingest`                  | WebSocket ingestion endpoint URL of `air-ingester` for `air-observer` telemetry streaming |
-| `AIR_BEARER_TOKEN`      | `dev-secret-token`                               | Shared bearer token for telemetry ingestion authentication                               |
-| `AGENT_STATUS_TOKEN`    | (none)                                           | Shared bearer authentication token used by `air-observer` and `air-server`               |
-| `AIR_LOG_DIR`           | `~/.local/state/agent-status/logs`               | Directory path for rotating daemon disk logs                                             |
-| `AIR_LOG_FILE`         | (none)                                           | Explicit file path override for daemon disk logging                                      |
+| `AGENT_STATUS_SUMMARIZER_MODEL`  | Provider default                                 | Custom model identifier override for action summarization                                |
+| `AGENT_STATUS_NO_SUMMARIZE`      | `0`                                              | Set to `1` to disable LLM action summarization and use deterministic fallback heuristics |
+| `AGENT_STATUS_IDLE_GRACE_PERIOD` | `5s`                                             | Grace period to debounce BUSY -> IDLE transitions after turn end                         |
+| `AGENT_STATUS_INGESTER_ADDR`     | `:4501`                                          | Listen address for `agent-ingester` WebSocket server                                       |
+| `AGENT_STATUS_INGESTER_URL`      | `http://127.0.0.1:4501`                          | HTTP URL of `agent-ingester` service for `agent-server` mutation proxying                    |
+| `AGENT_STATUS_INGESTER_URL`    | `ws://127.0.0.1:4501/ws/ingest`                  | WebSocket ingestion endpoint URL of `agent-ingester` for `agent-observer` telemetry streaming |
+| `AGENT_STATUS_BEARER_TOKEN`      | `dev-secret-token`                               | Shared bearer token for telemetry ingestion authentication                               |
+| `AGENT_STATUS_TOKEN`    | (none)                                           | Shared bearer authentication token used by `agent-observer` and `agent-server`               |
+| `AGENT_STATUS_LOG_DIR`           | `~/.local/state/agent-status/logs`               | Directory path for rotating daemon disk logs                                             |
+| `AGENT_STATUS_LOG_FILE`         | (none)                                           | Explicit file path override for daemon disk logging                                      |
 
 # License
 

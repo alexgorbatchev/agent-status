@@ -7,7 +7,7 @@ default:
 # Run in human-facing interactive mode
 run *args:
     @mkdir -p bin
-    go run ./cmd/air-ingester {{ args }}
+    go run ./cmd/agent-ingester {{ args }}
 
 # Run in agent-facing token-conservative mode
 run-ai *args:
@@ -16,7 +16,7 @@ run-ai *args:
 # Build compiled binary into bin/
 build:
     @mkdir -p bin
-    go build -o bin/air-ingester ./cmd/air-ingester
+    go build -o bin/agent-ingester ./cmd/agent-ingester
 
 # Run all unit and integration tests with race detector and verify >= 90% coverage
 test *args:
@@ -43,5 +43,5 @@ dev: build
     set -eu
     cd "{{ module_directory() }}/../.."
     mkdir -p .tmp/dev-stack/data/agent-status .tmp/dev-stack/cache .tmp/dev-stack/logs .tmp/dev-stack/run
-    unset AIR_LOG_FILE AIR_SESSION_STATE_PATH
-    exec packages/agent-ingester/bin/air-ingester --addr "$DEVHOST_BIND_HOST:$PORT" --token dev-secret-token --db .tmp/dev-stack/data/agent-status/agent-status.db --notify-sock .tmp/dev-stack/run/notify.sock --log-dir .tmp/dev-stack/logs
+    unset AGENT_STATUS_LOG_FILE AGENT_STATUS_SESSION_STATE_PATH
+    exec packages/agent-ingester/bin/agent-ingester --addr "$DEVHOST_BIND_HOST:$PORT" --token dev-secret-token --db .tmp/dev-stack/data/agent-status/agent-status.db --notify-sock .tmp/dev-stack/run/notify.sock --log-dir .tmp/dev-stack/logs

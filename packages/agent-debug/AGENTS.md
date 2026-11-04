@@ -1,6 +1,6 @@
 # agent-debug
 
-Offline replay and validation CLI tool for agent session transcripts through the ingestion pipeline (`air-debug`).
+Offline replay and validation CLI tool for agent session transcripts through the ingestion pipeline (`agent-debug`).
 
 ## Commands
 
@@ -13,22 +13,22 @@ Offline replay and validation CLI tool for agent session transcripts through the
 
 ## Usage Examples
 
-- Replay session transcript: `air-debug session replay ~/.claude/sessions/session-abc.jsonl`
-- Replay with turn-by-turn state diffs: `air-debug session replay --diff session-abc.jsonl`
-- Replay OpenCode database session: `air-debug session replay --session-id ses_123 opencode.db`
-- List sessions in OpenCode database: `air-debug session list opencode.db`
-- Validate session offline: `air-debug session validate session-abc.jsonl`
-- View terminal UI card representation: `air-debug session view session-abc.jsonl`
-- View hierarchical fleet tree: `air-debug session fleet` (or `air-debug fleet`)
-- View fleet for transcripts or DB: `air-debug session fleet session1.jsonl session2.jsonl`
-- Foreign path remapping: `air-debug session replay --cwd /local/repo session-abc.jsonl`
-- Export populated SQLite DB: `air-debug session replay --export-db .tmp/debug.db session-abc.jsonl`
-- Inspect persisted SQLite state: `air-debug db inspect <session-id>`
-- Audit process discovery & pairing: `air-debug scanner audit` (or `air-debug process list`)
+- Replay session transcript: `agent-debug session replay ~/.claude/sessions/session-abc.jsonl`
+- Replay with turn-by-turn state diffs: `agent-debug session replay --diff session-abc.jsonl`
+- Replay OpenCode database session: `agent-debug session replay --session-id ses_123 opencode.db`
+- List sessions in OpenCode database: `agent-debug session list opencode.db`
+- Validate session offline: `agent-debug session validate session-abc.jsonl`
+- View terminal UI card representation: `agent-debug session view session-abc.jsonl`
+- View hierarchical fleet tree: `agent-debug session fleet` (or `agent-debug fleet`)
+- View fleet for transcripts or DB: `agent-debug session fleet session1.jsonl session2.jsonl`
+- Foreign path remapping: `agent-debug session replay --cwd /local/repo session-abc.jsonl`
+- Export populated SQLite DB: `agent-debug session replay --export-db .tmp/debug.db session-abc.jsonl`
+- Inspect persisted SQLite state: `agent-debug db inspect <session-id>`
+- Audit process discovery & pairing: `agent-debug scanner audit` (or `agent-debug process list`)
 
 ## Local conventions
 
-- Follow subject-first CLI hierarchy (`air-debug session <verb>`).
+- Follow subject-first CLI hierarchy (`agent-debug session <verb>`).
 - Render hierarchical tree-view help screens with `cobra-help-tree`.
 - Dual-mode output: formatted tables and trees when `AGENT=0`, compact token-conservative key-value lines when `AGENT=1`.
 - Act strictly as an external driver; zero debug flags or conditional forks in production daemons.
@@ -57,7 +57,7 @@ Offline replay and validation CLI tool for agent session transcripts through the
 
 ## References
 
-- CLI entrypoint: `cmd/air-debug/main.go`
+- CLI entrypoint: `cmd/agent-debug/main.go`
 - Replay runner: `internal/replay/runner.go`
 - Read verification: `internal/replay/verify.go`
 - Formatting & dual-mode: `internal/output/format.go`

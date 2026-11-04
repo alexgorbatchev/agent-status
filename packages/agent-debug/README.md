@@ -4,7 +4,7 @@ An offline debugging and transcript replay utility for AI coding agent sessions.
 
 - **Replays agent sessions offline** from Claude Code, Pi, OpenAI Codex, and OpenCode transcripts through the ingestion pipeline.
 - **Validates state transitions** and lifecycle fidelity (`RUNNING` -> `EXITED`, `IDLE`, `BUSY`, `WAITING_QUESTION`, `ERROR`, `RATE_LIMITED`) and turn completion status (`Completed`) without launching live harnesses.
-- **Renders hierarchical fleet views** (`air-debug session fleet` / `air-debug fleet`) grouping sessions by project and linked worktree branches with idle freshness tiering.
+- **Renders hierarchical fleet views** (`agent-debug session fleet` / `agent-debug fleet`) grouping sessions by project and linked worktree branches with idle freshness tiering.
 - **Audits token pricing and usage** against static pricing models to diagnose calculation drift.
 - **Inspects turn-by-turn state diffs** (`--diff`) to isolate the exact turn where state corrupts.
 - **Verifies read-side queries** (`GetAgentByID`, `GetAgentLogs`) against an in-memory SQLite store to guarantee dashboard renderability.
@@ -20,16 +20,16 @@ An offline debugging and transcript replay utility for AI coding agent sessions.
 
 # How it Really Works
 
-- `air-debug` runs entirely in-process against an ephemeral in-memory SQLite database (`:memory:`), never mutating live observer cursors or daemon databases unless explicitly exported with `--export-db`.
+- `agent-debug` runs entirely in-process against an ephemeral in-memory SQLite database (`:memory:`), never mutating live observer cursors or daemon databases unless explicitly exported with `--export-db`.
 - Foreign transcript paths are remapped to local checkouts using `--cwd <path>` so Git metadata resolves against local checkouts.
 - Sibling subagent directories (`<session_id>/subagents/*.jsonl` or `subagents/*.jsonl`) are automatically discovered and interleaved into the event stream by timestamp.
 - Intermediate state inspection is controlled via breakpoints: `--until-line <N>`, `--until-event <type>`, and `--stop-on-error`.
 - Dual-mode output (`AGENT=1`) switches from aligned terminal tables and ASCII tree glyphs to token-conservative key-value lines.
-- Every command that reads the agent-status database finds it the same way when `--db` is `auto` (the default for `fleet`, `db inspect`, and `events`; `session replay` and `session validate` compare against a database only when `--db` is given): `AIR_DB_PATH` if set, then the installed ingester's `$XDG_DATA_HOME/agent-status/agent-status.db` (default `~/.local/share/agent-status/agent-status.db`), then the dev stack's `.tmp/dev-stack/data/agent-status/agent-status.db` under the current directory. Pass `--db .tmp/dev-stack/data/agent-status/agent-status.db` to read the dev stack on a machine that also runs the installed ingester. An explicit `--db` may start with `~/`.
+- Every command that reads the agent-status database finds it the same way when `--db` is `auto` (the default for `fleet`, `db inspect`, and `events`; `session replay` and `session validate` compare against a database only when `--db` is given): `AGENT_STATUS_DB_PATH` if set, then the installed ingester's `$XDG_DATA_HOME/agent-status/agent-status.db` (default `~/.local/share/agent-status/agent-status.db`), then the dev stack's `.tmp/dev-stack/data/agent-status/agent-status.db` under the current directory. Pass `--db .tmp/dev-stack/data/agent-status/agent-status.db` to read the dev stack on a machine that also runs the installed ingester. An explicit `--db` may start with `~/`.
 
 # Prerequisites
 
-- [Go](https://go.dev) (v1.26+) - Required for building or running `air-debug` from source.
+- [Go](https://go.dev) (v1.26+) - Required for building or running `agent-debug` from source.
 - [Git](https://git-scm.com) - Used for resolving repository canonical roots and branch names during replay.
 
 # Installation
@@ -38,48 +38,48 @@ Download the prebuilt binary archive for your platform from the [latest release]
 
 ```bash
 # macOS (Apple Silicon)
-curl -sSL https://github.com/alexgorbatchev/agent-status/releases/latest/download/air-debug_X.X.X_darwin_arm64.tar.gz | tar -xz -C ~/.local/bin
+curl -sSL https://github.com/alexgorbatchev/agent-status/releases/latest/download/agent-debug_X.X.X_darwin_arm64.tar.gz | tar -xz -C ~/.local/bin
 ```
 
 # Quick Start
 
 ```bash
 # Replay a session transcript or session ID (auto-detects harness)
-air-debug session replay ~/.claude/sessions/session-abc.jsonl
+agent-debug session replay ~/.claude/sessions/session-abc.jsonl
 
 # Replay with turn-by-turn state transition diffs
-air-debug session replay --diff session-abc.jsonl
+agent-debug session replay --diff session-abc.jsonl
 
 # Compare transcript replay against a live agent-status database
-air-debug session replay --db ~/.local/share/agent-status/agent-status.db session-abc.jsonl
+agent-debug session replay --db ~/.local/share/agent-status/agent-status.db session-abc.jsonl
 
 # Directly inspect persisted agent state in SQLite database
-air-debug db inspect 01a0bd5b-0024-7222-9709-194e2fa6a892
+agent-debug db inspect 01a0bd5b-0024-7222-9709-194e2fa6a892
 
 # Audit harness process discovery and session pairing across all harnesses
-air-debug scanner audit
+agent-debug scanner audit
 
 # Audit process pairing filtered by harness and working directory
-air-debug scanner audit --harness pi --cwd /Users/dev/agent-status
+agent-debug scanner audit --harness pi --cwd /Users/dev/agent-status
 
 # List running harness processes and pairing status
-air-debug process list
+agent-debug process list
 
 # Validate session transcript against parser, classifier, and query assertions
-air-debug session validate session-abc.jsonl
+agent-debug session validate session-abc.jsonl
 
 # View terminal UI card representation of agent session state
-air-debug session view session-abc.jsonl
+agent-debug session view session-abc.jsonl
 
 # View hierarchical fleet tree across transcripts or SQLite database
-air-debug session fleet ~/.claude/sessions/*.jsonl
-air-debug session fleet .tmp/dev-stack/data/agent-status/agent-status.db
+agent-debug session fleet ~/.claude/sessions/*.jsonl
+agent-debug session fleet .tmp/dev-stack/data/agent-status/agent-status.db
 
 # List sessions inside an OpenCode SQLite database
-air-debug session list ~/.local/share/opencode/opencode.db
+agent-debug session list ~/.local/share/opencode/opencode.db
 
 # Inspect ingested telemetry event stream from live database
-air-debug events 01a0b64b-b517-7569-9c97-dac1d07ce4dd --limit 10
+agent-debug events 01a0b64b-b517-7569-9c97-dac1d07ce4dd --limit 10
 ```
 
 Sample Output:
@@ -106,7 +106,7 @@ Session Replay Summary (pi)
 
 # Options & Flags
 
-### `air-debug session replay`
+### `agent-debug session replay`
 
 | Flag                   | Short  | Default | Description                                                                |
 | :--------------------- | :----- | :------ | :------------------------------------------------------------------------- |
@@ -123,7 +123,7 @@ Session Replay Summary (pi)
 | `--summarize`          | (none) | `false` | Enable live LLM summarizer provider verification                           |
 | `--env <label>`        | (none) | `debug` | Environment label override                                                 |
 
-### `air-debug session validate`
+### `agent-debug session validate`
 
 | Flag                | Short  | Default | Description                                                          |
 | :------------------ | :----- | :------ | :------------------------------------------------------------------- |
@@ -134,7 +134,7 @@ Session Replay Summary (pi)
 | `--json`            | (none) | `false` | Output validation report as JSON                                     |
 | `--env <label>`     | (none) | `debug` | Environment label override                                           |
 
-### `air-debug session view`
+### `agent-debug session view`
 
 | Flag                   | Short  | Default | Description                                                          |
 | :--------------------- | :----- | :------ | :------------------------------------------------------------------- |
@@ -146,7 +146,7 @@ Session Replay Summary (pi)
 | `--until-event <type>` | (none) | `""`    | Halt replay after encountering event type                            |
 | `--json`               | (none) | `false` | Output final agent state as JSON                                     |
 
-### `air-debug session fleet` / `air-debug fleet`
+### `agent-debug session fleet` / `agent-debug fleet`
 
 | Flag               | Short  | Default | Description                                                          |
 | :----------------- | :----- | :------ | :------------------------------------------------------------------- |
@@ -156,14 +156,14 @@ Session Replay Summary (pi)
 | `--harness <name>` | (none) | `""`    | Explicit harness override (`claude-code`, `pi`, `codex`, `opencode`) |
 | `--json`           | (none) | `false` | Output fleet agents as JSON                                          |
 
-### `air-debug db inspect`
+### `agent-debug db inspect`
 
 | Flag          | Short  | Default | Description                                         |
 | :------------ | :----- | :------ | :-------------------------------------------------- |
 | `--db <path>` | (none) | `auto`  | Path to `agent-status.db` (auto-detects if omitted) |
 | `--json`      | (none) | `false` | Output persisted session record as JSON             |
 
-### `air-debug events`
+### `agent-debug events`
 
 | Flag                  | Short  | Default | Description                                                           |
 | :-------------------- | :----- | :------ | :-------------------------------------------------------------------- |
@@ -177,7 +177,7 @@ Session Replay Summary (pi)
 | `--asc`               | (none) | `false` | Order events by ID ascending (oldest first)                           |
 | `--id <id>`           | (none) | `0`     | Inspect specific telemetry event by ID                                |
 
-### `air-debug scanner audit` / `air-debug process list`
+### `agent-debug scanner audit` / `agent-debug process list`
 
 | Flag               | Short  | Default | Description                                                   |
 | :----------------- | :----- | :------ | :------------------------------------------------------------ |

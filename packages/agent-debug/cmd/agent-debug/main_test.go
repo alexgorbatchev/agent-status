@@ -94,7 +94,7 @@ func TestCLI_Version(t *testing.T) {
 func TestMainFunc(t *testing.T) {
 	oldArgs := os.Args
 	defer func() { os.Args = oldArgs }()
-	os.Args = []string{"air-debug", "--version"}
+	os.Args = []string{"agent-debug", "--version"}
 	main()
 }
 
@@ -109,7 +109,7 @@ func TestMain_ErrorExit(t *testing.T) {
 	exitFunc = func(code int) {
 		exitCalled = true
 	}
-	os.Args = []string{"air-debug", "unknown-subcommand"}
+	os.Args = []string{"agent-debug", "unknown-subcommand"}
 	main()
 	if !exitCalled {
 		t.Errorf("expected exitFunc to be called on error")
@@ -1114,7 +1114,7 @@ func TestCLI_CommandsShareDatabaseResolution(t *testing.T) {
 			p := filepath.Join(home, "explicit.db")
 			return p, p
 		}},
-		{"AIR_DB_PATH", func(_, override string) (string, string) { return override, "" }},
+		{"AGENT_STATUS_DB_PATH", func(_, override string) (string, string) { return override, "" }},
 		{"installed ingester", func(home, _ string) (string, string) { return installed(home), "" }},
 		{"dev stack", func(_, _ string) (string, string) { return devStack, "" }},
 	}
@@ -1124,14 +1124,14 @@ func TestCLI_CommandsShareDatabaseResolution(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("HOME", home)
 			t.Setenv("XDG_DATA_HOME", "")
-			t.Setenv("AIR_DB_PATH", "")
+			t.Setenv("AGENT_STATUS_DB_PATH", "")
 			t.Chdir(t.TempDir())
 
 			override := filepath.Join(home, "override.db")
 			seed, flag := level.place(home, override)
 			decoys := []string{override, installed(home), devStack}[max(i-1, 0):]
 			if i <= 1 {
-				t.Setenv("AIR_DB_PATH", override)
+				t.Setenv("AGENT_STATUS_DB_PATH", override)
 			}
 			for _, decoy := range decoys {
 				if decoy == seed {
@@ -1177,7 +1177,7 @@ func TestCLI_CommandsShareDatabaseResolution(t *testing.T) {
 	t.Run("nothing found", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		t.Setenv("XDG_DATA_HOME", "")
-		t.Setenv("AIR_DB_PATH", "")
+		t.Setenv("AGENT_STATUS_DB_PATH", "")
 		t.Chdir(t.TempDir())
 
 		var messages []string

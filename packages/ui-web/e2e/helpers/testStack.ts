@@ -67,9 +67,9 @@ export async function createTestStack(testId: string): Promise<ITestStack> {
   const uiPort = Number(process.env.PLAYWRIGHT_PORT) || 3100;
   const token = "dev-secret-token";
 
-  const ingesterBin = resolve(rootDir, "packages", "agent-ingester", "bin", "air-ingester");
-  const serverBin = resolve(rootDir, "packages", "agent-server", "bin", "air-server");
-  const observerBin = resolve(rootDir, "packages", "agent-observer", "bin", "air-observer");
+  const ingesterBin = resolve(rootDir, "packages", "agent-ingester", "bin", "agent-ingester");
+  const serverBin = resolve(rootDir, "packages", "agent-server", "bin", "agent-server");
+  const observerBin = resolve(rootDir, "packages", "agent-observer", "bin", "agent-observer");
 
   const procs: ChildProcess[] = [];
 

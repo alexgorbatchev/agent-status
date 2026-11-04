@@ -10,11 +10,11 @@ import (
 func TestLoad_Defaults(t *testing.T) {
 	// Clear all relevant environment variables
 	envKeys := []string{
-		"AIR_INGESTER_ADDR",
-		"AIR_BEARER_TOKEN",
+		"AGENT_STATUS_INGESTER_ADDR",
+		"AGENT_STATUS_BEARER_TOKEN",
 		"XDG_DATA_HOME",
 		"XDG_RUNTIME_DIR",
-		"AIR_NO_SUMMARIZE",
+		"AGENT_STATUS_NO_SUMMARIZE",
 		"LITELLM_BASE_URL",
 		"OPENAI_BASE_URL",
 		"LITELLM_API_KEY",
@@ -22,10 +22,10 @@ func TestLoad_Defaults(t *testing.T) {
 		"OPENAI_API_KEY",
 		"GEMINI_API_KEY",
 		"ANTHROPIC_API_KEY",
-		"AIR_SUMMARIZER_MODEL",
-		"AIR_LOG_DIR",
-		"AIR_LOG_FILE",
-		"AIR_IDLE_GRACE_PERIOD",
+		"AGENT_STATUS_SUMMARIZER_MODEL",
+		"AGENT_STATUS_LOG_DIR",
+		"AGENT_STATUS_LOG_FILE",
+		"AGENT_STATUS_IDLE_GRACE_PERIOD",
 	}
 	for _, k := range envKeys {
 		t.Setenv(k, "")
@@ -71,18 +71,18 @@ func TestLoad_Defaults(t *testing.T) {
 }
 
 func TestLoad_EnvironmentOverrides(t *testing.T) {
-	t.Setenv("AIR_INGESTER_ADDR", "0.0.0.0:9999")
-	t.Setenv("AIR_BEARER_TOKEN", "custom-token-xyz")
+	t.Setenv("AGENT_STATUS_INGESTER_ADDR", "0.0.0.0:9999")
+	t.Setenv("AGENT_STATUS_BEARER_TOKEN", "custom-token-xyz")
 	t.Setenv("XDG_DATA_HOME", "/custom/data")
 	t.Setenv("XDG_RUNTIME_DIR", "/custom/run")
-	t.Setenv("AIR_NO_SUMMARIZE", "1")
+	t.Setenv("AGENT_STATUS_NO_SUMMARIZE", "1")
 	t.Setenv("LITELLM_BASE_URL", "https://litellm.custom/v1")
 	t.Setenv("LITELLM_API_KEY", "litellm-key-123")
 	t.Setenv("GEMINI_API_KEY", "gemini-key-456")
 	t.Setenv("ANTHROPIC_API_KEY", "anthropic-key-789")
-	t.Setenv("AIR_SUMMARIZER_MODEL", "custom-model-fast")
-	t.Setenv("AIR_LOG_DIR", "/custom/logs")
-	t.Setenv("AIR_LOG_FILE", "/custom/logs/ingester.log")
+	t.Setenv("AGENT_STATUS_SUMMARIZER_MODEL", "custom-model-fast")
+	t.Setenv("AGENT_STATUS_LOG_DIR", "/custom/logs")
+	t.Setenv("AGENT_STATUS_LOG_FILE", "/custom/logs/ingester.log")
 
 	cfg := Load()
 	if cfg.Addr != "0.0.0.0:9999" {
@@ -133,8 +133,8 @@ func TestLoad_EnvironmentOverrides(t *testing.T) {
 }
 
 func TestLoad_OpenAIFallbacks(t *testing.T) {
-	t.Setenv("AIR_INGESTER_ADDR", "")
-	t.Setenv("AIR_BEARER_TOKEN", "")
+	t.Setenv("AGENT_STATUS_INGESTER_ADDR", "")
+	t.Setenv("AGENT_STATUS_BEARER_TOKEN", "")
 	t.Setenv("LITELLM_BASE_URL", "")
 	t.Setenv("LITELLM_API_KEY", "")
 	t.Setenv("LITELLM_KEY", "")
@@ -151,8 +151,8 @@ func TestLoad_OpenAIFallbacks(t *testing.T) {
 }
 
 func TestLoad_LiteLLMKeyAlias(t *testing.T) {
-	t.Setenv("AIR_INGESTER_ADDR", "")
-	t.Setenv("AIR_BEARER_TOKEN", "")
+	t.Setenv("AGENT_STATUS_INGESTER_ADDR", "")
+	t.Setenv("AGENT_STATUS_BEARER_TOKEN", "")
 	t.Setenv("LITELLM_BASE_URL", "https://litellm.custom/v1")
 	t.Setenv("LITELLM_API_KEY", "")
 	t.Setenv("LITELLM_KEY", "litellm-alias-key-999")
@@ -359,7 +359,7 @@ func TestLoad_IdleGracePeriod(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv("AIR_IDLE_GRACE_PERIOD", tt.envGrace)
+			t.Setenv("AGENT_STATUS_IDLE_GRACE_PERIOD", tt.envGrace)
 
 			cfg := Load()
 			if cfg.IdleGracePeriod != tt.wantGrace {

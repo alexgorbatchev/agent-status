@@ -30,7 +30,7 @@ var version = "dev"
 
 func newRootCmd(cfg *config.Config) *cobra.Command {
 	rootCmd := &cobra.Command{
-		Use:   "air-ingester",
+		Use:   "agent-ingester",
 		Short: "Agent Status Central Telemetry Ingestion Daemon",
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			if err := cfg.Validate(); err != nil {

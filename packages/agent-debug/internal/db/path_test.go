@@ -25,7 +25,7 @@ func isolateDBLookup(t *testing.T) (home, workDir string) {
 	workDir = t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_DATA_HOME", "")
-	t.Setenv("AIR_DB_PATH", "")
+	t.Setenv("AGENT_STATUS_DB_PATH", "")
 	t.Chdir(workDir)
 	return home, workDir
 }
@@ -41,33 +41,33 @@ func TestResolveDBPathSearchOrder(t *testing.T) {
 			t.Fatalf("ResolveDBPath = %q, %v; want %q", got, err, explicit)
 		}
 	})
-	t.Run("AIR_DB_PATH beats the dev stack", func(t *testing.T) {
+	t.Run("AGENT_STATUS_DB_PATH beats the dev stack", func(t *testing.T) {
 		home, _ := isolateDBLookup(t)
 		override := filepath.Join(home, "override.db")
 		writeDB(t, override)
 		writeDB(t, devStackDBPath)
-		t.Setenv("AIR_DB_PATH", override)
+		t.Setenv("AGENT_STATUS_DB_PATH", override)
 		if got, err := ResolveDBPath("auto"); err != nil || got != override {
 			t.Fatalf("ResolveDBPath = %q, %v; want %q", got, err, override)
 		}
 	})
-	t.Run("explicit path beats AIR_DB_PATH", func(t *testing.T) {
+	t.Run("explicit path beats AGENT_STATUS_DB_PATH", func(t *testing.T) {
 		home, _ := isolateDBLookup(t)
 		explicit := filepath.Join(home, "explicit.db")
 		override := filepath.Join(home, "override.db")
 		writeDB(t, explicit)
 		writeDB(t, override)
-		t.Setenv("AIR_DB_PATH", override)
+		t.Setenv("AGENT_STATUS_DB_PATH", override)
 		if got, err := ResolveDBPath(explicit); err != nil || got != explicit {
 			t.Fatalf("ResolveDBPath = %q, %v; want %q", got, err, explicit)
 		}
 	})
-	t.Run("AIR_DB_PATH beats the installed database", func(t *testing.T) {
+	t.Run("AGENT_STATUS_DB_PATH beats the installed database", func(t *testing.T) {
 		home, _ := isolateDBLookup(t)
 		override := filepath.Join(home, "override.db")
 		writeDB(t, override)
 		writeDB(t, filepath.Join(home, ".local/share/agent-status/agent-status.db"))
-		t.Setenv("AIR_DB_PATH", override)
+		t.Setenv("AGENT_STATUS_DB_PATH", override)
 		if got, err := ResolveDBPath("auto"); err != nil || got != override {
 			t.Fatalf("ResolveDBPath = %q, %v; want %q", got, err, override)
 		}
@@ -115,11 +115,11 @@ func TestResolveDBPathErrors(t *testing.T) {
 			t.Fatalf("err = %v", err)
 		}
 	})
-	t.Run("missing AIR_DB_PATH does not fall back", func(t *testing.T) {
+	t.Run("missing AGENT_STATUS_DB_PATH does not fall back", func(t *testing.T) {
 		isolateDBLookup(t)
 		writeDB(t, devStackDBPath)
-		t.Setenv("AIR_DB_PATH", "/nonexistent/override.db")
-		if _, err := ResolveDBPath("auto"); err == nil || !strings.Contains(err.Error(), "AIR_DB_PATH") {
+		t.Setenv("AGENT_STATUS_DB_PATH", "/nonexistent/override.db")
+		if _, err := ResolveDBPath("auto"); err == nil || !strings.Contains(err.Error(), "AGENT_STATUS_DB_PATH") {
 			t.Fatalf("err = %v", err)
 		}
 	})

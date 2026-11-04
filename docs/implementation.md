@@ -157,8 +157,8 @@ All development must be strictly grounded in:
     - Google Gemini via `any-llm-go/providers/gemini` (`GEMINI_API_KEY`).
     - Anthropic Claude via `any-llm-go/providers/anthropic` (`ANTHROPIC_API_KEY`).
   - Handles fallback on 429, 5xx, or 10-second timeout with jittered backoff.
-  - `--no-summarize` CLI flag (and `AIR_NO_SUMMARIZE=1` environment variable) to bypass external LLM calls completely.
-  - Native devhost service supervision with automatic ports; `AIR_NO_SUMMARIZE=1` disables external summarization.
+  - `--no-summarize` CLI flag (and `AGENT_STATUS_NO_SUMMARIZE=1` environment variable) to bypass external LLM calls completely.
+  - Native devhost service supervision with automatic ports; `AGENT_STATUS_NO_SUMMARIZE=1` disables external summarization.
 
 ---
 
@@ -195,7 +195,7 @@ All development must be strictly grounded in:
 
 ### Package Build & Quality Gates
 
-- [ ] `just build-all` successfully compiles `air-observer`, `air-ingester`, `air-server` binaries into `packages/*/bin/` and bundles `ui-web`.
+- [ ] `just build-all` successfully compiles `agent-observer`, `agent-ingester`, `agent-server` binaries into `packages/*/bin/` and bundles `ui-web`.
 - [ ] `just test-all` executes all unit and integration test suites with zero failures.
 - [ ] Unit test coverage is $\ge 90\%$ across all Go packages.
 - [ ] TypeScript strict mode type-check (`bun x tsc --noEmit`) passes with zero errors.

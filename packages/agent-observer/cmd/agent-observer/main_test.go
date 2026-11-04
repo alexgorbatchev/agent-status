@@ -31,7 +31,7 @@ type testSyncBuffer struct {
 }
 
 func TestMain(m *testing.M) {
-	tmpDir, cleanup, err := testenv.IsolateStateDirs("air-observer-test-state")
+	tmpDir, cleanup, err := testenv.IsolateStateDirs("agent-observer-test-state")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -86,7 +86,7 @@ func TestObserverCommandHelp(t *testing.T) {
 
 	out := buf.String()
 	requiredHelpStrings := []string{
-		"air-observer",
+		"agent-observer",
 		"--ingester-url",
 		"--token",
 		"--env",
@@ -232,11 +232,11 @@ func TestObserverCommandFlagParsing(t *testing.T) {
 }
 
 func TestObserverCommandEnvFallbacks(t *testing.T) {
-	t.Setenv("AGENT_INGESTER_URL", "ws://env-ingester:8080/ws/ingest")
+	t.Setenv("AGENT_STATUS_INGESTER_URL", "ws://env-ingester:8080/ws/ingest")
 	t.Setenv("AGENT_STATUS_TOKEN", "env-token-xyz")
-	t.Setenv("AIR_CURSOR_RETENTION", "72h")
-	t.Setenv("AIR_CURSOR_PRUNE_INTERVAL", "2h")
-	t.Setenv("AIR_CURSOR_FLUSH_INTERVAL", "10s")
+	t.Setenv("AGENT_STATUS_CURSOR_RETENTION", "72h")
+	t.Setenv("AGENT_STATUS_CURSOR_PRUNE_INTERVAL", "2h")
+	t.Setenv("AGENT_STATUS_CURSOR_FLUSH_INTERVAL", "10s")
 
 	_, opts := newRootCmd()
 

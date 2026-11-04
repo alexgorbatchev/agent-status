@@ -24,7 +24,7 @@ var version = "dev"
 
 func newRootCmd(cfg *config.Config) *cobra.Command {
 	rootCmd := &cobra.Command{
-		Use:   "air-server",
+		Use:   "agent-server",
 		Short: "Agent Status central REST & streaming server",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run(cmd.Context(), *cfg)
@@ -38,7 +38,7 @@ func newRootCmd(cfg *config.Config) *cobra.Command {
 	flags.StringVarP(&cfg.Addr, "addr", "a", cfg.Addr, "HTTP listen address (e.g. :4502 or 127.0.0.1:4502)")
 	flags.StringVar(&cfg.DBPath, "db", cfg.DBPath, "Path to agent-status SQLite database (read-only)")
 	flags.StringVar(&cfg.SocketPath, "socket", cfg.SocketPath, "Path to notify unix domain socket")
-	flags.StringVar(&cfg.IngesterURL, "ingester-url", cfg.IngesterURL, "URL of air-ingester for mutation proxying")
+	flags.StringVar(&cfg.IngesterURL, "ingester-url", cfg.IngesterURL, "URL of agent-ingester for mutation proxying")
 	flags.StringSliceVar(&cfg.CORSOrigins, "cors-origin", cfg.CORSOrigins, "Allowed CORS origins")
 	flags.StringVar(&cfg.AuthToken, "token", cfg.AuthToken, "Bearer authentication token (or AGENT_STATUS_TOKEN env)")
 	flags.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "Log level (debug, info, warn, error)")

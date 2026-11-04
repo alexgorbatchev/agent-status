@@ -14,7 +14,7 @@ var isolatedDir string
 
 // IsolateStateDirs points every location agent-status writes state to (the log
 // directory, and the XDG state, data, and cache homes it falls back to) at a new
-// temporary directory, so a test that starts a daemon or clears AIR_LOG_DIR cannot write
+// temporary directory, so a test that starts a daemon or clears AGENT_STATUS_LOG_DIR cannot write
 // into the developer's home directory. Call it from TestMain before m.Run, and call the
 // returned cleanup after. It returns the temporary directory.
 func IsolateStateDirs(prefix string) (string, func(), error) {
@@ -53,9 +53,9 @@ func RequireIsolated(t testing.TB) {
 // stateEnv returns the variables IsolateStateDirs sets, pointing inside dir.
 var stateEnv = func(dir string) map[string]string {
 	return map[string]string{
-		"AIR_LOG_DIR":    dir,
-		"XDG_STATE_HOME": filepath.Join(dir, "state"),
-		"XDG_DATA_HOME":  filepath.Join(dir, "data"),
-		"XDG_CACHE_HOME": filepath.Join(dir, "cache"),
+		"AGENT_STATUS_LOG_DIR": dir,
+		"XDG_STATE_HOME":       filepath.Join(dir, "state"),
+		"XDG_DATA_HOME":        filepath.Join(dir, "data"),
+		"XDG_CACHE_HOME":       filepath.Join(dir, "cache"),
 	}
 }

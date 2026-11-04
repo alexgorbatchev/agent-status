@@ -120,7 +120,7 @@ func TestMain_Version(t *testing.T) {
 	t.Cleanup(func() {
 		os.Args = origArgs
 	})
-	os.Args = []string{"air-server", "--version"}
+	os.Args = []string{"agent-server", "--version"}
 	main()
 }
 
@@ -248,7 +248,7 @@ func TestRootCmd_ExecuteError(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
-	_, cleanup, err := testenv.IsolateStateDirs("air-server-test-state")
+	_, cleanup, err := testenv.IsolateStateDirs("agent-server-test-state")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -279,7 +279,7 @@ func TestServerCommandHelp(t *testing.T) {
 
 	out := buf.String()
 	requiredHelpStrings := []string{
-		"air-server",
+		"agent-server",
 		"--addr",
 		"--db",
 		"--socket",

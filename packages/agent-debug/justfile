@@ -1,4 +1,4 @@
-# Task automation for air-debug CLI
+# Task automation for agent-debug CLI
 
 # Default recipe: list available tasks
 default:
@@ -7,7 +7,7 @@ default:
 # Build compiled binary into bin/
 build:
     @mkdir -p bin
-    go build -o bin/air-debug ./cmd/air-debug
+    go build -o bin/agent-debug ./cmd/agent-debug
 
 # Run all unit tests with race detector and verify >= 90% coverage
 test *args:
@@ -23,12 +23,12 @@ lint:
 # Run in human-facing interactive mode
 [working-directory('../..')]
 run *args:
-    go run ./packages/agent-debug/cmd/air-debug {{ args }}
+    go run ./packages/agent-debug/cmd/agent-debug {{ args }}
 
 # Run in agent-facing token-conservative mode
 [working-directory('../..')]
 run-ai *args:
-    AGENT=1 go run ./packages/agent-debug/cmd/air-debug {{ args }}
+    AGENT=1 go run ./packages/agent-debug/cmd/agent-debug {{ args }}
 
 # Clean build artifacts
 clean:

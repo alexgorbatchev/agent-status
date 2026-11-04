@@ -327,18 +327,18 @@ func TestSetupAndLoggingHelpers(t *testing.T) {
 }
 
 func TestDefaultLogDir(t *testing.T) {
-	t.Run("AIR_LOG_DIR precedence", func(t *testing.T) {
-		t.Setenv("AIR_LOG_DIR", "/custom/air/logs")
+	t.Run("AGENT_STATUS_LOG_DIR precedence", func(t *testing.T) {
+		t.Setenv("AGENT_STATUS_LOG_DIR", "/custom/agent-status/logs")
 		t.Setenv("XDG_STATE_HOME", "/custom/state")
 		t.Setenv("XDG_DATA_HOME", "/custom/data")
 
-		if got := DefaultLogDir(); got != "/custom/air/logs" {
-			t.Errorf("DefaultLogDir() = %q, want %q", got, "/custom/air/logs")
+		if got := DefaultLogDir(); got != "/custom/agent-status/logs" {
+			t.Errorf("DefaultLogDir() = %q, want %q", got, "/custom/agent-status/logs")
 		}
 	})
 
 	t.Run("XDG_STATE_HOME precedence over XDG_DATA_HOME", func(t *testing.T) {
-		t.Setenv("AIR_LOG_DIR", "")
+		t.Setenv("AGENT_STATUS_LOG_DIR", "")
 		t.Setenv("XDG_STATE_HOME", "/custom/state")
 		t.Setenv("XDG_DATA_HOME", "/custom/data")
 
@@ -349,7 +349,7 @@ func TestDefaultLogDir(t *testing.T) {
 	})
 
 	t.Run("XDG_DATA_HOME fallback", func(t *testing.T) {
-		t.Setenv("AIR_LOG_DIR", "")
+		t.Setenv("AGENT_STATUS_LOG_DIR", "")
 		t.Setenv("XDG_STATE_HOME", "")
 		t.Setenv("XDG_DATA_HOME", "/custom/data")
 
@@ -360,7 +360,7 @@ func TestDefaultLogDir(t *testing.T) {
 	})
 
 	t.Run("User home default fallback", func(t *testing.T) {
-		t.Setenv("AIR_LOG_DIR", "")
+		t.Setenv("AGENT_STATUS_LOG_DIR", "")
 		t.Setenv("XDG_STATE_HOME", "")
 		t.Setenv("XDG_DATA_HOME", "")
 
@@ -373,13 +373,13 @@ func TestDefaultLogDir(t *testing.T) {
 
 func TestLoadFileConfigFromEnv(t *testing.T) {
 	t.Run("defaults", func(t *testing.T) {
-		t.Setenv("AIR_LOG_TO_DISK", "")
-		t.Setenv("AIR_LOG_FILE", "")
-		t.Setenv("AIR_LOG_DIR", "")
-		t.Setenv("AIR_LOG_MAX_SIZE_MB", "")
-		t.Setenv("AIR_LOG_MAX_BACKUPS", "")
-		t.Setenv("AIR_LOG_MAX_AGE_DAYS", "")
-		t.Setenv("AIR_LOG_COMPRESS", "")
+		t.Setenv("AGENT_STATUS_LOG_TO_DISK", "")
+		t.Setenv("AGENT_STATUS_LOG_FILE", "")
+		t.Setenv("AGENT_STATUS_LOG_DIR", "")
+		t.Setenv("AGENT_STATUS_LOG_MAX_SIZE_MB", "")
+		t.Setenv("AGENT_STATUS_LOG_MAX_BACKUPS", "")
+		t.Setenv("AGENT_STATUS_LOG_MAX_AGE_DAYS", "")
+		t.Setenv("AGENT_STATUS_LOG_COMPRESS", "")
 
 		cfg := LoadFileConfigFromEnv("test-svc")
 		if cfg.Disabled {
@@ -401,24 +401,24 @@ func TestLoadFileConfigFromEnv(t *testing.T) {
 
 	t.Run("custom env overrides and disabled variations", func(t *testing.T) {
 		for _, val := range []string{"0", "false", "no", "off"} {
-			t.Setenv("AIR_LOG_TO_DISK", val)
+			t.Setenv("AGENT_STATUS_LOG_TO_DISK", val)
 			cfg := LoadFileConfigFromEnv("test-svc")
 			if !cfg.Disabled {
-				t.Errorf("expected Disabled=true for AIR_LOG_TO_DISK=%q", val)
+				t.Errorf("expected Disabled=true for AGENT_STATUS_LOG_TO_DISK=%q", val)
 			}
 		}
 
-		t.Setenv("AIR_LOG_TO_DISK", "1")
-		t.Setenv("AIR_LOG_FILE", "/custom/file.log")
-		t.Setenv("AIR_LOG_DIR", "/custom/dir")
-		t.Setenv("AIR_LOG_MAX_SIZE_MB", "50")
-		t.Setenv("AIR_LOG_MAX_BACKUPS", "10")
-		t.Setenv("AIR_LOG_MAX_AGE_DAYS", "30")
-		t.Setenv("AIR_LOG_COMPRESS", "false")
+		t.Setenv("AGENT_STATUS_LOG_TO_DISK", "1")
+		t.Setenv("AGENT_STATUS_LOG_FILE", "/custom/file.log")
+		t.Setenv("AGENT_STATUS_LOG_DIR", "/custom/dir")
+		t.Setenv("AGENT_STATUS_LOG_MAX_SIZE_MB", "50")
+		t.Setenv("AGENT_STATUS_LOG_MAX_BACKUPS", "10")
+		t.Setenv("AGENT_STATUS_LOG_MAX_AGE_DAYS", "30")
+		t.Setenv("AGENT_STATUS_LOG_COMPRESS", "false")
 
 		cfg := LoadFileConfigFromEnv("test-svc")
 		if cfg.Disabled {
-			t.Errorf("expected Disabled=false when AIR_LOG_TO_DISK=1")
+			t.Errorf("expected Disabled=false when AGENT_STATUS_LOG_TO_DISK=1")
 		}
 		if cfg.Filename != "/custom/file.log" {
 			t.Errorf("Filename = %q, want /custom/file.log", cfg.Filename)
@@ -436,13 +436,13 @@ func TestLoadFileConfigFromEnv(t *testing.T) {
 			t.Errorf("MaxAgeDays = %d, want 30", cfg.MaxAgeDays)
 		}
 		if cfg.Compress {
-			t.Errorf("expected Compress=false when AIR_LOG_COMPRESS=false")
+			t.Errorf("expected Compress=false when AGENT_STATUS_LOG_COMPRESS=false")
 		}
 
 		// Test invalid numbers keep defaults
-		t.Setenv("AIR_LOG_MAX_SIZE_MB", "invalid")
-		t.Setenv("AIR_LOG_MAX_BACKUPS", "-5")
-		t.Setenv("AIR_LOG_MAX_AGE_DAYS", "abc")
+		t.Setenv("AGENT_STATUS_LOG_MAX_SIZE_MB", "invalid")
+		t.Setenv("AGENT_STATUS_LOG_MAX_BACKUPS", "-5")
+		t.Setenv("AGENT_STATUS_LOG_MAX_AGE_DAYS", "abc")
 		cfgInvalid := LoadFileConfigFromEnv("test-svc")
 		if cfgInvalid.MaxSizeMB != DefaultMaxSizeMB {
 			t.Errorf("MaxSizeMB = %d, want default %d", cfgInvalid.MaxSizeMB, DefaultMaxSizeMB)
@@ -544,7 +544,7 @@ func TestNewRotator(t *testing.T) {
 func TestSetupWithOptionsAndDiskLogging(t *testing.T) {
 	t.Run("writes to both stderr buffer and disk file", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		logFile := filepath.Join(tmpDir, "air-test.log")
+		logFile := filepath.Join(tmpDir, "agent-test.log")
 
 		var stderrBuf bytes.Buffer
 		isAgent := true

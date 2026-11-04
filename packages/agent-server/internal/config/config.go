@@ -38,7 +38,7 @@ func DefaultSocketPath() string {
 
 func DefaultConfig() Config {
 	token := os.Getenv("AGENT_STATUS_TOKEN")
-	ingesterURL := os.Getenv("AIR_INGESTER_URL")
+	ingesterURL := os.Getenv("AGENT_STATUS_INGESTER_URL")
 	if ingesterURL == "" {
 		ingesterURL = "http://127.0.0.1:4501"
 	}
@@ -50,7 +50,7 @@ func DefaultConfig() Config {
 		AuthToken:   token,
 		CORSOrigins: []string{"http://localhost:3000"},
 		LogLevel:    "info",
-		LogDir:      os.Getenv("AIR_LOG_DIR"),
-		LogFile:     os.Getenv("AIR_LOG_FILE"),
+		LogDir:      os.Getenv("AGENT_STATUS_LOG_DIR"),
+		LogFile:     os.Getenv("AGENT_STATUS_LOG_FILE"),
 	}
 }

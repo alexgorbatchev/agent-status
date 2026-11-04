@@ -311,7 +311,7 @@ Evaluated on the hot path without external network calls:
 5. On `tool_call`: Set `activity = BUSY`, record `activeTool` and `activeTarget`.
 6. On genuine runtime `error`: Transition the agent to `activity = ERROR` (storing truncated error message in `lastError`), or `activity = RATE_LIMITED` on structured rate-limit signals / HTTP 429 (storing `rateLimitResetAt` in epoch ms and `retryAfterSeconds` from headers or error message, and scheduling silence timer).
 7. On `turn_end`:
-   - If the agent was `BUSY`, evaluate via the **turn-end grace window** (default 5s, configurable via `--idle-grace-period` / `AIR_IDLE_GRACE_PERIOD`). The agent remains `BUSY` during the grace window to prevent rapid BUSY/IDLE flipping across multi-step execution.
+   - If the agent was `BUSY`, evaluate via the **turn-end grace window** (default 5s, configurable via `--idle-grace-period` / `AGENT_STATUS_IDLE_GRACE_PERIOD`). The agent remains `BUSY` during the grace window to prevent rapid BUSY/IDLE flipping across multi-step execution.
    - When the grace window expires without subsequent activity (or immediately in synchronous mode / when not BUSY), transition to `activity = IDLE`, clear `activeTool`, `activeTarget`, and `question`, set `hasUnseenCompletion = true`, and record `completedAt` timestamp.
    - If the agent is in `RATE_LIMITED` without terminal output, remain in `RATE_LIMITED` and reschedule silence timers rather than transitioning to `IDLE`.
    - Attention states (WAITING_QUESTION, ERROR) are preserved across turn_end without transitioning to IDLE, and incoming attention states cancel any pending idle grace period immediately.
@@ -354,7 +354,7 @@ Subagent events update parent token usage and cost roll-ups, track active subage
       "activeTarget": "packages/registry-cli/src/commands/buildCommand.ts"
     }
     ```
-  - Flag `--no-summarize` (or environment variable `AIR_NO_SUMMARIZE=1`) disables external LLM calls, falling back to deterministic tool descriptions (`"Editing build.ts"`).
+  - Flag `--no-summarize` (or environment variable `AGENT_STATUS_NO_SUMMARIZE=1`) disables external LLM calls, falling back to deterministic tool descriptions (`"Editing build.ts"`).
 
 #### 4.2.5. SQLite Persistence & Retention
 
@@ -480,7 +480,7 @@ agent-status/
 ├── packages/
 │   ├── agent-observer/
 │   │   ├── bin/
-│   │   ├── cmd/air-observer/main.go
+│   │   ├── cmd/agent-observer/main.go
 │   │   ├── internal/
 │   │   │   ├── config/config.go
 │   │   │   ├── git/resolver.go
@@ -497,7 +497,7 @@ agent-status/
 │   │   └── justfile
 │   ├── agent-ingester/
 │   │   ├── bin/
-│   │   ├── cmd/air-ingester/main.go
+│   │   ├── cmd/agent-ingester/main.go
 │   │   ├── internal/
 │   │   │   ├── config/config.go
 │   │   │   ├── receiver/receiver.go
@@ -514,7 +514,7 @@ agent-status/
 │   │   └── justfile
 │   ├── agent-server/
 │   │   ├── bin/
-│   │   ├── cmd/air-server/main.go
+│   │   ├── cmd/agent-server/main.go
 │   │   ├── internal/
 │   │   │   ├── config/config.go
 │   │   │   ├── api/handlers.go
@@ -913,7 +913,7 @@ CREATE TABLE IF NOT EXISTS observer_cursors (
 
 - [ ] Ingester: Multi-provider client via `github.com/mozilla-ai/any-llm-go` supporting OpenAI-compatible endpoints (LiteLLM proxy e.g. `https://litellm.example.com` via `LITELLM_BASE_URL` and `LITELLM_API_KEY` / `LITELLM_KEY`), Google Gemini, and Anthropic Claude.
 - [ ] Ingester: 12-second debouncer (`golang.org/x/time/rate`) and event trigger scheduler.
-- [ ] Ingester: `--no-summarize` toggle (and `AIR_NO_SUMMARIZE=1`) verification.
+- [ ] Ingester: `--no-summarize` toggle (and `AGENT_STATUS_NO_SUMMARIZE=1`) verification.
 
 ### Phase 4: Full Dashboard UI
 

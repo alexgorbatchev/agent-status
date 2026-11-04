@@ -31,7 +31,7 @@ type Config struct {
 }
 
 func parseIdleGracePeriod() time.Duration {
-	v := os.Getenv("AIR_IDLE_GRACE_PERIOD")
+	v := os.Getenv("AGENT_STATUS_IDLE_GRACE_PERIOD")
 	if v == "" {
 		return classifier.DefaultIdleGracePeriod
 	}
@@ -56,12 +56,12 @@ func (c *Config) Validate() error {
 }
 
 func Load() *Config {
-	addr := os.Getenv("AIR_INGESTER_ADDR")
+	addr := os.Getenv("AGENT_STATUS_INGESTER_ADDR")
 	if addr == "" {
 		addr = ":4501"
 	}
 
-	token := os.Getenv("AIR_BEARER_TOKEN")
+	token := os.Getenv("AGENT_STATUS_BEARER_TOKEN")
 	if token == "" {
 		token = "dev-secret-token"
 	}
@@ -92,7 +92,7 @@ func Load() *Config {
 		liteLLMKey = os.Getenv("OPENAI_API_KEY")
 	}
 
-	noSummarizeEnv := os.Getenv("AIR_NO_SUMMARIZE") == "1"
+	noSummarizeEnv := os.Getenv("AGENT_STATUS_NO_SUMMARIZE") == "1"
 	var noSummarizeSource string
 	if noSummarizeEnv {
 		noSummarizeSource = "env"
@@ -113,10 +113,10 @@ func Load() *Config {
 		LiteLLMAPIKey:     liteLLMKey,
 		GeminiAPIKey:      os.Getenv("GEMINI_API_KEY"),
 		AnthropicAPIKey:   os.Getenv("ANTHROPIC_API_KEY"),
-		SummarizerModel:   os.Getenv("AIR_SUMMARIZER_MODEL"),
+		SummarizerModel:   os.Getenv("AGENT_STATUS_SUMMARIZER_MODEL"),
 		LogLevel:          "info",
-		LogDir:            os.Getenv("AIR_LOG_DIR"),
-		LogFile:           os.Getenv("AIR_LOG_FILE"),
+		LogDir:            os.Getenv("AGENT_STATUS_LOG_DIR"),
+		LogFile:           os.Getenv("AGENT_STATUS_LOG_FILE"),
 		IdleGracePeriod:   idleGrace,
 	}
 }

@@ -28,7 +28,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	_, cleanup, err := testenv.IsolateStateDirs("air-ingester-test-state")
+	_, cleanup, err := testenv.IsolateStateDirs("agent-ingester-test-state")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -59,7 +59,7 @@ func TestIngesterCommandHelp(t *testing.T) {
 
 	out := buf.String()
 	requiredHelpStrings := []string{
-		"air-ingester",
+		"agent-ingester",
 		"--addr",
 		"--token",
 		"--db",
@@ -227,7 +227,7 @@ func TestIngesterIdleGracePeriodFlag(t *testing.T) {
 	})
 
 	t.Run("falls back to default duration via invalid negative environment variable", func(t *testing.T) {
-		t.Setenv("AIR_IDLE_GRACE_PERIOD", "-4s")
+		t.Setenv("AGENT_STATUS_IDLE_GRACE_PERIOD", "-4s")
 		cfg := config.Load()
 		if cfg.IdleGracePeriod != 5*time.Second {
 			t.Fatalf("expected IdleGracePeriod to fall back to default 5s, got %v", cfg.IdleGracePeriod)
@@ -356,11 +356,11 @@ func TestLogSummarizerStartup(t *testing.T) {
 		}
 	})
 
-	t.Run("disabled by env var AIR_NO_SUMMARIZE", func(t *testing.T) {
+	t.Run("disabled by env var AGENT_STATUS_NO_SUMMARIZE", func(t *testing.T) {
 		buf := new(bytes.Buffer)
 		logging.SetDefault(logging.NewWithMode(buf, "test-ingester", "info", true))
 
-		t.Setenv("AIR_NO_SUMMARIZE", "1")
+		t.Setenv("AGENT_STATUS_NO_SUMMARIZE", "1")
 		cfg := config.Load()
 		sumEngine, err := summarizer.New(summarizer.Config{
 			NoSummarize:       cfg.NoSummarize,
@@ -382,7 +382,7 @@ func TestLogSummarizerStartup(t *testing.T) {
 		if strings.Contains(out, "source=flag") {
 			t.Errorf("did not expect source=flag when disabled by env var, got: %s", out)
 		}
-		if strings.Contains(out, "AIR_NO_SUMMARIZE=1 was provided") || strings.Contains(out, "deterministic fallback heuristics") {
+		if strings.Contains(out, "AGENT_STATUS_NO_SUMMARIZE=1 was provided") || strings.Contains(out, "deterministic fallback heuristics") {
 			t.Errorf("did not expect prose sentence in log, got: %s", out)
 		}
 	})
@@ -921,7 +921,7 @@ func TestPeriodicPruner(t *testing.T) {
 // caused by lengthy t.TempDir() subtest paths.
 func shortTestSockPath(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("/tmp", "air-sock-*")
+	dir, err := os.MkdirTemp("/tmp", "agent-sock-*")
 	if err != nil {
 		dir = t.TempDir()
 	} else {
@@ -1231,7 +1231,7 @@ func TestMain_Version(t *testing.T) {
 	t.Cleanup(func() {
 		os.Args = origArgs
 	})
-	os.Args = []string{"air-ingester", "--version"}
+	os.Args = []string{"agent-ingester", "--version"}
 	main()
 }
 
@@ -1307,7 +1307,7 @@ func TestRunServer_DoesNotLeakLogsToUserXDGStateHome(t *testing.T) {
 		}
 	})
 
-	t.Run("isolated via package TestMain AIR_LOG_DIR fallback", func(t *testing.T) {
+	t.Run("isolated via package TestMain AGENT_STATUS_LOG_DIR fallback", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		dbPath := filepath.Join(tmpDir, "agent-status.db")
 		sockPath := shortTestSockPath(t)
@@ -1319,7 +1319,7 @@ func TestRunServer_DoesNotLeakLogsToUserXDGStateHome(t *testing.T) {
 			NoSummarize: true,
 			BearerToken: "test-secret-token",
 			LogLevel:    "info",
-			// LogDir and LogFile deliberately empty; package TestMain AIR_LOG_DIR catches it
+			// LogDir and LogFile deliberately empty; package TestMain AGENT_STATUS_LOG_DIR catches it
 		}
 
 		ctx, cancel := context.WithCancel(context.Background())

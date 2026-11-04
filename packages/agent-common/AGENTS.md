@@ -17,7 +17,7 @@ Shared Go types and structured logging definitions for the agent-status pipeline
 
 ## Local gotchas
 
-- Renaming struct tags in `types/types.go` breaks JSON contracts between `air-observer`, `air-ingester`, `air-server`, and `ui-web`.
+- Renaming struct tags in `types/types.go` breaks JSON contracts between `agent-observer`, `agent-ingester`, `agent-server`, and `ui-web`.
 
 ## Boundaries
 

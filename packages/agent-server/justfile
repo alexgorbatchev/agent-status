@@ -6,16 +6,16 @@ default:
 
 # Run in human-facing interactive mode
 run:
-    go run ./cmd/air-server
+    go run ./cmd/agent-server
 
 # Run in agent-facing token-conservative mode
 run-ai:
-    @AGENT=1 go run ./cmd/air-server
+    @AGENT=1 go run ./cmd/agent-server
 
 # Build compiled binary strictly into bin/
 build:
     @mkdir -p bin
-    go build -o bin/air-server ./cmd/air-server
+    go build -o bin/agent-server ./cmd/agent-server
 
 # Run all unit tests with race detector and verify >= 90% coverage
 test *args:
@@ -42,5 +42,5 @@ dev: build
     set -eu
     cd "{{ module_directory() }}/../.."
     mkdir -p .tmp/dev-stack/data/agent-status .tmp/dev-stack/cache .tmp/dev-stack/logs .tmp/dev-stack/run
-    unset AIR_LOG_FILE AIR_SESSION_STATE_PATH
-    exec packages/agent-server/bin/air-server --addr "$DEVHOST_BIND_HOST:$PORT" --token dev-secret-token --db .tmp/dev-stack/data/agent-status/agent-status.db --socket .tmp/dev-stack/run/notify.sock --ingester-url "$AGENT_INGESTER_URL" --log-dir .tmp/dev-stack/logs
+    unset AGENT_STATUS_LOG_FILE AGENT_STATUS_SESSION_STATE_PATH
+    exec packages/agent-server/bin/agent-server --addr "$DEVHOST_BIND_HOST:$PORT" --token dev-secret-token --db .tmp/dev-stack/data/agent-status/agent-status.db --socket .tmp/dev-stack/run/notify.sock --ingester-url "$AGENT_STATUS_INGESTER_URL" --log-dir .tmp/dev-stack/logs

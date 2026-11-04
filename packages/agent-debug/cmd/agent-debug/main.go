@@ -38,7 +38,7 @@ type replayFlags struct {
 
 func newRootCmd() *cobra.Command {
 	rootCmd := &cobra.Command{
-		Use:   "air-debug",
+		Use:   "agent-debug",
 		Short: "Agent Status Offline Replay & Ingestion Debugger",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmd.Help()

@@ -1,10 +1,10 @@
 # agent-observer
 
-Local observer daemon (`air-observer`) that consumes `agent-watcher`, formats telemetry, resolves git workspaces, and ships events over WebSocket.
+Local observer daemon (`agent-observer`) that consumes `agent-watcher`, formats telemetry, resolves git workspaces, and ships events over WebSocket.
 
 ## Commands
 
-- Dev: `go run ./cmd/air-observer`
+- Dev: `go run ./cmd/agent-observer`
 - Build: `just build`
 - Test: `just test` (>=90% statement coverage via `scripts/check-coverage.sh`)
 - Lint: `just lint`
@@ -12,7 +12,7 @@ Local observer daemon (`air-observer`) that consumes `agent-watcher`, formats te
 ## Local conventions
 
 - Keep discovery, lifecycle, transcript/database watching, and parser-event emission in standalone `github.com/alexgorbatchev/agent-watcher`.
-- `cmd/air-observer/main.go` maps `watcher.Event` to telemetry. Environment identity, git workspace resolution (`internal/git/`), and WebSocket delivery (`internal/shipper/`) belong here.
+- `cmd/agent-observer/main.go` maps `watcher.Event` to telemetry. Environment identity, git workspace resolution (`internal/git/`), and WebSocket delivery (`internal/shipper/`) belong here.
 - Pass explicit harness paths to `watcher.Config`; do not change process environment variables to configure the library.
 - Preserve agent-status cache locations using `config.ObserverCachePath`: `observer-cursors.json` and `observer-sessions.json` under `$XDG_CACHE_HOME/agent-status/` or `~/.cache/agent-status/`.
 - OpenCode messages use read-only database access and a separate acknowledged checkpoint file at the resolved cursor path + `.opencode`.
@@ -42,7 +42,7 @@ Local observer daemon (`air-observer`) that consumes `agent-watcher`, formats te
 
 ## References
 
-- Entry point and telemetry adapter: `cmd/air-observer/main.go`
+- Entry point and telemetry adapter: `cmd/agent-observer/main.go`
 - Shipper: `internal/shipper/shipper.go`
 - Watcher API and implementation: `github.com/alexgorbatchev/agent-watcher`
 - Public git resolver used by debug: `git/export.go`

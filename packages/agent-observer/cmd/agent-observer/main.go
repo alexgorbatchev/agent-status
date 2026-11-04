@@ -53,33 +53,33 @@ func newRootCmd() (*cobra.Command, *observerOptions) {
 		logLevel:            "info",
 	}
 
-	if envURL := os.Getenv("AGENT_INGESTER_URL"); envURL != "" {
+	if envURL := os.Getenv("AGENT_STATUS_INGESTER_URL"); envURL != "" {
 		opts.ingesterURL = envURL
 	}
 	if envToken := os.Getenv("AGENT_STATUS_TOKEN"); envToken != "" {
 		opts.token = envToken
 	}
-	if envState := os.Getenv("AIR_SESSION_STATE_PATH"); envState != "" {
+	if envState := os.Getenv("AGENT_STATUS_SESSION_STATE_PATH"); envState != "" {
 		opts.sessionStatePath = envState
 	}
-	if envRet := os.Getenv("AIR_CURSOR_RETENTION"); envRet != "" {
+	if envRet := os.Getenv("AGENT_STATUS_CURSOR_RETENTION"); envRet != "" {
 		if d, err := time.ParseDuration(envRet); err == nil {
 			opts.cursorRetention = d
 		}
 	}
-	if envPrune := os.Getenv("AIR_CURSOR_PRUNE_INTERVAL"); envPrune != "" {
+	if envPrune := os.Getenv("AGENT_STATUS_CURSOR_PRUNE_INTERVAL"); envPrune != "" {
 		if d, err := time.ParseDuration(envPrune); err == nil {
 			opts.cursorPruneInterval = d
 		}
 	}
-	if envFlush := os.Getenv("AIR_CURSOR_FLUSH_INTERVAL"); envFlush != "" {
+	if envFlush := os.Getenv("AGENT_STATUS_CURSOR_FLUSH_INTERVAL"); envFlush != "" {
 		if d, err := time.ParseDuration(envFlush); err == nil {
 			opts.cursorFlushInterval = d
 		}
 	}
 
 	rootCmd := &cobra.Command{
-		Use:   "air-observer",
+		Use:   "agent-observer",
 		Short: "Observer agent for local harness session monitoring and telemetry shipping",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runObserver(*opts)

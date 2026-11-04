@@ -4,7 +4,7 @@ description: >-
   REQUIRED when diagnosing, replaying, validating, or troubleshooting agent session transcripts
   (`.jsonl`, `opencode.db`) across Claude Code, Pi, OpenAI Codex, or OpenCode harnesses. You MUST
   use this skill whenever debugging parsing discrepancies, activity state glitches, token pricing
-  errors, or read-side query failures offline via `air-debug` or `just session-replay-<harness>`.
+  errors, or read-side query failures offline via `agent-debug` or `just session-replay-<harness>`.
   Do NOT use for live daemon monitoring (`just logs`) or browser UI testing.
 author: alexgorbatchev
 metadata:
@@ -56,7 +56,7 @@ If locating files manually or replaying archived sessions, inspect default harne
 
 ## 3. Core Offline Diagnostics Workflows
 
-Execute `just debug` (or `packages/agent-debug/bin/air-debug`) directly against any file or session ID:
+Execute `just debug` (or `packages/agent-debug/bin/agent-debug`) directly against any file or session ID:
 
 ### A. Full Session Replay & Summary
 
@@ -109,16 +109,16 @@ Diagnose observer harness process discovery, clock pairing deltas, and detect or
 
 ```bash
 # Audit process pairing across all harnesses
-air-debug scanner audit
+agent-debug scanner audit
 
 # Filter by harness or workspace directory
-air-debug scanner audit --harness pi --cwd /path/to/repo
+agent-debug scanner audit --harness pi --cwd /path/to/repo
 
 # List running processes (alias)
-air-debug process list
+agent-debug process list
 
 # Structured JSON output
-air-debug scanner audit --json
+agent-debug scanner audit --json
 ```
 
 ### E. Ingested Telemetry Event Inspection (`events`)
@@ -148,7 +148,7 @@ just debug events <session-id> --asc
 Trace activity flipping, active tool transitions, and token accumulation per turn:
 
 ```bash
-air-debug session replay --diff session.jsonl
+agent-debug session replay --diff session.jsonl
 ```
 
 Inspect field mutations:
@@ -190,13 +190,13 @@ Isolate the exact turn where state corrupts or token calculation drifts:
 
 ```bash
 # Halt replay after line N
-air-debug session replay --until-line 42 session.jsonl
+agent-debug session replay --until-line 42 session.jsonl
 
 # Halt replay after first occurrence of an event type
-air-debug session replay --until-event question_prompt session.jsonl
+agent-debug session replay --until-event question_prompt session.jsonl
 
 # Halt immediately on the first parse error or state machine failure
-air-debug session replay --stop-on-error session.jsonl
+agent-debug session replay --stop-on-error session.jsonl
 ```
 
 ### Foreign Transcript Path Remapping (`--cwd`)
@@ -204,7 +204,7 @@ air-debug session replay --stop-on-error session.jsonl
 When diagnosing transcripts captured on other machines, remote worktrees, or CI runners, remap Git resolution to your local checkout:
 
 ```bash
-air-debug session replay --cwd /Users/you/development/agent-status session.jsonl
+agent-debug session replay --cwd /Users/you/development/agent-status session.jsonl
 ```
 
 ### Subagent Tree Verification
@@ -218,10 +218,10 @@ Verify:
 
 ### SQLite Database Export (`--export-db`)
 
-Retain the fully populated SQLite database on disk for manual SQL queries or testing with `air-server`:
+Retain the fully populated SQLite database on disk for manual SQL queries or testing with `agent-server`:
 
 ```bash
-air-debug session replay --export-db .tmp/debug.db session.jsonl
+agent-debug session replay --export-db .tmp/debug.db session.jsonl
 
 # Inspect database directly
 sqlite3 .tmp/debug.db "SELECT id, activity, tokens_total, cost_usd FROM agents;"
@@ -235,7 +235,7 @@ sqlite3 .tmp/debug.db "SELECT id, event_type, timestamp FROM telemetry_events OR
 When running automated checks or script evaluations, invoke with `AGENT=1` for compact, token-conservative output without tables or dividers:
 
 ```bash
-AGENT=1 air-debug session replay session.jsonl
+AGENT=1 agent-debug session replay session.jsonl
 ```
 
 Output contract:

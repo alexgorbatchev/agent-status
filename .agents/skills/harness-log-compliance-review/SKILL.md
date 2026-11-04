@@ -57,7 +57,7 @@ Systematically audit `agent-parser` (`github.com/alexgorbatchev/agent-parser`) a
 Audit the complete path from parsed event to database and frontend:
 
 1. **Observer Scanner & Tailer (`packages/agent-observer`)**:
-   - Verify `air-observer` has active scanners for each supported harness.
+   - Verify `agent-observer` has active scanners for each supported harness.
    - Verify tailer callbacks route lines through an explicit switch on `frame.Harness` rather than binary fallbacks.
    - Verify `ParsedEvent` properties (`Timestamp`, `EventType`, `CWD`, `GitBranch`, `Data`) are mapped 1-to-1 into `ITelemetryFrame`.
 2. **Ingester Storage (`packages/agent-ingester/internal/store`)**:

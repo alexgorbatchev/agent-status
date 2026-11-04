@@ -2,10 +2,10 @@
 default:
     @just --justfile "{{ module_directory() }}/justfile" --list
 
-# Build air-observer binary strictly into bin/
+# Build agent-observer binary strictly into bin/
 build:
     @mkdir -p bin
-    go build -o bin/air-observer ./cmd/air-observer
+    go build -o bin/agent-observer ./cmd/agent-observer
 
 # Run all unit tests with race detector and verify >= 90% coverage
 test *args:
@@ -32,5 +32,5 @@ dev: build
     set -eu
     cd "{{ module_directory() }}/../.."
     mkdir -p .tmp/dev-stack/data .tmp/dev-stack/cache .tmp/dev-stack/logs .tmp/dev-stack/run
-    unset AIR_LOG_FILE AIR_SESSION_STATE_PATH
-    exec packages/agent-observer/bin/air-observer --ingester-url "$AGENT_INGESTER_URL" --token dev-secret-token --cursor-path .tmp/dev-stack/cache/observer-cursors.json --session-state-path .tmp/dev-stack/cache/session-state.json --log-dir .tmp/dev-stack/logs
+    unset AGENT_STATUS_LOG_FILE AGENT_STATUS_SESSION_STATE_PATH
+    exec packages/agent-observer/bin/agent-observer --ingester-url "$AGENT_STATUS_INGESTER_URL" --token dev-secret-token --cursor-path .tmp/dev-stack/cache/observer-cursors.json --session-state-path .tmp/dev-stack/cache/session-state.json --log-dir .tmp/dev-stack/logs

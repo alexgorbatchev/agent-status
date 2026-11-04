@@ -1482,7 +1482,7 @@ func TestSummarizer_DoesNotReadEnvironment(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "openai-test-key")
 	t.Setenv("GEMINI_API_KEY", "gemini-test-key")
 	t.Setenv("ANTHROPIC_API_KEY", "anthropic-test-key")
-	t.Setenv("AIR_SUMMARIZER_MODEL", "custom-model")
+	t.Setenv("AGENT_STATUS_SUMMARIZER_MODEL", "custom-model")
 
 	s, err := New(Config{})
 	if err != nil {
