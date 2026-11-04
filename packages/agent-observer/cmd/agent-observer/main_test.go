@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -312,7 +313,6 @@ func TestObserverRunLogging(t *testing.T) {
 }
 
 func TestObserverContextCancellationFlushesCursorStore(t *testing.T) {
-	t.Setenv("AGENT_STATUS_TEST_MOCK_PROC", "1")
 
 	buf := &testSyncBuffer{}
 	logger := logging.NewWithMode(buf, "observer", "info", false)
@@ -347,7 +347,7 @@ func TestObserverContextCancellationFlushesCursorStore(t *testing.T) {
 	}
 
 	metaPath := filepath.Join(claudeDir, "session-1.json")
-	metaData := []byte(`{"pid":99999,"sessionId":"test-session-1","cwd":"` + tmpDir + `","transcriptPath":"` + transcriptPath + `"}`)
+	metaData := []byte(`{"pid":` + strconv.Itoa(os.Getpid()) + `,"sessionId":"test-session-1","cwd":"` + tmpDir + `","transcriptPath":"` + transcriptPath + `"}`)
 	if err := os.WriteFile(metaPath, metaData, 0644); err != nil {
 		t.Fatalf("writing session metadata: %v", err)
 	}
@@ -581,7 +581,6 @@ func TestObserverEnvScannerDirs(t *testing.T) {
 }
 
 func TestObserverPiSessionIngestionWithThinkingLevelChange(t *testing.T) {
-	t.Setenv("AGENT_STATUS_TEST_MOCK_PROC", "1")
 
 	buf := &testSyncBuffer{}
 	logger := logging.NewWithMode(buf, "observer", "info", false)
@@ -674,14 +673,15 @@ func TestObserverPiSessionIngestionWithThinkingLevelChange(t *testing.T) {
 	defer mockIngester.Close()
 
 	opts := observerOptions{
-		ingesterURL:       "ws" + strings.TrimPrefix(mockIngester.URL, "http") + "/ws/ingest",
-		cursorPath:        cursorPath,
-		claudeSessionsDir: claudeDir,
-		piSessionsDir:     piSessionsDir,
-		codexSessionsDir:  codexDir,
-		opencodeDBPath:    opencodeDb,
-		scanInterval:      50 * time.Millisecond,
-		envFlag:           "test-env",
+		procSnapshotProvider: harnessProcesses([]string{sessionCWD}, nil),
+		ingesterURL:          "ws" + strings.TrimPrefix(mockIngester.URL, "http") + "/ws/ingest",
+		cursorPath:           cursorPath,
+		claudeSessionsDir:    claudeDir,
+		piSessionsDir:        piSessionsDir,
+		codexSessionsDir:     codexDir,
+		opencodeDBPath:       opencodeDb,
+		scanInterval:         50 * time.Millisecond,
+		envFlag:              "test-env",
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -736,7 +736,6 @@ func TestObserverPiSessionIngestionWithThinkingLevelChange(t *testing.T) {
 }
 
 func TestObserverTranscriptMalformedLineAdvance(t *testing.T) {
-	t.Setenv("AGENT_STATUS_TEST_MOCK_PROC", "1")
 
 	tmpDir := t.TempDir()
 	cursorPath := filepath.Join(tmpDir, "cursors.json")
@@ -811,14 +810,15 @@ func TestObserverTranscriptMalformedLineAdvance(t *testing.T) {
 	defer mockIngester.Close()
 
 	opts := observerOptions{
-		ingesterURL:       "ws" + strings.TrimPrefix(mockIngester.URL, "http") + "/ws/ingest",
-		cursorPath:        cursorPath,
-		claudeSessionsDir: claudeDir,
-		piSessionsDir:     piSessionsDir,
-		codexSessionsDir:  codexDir,
-		opencodeDBPath:    opencodeDb,
-		scanInterval:      50 * time.Millisecond,
-		envFlag:           "test-env",
+		procSnapshotProvider: harnessProcesses([]string{sessionCWD}, nil),
+		ingesterURL:          "ws" + strings.TrimPrefix(mockIngester.URL, "http") + "/ws/ingest",
+		cursorPath:           cursorPath,
+		claudeSessionsDir:    claudeDir,
+		piSessionsDir:        piSessionsDir,
+		codexSessionsDir:     codexDir,
+		opencodeDBPath:       opencodeDb,
+		scanInterval:         50 * time.Millisecond,
+		envFlag:              "test-env",
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -846,7 +846,6 @@ func TestObserverTranscriptMalformedLineAdvance(t *testing.T) {
 }
 
 func TestObserverClaudeSubagentRunStartedEmission(t *testing.T) {
-	t.Setenv("AGENT_STATUS_TEST_MOCK_PROC", "1")
 
 	buf := &testSyncBuffer{}
 	logger := logging.NewWithMode(buf, "observer", "info", false)
@@ -873,8 +872,9 @@ func TestObserverClaudeSubagentRunStartedEmission(t *testing.T) {
 	expectedSubTS := time.Now().UnixMilli() - 10000
 	laterSubTS := expectedSubTS + 5000
 	subagentLines := []string{
-		fmt.Sprintf("{\"type\":\"assistant\",\"timestamp\":%d,\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"subagent response\"}]}}", expectedSubTS),
-		fmt.Sprintf("{\"type\":\"assistant\",\"timestamp\":%d,\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"later line\"}]}}", laterSubTS),
+		// Claude Code writes zoned RFC3339 timestamps.
+		fmt.Sprintf("{\"type\":\"assistant\",\"timestamp\":%q,\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"subagent response\"}]}}", time.UnixMilli(expectedSubTS).UTC().Format(time.RFC3339Nano)),
+		fmt.Sprintf("{\"type\":\"assistant\",\"timestamp\":%q,\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"later line\"}]}}", time.UnixMilli(laterSubTS).UTC().Format(time.RFC3339Nano)),
 	}
 	subagentData := []byte(strings.Join(subagentLines, "\n") + "\n")
 	if err := os.WriteFile(subagentPath, subagentData, 0644); err != nil {
@@ -883,7 +883,7 @@ func TestObserverClaudeSubagentRunStartedEmission(t *testing.T) {
 
 	sessionID := "claude-sub-sess-1"
 	metaPath := filepath.Join(claudeDir, "session-1.json")
-	metaData := []byte(`{"pid":99998,"sessionId":"` + sessionID + `","cwd":"` + tmpDir + `","transcriptPath":"` + transcriptPath + `"}`)
+	metaData := []byte(`{"pid":` + strconv.Itoa(os.Getpid()) + `,"sessionId":"` + sessionID + `","cwd":"` + tmpDir + `","transcriptPath":"` + transcriptPath + `"}`)
 	if err := os.WriteFile(metaPath, metaData, 0644); err != nil {
 		t.Fatalf("writing session metadata: %v", err)
 	}
@@ -1036,7 +1036,6 @@ func TestObserverClaudeSubagentRunStartedEmission(t *testing.T) {
 }
 
 func TestObserverPiAndCodexDormantSessionTimestamp(t *testing.T) {
-	t.Setenv("AGENT_STATUS_TEST_MOCK_PROC", "1")
 
 	tmpDir := t.TempDir()
 	cursorPath := filepath.Join(tmpDir, "cursors.json")
@@ -1151,14 +1150,15 @@ func TestObserverPiAndCodexDormantSessionTimestamp(t *testing.T) {
 	defer mockIngester.Close()
 
 	opts := observerOptions{
-		ingesterURL:       "ws" + strings.TrimPrefix(mockIngester.URL, "http") + "/ws/ingest",
-		cursorPath:        cursorPath,
-		claudeSessionsDir: claudeDir,
-		piSessionsDir:     piSessionsDir,
-		codexSessionsDir:  codexSessionsDir,
-		opencodeDBPath:    opencodeDb,
-		scanInterval:      50 * time.Millisecond,
-		envFlag:           "test-env",
+		procSnapshotProvider: harnessProcesses([]string{piCWD}, []string{codexCWD}),
+		ingesterURL:          "ws" + strings.TrimPrefix(mockIngester.URL, "http") + "/ws/ingest",
+		cursorPath:           cursorPath,
+		claudeSessionsDir:    claudeDir,
+		piSessionsDir:        piSessionsDir,
+		codexSessionsDir:     codexSessionsDir,
+		opencodeDBPath:       opencodeDb,
+		scanInterval:         50 * time.Millisecond,
+		envFlag:              "test-env",
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1346,7 +1346,6 @@ func TestObserver_StartupSessionReconciliation(t *testing.T) {
 }
 
 func TestObserverTranscriptRunStartedOnlyCommitsCursorOffset(t *testing.T) {
-	t.Setenv("AGENT_STATUS_TEST_MOCK_PROC", "1")
 
 	tmpDir := t.TempDir()
 	cursorPath := filepath.Join(tmpDir, "cursors.json")
@@ -1402,14 +1401,15 @@ func TestObserverTranscriptRunStartedOnlyCommitsCursorOffset(t *testing.T) {
 	defer mockIngester.Close()
 
 	opts := observerOptions{
-		ingesterURL:       "ws" + strings.TrimPrefix(mockIngester.URL, "http") + "/ws/ingest",
-		cursorPath:        cursorPath,
-		claudeSessionsDir: claudeDir,
-		piSessionsDir:     piSessionsDir,
-		codexSessionsDir:  codexDir,
-		opencodeDBPath:    opencodeDb,
-		scanInterval:      50 * time.Millisecond,
-		envFlag:           "test-env",
+		procSnapshotProvider: harnessProcesses([]string{sessionCWD}, nil),
+		ingesterURL:          "ws" + strings.TrimPrefix(mockIngester.URL, "http") + "/ws/ingest",
+		cursorPath:           cursorPath,
+		claudeSessionsDir:    claudeDir,
+		piSessionsDir:        piSessionsDir,
+		codexSessionsDir:     codexDir,
+		opencodeDBPath:       opencodeDb,
+		scanInterval:         50 * time.Millisecond,
+		envFlag:              "test-env",
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1457,7 +1457,6 @@ func TestObserverTranscriptRunStartedOnlyCommitsCursorOffset(t *testing.T) {
 }
 
 func TestAttachTailer(t *testing.T) {
-	t.Setenv("AGENT_STATUS_TEST_MOCK_PROC", "1")
 
 	buf := &testSyncBuffer{}
 	logger := logging.NewWithMode(buf, "observer", "info", false)
@@ -1488,7 +1487,7 @@ func TestAttachTailer(t *testing.T) {
 
 	sessionID := "claude-test-session"
 	metaPath := filepath.Join(claudeDir, "session-1.json")
-	metaData := []byte(`{"pid":99998,"sessionId":"` + sessionID + `","cwd":"` + tmpDir + `","transcriptPath":"` + transcriptPath + `"}`)
+	metaData := []byte(`{"pid":` + strconv.Itoa(os.Getpid()) + `,"sessionId":"` + sessionID + `","cwd":"` + tmpDir + `","transcriptPath":"` + transcriptPath + `"}`)
 	if err := os.WriteFile(metaPath, metaData, 0644); err != nil {
 		t.Fatalf("writing session metadata: %v", err)
 	}
@@ -1595,7 +1594,6 @@ func TestAttachTailer(t *testing.T) {
 }
 
 func TestObserverStartupPrunesCursors(t *testing.T) {
-	t.Setenv("AGENT_STATUS_TEST_MOCK_PROC", "1")
 
 	tmpDir := t.TempDir()
 	cursorPath := filepath.Join(tmpDir, "cursors.json")
@@ -1704,6 +1702,43 @@ func TestObserverStartupPrunesCursors(t *testing.T) {
 	if _, ok := saved["stale"]; ok {
 		t.Errorf("expected stale cursor to be pruned on startup")
 	}
+}
+
+// harnessProcesses stands in for the host process table: the test process is
+// the only live PID, running as the Pi and Codex harness of each session cwd
+// listed. Claude Code descriptors in these tests name os.Getpid(), which the
+// scanner's real liveness probe accepts too.
+func harnessProcesses(piCWDs, codexCWDs []string) scanner.ProcessSnapshotProvider {
+	table := &harnessProcessTable{}
+	for _, cwd := range piCWDs {
+		table.pi = append(table.pi, scanner.PiProcessInfo{PID: os.Getpid(), CWD: cwd})
+	}
+	for _, cwd := range codexCWDs {
+		table.codex = append(table.codex, scanner.CodexProcessInfo{PID: os.Getpid(), CWD: cwd})
+	}
+	return &countingSnapshotProvider{snapshot: table}
+}
+
+type harnessProcessTable struct {
+	pi    []scanner.PiProcessInfo
+	codex []scanner.CodexProcessInfo
+}
+
+func (h *harnessProcessTable) IsProcessAlive(pid int) bool { return pid == os.Getpid() }
+
+func (h *harnessProcessTable) VerifyProcessMatch(pid int, _ int64) bool { return pid == os.Getpid() }
+
+func (h *harnessProcessTable) PiProcesses() []scanner.PiProcessInfo { return h.pi }
+
+func (h *harnessProcessTable) CodexProcesses() []scanner.CodexProcessInfo { return h.codex }
+
+func (h *harnessProcessTable) OpencodeProcesses() []scanner.OpencodeProcessInfo { return nil }
+
+func (h *harnessProcessTable) Process(pid int) (scanner.ProcessMeta, bool) {
+	if pid != os.Getpid() {
+		return scanner.ProcessMeta{}, false
+	}
+	return scanner.ProcessMeta{PID: pid, Alive: true}, true
 }
 
 type mockProcessSnapshot struct {

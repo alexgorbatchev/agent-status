@@ -23,11 +23,11 @@ Local observer daemon (`agent-observer`) that consumes `agent-watcher`, formats 
 
 ## Local gotchas
 
-- Keep `agent-parser` at least `v1.0.1` across workspace modules; Codex tool outputs may be content arrays, and task timestamps may be numeric. Older decoders reject these records.
+- Keep `agent-parser` at least `v1.1.0` (required by agent-watcher `v1.1.0`) across workspace modules; Codex tool outputs may be content arrays, and task timestamps may be numeric. Older decoders reject these records.
 - Watcher shutdown joins tailers and flushes cursors, database checkpoints, and session state before shipper shutdown.
 - Transcript files remain the durable queue when the bounded shipper buffer fills up.
 - Claude Code compaction replaces or truncates transcripts; file generation checks belong to the library.
-- Observer and debug consume the same tested watcher release, at least `v1.0.1` to preserve cursors for existing transcripts. Keep sibling workspace overrides optional and out of committed manifests.
+- Observer and debug consume the same tested watcher release, at least `v1.1.0`: it preserves cursors for existing transcripts, reads session recency from agent-parser's per-harness activity readers, and detects Pi under Node 24 on Linux. Keep sibling workspace overrides optional and out of committed manifests.
 
 ## Boundaries
 

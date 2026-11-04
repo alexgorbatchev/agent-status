@@ -131,7 +131,7 @@ func TestLoadSession_EdgeCases(t *testing.T) {
 	t.Run("loadCodexSession preserves parser state across lines within session", func(t *testing.T) {
 		codexFile := filepath.Join(tmpDir, "rollout-2026-06-12T16-08-43-test-session.jsonl")
 		content := `{"type":"session_meta","timestamp":"2026-06-12T16:08:43.000Z","payload":{"id":"test-session","cwd":"/repo"}}
-{"type":"event_msg","timestamp":"2026-06-12T16:08:44.000Z","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":100,"prompt_tokens":80,"completion_tokens":20},"last_token_usage":{"total_tokens":100,"prompt_tokens":80,"completion_tokens":20}},"rate_limits":{"remaining_tokens":0,"reset_tokens":"60s"}}}
+{"type":"event_msg","timestamp":"2026-06-12T16:08:44.000Z","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":100,"prompt_tokens":80,"completion_tokens":20},"last_token_usage":{"total_tokens":100,"prompt_tokens":80,"completion_tokens":20}},"rate_limits":{"primary":{"used_percent":100,"window_minutes":300,"resets_at":1781280584}}}}
 {"type":"event_msg","timestamp":"2026-06-12T16:08:45.000Z","payload":{"type":"error","message":"Rate limit exceeded","codex_error_info":"RateLimitExceeded"}}
 `
 		if err := os.WriteFile(codexFile, []byte(content), 0644); err != nil {
@@ -146,7 +146,7 @@ func TestLoadSession_EdgeCases(t *testing.T) {
 			if re.Event.EventType == "error" {
 				foundErrorEvent = true
 				if re.Event.Data.RetryAfterSeconds == nil || *re.Event.Data.RetryAfterSeconds != 59 {
-					t.Errorf("expected error event to have RetryAfterSeconds 59 (60s discounted by 1s) from session parser state, got %v", re.Event.Data.RetryAfterSeconds)
+					t.Errorf("expected error event to have RetryAfterSeconds 59 (window resets 60s after token_count, error 1s later) from session parser state, got %v", re.Event.Data.RetryAfterSeconds)
 				}
 			}
 		}
