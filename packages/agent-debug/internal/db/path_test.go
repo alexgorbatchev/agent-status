@@ -51,11 +51,40 @@ func TestResolveDBPathSearchOrder(t *testing.T) {
 			t.Fatalf("ResolveDBPath = %q, %v; want %q", got, err, override)
 		}
 	})
-	t.Run("dev stack beats the installed database", func(t *testing.T) {
+	t.Run("explicit path beats AIR_DB_PATH", func(t *testing.T) {
 		home, _ := isolateDBLookup(t)
-		writeDB(t, devStackDBPath)
+		explicit := filepath.Join(home, "explicit.db")
+		override := filepath.Join(home, "override.db")
+		writeDB(t, explicit)
+		writeDB(t, override)
+		t.Setenv("AIR_DB_PATH", override)
+		if got, err := ResolveDBPath(explicit); err != nil || got != explicit {
+			t.Fatalf("ResolveDBPath = %q, %v; want %q", got, err, explicit)
+		}
+	})
+	t.Run("AIR_DB_PATH beats the installed database", func(t *testing.T) {
+		home, _ := isolateDBLookup(t)
+		override := filepath.Join(home, "override.db")
+		writeDB(t, override)
 		writeDB(t, filepath.Join(home, ".local/share/agent-status/agent-status.db"))
-		if got, err := ResolveDBPath(""); err != nil || got != devStackDBPath {
+		t.Setenv("AIR_DB_PATH", override)
+		if got, err := ResolveDBPath("auto"); err != nil || got != override {
+			t.Fatalf("ResolveDBPath = %q, %v; want %q", got, err, override)
+		}
+	})
+	t.Run("installed database beats the dev stack", func(t *testing.T) {
+		home, _ := isolateDBLookup(t)
+		want := filepath.Join(home, ".local/share/agent-status/agent-status.db")
+		writeDB(t, want)
+		writeDB(t, devStackDBPath)
+		if got, err := ResolveDBPath(""); err != nil || got != want {
+			t.Fatalf("ResolveDBPath = %q, %v; want %q", got, err, want)
+		}
+	})
+	t.Run("dev stack when nothing is installed", func(t *testing.T) {
+		isolateDBLookup(t)
+		writeDB(t, devStackDBPath)
+		if got, err := ResolveDBPath("auto"); err != nil || got != devStackDBPath {
 			t.Fatalf("ResolveDBPath = %q, %v; want the dev stack", got, err)
 		}
 	})

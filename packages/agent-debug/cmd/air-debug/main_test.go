@@ -1097,37 +1097,122 @@ func TestCLI_SessionFleet(t *testing.T) {
 	})
 }
 
-// TestCLI_CommandsShareDatabaseResolution runs events, db inspect, and fleet without --db
-// where no database exists: every command must report the same search, proving they share
-// one resolver.
+// TestCLI_CommandsShareDatabaseResolution seeds a real database at one level of the
+// search order and an unreadable decoy at every level that should lose to it, then
+// requires events, db inspect, and fleet to all read the real one.
 func TestCLI_CommandsShareDatabaseResolution(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("XDG_DATA_HOME", "")
-	t.Setenv("AIR_DB_PATH", "")
-	t.Chdir(t.TempDir())
+	devStack := filepath.Join(".tmp", "dev-stack", "data", "agent-status", "agent-status.db")
+	installed := func(home string) string {
+		return filepath.Join(home, ".local", "share", "agent-status", "agent-status.db")
+	}
+	levels := []struct {
+		name string
+		// place returns the path to seed and the --db flag, given the other levels' paths.
+		place func(home, override string) (seed, flag string)
+	}{
+		{"explicit --db", func(home, _ string) (string, string) {
+			p := filepath.Join(home, "explicit.db")
+			return p, p
+		}},
+		{"AIR_DB_PATH", func(_, override string) (string, string) { return override, "" }},
+		{"installed ingester", func(home, _ string) (string, string) { return installed(home), "" }},
+		{"dev stack", func(_, _ string) (string, string) { return devStack, "" }},
+	}
 
-	var messages []string
-	for _, args := range [][]string{
-		{"events", "ses-1"},
-		{"db", "inspect", "ses-1"},
-		{"fleet"},
-	} {
-		cmd := newRootCmd()
-		cmd.SetOut(new(bytes.Buffer))
-		cmd.SetErr(new(bytes.Buffer))
-		cmd.SetArgs(args)
-		err := cmd.Execute()
-		if err == nil {
-			t.Fatalf("%v found a database where none exists", args)
-		}
-		messages = append(messages, err.Error())
+	for i, level := range levels {
+		t.Run(level.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_DATA_HOME", "")
+			t.Setenv("AIR_DB_PATH", "")
+			t.Chdir(t.TempDir())
+
+			override := filepath.Join(home, "override.db")
+			seed, flag := level.place(home, override)
+			decoys := []string{override, installed(home), devStack}[max(i-1, 0):]
+			if i <= 1 {
+				t.Setenv("AIR_DB_PATH", override)
+			}
+			for _, decoy := range decoys {
+				if decoy == seed {
+					continue
+				}
+				writeFile(t, decoy, "not a database")
+			}
+			real := createTestStatusDB(t, t.TempDir())
+			if err := os.MkdirAll(filepath.Dir(seed), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(real, seed); err != nil {
+				t.Fatal(err)
+			}
+
+			for _, check := range []struct {
+				args []string
+				want string
+			}{
+				{[]string{"events", "test-session"}, "pid=5555"},
+				{[]string{"db", "inspect", "test-session"}, "Main Test Agent"},
+				{[]string{"fleet"}, "Main Test Agent"},
+			} {
+				args := check.args
+				if flag != "" {
+					args = append(args, "--db", flag)
+				}
+				cmd := newRootCmd()
+				var out bytes.Buffer
+				cmd.SetOut(&out)
+				cmd.SetErr(new(bytes.Buffer))
+				cmd.SetArgs(args)
+				if err := cmd.Execute(); err != nil {
+					t.Fatalf("%v did not read the %s database: %v", args, level.name, err)
+				}
+				if !strings.Contains(out.String(), check.want) {
+					t.Errorf("%v output does not show the seeded session:\n%s", args, out.String())
+				}
+			}
+		})
 	}
-	for _, message := range messages[1:] {
-		if message != messages[0] {
-			t.Fatalf("commands resolved the database differently:\n%s", strings.Join(messages, "\n"))
+
+	t.Run("nothing found", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("XDG_DATA_HOME", "")
+		t.Setenv("AIR_DB_PATH", "")
+		t.Chdir(t.TempDir())
+
+		var messages []string
+		for _, args := range [][]string{
+			{"events", "ses-1"},
+			{"db", "inspect", "ses-1"},
+			{"fleet"},
+		} {
+			cmd := newRootCmd()
+			cmd.SetOut(new(bytes.Buffer))
+			cmd.SetErr(new(bytes.Buffer))
+			cmd.SetArgs(args)
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("%v found a database where none exists", args)
+			}
+			messages = append(messages, err.Error())
 		}
+		for _, message := range messages[1:] {
+			if message != messages[0] {
+				t.Fatalf("commands resolved the database differently:\n%s", strings.Join(messages, "\n"))
+			}
+		}
+		if !strings.Contains(messages[0], "agent-status database not found in") {
+			t.Errorf("unexpected resolution error: %s", messages[0])
+		}
+	})
+}
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(messages[0], "agent-status database not found in") {
-		t.Errorf("unexpected resolution error: %s", messages[0])
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

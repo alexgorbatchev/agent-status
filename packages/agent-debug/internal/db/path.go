@@ -12,9 +12,9 @@ var devStackDBPath = filepath.Join(".tmp", "dev-stack", "data", "agent-status", 
 
 // ResolveDBPath returns the agent-status database every agent-debug command reads. An
 // explicit path (with a leading ~/ expanded) must exist. "" or "auto" searches, in order:
-// AIR_DB_PATH; the dev stack's database under the current directory, which exists only
-// when running from a repository with the dev stack; and the ingester's default,
-// $XDG_DATA_HOME/agent-status/agent-status.db or ~/.local/share/agent-status/agent-status.db.
+// AIR_DB_PATH; where the installed ingester writes,
+// $XDG_DATA_HOME/agent-status/agent-status.db or ~/.local/share/agent-status/agent-status.db;
+// and the dev stack's database under the current directory.
 func ResolveDBPath(flagVal string) (string, error) {
 	if flagVal != "" && flagVal != "auto" {
 		path := expandHome(flagVal)
@@ -30,10 +30,11 @@ func ResolveDBPath(flagVal string) (string, error) {
 		}
 		return path, nil
 	}
-	candidates := []string{devStackDBPath}
+	var candidates []string
 	if installed := ingesterDBPath(); installed != "" {
 		candidates = append(candidates, installed)
 	}
+	candidates = append(candidates, devStackDBPath)
 	for _, candidate := range candidates {
 		if _, err := os.Stat(candidate); err == nil {
 			return candidate, nil

@@ -25,7 +25,7 @@ An offline debugging and transcript replay utility for AI coding agent sessions.
 - Sibling subagent directories (`<session_id>/subagents/*.jsonl` or `subagents/*.jsonl`) are automatically discovered and interleaved into the event stream by timestamp.
 - Intermediate state inspection is controlled via breakpoints: `--until-line <N>`, `--until-event <type>`, and `--stop-on-error`.
 - Dual-mode output (`AGENT=1`) switches from aligned terminal tables and ASCII tree glyphs to token-conservative key-value lines.
-- Every command that reads the agent-status database finds it the same way when `--db` is omitted or `auto`: `AIR_DB_PATH` if set, then the dev stack's `.tmp/dev-stack/data/agent-status/agent-status.db` under the current directory, then the installed ingester's `$XDG_DATA_HOME/agent-status/agent-status.db` (default `~/.local/share/agent-status/agent-status.db`). An explicit `--db` may start with `~/`.
+- Every command that reads the agent-status database finds it the same way when `--db` is `auto` (the default for `fleet`, `db inspect`, and `events`; `session replay` and `session validate` compare against a database only when `--db` is given): `AIR_DB_PATH` if set, then the installed ingester's `$XDG_DATA_HOME/agent-status/agent-status.db` (default `~/.local/share/agent-status/agent-status.db`), then the dev stack's `.tmp/dev-stack/data/agent-status/agent-status.db` under the current directory. Pass `--db .tmp/dev-stack/data/agent-status/agent-status.db` to read the dev stack on a machine that also runs the installed ingester. An explicit `--db` may start with `~/`.
 
 # Prerequisites
 
