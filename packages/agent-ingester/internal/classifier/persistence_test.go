@@ -515,3 +515,36 @@ func TestClassifier_SummaryWaitsForFrameInFlight(t *testing.T) {
 		t.Errorf("action = %q, want the summary saved after the frame", saved.Activity.Action)
 	}
 }
+
+func TestClassifier_ClearingCompletionClearsItsTimestamp(t *testing.T) {
+	str := func(s string) *string { return &s }
+	yes := true
+	for _, tt := range []struct {
+		name     string
+		subagent string
+		event    string
+		data     types.TelemetryFrameData
+	}{
+		{name: "root tool result", event: "tool_result"},
+		{name: "root tool-use turn end", event: "turn_end", data: types.TelemetryFrameData{StopReason: str("tool_use")}},
+		{name: "busy subagent", subagent: "worker", event: "tool_call", data: types.TelemetryFrameData{ToolName: str("Read")}},
+		{name: "failed subagent", subagent: "worker", event: "error", data: types.TelemetryFrameData{Content: str("boom")}},
+		{name: "subagent question", subagent: "worker", event: "question_prompt", data: types.TelemetryFrameData{Question: str("continue?")}},
+		{name: "rate-limited subagent", subagent: "worker", event: "error", data: types.TelemetryFrameData{Content: str("rate limited"), IsRateLimit: &yes}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			c, st, frame := completedAgent(t, ":memory:")
+			frame.Seq++
+			frame.Timestamp += 1000
+			frame.EventType = tt.event
+			frame.Data = tt.data
+			if tt.subagent != "" {
+				frame.SubagentID = &tt.subagent
+			}
+			if _, err := c.ProcessFrame(frame); err != nil {
+				t.Fatal(err)
+			}
+			assertCompletion(t, c, st, frame.AgentID, 0)
+		})
+	}
+}

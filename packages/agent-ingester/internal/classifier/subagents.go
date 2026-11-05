@@ -177,12 +177,12 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 	if actx.rootActivity == types.ActivityError {
 		agent.Activity.Activity = types.ActivityError
 		agent.Activity.LastError = actx.rootLastError
-		agent.Activity.HasUnseenCompletion = nil
+		clearCompletion(&agent.Activity)
 		clearRateLimit(&agent.Activity)
 		return
 	} else if subError != nil {
 		agent.Activity.Activity = types.ActivityError
-		agent.Activity.HasUnseenCompletion = nil
+		clearCompletion(&agent.Activity)
 		clearRateLimit(&agent.Activity)
 		if subError.LastError != nil {
 			errStr := fmt.Sprintf("[Subagent %s] %s", subError.ID, *subError.LastError)
@@ -197,12 +197,12 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 	if actx.rootActivity == types.ActivityWaitingQuestion {
 		agent.Activity.Activity = types.ActivityWaitingQuestion
 		agent.Activity.Question = actx.rootQuestion
-		agent.Activity.HasUnseenCompletion = nil
+		clearCompletion(&agent.Activity)
 		clearRateLimit(&agent.Activity)
 		return
 	} else if subQuestion != nil {
 		agent.Activity.Activity = types.ActivityWaitingQuestion
-		agent.Activity.HasUnseenCompletion = nil
+		clearCompletion(&agent.Activity)
 		clearRateLimit(&agent.Activity)
 		if sub, ok := actx.subagents[subQuestion.ID]; ok && sub.question != nil {
 			qStr := fmt.Sprintf("[Subagent %s] %s", subQuestion.ID, *sub.question)
@@ -216,13 +216,13 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 	// 3. Rate Limited Precedence
 	if actx.rootActivity == types.ActivityRateLimited {
 		agent.Activity.Activity = types.ActivityRateLimited
-		agent.Activity.HasUnseenCompletion = nil
+		clearCompletion(&agent.Activity)
 		agent.Activity.RateLimitResetAt = actx.rootRateLimitResetAt
 		agent.Activity.RetryAfterSeconds = actx.rootRetryAfterSeconds
 		return
 	} else if subRateLimited != nil {
 		agent.Activity.Activity = types.ActivityRateLimited
-		agent.Activity.HasUnseenCompletion = nil
+		clearCompletion(&agent.Activity)
 		if subRateLimited.LastError != nil {
 			errStr := fmt.Sprintf("[Subagent %s] %s", subRateLimited.ID, *subRateLimited.LastError)
 			agent.Activity.LastError = &errStr
@@ -242,11 +242,11 @@ func (c *Classifier) rollupActivityLocked(agent *types.IAgentState, actx *agentC
 	if actx.rootActivity == types.ActivityBusy {
 		agent.Activity.Activity = types.ActivityBusy
 		agent.Activity.Action = actx.rootAction
-		agent.Activity.HasUnseenCompletion = nil
+		clearCompletion(&agent.Activity)
 		clearRateLimit(&agent.Activity)
 	} else if subBusy != nil {
 		agent.Activity.Activity = types.ActivityBusy
-		agent.Activity.HasUnseenCompletion = nil
+		clearCompletion(&agent.Activity)
 		clearRateLimit(&agent.Activity)
 		if subBusy.ActiveTool != nil && *subBusy.ActiveTool != "" {
 			agent.Activity.Action = fmt.Sprintf("Running subagent %s: %s", subBusy.ID, *subBusy.ActiveTool)

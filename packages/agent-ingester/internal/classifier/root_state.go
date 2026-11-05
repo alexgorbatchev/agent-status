@@ -119,7 +119,7 @@ func (c *Classifier) applyRootEvent(agent *types.IAgentState, actx *agentContext
 		// the agent remains busy processing the result, not in an error state.
 		agent.Activity.Activity = types.ActivityBusy
 		clearRateLimit(&agent.Activity)
-		agent.Activity.HasUnseenCompletion = nil
+		clearCompletion(&agent.Activity)
 		agent.Activity.LastError = nil
 		clearActiveTool(&agent.Activity)
 		pendingJob = c.updateSummarization(agent, false)
@@ -238,7 +238,7 @@ func (c *Classifier) applyRootEvent(agent *types.IAgentState, actx *agentContext
 			c.mu.Unlock()
 			if agent.Activity.Activity != types.ActivityWaitingQuestion {
 				agent.Activity.Activity = types.ActivityBusy
-				agent.Activity.HasUnseenCompletion = nil
+				clearCompletion(&agent.Activity)
 			}
 			pendingJob = c.updateSummarization(agent, true)
 		} else if agent.Activity.Activity == types.ActivityWaitingQuestion {
@@ -284,7 +284,7 @@ func (c *Classifier) applyRootEvent(agent *types.IAgentState, actx *agentContext
 
 			if isWithinTurnFloor {
 				agent.Activity.Activity = types.ActivityBusy
-				agent.Activity.HasUnseenCompletion = nil
+				clearCompletion(&agent.Activity)
 				markThinking(&agent.Activity)
 				c.mu.Lock()
 				c.cancelIdleTimerLocked(agent.ID)
