@@ -30,9 +30,10 @@ test:
     bun run check
     NODE_ENV=test bun test src
 
-# Build the daemons the full-stack specs spawn, then run the Playwright E2E suite
+# Build the daemons the full-stack specs spawn, make sure Chromium is installed, then run the Playwright E2E suite
 test-e2e:
     just --justfile ../../justfile build-daemons
+    bun x playwright install chromium
     bun run test:e2e
 
 # Clean artifacts

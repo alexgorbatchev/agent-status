@@ -18,7 +18,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - Test all: `just test-all`
 - Check coverage: `just check-coverage` (enforces >= 90% statement coverage across all Go packages via `scripts/check-coverage.sh`)
 - Lint all: `just lint-all` (Go formatting via `scripts/check-format.sh`, which checks tracked and new source and skips ignored output)
-- Run Playwright E2E: `just ui test-e2e` (builds the daemons first; run `bun x playwright install chromium` in `packages/ui-web` once)
+- Run Playwright E2E: `just ui test-e2e` (builds the daemons and installs the pinned Chromium first)
 - Start Storybook: `just ui storybook`
 
 ## Workspace map
