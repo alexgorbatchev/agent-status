@@ -760,7 +760,17 @@ type recordingBackOff struct {
 	mu       sync.Mutex
 	delays   []time.Duration
 	connects []time.Time
+	closes   []time.Time
 	resets   int
+}
+
+// fail records when the server starts closing a recorded connection, then
+// closes it with an error status.
+func (r *recordingBackOff) fail(conn *websocket.Conn, reason string) {
+	r.mu.Lock()
+	r.closes = append(r.closes, time.Now())
+	r.mu.Unlock()
+	_ = conn.Close(websocket.StatusInternalError, reason)
 }
 
 func (r *recordingBackOff) Reset() {
@@ -804,19 +814,22 @@ func (r *recordingBackOff) waitForDelays(t *testing.T, n int) []time.Duration {
 }
 
 // requireWaited fails unless each of the first len(delays) reconnects came at
-// least the chosen delay after the previous connection attempt. A lower bound
-// holds under any scheduler load.
+// least the chosen delay after the server began closing the previous
+// connection. The shipper only notices the close after that moment, so this
+// lower bound holds under any scheduler load and however long the previous
+// connection stayed open.
 func (r *recordingBackOff) requireWaited(t *testing.T, delays []time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		r.mu.Lock()
 		connects := append([]time.Time(nil), r.connects...)
+		closes := append([]time.Time(nil), r.closes...)
 		r.mu.Unlock()
-		if len(connects) > len(delays) {
+		if len(connects) > len(delays) && len(closes) >= len(delays) {
 			for i, delay := range delays {
-				if gap := connects[i+1].Sub(connects[i]); gap < delay {
-					t.Errorf("reconnect %d came %v after the previous attempt, before its %v backoff", i+1, gap, delay)
+				if gap := connects[i+1].Sub(closes[i]); gap < delay {
+					t.Errorf("reconnect %d came %v after the previous connection closed, before its %v backoff", i+1, gap, delay)
 				}
 			}
 			return
@@ -862,7 +875,7 @@ func startRecordingShipper(t *testing.T, handler func(*recordingBackOff) http.Ha
 }
 
 func TestShipperBackoffSuccessivelyIncreasesOnImmediateDisconnect(t *testing.T) {
-	recorder := startRecordingShipper(t, func(*recordingBackOff) http.HandlerFunc {
+	recorder := startRecordingShipper(t, func(recorder *recordingBackOff) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			conn, err := websocket.Accept(w, r, nil)
 			if err != nil {
@@ -871,10 +884,10 @@ func TestShipperBackoffSuccessivelyIncreasesOnImmediateDisconnect(t *testing.T) 
 			// Read the hello frame, then fail the stream at once: a successful
 			// handshake alone must not count as a healthy connection.
 			if _, _, err := conn.Read(r.Context()); err != nil {
-				_ = conn.Close(websocket.StatusInternalError, "read error")
+				recorder.fail(conn, "read error")
 				return
 			}
-			_ = conn.Close(websocket.StatusInternalError, "immediate streaming failure")
+			recorder.fail(conn, "immediate streaming failure")
 		}
 	}, 10*time.Second)
 
@@ -889,14 +902,14 @@ func TestShipperBackoffSuccessivelyIncreasesOnImmediateDisconnect(t *testing.T) 
 func TestShipperBackoffResetsOnAck(t *testing.T) {
 	var mu sync.Mutex
 	attempt := 0
-	recorder := startRecordingShipper(t, func(*recordingBackOff) http.HandlerFunc {
+	recorder := startRecordingShipper(t, func(recorder *recordingBackOff) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			conn, err := websocket.Accept(w, r, nil)
 			if err != nil {
 				return
 			}
 			if _, _, err := conn.Read(r.Context()); err != nil {
-				_ = conn.Close(websocket.StatusInternalError, "read error")
+				recorder.fail(conn, "read error")
 				return
 			}
 			mu.Lock()
@@ -910,7 +923,7 @@ func TestShipperBackoffResetsOnAck(t *testing.T) {
 				ackBytes, _ := json.Marshal(types.IIngesterMessage{Type: "ack", UpTo: 1})
 				_ = conn.Write(r.Context(), websocket.MessageText, ackBytes)
 			}
-			_ = conn.Close(websocket.StatusInternalError, "closing connection")
+			recorder.fail(conn, "closing connection")
 		}
 	}, 10*time.Second)
 
@@ -924,6 +937,9 @@ func TestShipperBackoffResetsOnAck(t *testing.T) {
 }
 
 func TestShipperBackoffResetsOnSustainedHealth(t *testing.T) {
+	// Closed before the server shuts down, so a held connection never delays it.
+	testDone := make(chan struct{})
+	defer close(testDone)
 	var mu sync.Mutex
 	attempt := 0
 	recorder := startRecordingShipper(t, func(recorder *recordingBackOff) http.HandlerFunc {
@@ -933,7 +949,7 @@ func TestShipperBackoffResetsOnSustainedHealth(t *testing.T) {
 				return
 			}
 			if _, _, err := conn.Read(r.Context()); err != nil {
-				_ = conn.Close(websocket.StatusInternalError, "read error")
+				recorder.fail(conn, "read error")
 				return
 			}
 			mu.Lock()
@@ -946,11 +962,16 @@ func TestShipperBackoffResetsOnSustainedHealth(t *testing.T) {
 				// healthy, which resets the backoff, then fail it.
 				resetsBefore := recorder.resetCount()
 				deadline := time.Now().Add(3 * time.Second)
-				for recorder.resetCount() == resetsBefore && time.Now().Before(deadline) && r.Context().Err() == nil {
-					time.Sleep(5 * time.Millisecond)
+			hold:
+				for recorder.resetCount() == resetsBefore && time.Now().Before(deadline) {
+					select {
+					case <-testDone:
+						break hold
+					case <-time.After(5 * time.Millisecond):
+					}
 				}
 			}
-			_ = conn.Close(websocket.StatusInternalError, "closing connection")
+			recorder.fail(conn, "closing connection")
 		}
 		// Long enough that the immediately failed connections 1 and 2 never
 		// count as healthy; connection 3 waits for the reset, not for a timer.
