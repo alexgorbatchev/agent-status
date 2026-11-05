@@ -155,7 +155,7 @@ func (c *Classifier) handleIdleTransition(agentID string, scheduledGen uint64) {
 			agent.Activity.Lifecycle != types.LifecycleRunning {
 			return false
 		}
-		if actx.saveGeneration != scheduledSaveGen {
+		if actx.saveGeneration != scheduledSaveGen || actx.frameInFlight {
 			// A subagent frame arrived after scheduling; try again once it settles.
 			c.scheduleIdleTransitionLocked(agentID, actx.rootGeneration, 100*time.Millisecond)
 			return false
@@ -218,7 +218,7 @@ func (c *Classifier) handleSilenceTransition(agentID string, scheduledGen uint64
 		agentRateLimited := agent.Activity.Activity == types.ActivityRateLimited
 		if agent.Activity.Lifecycle != types.LifecycleRunning ||
 			(!silenceCanIdle(scheduledRootActivity) && !agentRateLimited) ||
-			actx.rootGeneration != scheduledGen || actx.saveGeneration != scheduledSaveGen ||
+			actx.rootGeneration != scheduledGen || actx.saveGeneration != scheduledSaveGen || actx.frameInFlight ||
 			(!silenceCanIdle(actx.rootActivity) && !agentRateLimited) {
 			return false
 		}

@@ -37,8 +37,12 @@ type subagentState struct {
 }
 
 type agentContext struct {
-	persistMu               sync.Mutex
-	saveGeneration          uint64
+	persistMu      sync.Mutex
+	saveGeneration uint64
+	// frameInFlight is set from the moment a frame bumps saveGeneration until
+	// it has saved. Background writers must not save or change the cache then:
+	// the frame already copied the cache into the row it is about to save.
+	frameInFlight           bool
 	lastPrompt              string
 	lastAssistantResponse   string
 	lastToolArgs            string
@@ -123,6 +127,7 @@ type Classifier struct {
 	beforeSilenceSaveHook       func(agentID string)
 	beforeSummarySaveHook       func(agentID string)
 	beforeFramePublishHook      func(agentID string)
+	beforeFrameSaveHook         func(agentID string)
 	afterFrameReadHook          func(agentID string)
 	beforeSubagentDwellSaveHook func(agentID, subagentID string)
 	afterSubagentDwellHook      func(agentID, subagentID string)
@@ -409,6 +414,12 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 	}
 	c.mu.Lock()
 	actx.saveGeneration++
+	actx.frameInFlight = true
+	defer func() {
+		c.mu.Lock()
+		actx.frameInFlight = false
+		c.mu.Unlock()
+	}()
 	actx.lastEventTimestamp = now
 	if !isSubagent && isRootStateEvent(frame.EventType) {
 		actx.rootGeneration++
@@ -488,6 +499,9 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 	}
 	c.mu.Unlock()
 
+	if c.beforeFrameSaveHook != nil {
+		c.beforeFrameSaveHook(agent.ID)
+	}
 	actx.persistMu.Lock()
 	if agent.Activity.Lifecycle != types.LifecycleExited {
 		// A dismissal may have committed after this frame prepared its snapshot.

@@ -286,3 +286,128 @@ func TestClassifier_SubagentDwellExpiryCachesSavedCompletion(t *testing.T) {
 	}
 	assertCompletion(t, c, st, frame.AgentID, *saved.Activity.CompletedAt)
 }
+
+func TestClassifier_IdleTransitionWaitsForFrameInFlight(t *testing.T) {
+	c, st, frame := completedAgent(t, ":memory:")
+	c.SetIdleGracePeriod(time.Hour)
+	send := func(event string, subagent string, stop string) {
+		t.Helper()
+		f := frame
+		f.Seq += 10
+		frame.Seq = f.Seq
+		f.Timestamp += 1000
+		frame.Timestamp = f.Timestamp
+		f.EventType = event
+		f.SubagentID = nil
+		if subagent != "" {
+			f.SubagentID = &subagent
+		}
+		f.Data = types.TelemetryFrameData{}
+		if stop != "" {
+			f.Data.StopReason = &stop
+		}
+		if event == "tool_call" {
+			tool := "Read"
+			f.Data.ToolName = &tool
+		}
+		if _, err := c.ProcessFrame(f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	send("turn_start", "", "")
+	send("tool_call", "worker", "")
+	// The root finishes its turn and waits out the idle grace period.
+	send("turn_end", "", "end_turn")
+	c.mu.Lock()
+	scheduledGen := c.agentCtx[frame.AgentID].rootGeneration
+	c.mu.Unlock()
+
+	// The subagent finishes. Its frame prepares a BUSY row (the root is still
+	// in its grace period), then the grace period ends before the frame saves.
+	paused, resume := make(chan struct{}), make(chan struct{})
+	c.beforeFrameSaveHook = func(string) {
+		c.beforeFrameSaveHook = nil
+		close(paused)
+		<-resume
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		send("turn_end", "worker", "end_turn")
+	}()
+	<-paused
+	c.handleIdleTransition(frame.AgentID, scheduledGen)
+	close(resume)
+	<-done
+
+	// The idle transition must not be lost behind the frame's later save.
+	waitForDismissalCondition(t, func() bool {
+		agent, err := st.GetAgent(frame.AgentID)
+		return err == nil && agent != nil && agent.Activity.Activity == types.ActivityIdle &&
+			agent.Activity.HasUnseenCompletion != nil && *agent.Activity.HasUnseenCompletion
+	})
+	c.mu.Lock()
+	rootActivity := c.agentCtx[frame.AgentID].rootActivity
+	c.mu.Unlock()
+	if rootActivity != types.ActivityIdle {
+		t.Errorf("cached root activity = %v, want IDLE", rootActivity)
+	}
+}
+
+func TestClassifier_SubagentDwellExpiryWaitsForFrameInFlight(t *testing.T) {
+	c, st, frame := completedAgent(t, ":memory:")
+	c.SetSubagentDwell(time.Hour)
+	worker := "worker"
+	for _, event := range []string{"tool_call", "turn_end"} {
+		f := frame
+		f.Seq += 10
+		frame.Seq = f.Seq
+		f.Timestamp += 1000
+		frame.Timestamp = f.Timestamp
+		f.SubagentID = &worker
+		f.EventType = event
+		f.Data = types.TelemetryFrameData{}
+		if event == "tool_call" {
+			tool := "Read"
+			f.Data.ToolName = &tool
+		}
+		if _, err := c.ProcessFrame(f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Frame timestamps are far in the past, so only the wall-clock dwell timer
+	// treats the completed worker as expired; frames keep it.
+	c.mu.Lock()
+	c.agentCtx[frame.AgentID].subagents[worker].startedAt = time.Now().Add(-2 * time.Hour).UnixMilli()
+	c.mu.Unlock()
+
+	paused, resume := make(chan struct{}), make(chan struct{})
+	c.beforeFrameSaveHook = func(string) {
+		c.beforeFrameSaveHook = nil
+		close(paused)
+		<-resume
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		f := frame
+		f.Seq += 10
+		f.Timestamp += 1000
+		f.EventType = "text"
+		f.SubagentID = nil
+		f.Data = types.TelemetryFrameData{}
+		if _, err := c.ProcessFrame(f); err != nil {
+			t.Error(err)
+		}
+	}()
+	<-paused
+	c.handleSubagentDwellExpired(frame.AgentID, worker)
+	close(resume)
+	<-done
+
+	// The expiry must not be lost behind the frame's later save of the worker.
+	waitForDismissalCondition(t, func() bool {
+		agent, err := st.GetAgent(frame.AgentID)
+		return err == nil && agent != nil && len(agent.Activity.ActiveSubagents) == 0
+	})
+}

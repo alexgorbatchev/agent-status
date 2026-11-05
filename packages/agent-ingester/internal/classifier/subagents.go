@@ -88,6 +88,13 @@ func (c *Classifier) handleSubagentDwellExpired(agentID, subID string) {
 	}
 
 	agent, err := c.persistAgent(agentID, actx, func(agent *types.IAgentState) bool {
+		if actx.frameInFlight {
+			// The frame has already pruned and rolled up; expire once it saves.
+			c.subagentTimers[key] = time.AfterFunc(100*time.Millisecond, func() {
+				c.handleSubagentDwellExpired(agentID, subID)
+			})
+			return false
+		}
 		if actx.saveGeneration != scheduledSaveGen {
 			return false
 		}
