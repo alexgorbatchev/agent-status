@@ -97,14 +97,6 @@ func Migrate(db *sql.DB) error {
 	}
 
 	if version < 1 {
-		// auto_vacuum is stored in the database file. Setting it needs a write
-		// lock, so it is set once here rather than on every new connection,
-		// where it would block readers behind any open write transaction.
-		// Opening in WAL mode has already written page 1, so the setting only
-		// takes effect after VACUUM, which is instant on an empty database.
-		if _, err := db.Exec("PRAGMA auto_vacuum = INCREMENTAL; VACUUM;"); err != nil {
-			return fmt.Errorf("enabling incremental auto-vacuum: %w", err)
-		}
 		tx, err := db.Begin()
 		if err != nil {
 			return fmt.Errorf("beginning migration transaction: %w", err)
@@ -308,6 +300,28 @@ func Migrate(db *sql.DB) error {
 		version = 8
 	}
 
+	return ensureIncrementalAutoVacuum(db)
+}
+
+// ensureIncrementalAutoVacuum switches the database to incremental auto-vacuum
+// so the hourly prune's incremental_vacuum returns freed pages to the
+// filesystem. The mode is stored in the database file and needs a write lock
+// to set, so it is checked here once per start rather than on every
+// connection. Once page 1 exists (opening in WAL mode writes it) the mode only
+// changes through VACUUM, which rewrites the whole file once: instant for a new
+// database, and needing free space about the size of an existing one.
+func ensureIncrementalAutoVacuum(db *sql.DB) error {
+	var mode int
+	if err := db.QueryRow("PRAGMA auto_vacuum;").Scan(&mode); err != nil {
+		return fmt.Errorf("reading auto_vacuum: %w", err)
+	}
+	const incremental = 2
+	if mode == incremental {
+		return nil
+	}
+	if _, err := db.Exec("PRAGMA auto_vacuum = INCREMENTAL; VACUUM;"); err != nil {
+		return fmt.Errorf("enabling incremental auto-vacuum: %w", err)
+	}
 	return nil
 }
 

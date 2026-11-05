@@ -2,7 +2,6 @@ package store
 
 import (
 	"database/sql"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -554,9 +553,18 @@ func TestMigrate_UserVersionTransactionalRollback(t *testing.T) {
 	}
 }
 
-func TestMigrate_ReportsUnwritableNewDatabase(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "readonly.db")
-	if err := os.WriteFile(path, nil, 0o600); err != nil {
+func TestMigrate_ReportsUnwritableAutoVacuumConversion(t *testing.T) {
+	// A fully migrated database that predates incremental auto-vacuum, opened
+	// read-only: only the conversion has anything left to write.
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	setup, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := setup.Exec("PRAGMA journal_mode = wal; PRAGMA user_version = 8;"); err != nil {
+		t.Fatal(err)
+	}
+	if err := setup.Close(); err != nil {
 		t.Fatal(err)
 	}
 	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
@@ -567,6 +575,6 @@ func TestMigrate_ReportsUnwritableNewDatabase(t *testing.T) {
 
 	err = Migrate(db)
 	if err == nil || !strings.Contains(err.Error(), "enabling incremental auto-vacuum") {
-		t.Fatalf("Migrate on a read-only new database = %v, want the auto-vacuum setup error", err)
+		t.Fatalf("Migrate on a read-only legacy database = %v, want the auto-vacuum conversion error", err)
 	}
 }

@@ -73,6 +73,44 @@ func TestOpen_NewDatabaseUsesIncrementalAutoVacuum(t *testing.T) {
 	}
 }
 
+func TestOpen_ConvertsLegacyDatabaseToIncrementalAutoVacuum(t *testing.T) {
+	// Databases created before auto_vacuum was set at creation have it off:
+	// the old DSN switched to WAL, writing page 1, before asking for it.
+	path := filepath.Join(t.TempDir(), "agents.db")
+	legacy, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.DB().Exec("PRAGMA auto_vacuum = NONE; VACUUM;"); err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.UpsertEnvironment(types.IEnvironmentInfo{ID: "env", Hostname: "host", Platform: "linux"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.SaveCursor("env", 42); err != nil {
+		t.Fatal(err)
+	}
+	var mode int
+	if err := legacy.DB().QueryRow("PRAGMA auto_vacuum;").Scan(&mode); err != nil || mode != 0 {
+		t.Fatalf("legacy fixture auto_vacuum = %d, %v; want 0", mode, err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	if err := st.DB().QueryRow("PRAGMA auto_vacuum;").Scan(&mode); err != nil || mode != 2 {
+		t.Errorf("auto_vacuum after reopening = %d, %v; want 2 (incremental)", mode, err)
+	}
+	if seq, err := st.GetLastSeq("env"); err != nil || seq != 42 {
+		t.Errorf("cursor after conversion = %d, %v; want 42", seq, err)
+	}
+}
+
 func TestOpen_NewConnectionReadsDuringWriteTransaction(t *testing.T) {
 	st, err := Open(filepath.Join(t.TempDir(), "agents.db"))
 	if err != nil {
