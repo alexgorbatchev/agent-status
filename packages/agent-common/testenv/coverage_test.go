@@ -15,9 +15,19 @@ import (
 )
 
 func TestCoverageRunnerUsesNativeTempByDefault(t *testing.T) {
+	testCoverageNativeTemp(t, "success", "")
+}
+
+func testCoverageNativeTemp(t *testing.T, mode, report string) {
+	t.Helper()
+	// The enclosing runner must own this fixture if its test process is killed.
+	dir := t.TempDir()
 	t.Setenv("TMPDIR", "")
 	t.Setenv("GOTMPDIR", "")
-	dir := t.TempDir()
+	if report == "" {
+		report = dir
+	}
+	writeCoverageFixture(t, filepath.Join(report, "fixture.path"), dir)
 	data, err := os.ReadFile("../../../scripts/check-coverage.sh")
 	if err != nil {
 		t.Fatal(err)
@@ -34,11 +44,23 @@ func TestCoverageRunnerUsesNativeTempByDefault(t *testing.T) {
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = 15 * time.Second
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOWORK=off", "FIXTURE_MODE=success", "THRESHOLD=90")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("native-temp run: %v\n%s", err, output)
+	cmd.Env = append(os.Environ(), "GOWORK=off", "FIXTURE_MODE="+mode, "FIXTURE_REPORT_DIR="+report, "THRESHOLD=90")
+	var output bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &output, &output
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
 	}
-	path, err := os.ReadFile(filepath.Join(dir, "scratch.path"))
+	// Write before waiting so the enclosing-cancellation test can suspend this
+	// supervisor and verify its parent still owns every child and scratch path.
+	if err := os.WriteFile(filepath.Join(report, "runner.pid"), []byte(strconv.Itoa(cmd.Process.Pid)), 0o600); err != nil {
+		cancel()
+		_ = cmd.Wait() // join the failed fixture before reporting the write error
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("native-temp run: %v\n%s", err, &output)
+	}
+	path, err := os.ReadFile(filepath.Join(report, "scratch.path"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,18 +229,25 @@ const coverageFixture = `package fixture
 import (
  "os"
  "os/exec"
+ "path/filepath"
  "strconv"
  "testing"
  "time"
 )
 func TestFixture(t *testing.T) {
  mode := os.Getenv("FIXTURE_MODE")
- if err := os.WriteFile("scratch.path", []byte(os.TempDir()), 0600); err != nil { t.Fatal(err) }
+ report := os.Getenv("FIXTURE_REPORT_DIR")
+ if report == "" { report = "." }
+ if err := os.WriteFile(filepath.Join(report, "scratch.path"), []byte(os.TempDir()), 0600); err != nil { t.Fatal(err) }
  if _, err := os.MkdirTemp("", "unmanaged-"); err != nil { t.Fatal(err) }
  t.TempDir()
  covered()
  if mode != "coverage" { uncovered() }
  switch mode {
+ case "nested":
+   cmd := exec.Command(os.Getenv("COVERAGE_TEST_BINARY"), "-test.run=^TestCoverageRunnerEnclosingFixture$")
+   cmd.Dir = os.Getenv("COVERAGE_TEST_DIR")
+   if output, err := cmd.CombinedOutput(); err != nil { t.Fatalf("nested fixture: %v\n%s", err, output) }
  case "failure": t.Fatal("intentional failure")
  case "panic": panic("intentional panic")
  case "timeout": time.Sleep(time.Minute)
@@ -227,11 +256,12 @@ func TestFixture(t *testing.T) {
      action := "trap 'printf done > graceful; exit 0' TERM"
      if mode != "terminate" { action = "trap '' TERM" }
      child := exec.Command("bash", "-c", action+"; printf ready > child.ready; while :; do sleep 0.1; done")
+     child.Dir = report
      if err := child.Start(); err != nil { t.Fatal(err) }
-     if err := os.WriteFile("child.pid", []byte(strconv.Itoa(child.Process.Pid)), 0600); err != nil { t.Fatal(err) }
-     for { if _, err := os.Stat("child.ready"); err == nil { break }; time.Sleep(time.Millisecond) }
+     if err := os.WriteFile(filepath.Join(report, "child.pid"), []byte(strconv.Itoa(child.Process.Pid)), 0600); err != nil { t.Fatal(err) }
+     for { if _, err := os.Stat(filepath.Join(report, "child.ready")); err == nil { break }; time.Sleep(time.Millisecond) }
    }
-   if err := os.WriteFile("ready", nil, 0600); err != nil { t.Fatal(err) }
+   if err := os.WriteFile(filepath.Join(report, "ready"), nil, 0600); err != nil { t.Fatal(err) }
    time.Sleep(time.Minute)
  }
 }
