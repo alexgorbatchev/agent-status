@@ -3,6 +3,7 @@ package classifier
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 )
@@ -102,6 +103,31 @@ func (c *Classifier) persistAgent(agentID string, target *agentContext, mutate f
 		return nil, fmt.Errorf("saving agent: %w", err)
 	}
 	return agent, nil
+}
+
+// frameRetryDelay is how long a background writer waits before trying again
+// after a frame was being saved.
+const frameRetryDelay = 100 * time.Millisecond
+
+// persistAgentAfterFrame is persistAgent for writers whose result is still valid
+// after the frame being saved lands, such as an LLM summary: it waits out that
+// frame and retries the save instead of dropping the result. mutate still
+// rejects anything a frame made stale.
+func (c *Classifier) persistAgentAfterFrame(agentID string, target *agentContext, mutate func(agent *types.IAgentState) bool) (*types.IAgentState, error) {
+	for {
+		frameSaving := false
+		agent, err := c.persistAgent(agentID, target, func(agent *types.IAgentState) bool {
+			if target.frameInFlight {
+				frameSaving = true
+				return false
+			}
+			return mutate(agent)
+		})
+		if !frameSaving {
+			return agent, err
+		}
+		time.Sleep(frameRetryDelay)
+	}
 }
 
 func (c *Classifier) isCurrentContext(agentID string, target *agentContext) bool {

@@ -157,7 +157,7 @@ func (c *Classifier) handleIdleTransition(agentID string, scheduledGen uint64) {
 		}
 		if actx.saveGeneration != scheduledSaveGen || actx.frameInFlight {
 			// A subagent frame arrived after scheduling; try again once it settles.
-			c.scheduleIdleTransitionLocked(agentID, actx.rootGeneration, 100*time.Millisecond)
+			c.scheduleIdleTransitionLocked(agentID, actx.rootGeneration, frameRetryDelay)
 			return false
 		}
 

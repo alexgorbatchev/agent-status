@@ -52,7 +52,7 @@ func (c *Classifier) flushTrailingCandidateLocked(agentID string) {
 		if c.beforeSummarySaveHook != nil {
 			c.beforeSummarySaveHook(agentID)
 		}
-		agent, err := c.persistAgent(agentID, actx, func(agent *types.IAgentState) bool {
+		agent, err := c.persistAgentAfterFrame(agentID, actx, func(agent *types.IAgentState) bool {
 			if (cand.saveGen != 0 && actx.saveGeneration != cand.saveGen) || !runIsActive(agent) {
 				return false
 			}
@@ -422,7 +422,7 @@ func (c *Classifier) processSummaryJob(agentID string, job summaryJob) {
 		c.beforeSummarySaveHook(agentID)
 	}
 
-	agent, err := c.persistAgent(agentID, actx, func(agent *types.IAgentState) bool {
+	agent, err := c.persistAgentAfterFrame(agentID, actx, func(agent *types.IAgentState) bool {
 		if actx.saveGeneration != scheduledSaveGen || !summaryStillApplies(agent, job.input) {
 			return false
 		}

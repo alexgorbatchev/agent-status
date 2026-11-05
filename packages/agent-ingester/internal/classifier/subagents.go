@@ -54,8 +54,7 @@ func (c *Classifier) handleSubagentDwellExpired(agentID, subID string) {
 		c.mu.Unlock()
 		return
 	}
-	key := fmt.Sprintf("%s:%s", agentID, subID)
-	delete(c.subagentTimers, key)
+	c.cancelSubagentTimerLocked(agentID, subID)
 	actx := c.agentCtx[agentID]
 	if actx == nil {
 		c.mu.Unlock()
@@ -70,9 +69,7 @@ func (c *Classifier) handleSubagentDwellExpired(agentID, subID string) {
 	dwellMs := int64(c.subagentDwell / time.Millisecond)
 	targetTime := sub.startedAt + dwellMs
 	if diff := targetTime - now; diff > 1 {
-		c.subagentTimers[key] = time.AfterFunc(time.Duration(diff)*time.Millisecond, func() {
-			c.handleSubagentDwellExpired(agentID, subID)
-		})
+		c.scheduleSubagentExpiryLocked(agentID, subID, time.Duration(diff)*time.Millisecond)
 		c.mu.Unlock()
 		return
 	}
@@ -88,14 +85,10 @@ func (c *Classifier) handleSubagentDwellExpired(agentID, subID string) {
 	}
 
 	agent, err := c.persistAgent(agentID, actx, func(agent *types.IAgentState) bool {
-		if actx.frameInFlight {
-			// The frame has already pruned and rolled up; expire once it saves.
-			c.subagentTimers[key] = time.AfterFunc(100*time.Millisecond, func() {
-				c.handleSubagentDwellExpired(agentID, subID)
-			})
-			return false
-		}
-		if actx.saveGeneration != scheduledSaveGen {
+		if actx.frameInFlight || actx.saveGeneration != scheduledSaveGen {
+			// A frame is saving or has saved since the timer fired; frames whose
+			// clock lags do not prune the subagent, so check again afterwards.
+			c.scheduleSubagentExpiryLocked(agentID, subID, frameRetryDelay)
 			return false
 		}
 		delete(actx.subagents, subID)
@@ -420,4 +413,13 @@ func (c *Classifier) applySubagentEventLocked(agentID string, actx *agentContext
 		}
 	}
 	return isNewSubagent
+}
+
+// scheduleSubagentExpiryLocked (re)arms the dwell-expiry check for one
+// subagent, stopping any timer already armed for it.
+func (c *Classifier) scheduleSubagentExpiryLocked(agentID, subID string, delay time.Duration) {
+	c.cancelSubagentTimerLocked(agentID, subID)
+	c.subagentTimers[fmt.Sprintf("%s:%s", agentID, subID)] = time.AfterFunc(delay, func() {
+		c.handleSubagentDwellExpired(agentID, subID)
+	})
 }

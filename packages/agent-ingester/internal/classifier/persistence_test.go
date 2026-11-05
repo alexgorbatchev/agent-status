@@ -411,3 +411,107 @@ func TestClassifier_SubagentDwellExpiryWaitsForFrameInFlight(t *testing.T) {
 		return err == nil && agent != nil && len(agent.Activity.ActiveSubagents) == 0
 	})
 }
+
+func TestClassifier_SubagentDwellExpiryRetriesAfterFrameLands(t *testing.T) {
+	c, st, frame := completedAgent(t, ":memory:")
+	c.SetSubagentDwell(time.Hour)
+	worker := "worker"
+	for _, event := range []string{"tool_call", "turn_end"} {
+		f := frame
+		f.Seq += 10
+		frame.Seq = f.Seq
+		f.Timestamp += 1000
+		frame.Timestamp = f.Timestamp
+		f.SubagentID = &worker
+		f.EventType = event
+		f.Data = types.TelemetryFrameData{}
+		if event == "tool_call" {
+			tool := "Read"
+			f.Data.ToolName = &tool
+		}
+		if _, err := c.ProcessFrame(f); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c.mu.Lock()
+	c.agentCtx[frame.AgentID].subagents[worker].startedAt = time.Now().Add(-2 * time.Hour).UnixMilli()
+	c.mu.Unlock()
+
+	// A whole frame lands after the expiry read its generation and before it
+	// saves. Its lagging clock does not prune the worker.
+	c.beforeSubagentDwellSaveHook = func(string, string) {
+		c.beforeSubagentDwellSaveHook = nil
+		f := frame
+		f.Seq += 10
+		f.Timestamp += 1000
+		f.EventType = "text"
+		f.SubagentID = nil
+		f.Data = types.TelemetryFrameData{}
+		if _, err := c.ProcessFrame(f); err != nil {
+			t.Error(err)
+		}
+	}
+	c.handleSubagentDwellExpired(frame.AgentID, worker)
+
+	waitForDismissalCondition(t, func() bool {
+		agent, err := st.GetAgent(frame.AgentID)
+		return err == nil && agent != nil && len(agent.Activity.ActiveSubagents) == 0
+	})
+}
+
+func TestClassifier_SummaryWaitsForFrameInFlight(t *testing.T) {
+	c, st, frame := completedAgent(t, ":memory:")
+	before, err := st.GetAgent(frame.AgentID)
+	if err != nil || before == nil {
+		t.Fatalf("GetAgent = %v, %v", before, err)
+	}
+	if before.Activity.Action == "Responded to user" {
+		t.Fatal("fixture already shows the summary action")
+	}
+
+	paused, resume := make(chan struct{}), make(chan struct{})
+	c.beforeFrameSaveHook = func(string) {
+		c.beforeFrameSaveHook = nil
+		close(paused)
+		<-resume
+	}
+	framed := make(chan struct{})
+	go func() {
+		defer close(framed)
+		f := frame
+		f.Seq++
+		f.Timestamp += 1000
+		f.EventType = "text"
+		f.Data = types.TelemetryFrameData{}
+		if _, err := c.ProcessFrame(f); err != nil {
+			t.Error(err)
+		}
+	}()
+	<-paused
+
+	// A summary carrying the in-flight frame's own generation, as one built
+	// from that frame's trailing candidate would.
+	c.mu.Lock()
+	generation := c.agentCtx[frame.AgentID].saveGeneration
+	c.mu.Unlock()
+	summarized := make(chan struct{})
+	go func() {
+		defer close(summarized)
+		c.processSummaryJob(frame.AgentID, summaryJob{
+			input:   summarizer.SummaryInput{AgentID: frame.AgentID, Activity: types.ActivityIdle, LastAssistantResponse: "Work is complete"},
+			saveGen: generation,
+		})
+	}()
+	time.Sleep(50 * time.Millisecond) // let the summary reach its save while the frame is paused
+	close(resume)
+	<-framed
+	<-summarized
+
+	saved, err := st.GetAgent(frame.AgentID)
+	if err != nil || saved == nil {
+		t.Fatalf("GetAgent = %v, %v", saved, err)
+	}
+	if saved.Activity.Action != "Responded to user" {
+		t.Errorf("action = %q, want the summary saved after the frame", saved.Activity.Action)
+	}
+}

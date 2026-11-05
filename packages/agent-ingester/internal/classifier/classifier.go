@@ -40,8 +40,9 @@ type agentContext struct {
 	persistMu      sync.Mutex
 	saveGeneration uint64
 	// frameInFlight is set from the moment a frame bumps saveGeneration until
-	// it has saved. Background writers must not save or change the cache then:
-	// the frame already copied the cache into the row it is about to save.
+	// it has saved (or returned early). Background writers must not save or
+	// change the cache then: the frame already copied the cache into the row
+	// it is about to save.
 	frameInFlight           bool
 	lastPrompt              string
 	lastAssistantResponse   string
@@ -510,6 +511,9 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		c.mu.Unlock()
 	}
 	saveErr := c.store.SaveAgentState(*agent)
+	c.mu.Lock()
+	actx.frameInFlight = false
+	c.mu.Unlock()
 	actx.persistMu.Unlock()
 	if saveErr != nil {
 		return nil, fmt.Errorf("saving agent state: %w", saveErr)
