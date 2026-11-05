@@ -69,10 +69,15 @@ func testCoverageEnclosingCancellation(t *testing.T, suspend bool) {
 		if !finished {
 			_ = cmd.Process.Signal(syscall.SIGTERM) // best effort on a failed regression
 			select {
-			case <-done:
+			case err := <-done:
+				if err != nil {
+					t.Logf("enclosing runner stopped during cleanup: %v", err)
+				}
 			case <-time.After(20 * time.Second):
 				_ = cmd.Process.Kill() // contain the owned broken supervisor
-				<-done
+				if err := <-done; err != nil {
+					t.Logf("enclosing runner killed during cleanup: %v", err)
+				}
 			}
 		}
 		if group > 0 {
