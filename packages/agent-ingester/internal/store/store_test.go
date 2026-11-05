@@ -109,6 +109,34 @@ func TestOpen_ConvertsLegacyDatabaseToIncrementalAutoVacuum(t *testing.T) {
 	if seq, err := st.GetLastSeq("env"); err != nil || seq != 42 {
 		t.Errorf("cursor after conversion = %d, %v; want 42", seq, err)
 	}
+	if info, err := os.Stat(path + "-wal"); err == nil && info.Size() > 0 {
+		t.Errorf("WAL is %d bytes after the conversion, want it truncated", info.Size())
+	}
+
+	// The point of the conversion: incremental_vacuum now returns freed pages.
+	if _, err := st.DB().Exec("CREATE TABLE ballast (v BLOB); WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 200) INSERT INTO ballast SELECT randomblob(8192) FROM n; DROP TABLE ballast;"); err != nil {
+		t.Fatal(err)
+	}
+	pages := func() (count, free int) {
+		t.Helper()
+		if err := st.DB().QueryRow("PRAGMA page_count;").Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.DB().QueryRow("PRAGMA freelist_count;").Scan(&free); err != nil {
+			t.Fatal(err)
+		}
+		return count, free
+	}
+	before, free := pages()
+	if free == 0 {
+		t.Fatal("dropping the ballast table freed no pages")
+	}
+	if _, err := st.DB().Exec("PRAGMA incremental_vacuum;"); err != nil {
+		t.Fatal(err)
+	}
+	if after, _ := pages(); after >= before {
+		t.Errorf("page count after incremental_vacuum = %d, want fewer than %d", after, before)
+	}
 }
 
 func TestOpen_NewConnectionReadsDuringWriteTransaction(t *testing.T) {

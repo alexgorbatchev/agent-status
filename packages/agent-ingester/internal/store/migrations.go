@@ -309,7 +309,9 @@ func Migrate(db *sql.DB) error {
 // to set, so it is checked here once per start rather than on every
 // connection. Once page 1 exists (opening in WAL mode writes it) the mode only
 // changes through VACUUM, which rewrites the whole file once: instant for a new
-// database, and needing free space about the size of an existing one.
+// database, but an existing one can need free space up to twice its size for
+// the temporary copy and the WAL. The WAL is truncated afterwards so the
+// rewritten pages do not stay on disk until the ingester restarts.
 func ensureIncrementalAutoVacuum(db *sql.DB) error {
 	var mode int
 	if err := db.QueryRow("PRAGMA auto_vacuum;").Scan(&mode); err != nil {
@@ -319,7 +321,7 @@ func ensureIncrementalAutoVacuum(db *sql.DB) error {
 	if mode == incremental {
 		return nil
 	}
-	if _, err := db.Exec("PRAGMA auto_vacuum = INCREMENTAL; VACUUM;"); err != nil {
+	if _, err := db.Exec("PRAGMA auto_vacuum = INCREMENTAL; VACUUM; PRAGMA wal_checkpoint(TRUNCATE);"); err != nil {
 		return fmt.Errorf("enabling incremental auto-vacuum: %w", err)
 	}
 	return nil
