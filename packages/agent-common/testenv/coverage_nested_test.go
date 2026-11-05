@@ -20,7 +20,7 @@ func TestCoverageRunnerEnclosingFixture(t *testing.T) {
 	if report == "" {
 		t.Skip("subprocess fixture")
 	}
-	testCoverageNativeTemp(t, "stubborn", report)
+	testCoverageTemp(t, "stubborn", report, "")
 }
 
 func TestCoverageRunnerEnclosingCancellation(t *testing.T) {

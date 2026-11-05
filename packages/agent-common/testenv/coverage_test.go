@@ -15,14 +15,27 @@ import (
 )
 
 func TestCoverageRunnerUsesNativeTempByDefault(t *testing.T) {
-	testCoverageNativeTemp(t, "success", "")
+	testCoverageTemp(t, "success", "", "")
 }
 
-func testCoverageNativeTemp(t *testing.T, mode, report string) {
+func TestCoverageRunnerUsesSymlinkedTempParent(t *testing.T) {
+	dir := t.TempDir()
+	parent := filepath.Join(dir, "parent")
+	if err := os.Mkdir(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(parent, link); err != nil {
+		t.Fatal(err)
+	}
+	testCoverageTemp(t, "success", "", link)
+}
+
+func testCoverageTemp(t *testing.T, mode, report, tempParent string) {
 	t.Helper()
 	// The enclosing runner must own this fixture if its test process is killed.
 	dir := t.TempDir()
-	t.Setenv("TMPDIR", "")
+	t.Setenv("TMPDIR", tempParent)
 	t.Setenv("GOTMPDIR", "")
 	if report == "" {
 		report = dir
@@ -68,8 +81,13 @@ func testCoverageNativeTemp(t *testing.T, mode, report string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if filepath.Dir(string(path)) != parent {
-		t.Errorf("scratch parent = %q, want native temp %q", filepath.Dir(string(path)), parent)
+	// The runner has removed its scratch child; resolve the surviving parent.
+	actualParent, err := filepath.EvalSymlinks(filepath.Dir(string(path)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actualParent != parent {
+		t.Errorf("scratch parent = %q, want native temp %q", actualParent, parent)
 	}
 	if _, err := os.Stat(string(path)); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("native scratch survived: %v", err)
