@@ -263,6 +263,7 @@ func TestObserverCommandEnvFallbacks(t *testing.T) {
 }
 
 func TestObserverRunLogging(t *testing.T) {
+	preserveDefaultLogger(t)
 	buf := &testSyncBuffer{}
 	logger := logging.NewWithMode(buf, "observer", "info", false)
 	logging.SetDefault(logger)
@@ -313,6 +314,7 @@ func TestObserverRunLogging(t *testing.T) {
 }
 
 func TestObserverContextCancellationFlushesCursorStore(t *testing.T) {
+	preserveDefaultLogger(t)
 	buf := &testSyncBuffer{}
 	logger := logging.NewWithMode(buf, "observer", "info", false)
 	logging.SetDefault(logger)
@@ -456,6 +458,7 @@ func TestObserverContextCancellationFlushesCursorStore(t *testing.T) {
 }
 
 func TestObserverCursorStoreSaveErrorOnShutdown(t *testing.T) {
+	preserveDefaultLogger(t)
 	buf := &testSyncBuffer{}
 	logger := logging.NewWithMode(buf, "observer", "warn", false)
 	logging.SetDefault(logger)
@@ -507,6 +510,7 @@ func TestObserverCursorStoreSaveErrorOnShutdown(t *testing.T) {
 
 func TestRunObserverInvalidCursorPath(t *testing.T) {
 	tmpDir := t.TempDir()
+	preserveDefaultLogger(t)
 	corruptedCursor := filepath.Join(tmpDir, "corrupted.json")
 	if err := os.WriteFile(corruptedCursor, []byte("invalid json"), 0644); err != nil {
 		t.Fatalf("writing corrupt file: %v", err)
@@ -517,7 +521,7 @@ func TestRunObserverInvalidCursorPath(t *testing.T) {
 		envFlag:    "test-env",
 		logLevel:   "error",
 		logDir:     tmpDir,
-		logFile:    "test-observer.log",
+		logFile:    filepath.Join(tmpDir, "test-observer.log"),
 	}
 
 	err := runObserver(opts)
@@ -531,6 +535,7 @@ func TestRunObserverInvalidCursorPath(t *testing.T) {
 
 func TestRootCmdExecute_RunE(t *testing.T) {
 	tmpDir := t.TempDir()
+	preserveDefaultLogger(t)
 	corruptedCursor := filepath.Join(tmpDir, "corrupted.json")
 	if err := os.WriteFile(corruptedCursor, []byte("invalid json"), 0644); err != nil {
 		t.Fatalf("writing corrupt file: %v", err)
@@ -582,6 +587,7 @@ func TestObserverEnvScannerDirs(t *testing.T) {
 }
 
 func TestObserverPiSessionIngestionWithThinkingLevelChange(t *testing.T) {
+	preserveDefaultLogger(t)
 	buf := &testSyncBuffer{}
 	logger := logging.NewWithMode(buf, "observer", "info", false)
 	logging.SetDefault(logger)
@@ -853,6 +859,7 @@ func TestObserverTranscriptMalformedLineAdvance(t *testing.T) {
 }
 
 func TestObserverClaudeSubagentRunStartedEmission(t *testing.T) {
+	preserveDefaultLogger(t)
 	buf := &testSyncBuffer{}
 	logger := logging.NewWithMode(buf, "observer", "info", false)
 	logging.SetDefault(logger)
@@ -1467,6 +1474,7 @@ func TestObserverTranscriptRunStartedOnlyCommitsCursorOffset(t *testing.T) {
 }
 
 func TestAttachTailer(t *testing.T) {
+	preserveDefaultLogger(t)
 	buf := &testSyncBuffer{}
 	logger := logging.NewWithMode(buf, "observer", "info", false)
 	logging.SetDefault(logger)
