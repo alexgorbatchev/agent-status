@@ -50,8 +50,7 @@ if [ $# -gt 0 ]; then
   if [ $has_cover -eq 0 ]; then
     set -- -cover "$@"
   fi
-  repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-  scratch_root=${TMPDIR:-"$repo_root/.tmp"}
+  scratch_root=${GOTMPDIR:-${TMPDIR:-/tmp}}
   mkdir -p "$scratch_root"
   scratch_root=$(cd "$scratch_root" && pwd)
   run_dir=$(mktemp -d "$scratch_root/coverage.XXXXXX")

@@ -2,6 +2,7 @@ package testenv
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -13,6 +14,46 @@ import (
 	"time"
 )
 
+func TestCoverageRunnerUsesNativeTempByDefault(t *testing.T) {
+	t.Setenv("TMPDIR", "")
+	t.Setenv("GOTMPDIR", "")
+	dir := t.TempDir()
+	data, err := os.ReadFile("../../../scripts/check-coverage.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "scripts"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(dir, "scripts/check-coverage.sh")
+	writeCoverageFixture(t, script, string(data))
+	writeCoverageModule(t, dir)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "bash", script, "-count=1", "./...")
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = 15 * time.Second
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOWORK=off", "FIXTURE_MODE=success", "THRESHOLD=90")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("native-temp run: %v\n%s", err, output)
+	}
+	path, err := os.ReadFile(filepath.Join(dir, "scratch.path"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, err := filepath.EvalSymlinks(os.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Dir(string(path)) != parent {
+		t.Errorf("scratch parent = %q, want native temp %q", filepath.Dir(string(path)), parent)
+	}
+	if _, err := os.Stat(string(path)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("native scratch survived: %v", err)
+	}
+}
+
 func TestCoverageRunnerCleanup(t *testing.T) {
 	for _, mode := range []string{"success", "failure", "panic", "timeout", "coverage", "interrupt", "terminate", "hangup", "stubborn", "closed_output"} {
 		t.Run(mode, func(t *testing.T) {
@@ -23,9 +64,7 @@ func TestCoverageRunnerCleanup(t *testing.T) {
 			}
 			preserved := filepath.Join(scratch, "other-command")
 			writeCoverageFixture(t, preserved, "keep")
-			writeCoverageFixture(t, filepath.Join(dir, "go.mod"), "module fixture\n\ngo 1.26.2\n")
-			writeCoverageFixture(t, filepath.Join(dir, "fixture.go"), "package fixture\nfunc covered() int { return 1 }\nfunc uncovered() int { return 2 }\n")
-			writeCoverageFixture(t, filepath.Join(dir, "fixture_test.go"), coverageFixture)
+			writeCoverageModule(t, dir)
 			script, err := filepath.Abs("../../../scripts/check-coverage.sh")
 			if err != nil {
 				t.Fatal(err)
@@ -58,10 +97,15 @@ func TestCoverageRunnerCleanup(t *testing.T) {
 					// Also contain a broken runner when this regression fails.
 					_ = cmd.Process.Signal(syscall.SIGTERM)
 					select {
-					case <-done:
+					case err := <-done:
+						if err != nil {
+							t.Logf("coverage runner stopped during cleanup: %v", err)
+						}
 					case <-time.After(15 * time.Second):
 						_ = cmd.Process.Kill()
-						<-done
+						if err := <-done; err != nil {
+							t.Logf("coverage runner killed during cleanup: %v", err)
+						}
 					}
 				}
 			})
@@ -133,6 +177,13 @@ func TestCoverageRunnerCleanup(t *testing.T) {
 	}
 }
 
+func writeCoverageModule(t *testing.T, dir string) {
+	t.Helper()
+	writeCoverageFixture(t, filepath.Join(dir, "go.mod"), "module fixture\n\ngo 1.26.2\n")
+	writeCoverageFixture(t, filepath.Join(dir, "fixture.go"), "package fixture\nfunc covered() int { return 1 }\nfunc uncovered() int { return 2 }\n")
+	writeCoverageFixture(t, filepath.Join(dir, "fixture_test.go"), coverageFixture)
+}
+
 func writeCoverageFixture(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
@@ -162,6 +213,7 @@ import (
 )
 func TestFixture(t *testing.T) {
  mode := os.Getenv("FIXTURE_MODE")
+ if err := os.WriteFile("scratch.path", []byte(os.TempDir()), 0600); err != nil { t.Fatal(err) }
  if _, err := os.MkdirTemp("", "unmanaged-"); err != nil { t.Fatal(err) }
  t.TempDir()
  covered()
