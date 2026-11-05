@@ -31,9 +31,6 @@ func (c *OSProcessChecker) IsProcessAlive(pid int, startedAt int64) bool {
 	if pid <= 0 {
 		return false
 	}
-	if os.Getenv("AGENT_STATUS_TEST_MOCK_PROC") == "1" {
-		return true
-	}
 	exists, err := process.PidExists(int32(pid))
 	if err != nil || !exists {
 		return false

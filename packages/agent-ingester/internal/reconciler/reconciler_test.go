@@ -524,12 +524,11 @@ func TestOSProcessChecker(t *testing.T) {
 		t.Errorf("expected PID -1 to not be alive")
 	}
 
-	// Mock proc env var
+	// No environment variable makes a dead PID look alive.
 	t.Setenv("AGENT_STATUS_TEST_MOCK_PROC", "1")
-	if !checker.IsProcessAlive(999999, 0) {
-		t.Errorf("expected PID 999999 to be alive with AGENT_STATUS_TEST_MOCK_PROC=1")
+	if checker.IsProcessAlive(99999999, 0) {
+		t.Errorf("expected nonexistent PID 99999999 to stay dead with AGENT_STATUS_TEST_MOCK_PROC=1")
 	}
-	t.Setenv("AGENT_STATUS_TEST_MOCK_PROC", "")
 
 	// Real current process PID
 	currentPID := os.Getpid()
