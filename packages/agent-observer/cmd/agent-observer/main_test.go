@@ -495,7 +495,9 @@ func TestObserverCursorStoreSaveErrorOnShutdown(t *testing.T) {
 	})
 
 	cancel()
-	<-errCh
+	if err := <-errCh; err != nil {
+		t.Fatalf("runObserverContext returned unexpected error: %v", err)
+	}
 
 	out := buf.String()
 	if !strings.Contains(out, "cursor_store_save_error") {
@@ -698,7 +700,9 @@ func TestObserverPiSessionIngestionWithThinkingLevelChange(t *testing.T) {
 		got := append([]string{}, receivedEventTypes...)
 		receivedFramesMu.Unlock()
 		cancel()
-		<-errCh
+		if err := <-errCh; err != nil {
+			t.Fatalf("runObserverContext returned unexpected error: %v", err)
+		}
 		t.Fatalf("timed out waiting for frames beyond thinking_level_change, got event types: %v", got)
 	}
 
@@ -713,7 +717,9 @@ func TestObserverPiSessionIngestionWithThinkingLevelChange(t *testing.T) {
 	}
 
 	cancel()
-	<-errCh
+	if err := <-errCh; err != nil {
+		t.Fatalf("runObserverContext returned unexpected error: %v", err)
+	}
 
 	receivedFramesMu.Lock()
 	defer receivedFramesMu.Unlock()
@@ -834,12 +840,16 @@ func TestObserverTranscriptMalformedLineAdvance(t *testing.T) {
 		got := append([]string{}, receivedEventTypes...)
 		receivedFramesMu.Unlock()
 		cancel()
-		<-errCh
+		if err := <-errCh; err != nil {
+			t.Fatalf("runObserverContext returned unexpected error: %v", err)
+		}
 		t.Fatalf("timed out waiting for valid message after corrupt line, got: %v", got)
 	}
 
 	cancel()
-	<-errCh
+	if err := <-errCh; err != nil {
+		t.Fatalf("runObserverContext returned unexpected error: %v", err)
+	}
 }
 
 func TestObserverClaudeSubagentRunStartedEmission(t *testing.T) {
@@ -1028,7 +1038,9 @@ func TestObserverClaudeSubagentRunStartedEmission(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	cancel()
-	<-errCh
+	if err := <-errCh; err != nil {
+		t.Fatalf("runObserverContext returned unexpected error: %v", err)
+	}
 }
 
 func TestObserverPiAndCodexDormantSessionTimestamp(t *testing.T) {
@@ -1177,7 +1189,9 @@ func TestObserverPiAndCodexDormantSessionTimestamp(t *testing.T) {
 	}
 
 	cancel()
-	<-errCh
+	if err := <-errCh; err != nil {
+		t.Fatalf("runObserverContext returned unexpected error: %v", err)
+	}
 
 	receivedFramesMu.Lock()
 	defer receivedFramesMu.Unlock()
@@ -1327,7 +1341,9 @@ func TestObserver_StartupSessionReconciliation(t *testing.T) {
 	}
 
 	cancel()
-	<-errCh
+	if err := <-errCh; err != nil {
+		t.Fatalf("runObserverContext returned unexpected error: %v", err)
+	}
 
 	// Verify sessionStatePath on disk was updated to remove the exited sessions
 	tracker, err := scanner.NewSessionTracker(sessionStatePath)
@@ -1543,7 +1559,9 @@ func TestAttachTailer(t *testing.T) {
 	}
 
 	cancel()
-	<-errCh
+	if err := <-errCh; err != nil {
+		t.Fatalf("runObserverContext returned unexpected error: %v", err)
+	}
 
 	if len(attachLines) < 2 {
 		t.Fatalf("expected at least 2 session_attached log lines, got %d:\n%s", len(attachLines), buf.String())
@@ -1916,7 +1934,9 @@ func TestObserver_ScanAllSharesProcessSnapshot(t *testing.T) {
 	// Allow initial scan to run
 	time.Sleep(200 * time.Millisecond)
 	cancel()
-	<-errCh
+	if err := <-errCh; err != nil {
+		t.Fatalf("runObserverContext returned unexpected error: %v", err)
+	}
 
 	mockProvider.mu.Lock()
 	calls := mockProvider.calls
@@ -1998,7 +2018,9 @@ func TestObserver_ScanAllSkipsProcessSnapshotWhenNoSessions(t *testing.T) {
 
 	time.Sleep(200 * time.Millisecond)
 	cancel()
-	<-errCh
+	if err := <-errCh; err != nil {
+		t.Fatalf("runObserverContext returned unexpected error: %v", err)
+	}
 
 	mockProvider.mu.Lock()
 	calls := mockProvider.calls
@@ -2082,7 +2104,9 @@ func TestObserver_ScanAllSkipsProcessSnapshotWhenAllSessionsDead(t *testing.T) {
 
 	time.Sleep(200 * time.Millisecond)
 	cancel()
-	<-errCh
+	if err := <-errCh; err != nil {
+		t.Fatalf("runObserverContext returned unexpected error: %v", err)
+	}
 
 	mockProvider.mu.Lock()
 	calls := mockProvider.calls
