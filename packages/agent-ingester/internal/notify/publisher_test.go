@@ -2,8 +2,6 @@ package notify
 
 import (
 	"bufio"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"net"
 	"os"
@@ -14,17 +12,11 @@ import (
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 )
 
-// shortTempDir creates a short temp dir under /tmp to prevent exceeding sockaddr_un sun_path limit on macOS (104 chars)
+// Use relative socket addresses within owned scratch to fit sun_path.
 func shortTempDir(t *testing.T) string {
 	t.Helper()
-	var b [4]byte
-	_, _ = rand.Read(b[:])
-	dir := filepath.Join("/tmp", "as-"+hex.EncodeToString(b[:]))
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		t.Fatalf("creating temp dir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	return dir
+	t.Chdir(t.TempDir())
+	return "."
 }
 
 func TestNewPublisher_DefaultPath(t *testing.T) {

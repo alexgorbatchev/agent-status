@@ -33,6 +33,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 ## Shared gotchas
 
 - Watcher dependency -> observer/debug consume a tagged GitHub version of `agent-watcher`. Builds, tests, and lint must work without a sibling checkout; local workspace overrides are optional development choices.
+- Go test scratch -> use the package `just test` recipes. `scripts/check-coverage.sh` owns a unique directory under `$TMPDIR` (or root `.tmp/`), sets both `TMPDIR` and `GOTMPDIR`, and terminates the test process group before removing that directory on exit. Keep fixtures inside that scratch tree. For Unix sockets, use `t.Chdir(t.TempDir())` and a relative address so deeply nested checkout paths fit the socket address limit; do not bypass isolation with hardcoded `/tmp` paths.
 - Dev stack ports -> devhost allocates loopback ports automatically and routes UI and `/api/*` through the same HTTPS hostname.
 - Dev stack execution -> `just run` starts the shared devhost proxy and runs devhost in the foreground; use background process management in tools.
 - SQLite database concurrency -> `agent-server` opens SQLite strictly in read-only mode (`?mode=ro`); all mutations occur through `agent-ingester`.

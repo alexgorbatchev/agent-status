@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -24,8 +23,8 @@ type mockHerdrServer struct {
 
 func startMockHerdrServer(t *testing.T) *mockHerdrServer {
 	t.Helper()
-	// Use a short path under /tmp to respect macOS 104-char unix socket limit
-	sockPath := fmt.Sprintf("/tmp/h-%d-%d.sock", os.Getpid(), time.Now().UnixNano()%100000)
+	t.Chdir(t.TempDir())
+	sockPath := "herdr.sock"
 
 	l, err := net.Listen("unix", sockPath)
 	if err != nil {

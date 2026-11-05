@@ -7,8 +7,6 @@ import (
 	"errors"
 	"io"
 	"net"
-	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -148,12 +146,8 @@ func TestSubscriber_ReconcileSnapshot(t *testing.T) {
 }
 
 func TestSubscriber_SocketStreamAndReconnect(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("/tmp", "subtest")
-	if err != nil {
-		t.Fatalf("creating temp dir in /tmp: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
-	sockPath := filepath.Join(tmpDir, "n.sock")
+	t.Chdir(t.TempDir())
+	sockPath := "n.sock"
 
 	hub := NewHub()
 	defer hub.Close()
@@ -312,12 +306,8 @@ func TestSubscriber_ContextAlreadyCanceled(t *testing.T) {
 }
 
 func TestSubscriber_ResyncFailureOnConnect(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("/tmp", "subtest")
-	if err != nil {
-		t.Fatalf("creating temp dir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
-	sockPath := filepath.Join(tmpDir, "n.sock")
+	t.Chdir(t.TempDir())
+	sockPath := "n.sock"
 
 	listener, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -398,12 +388,8 @@ func TestSubscriber_ResyncFailureOnConnect(t *testing.T) {
 }
 
 func TestSubscriber_ResyncFailureOnFallbackEvent(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("/tmp", "subtest")
-	if err != nil {
-		t.Fatalf("creating temp dir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
-	sockPath := filepath.Join(tmpDir, "n.sock")
+	t.Chdir(t.TempDir())
+	sockPath := "n.sock"
 
 	listener, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -506,12 +492,8 @@ func TestDefaultSocketPath(t *testing.T) {
 }
 
 func TestSubscriber_ReconcileSnapshotOnReconnectionAfterMissedEvents(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "subtest-reconnect-*")
-	if err != nil {
-		t.Fatalf("creating temp dir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(tmpDir) })
-	sockPath := filepath.Join(tmpDir, "notify.sock")
+	t.Chdir(t.TempDir())
+	sockPath := "notify.sock"
 
 	listener, err := net.Listen("unix", sockPath)
 	if err != nil {

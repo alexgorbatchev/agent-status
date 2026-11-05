@@ -916,20 +916,11 @@ func TestPeriodicPruner(t *testing.T) {
 	})
 }
 
-// shortTestSockPath returns a Unix domain socket path short enough to fit within
-// OS sun_path length limits (104 bytes on Darwin, 108 on Linux), avoiding bind errors
-// caused by lengthy t.TempDir() subtest paths.
+// Relative socket addresses fit sun_path even in deeply nested test scratch.
 func shortTestSockPath(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("/tmp", "agent-sock-*")
-	if err != nil {
-		dir = t.TempDir()
-	} else {
-		t.Cleanup(func() {
-			_ = os.RemoveAll(dir)
-		})
-	}
-	return filepath.Join(dir, "notify.sock")
+	t.Chdir(t.TempDir())
+	return "notify.sock"
 }
 
 func TestShortTestSockPath(t *testing.T) {

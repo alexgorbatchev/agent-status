@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -44,7 +43,8 @@ func newTestReceiver(t *testing.T) (*Receiver, *store.Store, *notify.Publisher) 
 		t.Fatalf("summarizer engine: %v", err)
 	}
 
-	sockPath := "/tmp/test-notify-" + t.Name() + ".sock"
+	t.Chdir(t.TempDir())
+	sockPath := "notify.sock"
 	pub, err := notify.NewPublisher(sockPath)
 	if err != nil {
 		t.Fatalf("new publisher: %v", err)
@@ -1208,7 +1208,7 @@ func TestReceiver_HandleFocusAgent(t *testing.T) {
 	}
 
 	// 5. 200 OK when Herdr finds and focuses pane
-	sockPath := fmt.Sprintf("/tmp/h-rcv-%d.sock", time.Now().UnixNano()%100000)
+	sockPath := "herdr.sock"
 	l, err := net.Listen("unix", sockPath)
 	if err != nil {
 		t.Fatalf("failed to listen on unix socket: %v", err)
@@ -1421,12 +1421,8 @@ func TestReceiver_HandlePatchAgent_BroadcastsExactlyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("store.Open failed: %v", err)
 	}
-	sockDir, err := os.MkdirTemp("/tmp", "as-sock-")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer func() { _ = os.RemoveAll(sockDir) }()
-	sockPath := sockDir + "/test.sock"
+	t.Chdir(t.TempDir())
+	sockPath := "test.sock"
 	pub, err := notify.NewPublisher(sockPath)
 	if err != nil {
 		t.Fatalf("failed to create publisher: %v", err)
