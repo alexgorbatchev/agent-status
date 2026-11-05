@@ -81,16 +81,14 @@ lint-all:
 lint:
     @just lint-all
 
-# Clean all build and test artifacts
+# Clean package build outputs, preserving runtime state and test scratch
 clean:
-    @just stop
     just common clean
     just observer clean
     just ingester clean
     just server clean
     just debug clean
     just ui clean
-    rm -rf .tmp/test-* .tmp/dev-stack
 
 # Prepare dependencies for local development
 setup:

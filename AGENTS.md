@@ -15,6 +15,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - Replay session offline: `just debug session-replay-[claude|pi|codex|opencode] <session-id>`
 - Print session transcript: `just debug print-session [claude|pi] [print|summary|handoff] <session-id>`
 - Build all: `just build-all`
+- Clean build outputs: `just clean` (preserves test scratch, dev-stack state, and running services; use `just stop` explicitly to stop the stack)
 - Test all: `just test-all`
 - Check coverage: `just check-coverage` (enforces >= 90% statement coverage across all Go packages via `scripts/check-coverage.sh`)
 - Lint all: `just lint-all` (Go formatting via `scripts/check-format.sh`, which checks tracked and new source and skips ignored output)
@@ -47,6 +48,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 
 - Always: route `just run` through native devhost services; do not introduce a second stack supervisor.
 - Always: keep package-specific commands in each package's lowercase `justfile`; register packages with root `mod` declarations and keep the root justfile focused on workspace orchestration.
+- Always: keep `clean` limited to package build outputs. Tests own their scratch cleanup; the workspace cleaner handles stale scratch. Never remove `.tmp/test-*` or dev-stack runtime state from `clean`.
 - Always: automatically record all new instructions in the most appropriate `AGENTS.md` file immediately upon receipt (check with user if existing instructions conflict)
 - Always: keep `agent-watcher` published on GitHub and consume its tagged module version here; do not commit sibling-checkout requirements.
 - Always: when resolving tickets, follow the `github-issues` skill workflow (`skills/agent/github-issues` in the private AI registry overlay) for claims, worktree isolation, independent PR review, CI gates, and fast-forward integration
