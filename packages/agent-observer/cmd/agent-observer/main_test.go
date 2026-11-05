@@ -37,18 +37,10 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	for name, path := range map[string]string{
-		"CLAUDE_SESSIONS_DIR": filepath.Join(tmpDir, "claude-sessions"),
-		"CLAUDE_PROJECTS_DIR": filepath.Join(tmpDir, "claude-projects"),
-		"PI_SESSIONS_DIR":     filepath.Join(tmpDir, "pi-sessions"),
-		"CODEX_SESSIONS_DIR":  filepath.Join(tmpDir, "codex-sessions"),
-		"OPENCODE_DB_PATH":    filepath.Join(tmpDir, "opencode.db"),
-	} {
-		if err := os.Setenv(name, path); err != nil {
-			fmt.Fprintf(os.Stderr, "isolating harness paths: %v\n", err)
-			cleanup()
-			os.Exit(1)
-		}
+	if err := testenv.IsolateHarnessEnv(filepath.Join(tmpDir, "home")); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		cleanup()
+		os.Exit(1)
 	}
 
 	code := m.Run()
@@ -56,10 +48,10 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// TestStateDirsAreIsolated fails when TestMain no longer isolates this package's state,
-// so a test that opens the default log rotator cannot write into the home directory.
+// TestStateDirsAreIsolated fails if TestMain stops isolating state or sessions.
 func TestStateDirsAreIsolated(t *testing.T) {
 	testenv.RequireIsolated(t)
+	testenv.RequireHarnessIsolated(t)
 }
 
 func (s *testSyncBuffer) Write(p []byte) (n int, err error) {

@@ -18,7 +18,7 @@ Shared Go types and structured logging definitions for the agent-status pipeline
 ## Local gotchas
 
 - Renaming struct tags in `types/types.go` breaks JSON contracts between `agent-observer`, `agent-ingester`, `agent-server`, and `ui-web`.
-- Tests must never read real harness sessions or write real state. Command packages call `testenv.IsolateStateDirs` and, when they discover or resolve sessions, `testenv.IsolateHarnessEnv` from `TestMain`, and a test in that package calls `testenv.RequireIsolated` and `testenv.RequireHarnessIsolated` so removing the isolation fails the package. Tests that create sessions under HOME use `testenv.IsolateHarnessHome(t)`. Add new harness location variables to `harnessEnv` in `testenv/harness.go`.
+- Tests must never read real harness sessions or write real state. Command packages and debug's scanner package call `testenv.IsolateStateDirs` and, when they discover or resolve sessions, `testenv.IsolateHarnessEnv` from `TestMain`, and a test in that package calls `testenv.RequireIsolated` and `testenv.RequireHarnessIsolated` so removing the isolation fails the package. Harness isolation includes HOME and clears inherited location overrides; individual tests set their own fixture paths with `t.Setenv`. Tests that create sessions under HOME use `testenv.IsolateHarnessHome(t)`. Add new harness location variables to `harnessEnv` in `testenv/harness.go`.
 
 ## Boundaries
 
