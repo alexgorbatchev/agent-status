@@ -13,7 +13,7 @@ default:
 # Start the devhost-managed stack and shared HTTPS proxy
 run *args:
     devhost caddy start
-    devhost start {{ args }}
+    devhost start --detach {{ args }}
 
 # Start the full stack
 start *args:

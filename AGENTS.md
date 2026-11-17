@@ -36,7 +36,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - Watcher dependency -> observer/debug consume a tagged GitHub version of `agent-watcher`. Builds, tests, and lint must work without a sibling checkout; local workspace overrides are optional development choices.
 - Go test scratch -> use the package `just test` recipes. `scripts/check-coverage.sh` owns a unique directory under the native temporary directory (`GOTMPDIR`, then `TMPDIR`, then `/tmp`), sets both `TMPDIR` and `GOTMPDIR` for that invocation, and terminates its registered test process groups before removing their scratch directories on exit. Nested runners inherit the cleanup registry so enclosing cancellation also cleans up their descendants. Keep fixtures inside the enclosing scratch tree even when a child command tests native temporary-directory defaults; do not redirect tests into the repository's `.tmp/`. For Unix sockets, use `t.Chdir(t.TempDir())` and a relative address so deeply nested checkout paths fit the socket address limit.
 - Dev stack ports -> devhost allocates loopback ports automatically and routes UI and `/api/*` through the same HTTPS hostname.
-- Dev stack execution -> `just run` starts the shared devhost proxy and runs devhost in the foreground; use background process management in tools.
+- Dev stack execution -> `just run` starts the shared devhost proxy and waits for the detached stack to become ready. Use `just stop` to stop the stack.
 - SQLite database concurrency -> `agent-server` opens SQLite strictly in read-only mode (`?mode=ro`); all mutations occur through `agent-ingester`.
 - SQLite driver -> every module uses `modernc.org/sqlite` (driver name `sqlite`), the same pure-Go engine agent-parser and agent-watcher use. Do not add another SQLite driver.
 - Unix domain socket binding -> `agent-ingester` creates `$XDG_RUNTIME_DIR/agent-status/notify.sock`; `agent-server` reconnects automatically when the socket becomes available.
@@ -58,7 +58,6 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - Always (code-based projects only): any time code is changed such that results from running that code are changed, a test file must be changed as well; 90% statement coverage is required and enforced on `just test` and `just check-coverage` via `scripts/check-coverage.sh` (scripts/ folder is excluded from this rule)
 - Always: run `just test-all` and `just lint-all` before committing changes
 - Ask first: adding database migrations in `packages/agent-ingester/internal/store/migrations.go` or modifying shared types in `packages/agent-common/types/types.go`
-- Never: run `just run` or `just start` in a synchronous tool call; devhost runs in the foreground.
 - Never: let dev stack daemons write application data outside the repository; databases, caches, logs, and sockets belong under `.tmp/dev-stack/`. Devhost manages its own shared proxy and supervisor state.
 - Never: publish releases automatically without explicit user authorization
 - Never: parse or transmit credentials, API keys, or session auth tokens from agent harnesses

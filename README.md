@@ -48,7 +48,7 @@ curl -sSL https://github.com/alexgorbatchev/agent-status/releases/latest/downloa
 
 1. Install the prerequisites, run `just setup`, and complete devhost's Caddy download and certificate trust setup.
 2. Run `direnv allow .`. The dashboard defaults to `https://agent-status.localhost`. For a machine-specific hostname, set `export DEVHOST_DEV_EXT='<suffix>'` in ignored `.envrc.local`; the hostname is `agent-status` followed by that suffix.
-3. Run `just run` (or `just start`). This starts the shared proxy and all four native devhost services. Each Go service builds before launch. Ctrl+C or `just stop` stops this stack.
+3. Run `just run` (or `just start`). This starts the shared proxy and all four native devhost services. Each Go service builds before launch. The stack runs in the background. Run `just stop` to stop it.
 4. Use `just status` to see whether this checkout's stack is running and `just logs` to tail rotating daemon logs. Devhost also exposes service status and logs in its dashboard toolbar.
 
 Devhost allocates loopback ports and starts services in dependency order. UI and `/api/*` share the HTTPS hostname. Application state stays under `.tmp/dev-stack/`: `data/` (SQLite), `cache/` (observer checkpoints), `logs/`, and `run/` (notify socket). Devhost stores its own supervisor and shared proxy state in its standard locations.
