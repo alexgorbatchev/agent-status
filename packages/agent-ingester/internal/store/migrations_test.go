@@ -90,7 +90,7 @@ func TestMigrate_CrashAfterV7PartialCommit(t *testing.T) {
 	// Database is at v6, but v7 columns were already added to the agents table
 	// while user_version remained 6.
 	// Migrate(db) must succeed, skip duplicate column addition idempotently,
-	// and bring user_version to 8 with tables intact.
+	// and bring user_version to 9 with tables intact.
 	db, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
@@ -153,7 +153,7 @@ func TestMigrate_CrashAfterV7PartialCommit(t *testing.T) {
 		t.Fatalf("manually applying v7 columns failed: %v", err)
 	}
 
-	// Migrate must succeed and advance to version 8
+	// Migrate must succeed and advance to version 9
 	if err := Migrate(db); err != nil {
 		t.Fatalf("Migrate failed after simulated v7 partial crash: %v", err)
 	}
@@ -161,8 +161,8 @@ func TestMigrate_CrashAfterV7PartialCommit(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 8 {
-		t.Fatalf("expected user_version = 8, got %d", version)
+	if version != 10 {
+		t.Fatalf("expected user_version = 10, got %d", version)
 	}
 
 	// Assert tables and existing data are intact
@@ -258,8 +258,8 @@ func TestMigrate_CrashAfterV7SingleColumnCommit(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 8 {
-		t.Fatalf("expected user_version = 8, got %d", version)
+	if version != 10 {
+		t.Fatalf("expected user_version = 10, got %d", version)
 	}
 }
 
@@ -268,7 +268,7 @@ func TestMigrate_CrashAfterV8PartialCommit(t *testing.T) {
 	// Database is at v7, but v8 columns were already added to the agents table
 	// while user_version remained 7.
 	// Migrate(db) must succeed, skip duplicate column addition idempotently,
-	// and bring user_version to 8 with tables intact.
+	// and bring user_version to 9 with tables intact.
 	db, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
@@ -331,7 +331,7 @@ func TestMigrate_CrashAfterV8PartialCommit(t *testing.T) {
 		t.Fatalf("manually applying v8 columns failed: %v", err)
 	}
 
-	// Migrate must succeed and advance to version 8
+	// Migrate must succeed and advance to version 9
 	if err := Migrate(db); err != nil {
 		t.Fatalf("Migrate failed after simulated v8 partial crash: %v", err)
 	}
@@ -340,8 +340,8 @@ func TestMigrate_CrashAfterV8PartialCommit(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 8 {
-		t.Fatalf("expected user_version = 8, got %d", version)
+	if version != 10 {
+		t.Fatalf("expected user_version = 10, got %d", version)
 	}
 
 	// Assert tables and existing data are intact
@@ -436,8 +436,8 @@ func TestMigrate_CrashAfterV8SingleColumnCommit(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 8 {
-		t.Fatalf("expected user_version = 8, got %d", version)
+	if version != 10 {
+		t.Fatalf("expected user_version = 10, got %d", version)
 	}
 }
 

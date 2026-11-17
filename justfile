@@ -5,40 +5,43 @@ default:
     @just --list
 
 # Start the full agent-status stack (ingester, server, observer, web UI)
-start *args:
-    bun run scripts/dev-stack.ts start {{args}}
+[positional-arguments]
+start *args: build-stack
+    exec direnv exec . devhost start --manifest devhost.toml "$@"
 
 # Stop the full agent-status stack and free ports
 stop:
-    bun run scripts/dev-stack.ts stop
+    exec direnv exec . devhost stop --manifest devhost.toml
 
 # Check status of running dev stack
 status:
-    bun run scripts/dev-stack.ts status
+    exec devhost stack list
 
 # Tail rotating dev stack daemon logs on disk
 logs:
     @tail -f .tmp/dev-stack/logs/*.log
 
 # Run in human-facing interactive mode
+[positional-arguments]
 run *args:
-    @just start
+    @exec just start "$@"
 
 # Run in agent-facing token-conservative mode
+[positional-arguments]
 run-ai *args:
-    AGENT=1 just start
+    AGENT=1 exec just start "$@"
 
-# Run air-debug CLI utility via go run
+# Run agent-debug CLI utility via go run
 debug *args:
-    go run ./packages/agent-debug/cmd/air-debug {{args}}
+    go run ./packages/agent-debug/cmd/agent-debug {{ args }}
 
 # Alias for debug
 run-debug *args:
-    @just debug {{args}}
+    @just debug {{ args }}
 
 # Run print-session CLI utility via go run
 print-session *args:
-    go run github.com/alexgorbatchev/agent-print-session-cli/cmd/print-session@v1.0.0 {{args}}
+    go run github.com/alexgorbatchev/agent-print-session-cli/cmd/print-session@v1.0.0 {{ args }}
 
 # Build only dev stack binaries and bundle ui-web (omitting agent-debug)
 build-stack:
@@ -59,6 +62,7 @@ build-all:
 
 # Run all test suites across Go and Bun
 test-all:
+    bun test scripts/__tests__
     cd packages/agent-common && just test
     cd packages/agent-observer && just test
     cd packages/agent-ingester && just test
@@ -80,7 +84,7 @@ test-e2e:
 
 # Start Storybook component explorer for ui-web
 storybook-web *args:
-    cd packages/ui-web && just storybook {{args}}
+    cd packages/ui-web && just storybook {{ args }}
 
 # Run tests with short output / test summary
 test:
@@ -112,21 +116,20 @@ clean:
 
 # Replay a Claude Code session by session ID or file path
 session-replay-claude session_id *args:
-    just debug session replay --harness claude-code {{session_id}} {{args}}
+    just debug session replay --harness claude-code {{ session_id }} {{ args }}
 
 # Alias for session-replay-claude
 session-replay-claude-code session_id *args:
-    just session-replay-claude {{session_id}} {{args}}
+    just session-replay-claude {{ session_id }} {{ args }}
 
 # Replay a Pi session by session ID or file path
 session-replay-pi session_id *args:
-    just debug session replay --harness pi {{session_id}} {{args}}
+    just debug session replay --harness pi {{ session_id }} {{ args }}
 
 # Replay an OpenAI Codex session by session ID or file path
 session-replay-codex session_id *args:
-    just debug session replay --harness codex {{session_id}} {{args}}
+    just debug session replay --harness codex {{ session_id }} {{ args }}
 
 # Replay an OpenCode session by session ID or database path
 session-replay-opencode session_id *args:
-    just debug session replay --harness opencode {{session_id}} {{args}}
-
+    just debug session replay --harness opencode {{ session_id }} {{ args }}

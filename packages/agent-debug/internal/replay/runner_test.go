@@ -11,6 +11,7 @@ import (
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/output"
+	serverstore "github.com/alexgorbatchev/agent-status/packages/agent-server/store"
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
 
@@ -501,6 +502,38 @@ func TestReplay_Opencode(t *testing.T) {
 		}
 		if res.Verification == nil || !res.Verification.Passed {
 			t.Errorf("expected verification to pass, report: %+v", res.Verification)
+		}
+	})
+
+	t.Run("capability usage through native SQLite parts", func(t *testing.T) {
+		db, err := sql.Open("sqlite3", "file:"+dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = db.Exec(`INSERT INTO part (id,message_id,session_id,time_created,data) VALUES
+			('usage_skill','msg_2','ses_open_1',?, '{"type":"tool","tool":"skill","callID":"skill-1","state":{"status":"completed","input":{"name":"review"},"output":"Instructions"}}'),
+			('usage_mcp','msg_2','ses_open_1',?, '{"type":"tool","tool":"mcp__github__list_issues","callID":"mcp-1","state":{"status":"completed","input":{},"output":"[]"}}')`, now-6000, now-5000)
+		_ = db.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		exported := filepath.Join(tmpDir, "usage.db")
+		res, err := RunReplay(ctx, ReplayOptions{FilePath: dbPath, SessionID: "ses_open_1", ExportDB: exported})
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := serverstore.OpenReadOnly(exported)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = s.Close() }()
+		r, err := s.GetAgentUsage(ctx, res.AgentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(r.Skills) != 1 || r.Skills[0].Name != "review" || r.Skills[0].Count != 1 ||
+			len(r.MCP) != 1 || r.MCP[0].Server != "github" || r.MCP[0].Count != 1 {
+			t.Fatalf("usage did not survive OpenCode reconstruction: %+v", r)
 		}
 	})
 }

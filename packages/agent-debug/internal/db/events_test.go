@@ -156,11 +156,11 @@ func TestResolveDatabasePath(t *testing.T) {
 		}
 	})
 
-	t.Run("auto via AIR_DATA_DIR", func(t *testing.T) {
-		orig := os.Getenv("AIR_DATA_DIR")
-		defer func() { _ = os.Setenv("AIR_DATA_DIR", orig) }()
+	t.Run("auto via AGENT_DATA_DIR", func(t *testing.T) {
+		orig := os.Getenv("AGENT_DATA_DIR")
+		defer func() { _ = os.Setenv("AGENT_DATA_DIR", orig) }()
 
-		_ = os.Setenv("AIR_DATA_DIR", tmpDir)
+		_ = os.Setenv("AGENT_DATA_DIR", tmpDir)
 		got, err := ResolveDatabasePath("auto")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -171,13 +171,13 @@ func TestResolveDatabasePath(t *testing.T) {
 	})
 
 	t.Run("auto via XDG_DATA_HOME", func(t *testing.T) {
-		origAir := os.Getenv("AIR_DATA_DIR")
+		origAgent := os.Getenv("AGENT_DATA_DIR")
 		origXdg := os.Getenv("XDG_DATA_HOME")
 		defer func() {
-			_ = os.Setenv("AIR_DATA_DIR", origAir)
+			_ = os.Setenv("AGENT_DATA_DIR", origAgent)
 			_ = os.Setenv("XDG_DATA_HOME", origXdg)
 		}()
-		_ = os.Unsetenv("AIR_DATA_DIR")
+		_ = os.Unsetenv("AGENT_DATA_DIR")
 		xdgDir := t.TempDir()
 		sub := filepath.Join(xdgDir, "agent-status")
 		_ = os.MkdirAll(sub, 0755)
@@ -195,15 +195,15 @@ func TestResolveDatabasePath(t *testing.T) {
 	})
 
 	t.Run("auto not found returns error", func(t *testing.T) {
-		origAir := os.Getenv("AIR_DATA_DIR")
+		origAgent := os.Getenv("AGENT_DATA_DIR")
 		origXdg := os.Getenv("XDG_DATA_HOME")
 		origHome := os.Getenv("HOME")
 		defer func() {
-			_ = os.Setenv("AIR_DATA_DIR", origAir)
+			_ = os.Setenv("AGENT_DATA_DIR", origAgent)
 			_ = os.Setenv("XDG_DATA_HOME", origXdg)
 			_ = os.Setenv("HOME", origHome)
 		}()
-		_ = os.Unsetenv("AIR_DATA_DIR")
+		_ = os.Unsetenv("AGENT_DATA_DIR")
 		_ = os.Unsetenv("XDG_DATA_HOME")
 		emptyHome := t.TempDir()
 		_ = os.Setenv("HOME", emptyHome)

@@ -701,7 +701,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 		agent.Environment = frame.Environment
 		agent.Workspace = frame.Workspace
 		agent.Project = frame.Project
-		if frame.EventType != "run_exited" {
+		if frame.EventType != "run_exited" && frame.EventType != "summary" {
 			agent.Activity.UpdatedAt = now
 		}
 	}
@@ -881,7 +881,9 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 
 	c.mu.Lock()
 	actx.saveGeneration++
-	actx.lastEventTimestamp = now
+	if frame.EventType != "summary" {
+		actx.lastEventTimestamp = now
+	}
 	if !isSubagent && isRootStateEvent(frame.EventType) {
 		actx.rootGeneration++
 	}
@@ -919,6 +921,14 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 	// If not a subagent, apply deterministic state machine transitions
 	if !isSubagent {
 		switch frame.EventType {
+		case "summary":
+			if frame.Data.Content != nil && strings.TrimSpace(*frame.Data.Content) != "" &&
+				(agent.Activity.SummaryUpdatedAt == nil || frame.Timestamp >= *agent.Activity.SummaryUpdatedAt) {
+				agent.Activity.Summary = frame.Data.Content
+				ts := frame.Timestamp
+				agent.Activity.SummaryUpdatedAt = &ts
+			}
+
 		case "run_started":
 			c.mu.Lock()
 			c.cancelIdleTimerLocked(agent.ID)
@@ -1298,7 +1308,7 @@ func (c *Classifier) ProcessFrame(frame types.ITelemetryFrame) (*types.IAgentSta
 				}
 			}
 		}
-	} else {
+	} else if frame.EventType != "summary" {
 		// Subagent event: track subagent state (do not cancel parent idle timer #64)
 		c.mu.Lock()
 		isNewSubagent := false

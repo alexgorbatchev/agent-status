@@ -13,5 +13,8 @@ export function resolveApiBaseUrl(overrideUrl?: string): string {
       return windowWithStatus.__AGENT_STATUS_API_URL__;
     }
   }
+  if (process.env.AGENT_PUBLIC_API_URL) {
+    return process.env.AGENT_PUBLIC_API_URL;
+  }
   return DEFAULT_API_BASE_URL;
 }

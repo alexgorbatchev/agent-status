@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
+
 	_ "github.com/ncruces/go-sqlite3/driver"
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-server/internal/config"
@@ -89,6 +91,8 @@ func createTestDB(t *testing.T) string {
 		retry_after_seconds   INTEGER,
 		has_unseen_completion INTEGER NOT NULL DEFAULT 0,
 		completed_at          INTEGER,
+        summary               TEXT,
+        summary_updated_at    INTEGER,
 		UNIQUE (environment_id, harness, session_id)
 	);
 
@@ -119,8 +123,45 @@ func TestMain_Version(t *testing.T) {
 	t.Cleanup(func() {
 		os.Args = origArgs
 	})
-	os.Args = []string{"air-server", "--version"}
+	os.Args = []string{"agent-server", "--version"}
 	main()
+}
+
+func TestCommandFailureUsesSharedLoggerOnce(t *testing.T) {
+	previous := logging.Default()
+	t.Cleanup(func() { logging.SetDefault(previous) })
+	var out bytes.Buffer
+	code := logging.RunCommand("server", &out, func() error {
+		cfg := config.DefaultConfig()
+		cmd := newRootCmd(&cfg)
+		cmd.SetErr(&out)
+		cmd.SetOut(&out)
+		cmd.SetArgs([]string{"--unknown-flag"})
+		return cmd.Execute()
+	})
+	if code != 1 || strings.Count(out.String(), "command_failed") != 1 || !strings.Contains(out.String(), "err=") || strings.Contains(out.String(), "Usage:") || strings.Contains(out.String(), "Error:") {
+		t.Fatalf("expected one structured command failure: code=%d log=%s", code, &out)
+	}
+}
+
+func TestFailedServerStartupLogsFailureToDisk(t *testing.T) {
+	previous := logging.Default()
+	t.Cleanup(func() { logging.SetDefault(previous) })
+	var out bytes.Buffer
+	cfg := config.DefaultConfig()
+	cfg.DBPath = filepath.Join(t.TempDir(), "missing.db")
+	cfg.LogFile = filepath.Join(t.TempDir(), "server.log")
+	cfg.LogLevel = "info"
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	code := logging.RunCommand("server", &out, func() error { return run(ctx, cfg) })
+	content, err := os.ReadFile(cfg.LogFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code != 1 || strings.Count(string(content), "command_failed") != 1 || strings.Contains(string(content), "db_opened") {
+		t.Fatalf("startup logs must report failure accurately: code=%d log=%s", code, content)
+	}
 }
 
 func TestRun_LifecycleAndShutdown(t *testing.T) {
@@ -247,14 +288,14 @@ func TestRootCmd_ExecuteError(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
-	tmpDir, err := os.MkdirTemp("", "air-server-test-logs-*")
+	tmpDir, err := os.MkdirTemp("", "agent-server-test-logs-*")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to create test log dir: %v\n", err)
 		os.Exit(1)
 	}
 
-	if err := os.Setenv("AIR_LOG_DIR", tmpDir); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to set AIR_LOG_DIR: %v\n", err)
+	if err := os.Setenv("AGENT_LOG_DIR", tmpDir); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to set AGENT_LOG_DIR: %v\n", err)
 		_ = os.RemoveAll(tmpDir)
 		os.Exit(1)
 	}
@@ -278,7 +319,7 @@ func TestServerCommandHelp(t *testing.T) {
 
 	out := buf.String()
 	requiredHelpStrings := []string{
-		"air-server",
+		"agent-server",
 		"--addr",
 		"--db",
 		"--socket",

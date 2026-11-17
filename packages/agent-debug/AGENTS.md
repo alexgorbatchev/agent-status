@@ -1,6 +1,6 @@
 # agent-debug
 
-Offline replay and validation CLI tool for agent session transcripts through the ingestion pipeline (`air-debug`).
+Offline replay and validation CLI tool for agent session transcripts through the ingestion pipeline (`agent-debug`).
 
 ## Commands
 
@@ -13,22 +13,25 @@ Offline replay and validation CLI tool for agent session transcripts through the
 
 ## Usage Examples
 
-- Replay session transcript: `air-debug session replay ~/.claude/sessions/session-abc.jsonl`
-- Replay with turn-by-turn state diffs: `air-debug session replay --diff session-abc.jsonl`
-- Replay OpenCode database session: `air-debug session replay --session-id ses_123 opencode.db`
-- List sessions in OpenCode database: `air-debug session list opencode.db`
-- Validate session offline: `air-debug session validate session-abc.jsonl`
-- View terminal UI card representation: `air-debug session view session-abc.jsonl`
-- View hierarchical fleet tree: `air-debug session fleet` (or `air-debug fleet`)
-- View fleet for transcripts or DB: `air-debug session fleet session1.jsonl session2.jsonl`
-- Foreign path remapping: `air-debug session replay --cwd /local/repo session-abc.jsonl`
-- Export populated SQLite DB: `air-debug session replay --export-db .tmp/debug.db session-abc.jsonl`
-- Inspect persisted SQLite state: `air-debug db inspect <session-id>`
-- Audit process discovery & pairing: `air-debug scanner audit` (or `air-debug process list`)
+- Replay session transcript: `agent-debug session replay ~/.claude/sessions/session-abc.jsonl`
+- Replay with turn-by-turn state diffs: `agent-debug session replay --diff session-abc.jsonl`
+- Replay OpenCode database session: `agent-debug session replay --session-id ses_123 opencode.db`
+- List sessions in OpenCode database: `agent-debug session list opencode.db`
+- Validate session offline: `agent-debug session validate session-abc.jsonl`
+- View terminal UI card representation: `agent-debug session view session-abc.jsonl`
+- View hierarchical fleet tree: `agent-debug session fleet` (or `agent-debug fleet`)
+- View fleet for transcripts or DB: `agent-debug session fleet session1.jsonl session2.jsonl`
+- Foreign path remapping: `agent-debug session replay --cwd /local/repo session-abc.jsonl`
+- Export populated SQLite DB: `agent-debug session replay --export-db .tmp/debug.db session-abc.jsonl`
+- Inspect persisted SQLite state: `agent-debug db inspect <session-id>`
+- Audit process discovery & pairing: `agent-debug scanner audit` (or `agent-debug process list`)
+- List live local agents for shell selection: `agent-debug agent list | fzf`; use `--all` to query `agent-server` across monitored machines, or `--db <path>` for offline local database inspection.
+- Inspect observed skills, harness commands, and MCP usage: `agent-debug agent usage <composite-agent-id> --json` queries `agent-server` using `AGENT_SERVER_HTTP_URL` and `AGENT_STATUS_TOKEN`. Exclude shell commands; preserve invocation/load/request distinctions and coverage details.
 
 ## Local conventions
 
-- Follow subject-first CLI hierarchy (`air-debug session <verb>`).
+- Follow subject-first CLI hierarchy (`agent-debug session <verb>`).
+- Keep stdout reserved for command results, including JSON and TSV. Suppress routine diagnostics by default; `--debug` enables diagnostic logging on stderr. Return command failures to `logging.RunCommand` for one structured error on stderr. HTTP failures must include the attempted method and validated endpoint plus a safe cause; never print bearer credentials, raw response bodies, or server-supplied redirect locations.
 - Render hierarchical tree-view help screens with `cobra-help-tree`.
 - Dual-mode output: formatted tables and trees when `AGENT=0`, compact token-conservative key-value lines when `AGENT=1`.
 - Act strictly as an external driver; zero debug flags or conditional forks in production daemons.
@@ -45,6 +48,7 @@ Offline replay and validation CLI tool for agent session transcripts through the
 - Idle freshness tiers categorize idle sessions as `fresh` (<15m), `standard` (15m–2h), or `stale` (>2h, rendered with `AnsiDim` in card and fleet views unless an unacknowledged completion is pending; idle sessions in fleet views are stably partitioned into warm idle before stale dormant idle while preserving relative input order).
 - Hierarchical worktree nesting in `RenderFleetView` groups sessions under project families with linked worktree branches (`internal/output/view.go`).
 - All transcript-derived fields (titles, actions, errors, harness labels, questions, branches, project names) must be passed through `SanitizeTranscriptText` before formatting to strip ANSI escape sequences and control characters.
+- Agent selection output is headerless TSV in both output modes. Default to direct local harness discovery without requiring a running dashboard, daemon, or agent-status database; verify PID/start time and include idle and waiting agents whose processes remain alive. `--all` must query `agent-server` over HTTP, using `--server-url` or `AGENT_SERVER_HTTP_URL` and the user-configured `AGENT_STATUS_TOKEN` bearer credential. Verify local PIDs; include remotely reported running agents only while their observer heartbeat is fresh. Keep explicit `--db` as offline local database inspection, mutually exclusive with `--all`.
 
 ## Boundaries
 
@@ -53,11 +57,11 @@ Offline replay and validation CLI tool for agent session transcripts through the
 - Always: run `just test` and `just lint` before committing changes
 - Ask first: modifying output formats, CLI command hierarchies, or shared terminal styling contracts
 - Never: publish releases automatically without explicit user authorization
-- Never: parse or transmit credentials or authentication tokens
+- Never: parse or transmit credentials or authentication tokens from agent harness storage. Use only the user-configured agent-status API credential for server requests; keep it out of output, URLs, and command arguments.
 
 ## References
 
-- CLI entrypoint: `cmd/air-debug/main.go`
+- CLI entrypoint: `cmd/agent-debug/main.go`
 - Replay runner: `internal/replay/runner.go`
 - Read verification: `internal/replay/verify.go`
 - Formatting & dual-mode: `internal/output/format.go`

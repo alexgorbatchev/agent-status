@@ -6,6 +6,28 @@ import (
 	"testing"
 )
 
+func TestNativeSummaryJSON(t *testing.T) {
+	var activity IAgentActivity
+	if err := json.Unmarshal([]byte(`{"action":"Running tests","summary":"Finishing migration","summaryUpdatedAt":1791589631636}`), &activity); err != nil {
+		t.Fatal(err)
+	}
+	if activity.Summary == nil || *activity.Summary != "Finishing migration" || activity.SummaryUpdatedAt == nil || *activity.SummaryUpdatedAt != 1791589631636 {
+		t.Fatalf("recap lost: %+v", activity)
+	}
+	activity.Action = "Idle"
+	encoded, err := json.Marshal(activity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded IAgentActivity
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Action != "Idle" || *decoded.Summary != "Finishing migration" {
+		t.Fatalf("action overwrote native recap: %+v", decoded)
+	}
+}
+
 func TestEnumConstants(t *testing.T) {
 	tests := []struct {
 		name string

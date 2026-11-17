@@ -30,14 +30,14 @@ type testSyncBuffer struct {
 }
 
 func TestMain(m *testing.M) {
-	tmpDir, err := os.MkdirTemp("", "air-observer-test-logs-*")
+	tmpDir, err := os.MkdirTemp("", "agent-observer-test-logs-*")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to create test log dir: %v\n", err)
 		os.Exit(1)
 	}
 
-	if err := os.Setenv("AIR_LOG_DIR", tmpDir); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to set AIR_LOG_DIR: %v\n", err)
+	if err := os.Setenv("AGENT_LOG_DIR", tmpDir); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to set AGENT_LOG_DIR: %v\n", err)
 		_ = os.RemoveAll(tmpDir)
 		os.Exit(1)
 	}
@@ -85,7 +85,7 @@ func TestObserverCommandHelp(t *testing.T) {
 
 	out := buf.String()
 	requiredHelpStrings := []string{
-		"air-observer",
+		"agent-observer",
 		"--ingester-url",
 		"--token",
 		"--env",
@@ -109,6 +109,32 @@ func TestObserverCommandHelp(t *testing.T) {
 			t.Errorf("expected help output to contain %q, but got:\n%s", s, out)
 		}
 	}
+}
+
+func TestCommandFailureUsesSharedLoggerOnce(t *testing.T) {
+	previous := logging.Default()
+	t.Cleanup(func() { logging.SetDefault(previous) })
+	var out bytes.Buffer
+	code := logging.RunCommand("observer", &out, func() error {
+		cmd, _ := newRootCmd()
+		cmd.SetErr(&out)
+		cmd.SetOut(&out)
+		cmd.SetArgs([]string{"--scan-interval", "invalid"})
+		return cmd.Execute()
+	})
+	if code != 1 || strings.Count(out.String(), "command_failed") != 1 || !strings.Contains(out.String(), "err=") || strings.Contains(out.String(), "Usage:") || strings.Contains(out.String(), "Error:") {
+		t.Fatalf("expected one structured command failure: code=%d log=%s", code, &out)
+	}
+}
+
+func TestMainVersion(t *testing.T) {
+	previousArgs, previousLogger := os.Args, logging.Default()
+	t.Cleanup(func() {
+		os.Args = previousArgs
+		logging.SetDefault(previousLogger)
+	})
+	os.Args = []string{"agent-observer", "--version"}
+	main()
 }
 
 func TestObserverCommandVersion(t *testing.T) {
@@ -231,11 +257,12 @@ func TestObserverCommandFlagParsing(t *testing.T) {
 }
 
 func TestObserverCommandEnvFallbacks(t *testing.T) {
-	t.Setenv("AGENT_INGESTER_URL", "ws://env-ingester:8080/ws/ingest")
+	t.Setenv("AGENT_INGESTER_WS_URL", "ws://env-ingester:8080/ws/ingest")
+	t.Setenv("AGENT_INGESTER_HTTP_URL", "http://http-ingester:9090")
 	t.Setenv("AGENT_STATUS_TOKEN", "env-token-xyz")
-	t.Setenv("AIR_CURSOR_RETENTION", "72h")
-	t.Setenv("AIR_CURSOR_PRUNE_INTERVAL", "2h")
-	t.Setenv("AIR_CURSOR_FLUSH_INTERVAL", "10s")
+	t.Setenv("AGENT_CURSOR_RETENTION", "72h")
+	t.Setenv("AGENT_CURSOR_PRUNE_INTERVAL", "2h")
+	t.Setenv("AGENT_CURSOR_FLUSH_INTERVAL", "10s")
 
 	_, opts := newRootCmd()
 

@@ -194,7 +194,7 @@ func TestFindDefaultDBPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	t.Setenv("AIR_DB_PATH", "")
+	t.Setenv("AGENT_DB_PATH", "")
 	t.Setenv("XDG_DATA_HOME", filepath.Join(temp, "xdg"))
 	t.Setenv("HOME", temp)
 
@@ -256,18 +256,18 @@ func TestResolveDBPath(t *testing.T) {
 		t.Fatal("expected error for non-existent db path, got nil")
 	}
 
-	// 3. AIR_DB_PATH environment variable override
-	t.Setenv("AIR_DB_PATH", dbPath)
+	// 3. AGENT_DB_PATH environment variable override
+	t.Setenv("AGENT_DB_PATH", dbPath)
 	resolvedEnv, err := ResolveDBPath("auto")
 	if err != nil {
-		t.Fatalf("expected resolved from AIR_DB_PATH, got error: %v", err)
+		t.Fatalf("expected resolved from AGENT_DB_PATH, got error: %v", err)
 	}
 	if resolvedEnv != dbPath {
 		t.Errorf("expected %s, got %s", dbPath, resolvedEnv)
 	}
 
-	// 4. Auto fails if AIR_DB_PATH points nowhere and default locations empty
-	t.Setenv("AIR_DB_PATH", "/non/existent/path/db.sqlite")
+	// 4. Auto fails if AGENT_DB_PATH points nowhere and default locations empty
+	t.Setenv("AGENT_DB_PATH", "/non/existent/path/db.sqlite")
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	_, err = ResolveDBPath("auto")

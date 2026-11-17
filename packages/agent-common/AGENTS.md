@@ -14,10 +14,11 @@ Shared Go types and structured logging definitions for the agent-status pipeline
 - `ActivityRateLimited` (`"RATE_LIMITED"`) models rate-limiting state on `IAgentActivity` alongside `RateLimitResetAt` (epoch ms reset timestamp) and `RetryAfterSeconds` (retry delay).
 - Turn completion retention uses `HasUnseenCompletion` (boolean pointer) and `CompletedAt` (epoch ms timestamp) on `IAgentActivity` (and `CompletedAt` on `ISubagentSummary`) to flag unacknowledged completed turns that transitioned to idle.
 - Structured logging wraps `log/slog` via `logging/logging.go` and respects dual-mode output via `AGENT=1` (human mode formats clean tags and prefers human names over opaque IDs; agent mode produces token-conservative machine logfmt), with disk rotation and retention limits via lumberjack.
+- CLI entrypoints use `logging.RunCommand` with Cobra's automatic error/usage printing silenced. Keep the disk logger open until the returned command error is reported; the command runner owns closing it. Route native HTTP server diagnostics through `logging.HTTPErrorLogger`, preserving the diagnostic in `detail` with action `http_server_error`.
 
 ## Local gotchas
 
-- Renaming struct tags in `types/types.go` breaks JSON contracts between `air-observer`, `air-ingester`, `air-server`, and `ui-web`.
+- Renaming struct tags in `types/types.go` breaks JSON contracts between `agent-observer`, `agent-ingester`, `agent-server`, and `ui-web`.
 
 ## Boundaries
 

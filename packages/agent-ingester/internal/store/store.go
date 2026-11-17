@@ -115,11 +115,22 @@ func (s *Store) RecordTelemetryEvent(frame types.ITelemetryFrame) error {
 		return fmt.Errorf("marshaling frame data: %w", err)
 	}
 
-	_, err = s.db.Exec(`
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.Exec(`
 		INSERT INTO telemetry_events (agent_id, subagent_id, event_type, timestamp, data_json)
 		VALUES (?, ?, ?, ?, ?)
 	`, frame.AgentID, frame.SubagentID, frame.EventType, frame.Timestamp, string(dataBytes))
-	return err
+	if err != nil {
+		return err
+	}
+	if err := recordUsage(tx, frame); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) SaveAgentState(agent types.IAgentState) error {
@@ -220,7 +231,7 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 			cost_usd, subagent_count, active_subagents, first_started_at, updated_at,
 			is_hidden, hidden_at,
 			model, context_window, context_fullness,
-			has_unseen_completion, completed_at
+			has_unseen_completion, completed_at, summary, summary_updated_at
 		) VALUES (
 			?, ?, ?, ?,
 			?, ?, ?,
@@ -232,7 +243,7 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 			?, ?, ?, ?, ?,
 			?, ?,
 			?, ?, ?,
-			?, ?
+			?, ?, ?, ?
 		)
 		ON CONFLICT(id) DO UPDATE SET
 			project_id = excluded.project_id,
@@ -273,7 +284,9 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 			context_window = excluded.context_window,
 			context_fullness = excluded.context_fullness,
 			has_unseen_completion = excluded.has_unseen_completion,
-			completed_at = excluded.completed_at
+			completed_at = excluded.completed_at,
+			summary = excluded.summary,
+			summary_updated_at = excluded.summary_updated_at
 	`,
 		agent.ID, agent.SessionID, agent.Environment.ID, string(agent.Harness),
 		agent.Project.ID, agent.Project.Name, agent.Project.CanonicalRoot,
@@ -285,7 +298,7 @@ func (s *Store) SaveAgentState(agent types.IAgentState) error {
 		costUSD, agent.Activity.SubagentCount, activeSubagentsStr, agent.Activity.FirstStartedAt, agent.Activity.UpdatedAt,
 		isHidden, hiddenAt,
 		agent.Activity.Model, agent.Activity.ContextWindow, agent.Activity.ContextFullness,
-		hasUnseenCompletion, completedAt,
+		hasUnseenCompletion, completedAt, agent.Activity.Summary, agent.Activity.SummaryUpdatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("upserting agent: %w", err)
@@ -308,7 +321,7 @@ func (s *Store) GetAgent(id string) (*types.IAgentState, error) {
 			r.id, r.pid, r.harness_version, r.started_at, r.ended_at,
 			a.is_hidden, a.hidden_at,
 			a.model, a.context_window, a.context_fullness,
-			a.has_unseen_completion, a.completed_at
+			a.has_unseen_completion, a.completed_at, a.summary, a.summary_updated_at
 		FROM agents a
 		JOIN environments e ON a.environment_id = e.id
 		LEFT JOIN runs r ON a.current_run_id = r.id
@@ -338,6 +351,8 @@ func (s *Store) GetAgent(id string) (*types.IAgentState, error) {
 		contextWindow                                      sql.NullInt64
 		contextFullness                                    sql.NullFloat64
 		hasUnseenCompletion                                int
+		summary                                            sql.NullString
+		summaryUpdatedAt                                   sql.NullInt64
 		completedAt                                        sql.NullInt64
 	)
 
@@ -353,7 +368,7 @@ func (s *Store) GetAgent(id string) (*types.IAgentState, error) {
 		&runID, &runPID, &runHarnessVer, &runStart, &runEnd,
 		&isHidden, &hiddenAt,
 		&modelStr, &contextWindow, &contextFullness,
-		&hasUnseenCompletion, &completedAt,
+		&hasUnseenCompletion, &completedAt, &summary, &summaryUpdatedAt,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -433,6 +448,12 @@ func (s *Store) GetAgent(id string) (*types.IAgentState, error) {
 	if hasUnseenCompletion == 1 {
 		b := true
 		agent.Activity.HasUnseenCompletion = &b
+	}
+	if summary.Valid {
+		agent.Activity.Summary = &summary.String
+	}
+	if summaryUpdatedAt.Valid {
+		agent.Activity.SummaryUpdatedAt = &summaryUpdatedAt.Int64
 	}
 	if completedAt.Valid {
 		v := completedAt.Int64

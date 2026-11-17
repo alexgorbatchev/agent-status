@@ -24,8 +24,10 @@ var version = "dev"
 
 func newRootCmd(cfg *config.Config) *cobra.Command {
 	rootCmd := &cobra.Command{
-		Use:   "air-server",
-		Short: "Agent Status central REST & streaming server",
+		Use:           "agent-server",
+		Short:         "Agent Status central REST & streaming server",
+		SilenceErrors: true,
+		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run(cmd.Context(), *cfg)
 		},
@@ -38,7 +40,7 @@ func newRootCmd(cfg *config.Config) *cobra.Command {
 	flags.StringVarP(&cfg.Addr, "addr", "a", cfg.Addr, "HTTP listen address (e.g. :4502 or 127.0.0.1:4502)")
 	flags.StringVar(&cfg.DBPath, "db", cfg.DBPath, "Path to agent-status SQLite database (read-only)")
 	flags.StringVar(&cfg.SocketPath, "socket", cfg.SocketPath, "Path to notify unix domain socket")
-	flags.StringVar(&cfg.IngesterURL, "ingester-url", cfg.IngesterURL, "URL of air-ingester for mutation proxying")
+	flags.StringVar(&cfg.IngesterURL, "ingester-url", cfg.IngesterURL, "URL of agent-ingester for mutation proxying")
 	flags.StringSliceVar(&cfg.CORSOrigins, "cors-origin", cfg.CORSOrigins, "Allowed CORS origins")
 	flags.StringVar(&cfg.AuthToken, "token", cfg.AuthToken, "Bearer authentication token (or AGENT_STATUS_TOKEN env)")
 	flags.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "Log level (debug, info, warn, error)")
@@ -51,12 +53,12 @@ func newRootCmd(cfg *config.Config) *cobra.Command {
 }
 
 func main() {
-	cfg := config.DefaultConfig()
-	rootCmd := newRootCmd(&cfg)
-
-	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	code := logging.RunCommand("server", os.Stderr, func() error {
+		cfg := config.DefaultConfig()
+		return newRootCmd(&cfg).Execute()
+	})
+	if code != 0 {
+		os.Exit(code)
 	}
 }
 
@@ -80,11 +82,6 @@ func run(ctx context.Context, cfg config.Config) error {
 		Level:      cfg.LogLevel,
 		FileConfig: fileCfg,
 	})
-	defer func() {
-		_ = logging.Close()
-	}()
-
-	logger.InfoContext(ctx, "db_opened", "path", cfg.DBPath)
 	sqliteStore, err := store.OpenReadOnly(cfg.DBPath)
 	if err != nil {
 		return fmt.Errorf("opening store: %w", err)
@@ -92,6 +89,10 @@ func run(ctx context.Context, cfg config.Config) error {
 	defer func() {
 		_ = sqliteStore.Close()
 	}()
+	if err := sqliteStore.DB().PingContext(ctx); err != nil {
+		return fmt.Errorf("connecting to store: %w", err)
+	}
+	logger.InfoContext(ctx, "db_opened", "path", cfg.DBPath)
 
 	hub := stream.NewHub(logger)
 	defer hub.Close()
@@ -116,6 +117,7 @@ func run(ctx context.Context, cfg config.Config) error {
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           server.Router(),
+		ErrorLog:          logging.HTTPErrorLogger(logger),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 

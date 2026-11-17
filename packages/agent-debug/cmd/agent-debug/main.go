@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/alexgorbatchev/agent-parser"
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
 	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/db"
 	"github.com/alexgorbatchev/agent-status/packages/agent-debug/internal/output"
@@ -37,13 +38,24 @@ type replayFlags struct {
 }
 
 func newRootCmd() *cobra.Command {
+	var debug bool
 	rootCmd := &cobra.Command{
-		Use:   "air-debug",
-		Short: "Agent Status Offline Replay & Ingestion Debugger",
+		Use:           "agent-debug",
+		Short:         "Agent Status Offline Replay & Ingestion Debugger",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+			level := "warn"
+			if debug {
+				level = "debug"
+			}
+			logging.SetDefault(logging.New(cmd.ErrOrStderr(), "agent-debug", level))
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmd.Help()
 		},
 	}
+	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Write diagnostic logs to stderr")
 
 	rootCmd.Version = version
 	rootCmd.SetVersionTemplate("{{.Version}}\n")
@@ -774,6 +786,7 @@ func newRootCmd() *cobra.Command {
 	processListCmd.Flags().BoolVar(&sJSON, "json", false, "Output audit results as JSON")
 	processCmd.AddCommand(processListCmd)
 	rootCmd.AddCommand(processCmd)
+	rootCmd.AddCommand(newAgentCmd())
 
 	cobrahelptree.Setup(rootCmd)
 	return rootCmd
@@ -788,8 +801,8 @@ func run(args []string) error {
 var exitFunc = os.Exit
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		exitFunc(1)
+	code := logging.RunCommand("agent-debug", os.Stderr, func() error { return run(os.Args[1:]) })
+	if code != 0 {
+		exitFunc(code)
 	}
 }

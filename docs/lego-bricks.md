@@ -191,7 +191,7 @@ The following source checkouts are retained on disk:
      6. Genuine runtime `error` $\to$ `activity: ERROR` (stores `lastError` truncated to 2,000 chars), or `activity: RATE_LIMITED` on structured rate-limit signals / HTTP 429 (stores `rateLimitResetAt`, `retryAfterSeconds`, and schedules silence timer)
      7. `turn_end` $\to$ debounced via turn-end grace window (default 5s) when coming from `BUSY` to prevent inter-step BUSY/IDLE flipping. On expiration without new activity (or immediately in sync mode), transitions to `activity: IDLE`, setting `has_unseen_completion: true` and `completed_at` timestamp while clearing `activeTool`, `activeTarget`, and `question`.
      8. `thinking` / `turn_start` $\to$ `activity: BUSY`
-   - **Completed Status**: When an agent finishes a turn without errors or blocking questions, it enters `IDLE` with `has_unseen_completion: true` and `completed_at` timestamp. This renders an emerald `Completed` status badge until explicitly dismissed via the public client API `PATCH /api/v1/agents/:id` (which `air-server` proxies to `air-ingester`) or until a new prompt begins.
+   - **Completed Status**: When an agent finishes a turn without errors or blocking questions, it enters `IDLE` with `has_unseen_completion: true` and `completed_at` timestamp. This renders an emerald `Completed` status badge until explicitly dismissed via the public client API `PATCH /api/v1/agents/:id` (which `agent-server` proxies to `agent-ingester`) or until a new prompt begins.
    - **Idle Freshness Tiering**: Active running agents in `IDLE` state are tiered visually based on elapsed time since `updatedAt`: `fresh` (<15m), `standard` (15m–2h), and `dormant/stale` (>2h, rendered with visual dimming in dashboard cards and terminal views unless an unacknowledged completion is pending).
 
 ---
@@ -291,5 +291,5 @@ The following source checkouts are retained on disk:
 ### Chosen Building Blocks: `github.com/spf13/cobra` + `github.com/spf13/pflag`
 
 - **Adoption**: 44k+ stars, industry standard Go CLI framework.
-- **Used In**: `cmd/air-observer/main.go`, `cmd/air-ingester/main.go`, `cmd/air-server/main.go`.
+- **Used In**: `cmd/agent-observer/main.go`, `cmd/agent-ingester/main.go`, `cmd/agent-server/main.go`.
 - **Help Tree Generation**: `github.com/spf13/cobra/doc` generates structured markdown command trees, enabling `just help` to render full CLI surfaces.

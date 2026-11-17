@@ -35,7 +35,7 @@ type SessionRecord struct {
 
 // FindDefaultDBPath searches standard locations for agent-status.db.
 func FindDefaultDBPath() string {
-	if p := os.Getenv("AIR_DB_PATH"); p != "" {
+	if p := os.Getenv("AGENT_DB_PATH"); p != "" {
 		if _, err := os.Stat(p); err == nil {
 			return p
 		}

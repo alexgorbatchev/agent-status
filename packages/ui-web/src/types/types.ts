@@ -73,6 +73,8 @@ export interface IAgentActivity {
   activity: ActivityState;
   title: string; // Harness rolling title or prompt summary
   action: string; // LLM generated 1-sentence current action
+  summary?: string | null; // Latest native harness work recap
+  summaryUpdatedAt?: number | null; // Recap timestamp in epoch milliseconds
   actionStale: boolean;
   phase: AgentPhase | null;
   activeTool: string | null;

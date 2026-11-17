@@ -53,34 +53,36 @@ func newRootCmd() (*cobra.Command, *observerOptions) {
 		logLevel:            "info",
 	}
 
-	if envURL := os.Getenv("AGENT_INGESTER_URL"); envURL != "" {
+	if envURL := os.Getenv("AGENT_INGESTER_WS_URL"); envURL != "" {
 		opts.ingesterURL = envURL
 	}
 	if envToken := os.Getenv("AGENT_STATUS_TOKEN"); envToken != "" {
 		opts.token = envToken
 	}
-	if envState := os.Getenv("AIR_SESSION_STATE_PATH"); envState != "" {
+	if envState := os.Getenv("AGENT_SESSION_STATE_PATH"); envState != "" {
 		opts.sessionStatePath = envState
 	}
-	if envRet := os.Getenv("AIR_CURSOR_RETENTION"); envRet != "" {
+	if envRet := os.Getenv("AGENT_CURSOR_RETENTION"); envRet != "" {
 		if d, err := time.ParseDuration(envRet); err == nil {
 			opts.cursorRetention = d
 		}
 	}
-	if envPrune := os.Getenv("AIR_CURSOR_PRUNE_INTERVAL"); envPrune != "" {
+	if envPrune := os.Getenv("AGENT_CURSOR_PRUNE_INTERVAL"); envPrune != "" {
 		if d, err := time.ParseDuration(envPrune); err == nil {
 			opts.cursorPruneInterval = d
 		}
 	}
-	if envFlush := os.Getenv("AIR_CURSOR_FLUSH_INTERVAL"); envFlush != "" {
+	if envFlush := os.Getenv("AGENT_CURSOR_FLUSH_INTERVAL"); envFlush != "" {
 		if d, err := time.ParseDuration(envFlush); err == nil {
 			opts.cursorFlushInterval = d
 		}
 	}
 
 	rootCmd := &cobra.Command{
-		Use:   "air-observer",
-		Short: "Observer agent for local harness session monitoring and telemetry shipping",
+		Use:           "agent-observer",
+		Short:         "Observer agent for local harness session monitoring and telemetry shipping",
+		SilenceErrors: true,
+		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runObserver(*opts)
 		},
@@ -113,11 +115,12 @@ func newRootCmd() (*cobra.Command, *observerOptions) {
 }
 
 func main() {
-	rootCmd, _ := newRootCmd()
-
-	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+	code := logging.RunCommand("observer", os.Stderr, func() error {
+		rootCmd, _ := newRootCmd()
+		return rootCmd.Execute()
+	})
+	if code != 0 {
+		os.Exit(code)
 	}
 }
 
@@ -138,9 +141,6 @@ func runObserver(opts observerOptions) error {
 		Level:      opts.logLevel,
 		FileConfig: fileCfg,
 	})
-	defer func() {
-		_ = logging.Close()
-	}()
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	return runObserverContext(ctx, opts)

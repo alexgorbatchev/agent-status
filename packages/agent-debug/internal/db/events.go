@@ -55,8 +55,8 @@ func ResolveDatabasePath(customPath string) (string, error) {
 		filepath.Join(".tmp", "dev-stack", "data", "agent-status.db"),
 	)
 
-	// Environment variable AIR_DATA_DIR
-	if envDir := os.Getenv("AIR_DATA_DIR"); envDir != "" {
+	// Environment variable AGENT_DATA_DIR
+	if envDir := os.Getenv("AGENT_DATA_DIR"); envDir != "" {
 		candidates = append(candidates,
 			filepath.Join(envDir, "agent-status.db"),
 			filepath.Join(envDir, "agent-status", "agent-status.db"),

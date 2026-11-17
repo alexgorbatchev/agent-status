@@ -19,6 +19,7 @@ import (
 
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/logging"
 	"github.com/alexgorbatchev/agent-status/packages/agent-common/types"
+	"github.com/alexgorbatchev/agent-status/packages/agent-common/usage"
 	"github.com/alexgorbatchev/agent-status/packages/agent-server/internal/store"
 	"github.com/alexgorbatchev/agent-status/packages/agent-server/internal/stream"
 )
@@ -29,6 +30,7 @@ type StoreInterface interface {
 	GetEnvironments(ctx context.Context) ([]types.IEnvironmentInfo, error)
 	GetAgents(ctx context.Context, filter store.AgentFilter) ([]types.IAgentState, error)
 	GetAgentByID(ctx context.Context, id string) (*types.IAgentState, error)
+	GetAgentUsage(ctx context.Context, id string) (*usage.Report, error)
 	GetAgentLogs(ctx context.Context, agentID string, limit int, beforeID int64, subagentID string) ([]types.ITelemetryFrame, error)
 }
 
@@ -107,6 +109,7 @@ func (s *Server) setupRoutes() {
 		r.Patch("/api/v1/agents/{id}", s.handlePatchAgent)
 		r.Post("/api/v1/agents/{id}/focus", s.handleFocusAgent)
 		r.Get("/api/v1/agents/{id}/logs", s.handleGetAgentLogs)
+		r.Get("/api/v1/agents/{id}/usage", s.handleGetAgentUsage)
 	})
 
 	s.router = r

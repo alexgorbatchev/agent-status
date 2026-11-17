@@ -10,7 +10,7 @@ replace (
 )
 
 require (
-	github.com/alexgorbatchev/agent-parser v1.0.0
+	github.com/alexgorbatchev/agent-parser v1.0.1
 	github.com/alexgorbatchev/agent-status/packages/agent-common v0.0.0-00010101000000-000000000000
 	github.com/alexgorbatchev/agent-status/packages/agent-ingester v0.0.0-00010101000000-000000000000
 	github.com/alexgorbatchev/agent-status/packages/agent-observer v0.0.0-00010101000000-000000000000

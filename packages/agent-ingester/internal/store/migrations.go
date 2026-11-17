@@ -300,6 +300,34 @@ func Migrate(db *sql.DB) error {
 		version = 8
 	}
 
+	if version < 9 {
+		if err := migrateV9(db); err != nil {
+			return err
+		}
+	}
+	if version < 10 {
+		if err := migrateV10(db); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func migrateV9(db *sql.DB) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("beginning migration v9: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() // Cleanup after commit or failure.
+	if _, err := tx.Exec(`ALTER TABLE agents ADD COLUMN summary TEXT;
+		ALTER TABLE agents ADD COLUMN summary_updated_at INTEGER;
+		PRAGMA user_version = 9;`); err != nil {
+		return fmt.Errorf("executing migration v9: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing migration v9: %w", err)
+	}
 	return nil
 }
 

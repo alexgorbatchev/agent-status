@@ -1,4 +1,5 @@
 [serve.static]
+env = "AGENT_PUBLIC_*"
 plugins = ["bun-plugin-tailwind"]
 
 [test]

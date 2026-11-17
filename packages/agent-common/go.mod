@@ -3,7 +3,7 @@ module github.com/alexgorbatchev/agent-status/packages/agent-common
 go 1.26.2
 
 require (
-	github.com/alexgorbatchev/agent-parser v1.0.0
+	github.com/alexgorbatchev/agent-parser v1.0.1
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
 

@@ -47,12 +47,21 @@ func TestDefaultSocketPath(t *testing.T) {
 }
 
 func TestDefaultConfig(t *testing.T) {
+	t.Run("HTTP ingester endpoint is independent of observer WebSocket endpoint", func(t *testing.T) {
+		t.Setenv("AGENT_INGESTER_HTTP_URL", "http://ingester.example:5501")
+		t.Setenv("AGENT_INGESTER_WS_URL", "ws://observer.example:6501/ws/ingest")
+		cfg := DefaultConfig()
+		if cfg.IngesterURL != "http://ingester.example:5501" {
+			t.Fatalf("HTTP ingester endpoint = %q", cfg.IngesterURL)
+		}
+	})
+
 	t.Run("with token set", func(t *testing.T) {
 		t.Setenv("AGENT_STATUS_TOKEN", "test-token")
 		t.Setenv("XDG_DATA_HOME", "/custom/data")
 		t.Setenv("XDG_RUNTIME_DIR", "/custom/runtime")
-		t.Setenv("AIR_LOG_DIR", "/custom/logs")
-		t.Setenv("AIR_LOG_FILE", "/custom/logs/server.log")
+		t.Setenv("AGENT_LOG_DIR", "/custom/logs")
+		t.Setenv("AGENT_LOG_FILE", "/custom/logs/server.log")
 
 		cfg := DefaultConfig()
 		if cfg.Addr != ":4502" {

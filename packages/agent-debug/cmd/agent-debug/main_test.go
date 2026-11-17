@@ -94,7 +94,7 @@ func TestCLI_Version(t *testing.T) {
 func TestMainFunc(t *testing.T) {
 	oldArgs := os.Args
 	defer func() { os.Args = oldArgs }()
-	os.Args = []string{"air-debug", "--version"}
+	os.Args = []string{"agent-debug", "--version"}
 	main()
 }
 
@@ -109,7 +109,7 @@ func TestMain_ErrorExit(t *testing.T) {
 	exitFunc = func(code int) {
 		exitCalled = true
 	}
-	os.Args = []string{"air-debug", "unknown-subcommand"}
+	os.Args = []string{"agent-debug", "unknown-subcommand"}
 	main()
 	if !exitCalled {
 		t.Errorf("expected exitFunc to be called on error")

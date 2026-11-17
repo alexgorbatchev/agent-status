@@ -281,12 +281,12 @@ var (
 
 // DefaultLogDir returns the default directory for log files based on environment variables and XDG specifications.
 // Priority:
-// 1. AIR_LOG_DIR
+// 1. AGENT_LOG_DIR
 // 2. $XDG_STATE_HOME/agent-status/logs
 // 3. $XDG_DATA_HOME/agent-status/logs
 // 4. ~/.local/state/agent-status/logs
 func DefaultLogDir() string {
-	if dir := strings.TrimSpace(os.Getenv("AIR_LOG_DIR")); dir != "" {
+	if dir := strings.TrimSpace(os.Getenv("AGENT_LOG_DIR")); dir != "" {
 		return dir
 	}
 	if stateHome := strings.TrimSpace(os.Getenv("XDG_STATE_HOME")); stateHome != "" {
@@ -305,7 +305,7 @@ func DefaultLogDir() string {
 // LoadFileConfigFromEnv populates FileConfig from environment variables and defaults.
 func LoadFileConfigFromEnv(service string) FileConfig {
 	disabled := false
-	if val := strings.TrimSpace(os.Getenv("AIR_LOG_TO_DISK")); val != "" {
+	if val := strings.TrimSpace(os.Getenv("AGENT_LOG_TO_DISK")); val != "" {
 		lower := strings.ToLower(val)
 		if lower == "0" || lower == "false" || lower == "no" || lower == "off" {
 			disabled = true
@@ -313,36 +313,36 @@ func LoadFileConfigFromEnv(service string) FileConfig {
 	}
 
 	maxSize := DefaultMaxSizeMB
-	if s := os.Getenv("AIR_LOG_MAX_SIZE_MB"); s != "" {
+	if s := os.Getenv("AGENT_LOG_MAX_SIZE_MB"); s != "" {
 		if n, err := strconv.Atoi(s); err == nil && n > 0 {
 			maxSize = n
 		}
 	}
 
 	maxBackups := DefaultMaxBackups
-	if s := os.Getenv("AIR_LOG_MAX_BACKUPS"); s != "" {
+	if s := os.Getenv("AGENT_LOG_MAX_BACKUPS"); s != "" {
 		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
 			maxBackups = n
 		}
 	}
 
 	maxAge := DefaultMaxAgeDays
-	if s := os.Getenv("AIR_LOG_MAX_AGE_DAYS"); s != "" {
+	if s := os.Getenv("AGENT_LOG_MAX_AGE_DAYS"); s != "" {
 		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
 			maxAge = n
 		}
 	}
 
 	compress := true
-	if s := os.Getenv("AIR_LOG_COMPRESS"); s != "" {
+	if s := os.Getenv("AGENT_LOG_COMPRESS"); s != "" {
 		lower := strings.ToLower(s)
 		if lower == "0" || lower == "false" || lower == "no" || lower == "off" {
 			compress = false
 		}
 	}
 
-	filename := os.Getenv("AIR_LOG_FILE")
-	dir := os.Getenv("AIR_LOG_DIR")
+	filename := os.Getenv("AGENT_LOG_FILE")
+	dir := os.Getenv("AGENT_LOG_DIR")
 
 	return FileConfig{
 		Filename:   filename,
@@ -415,6 +415,10 @@ func SetupWithOptions(opts SetupOptions) *slog.Logger {
 	if w == nil {
 		w = os.Stderr
 	}
+	isAgent := IsAgentMode()
+	if opts.IsAgent != nil {
+		isAgent = *opts.IsAgent
+	}
 
 	var fileCfg FileConfig
 	if opts.FileConfig != nil {
@@ -426,7 +430,7 @@ func SetupWithOptions(opts SetupOptions) *slog.Logger {
 	if !fileCfg.Disabled {
 		rotator, err := NewRotator(opts.Service, fileCfg)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "[WARN] failed to initialize log rotator for %q: %v\n", opts.Service, err)
+			NewWithMode(w, opts.Service, opts.Level, isAgent).Warn("log_rotator_init_failed", "err", err)
 		} else if rotator != nil {
 			rotatorMu.Lock()
 			if defaultRotator != nil {
@@ -436,11 +440,6 @@ func SetupWithOptions(opts SetupOptions) *slog.Logger {
 			rotatorMu.Unlock()
 			w = io.MultiWriter(w, rotator)
 		}
-	}
-
-	isAgent := IsAgentMode()
-	if opts.IsAgent != nil {
-		isAgent = *opts.IsAgent
 	}
 
 	logger := NewWithMode(w, opts.Service, opts.Level, isAgent)
@@ -461,7 +460,7 @@ func Close() error {
 }
 
 // Setup initializes a logger for the given service at the specified level and sets it as the default slog logger.
-// It writes to os.Stderr and also rotates to disk under the default log directory unless disabled via AIR_LOG_TO_DISK=0.
+// It writes to os.Stderr and also rotates to disk under the default log directory unless disabled via AGENT_LOG_TO_DISK=0.
 func Setup(service string, levelStr string) *slog.Logger {
 	return SetupWithOptions(SetupOptions{
 		Service: service,

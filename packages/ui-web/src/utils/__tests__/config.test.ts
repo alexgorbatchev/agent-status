@@ -4,8 +4,10 @@ import type { IWindowWithAgentStatus } from "../../types";
 
 describe("config", () => {
   const originalWindow = globalThis.window;
+  const originalApiUrl = process.env.AGENT_PUBLIC_API_URL;
 
   afterEach(() => {
+    process.env.AGENT_PUBLIC_API_URL = originalApiUrl;
     Object.defineProperty(globalThis, "window", {
       value: originalWindow,
       configurable: true,
@@ -21,6 +23,23 @@ describe("config", () => {
   it("returns overrideUrl when provided", () => {
     const resolved = resolveApiBaseUrl("http://custom-host:8080");
     expect(resolved).toBe("http://custom-host:8080");
+  });
+
+  it("reads the public API URL supplied by devhost", () => {
+    Object.defineProperty(globalThis, "window", { value: undefined, configurable: true, writable: true });
+    process.env.AGENT_PUBLIC_API_URL = "https://dashboard.example";
+    expect(resolveApiBaseUrl()).toBe("https://dashboard.example");
+  });
+
+  it("keeps explicit overrides ahead of the public API URL", () => {
+    process.env.AGENT_PUBLIC_API_URL = "https://dashboard.example";
+    expect(resolveApiBaseUrl("https://override.example")).toBe("https://override.example");
+  });
+
+  it("uses the local API default when the public API URL is empty", () => {
+    Object.defineProperty(globalThis, "window", { value: undefined, configurable: true, writable: true });
+    process.env.AGENT_PUBLIC_API_URL = "";
+    expect(resolveApiBaseUrl()).toBe("http://localhost:4502");
   });
 
   it("reads window.__AGENT_STATUS_API_URL__ when no override is provided", () => {

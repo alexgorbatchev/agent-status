@@ -77,6 +77,8 @@ CREATE TABLE IF NOT EXISTS agents (
     retry_after_seconds   INTEGER,
     has_unseen_completion INTEGER NOT NULL DEFAULT 0,
     completed_at          INTEGER,
+    summary               TEXT,
+    summary_updated_at    INTEGER,
     UNIQUE (environment_id, harness, session_id)
 );
 

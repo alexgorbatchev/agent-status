@@ -1,9 +1,12 @@
 import indexHTML from "./index.html";
 
 const port = Number(process.env.PORT) || 3000;
+// Bun inlines this public variable in browser bundles, including outside devhost.
+process.env.AGENT_PUBLIC_API_URL ??= "";
 
 const server = Bun.serve({
   port,
+  hostname: process.env.DEVHOST_BIND_HOST,
   routes: {
     "/": indexHTML,
   },

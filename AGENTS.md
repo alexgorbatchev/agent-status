@@ -7,6 +7,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 ## Shared commands
 
 - Install: `bun install --cwd packages/ui-web`
+- Dev routing setup: `direnv allow`, then `devhost caddy start` (follow the devhost skill for first-machine certificate and privileged-port setup)
 - Start dev stack: `just start`
 - Stop dev stack: `just stop`
 - Check status: `just status`
@@ -33,26 +34,29 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 ## Shared gotchas
 
 - Watcher dependency -> observer/debug consume a tagged GitHub version of `agent-watcher`. Builds, tests, and lint must work without a sibling checkout; local workspace overrides are optional development choices.
-- Port collisions on 3000, 4501, or 4502 -> Run `just stop` to terminate orphaned processes and clean up `.tmp/dev-stack/pids.json`.
-- Dev stack execution -> Running `just start` directly in a synchronous tool call blocks indefinitely because `scripts/dev-stack.ts start` streams logs in the foreground and never exits; use background process management or let the user run it.
-- SQLite database concurrency -> `air-server` opens SQLite strictly in read-only mode (`?mode=ro`); all mutations occur through `air-ingester`.
-- Unix domain socket binding -> `air-ingester` creates `$XDG_RUNTIME_DIR/agent-status/notify.sock`; `air-server` reconnects automatically when the socket becomes available.
-- Daemon disk logs -> Installed daemons write `~/.local/state/agent-status/logs/{observer,ingester,server}.log` (or `$AIR_LOG_DIR`); the dev stack writes `.tmp/dev-stack/logs/`. Active logs rotate at 10 MB with 5 backups, 14-day retention, and gzip compression. Tail dev stack logs with `just logs`.
-- Dev stack file layout -> `scripts/dev-stack.ts` keeps everything under `.tmp/dev-stack/`: `data/` (SQLite), `cache/` (observer cursors and session state), `logs/`, `run/` (`XDG_RUNTIME_DIR`, notify socket), and `pids.json`. Deep checkout paths fail fast because Unix socket paths are capped at 103 bytes.
+- Dev stack ports -> devhost assigns automatic loopback ports and owns stack shutdown. `just stop` stops this manifest only; `just status` lists all running devhost stacks. Never kill arbitrary port listeners.
+- Dev stack execution -> `just start` builds the stack, then hands supervision to foreground `devhost start`; use `just --no-deps start` to reuse binaries. Pass service settings through `AGENT_DEV_LOG_LEVEL` and `AGENT_NO_SUMMARIZE`; `just start --debug` shows Caddy output.
+- SQLite database concurrency -> `agent-server` opens SQLite strictly in read-only mode (`?mode=ro`); all mutations occur through `agent-ingester`.
+- Unix domain socket binding -> `agent-ingester` creates `$XDG_RUNTIME_DIR/agent-status/notify.sock`; `agent-server` reconnects automatically when the socket becomes available.
+- Daemon disk logs -> Installed daemons write `~/.local/state/agent-status/logs/{observer,ingester,server}.log` (or `$AGENT_LOG_DIR`); the dev stack writes `.tmp/dev-stack/logs/`. Active logs rotate at 10 MB with 5 backups, 14-day retention, and gzip compression. Tail dev stack logs with `just logs`.
+- Dev stack file layout -> `scripts/dev-service.sh` keeps service output under `.tmp/dev-stack/`: `data/` (SQLite), `cache/` (observer cursors and session state), `logs/`, and `run/` (`XDG_RUNTIME_DIR`, notify socket). Preserve the observer's inherited `XDG_DATA_HOME` for harness discovery and clear inherited `AGENT_LOG_FILE` / `AGENT_SESSION_STATE_PATH` redirects. Deep checkout paths fail fast because Unix socket paths are capped at 103 bytes.
+- Dev routing -> `devhost.toml` routes the dashboard and `/api/*` through the same hostname. Bun inlines only the `AGENT_PUBLIC_*` allowlist, including `AGENT_PUBLIC_API_URL`; never inline the complete service environment. Bun HTML/HMR uses `proxyLocalOrigin = true` on the UI route.
 
 ## Shared boundaries
 
+- Always: name project executables `agent-debug`, `agent-observer`, `agent-ingester`, and `agent-server` to match their packages; use the `AGENT_` prefix for project configuration variables. Keep the observer WebSocket endpoint (`AGENT_INGESTER_WS_URL`) distinct from the server HTTP mutation endpoint (`AGENT_INGESTER_HTTP_URL`).
 - Always: automatically record all new instructions in the most appropriate `AGENTS.md` file immediately upon receipt (check with user if existing instructions conflict)
 - Always: keep `agent-watcher` published on GitHub and consume its tagged module version here; do not commit sibling-checkout requirements.
 - Always: when resolving GitHub issues, follow the `github-fix-issues` skill workflow (located in `alexgorbatchev/ai-registry` under `skills/agent/github-fix-issues` for coordinator lifecycle, worktree isolation, subagent delegation, and verification gates)
 - Always: design dashboard UX, activity summarization, and telemetry pipelines for long-running agent sessions rather than sub-second realtime mirroring (LLM inference latency of 1–3s and ~10s debounced summarization cadences are primary and intended; prioritize semantic stability, high-level intent, and stall detection over micro-second state churn)
-- Always: when designing or modifying UI presentation cards, update `air-debug session view` first as the canonical reference specification, and ensure frontend implementations sync to that output (#50, #51)
-- Always: use structured logging via `packages/agent-common/logging` with concise snake_case actions (e.g. `action=hello_received`, no prose, no emojis) and support dual-mode output via `AGENT=1` (prefer human names over opaque IDs in human mode)
+- Always: when designing or modifying UI presentation cards, update `agent-debug session view` first as the canonical reference specification, and ensure frontend implementations sync to that output (#50, #51)
+- Always: use structured logging via `packages/agent-common/logging` for all diagnostics, including command failures and logger setup warnings, with concise snake_case actions (e.g. `action=hello_received`, no prose, no emojis) and support dual-mode output via `AGENT=1` (prefer human names over opaque IDs in human mode). Report a command failure once on stderr; reserve stdout for results. HTTP client failures must identify the attempted method and endpoint without exposing bearer credentials or server-supplied response bodies.
 - Always (code-based projects only): any time code is changed such that results from running that code are changed, a test file must be changed as well; 90% statement coverage is required and enforced on `just test` and `just check-coverage` via `scripts/check-coverage.sh` (scripts/ folder is excluded from this rule)
 - Always: run `just test-all` and `just lint-all` before committing changes
 - Ask first: adding database migrations in `packages/agent-ingester/internal/store/migrations.go` or modifying shared types in `packages/agent-common/types/types.go`
-- Never: run the full dev stack (`just start` or `scripts/dev-stack.ts start`) in a synchronous tool call; it runs in the foreground and never exits
-- Never: let the dev stack write files outside the repository; every database, cache, log, socket, and PID file it produces belongs under `.tmp/dev-stack/`
+- Never: run the full dev stack (`just start` or `devhost start`) in a synchronous tool call; it runs in the foreground and never exits
+- Always: invoke devhost directly from the lifecycle recipes for dev-stack service supervision and read the dashboard hostname from `AGENT_DEV_HOST` in `.envrc`.
+- Never: let agent-status dev services write runtime files outside `.tmp/dev-stack/`; keep databases, caches, logs, and sockets local. The shared devhost/Caddy proxy uses its machine-level state and lifecycle independently of this stack.
 - Never: publish releases automatically without explicit user authorization
 - Never: parse or transmit credentials, API keys, or session auth tokens from agent harnesses
 - Never: write directly to agent harness storage directories or mutate active harness logs
@@ -60,7 +64,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 ## References
 
 - Architecture & concepts: `CONTEXT.md`
-- Dev stack orchestrator: `scripts/dev-stack.ts`
+- Dev stack manifest: `devhost.toml`; lifecycle recipes: `justfile`; service environment: `scripts/dev-service.sh`
 - Root task runner: `justfile`
 - Canonical harness log specs & parser: [`alexgorbatchev/agent-parser`](https://github.com/alexgorbatchev/agent-parser) (`docs/harness-logs/`)
 - Reusable watching pipeline: [`alexgorbatchev/agent-watcher`](https://github.com/alexgorbatchev/agent-watcher) (`watcher.Run`, `scanner/`, `tailer/`)

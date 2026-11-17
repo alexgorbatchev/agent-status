@@ -2,10 +2,10 @@
 default:
     @just --list
 
-# Build air-observer binary strictly into bin/
+# Build agent-observer binary strictly into bin/
 build:
     @mkdir -p bin
-    go build -o bin/air-observer ./cmd/air-observer
+    go build -o bin/agent-observer ./cmd/agent-observer
 
 # Run all unit tests with race detector and verify >= 90% coverage
 test *args:

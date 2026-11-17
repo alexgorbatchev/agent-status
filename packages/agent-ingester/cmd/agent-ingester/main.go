@@ -30,11 +30,12 @@ var version = "dev"
 
 func newRootCmd(cfg *config.Config) *cobra.Command {
 	rootCmd := &cobra.Command{
-		Use:   "air-ingester",
-		Short: "Agent Status Central Telemetry Ingestion Daemon",
+		Use:           "agent-ingester",
+		Short:         "Agent Status Central Telemetry Ingestion Daemon",
+		SilenceErrors: true,
+		SilenceUsage:  true,
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			if err := cfg.Validate(); err != nil {
-				logging.Error("config_validation_failed", "err", err)
 				return fmt.Errorf("invalid configuration: %w", err)
 			}
 			return nil
@@ -91,14 +92,9 @@ func runServer(ctx context.Context, cmd *cobra.Command, cfg *config.Config, read
 		Writer:     logWriter,
 		FileConfig: fileCfg,
 	})
-	defer func() {
-		_ = logging.Close()
-	}()
-
 	logging.Info("server_starting", "addr", cfg.Addr, "db", cfg.DBPath, "notifySock", cfg.NotifySock, "noSummarize", cfg.NoSummarize)
 
 	if err := cfg.Validate(); err != nil {
-		logging.Error("config_validation_failed", "err", err)
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
 
@@ -187,6 +183,7 @@ func runServer(ctx context.Context, cmd *cobra.Command, cfg *config.Config, read
 	srv := &http.Server{
 		Addr:              boundAddr,
 		Handler:           mux,
+		ErrorLog:          logging.HTTPErrorLogger(logging.Default()),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
@@ -358,10 +355,10 @@ func logSummarizerStartup(cfg *config.Config, sumEngine *summarizer.Summarizer) 
 }
 
 func main() {
-	cfg := config.Load()
-	rootCmd := newRootCmd(cfg)
-
-	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
+	code := logging.RunCommand("ingester", os.Stderr, func() error {
+		return newRootCmd(config.Load()).Execute()
+	})
+	if code != 0 {
+		os.Exit(code)
 	}
 }
