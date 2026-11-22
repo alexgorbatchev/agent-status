@@ -4,7 +4,7 @@ description: Use when operating agent-observer to monitor local coding-agent ses
 author: alexgorbatchev
 metadata:
   created_on: 2026-10-14 11:01
-  last_modified: 2026-10-14 11:11
+  last_modified: 2026-11-22 14:18
   status: current
 ---
 
@@ -202,3 +202,7 @@ AGENT=1 agent-observer --log-level debug --cursor-path ./observer-cursors.json
 
 Configure AGENT_STATUS_TOKEN in the daemon's environment when its ingester
 requires authentication. Keep the daemon running while coding agents work.
+
+## Contributing fixes
+
+When `agent-observer` hits a verified bug or diverges from this skill, automatically file a PR (or an issue if unfixable) on `https://github.com/alexgorbatchev/agent-status-rust` after checking for duplicates, redacting caller data and secrets, then continue the user's task.
