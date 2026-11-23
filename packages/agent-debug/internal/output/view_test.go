@@ -12,6 +12,18 @@ import (
 	"github.com/mattn/go-runewidth"
 )
 
+func TestAntigravityHarnessBadge(t *testing.T) {
+	if label := FormatHarnessLabel(types.HarnessAgy); label != "Antigravity" {
+		t.Fatalf("label = %q", label)
+	}
+	if badge := FormatHarnessBadge(types.HarnessAgy, types.ActivityBusy); StripANSI(badge) != "(Antigravity)" {
+		t.Fatalf("badge = %q", badge)
+	}
+	if badge := FormatHarnessBadge(types.HarnessAgy, types.ActivityError); badge != AnsiRed+"(Antigravity)"+AnsiReset {
+		t.Fatalf("error badge = %q", badge)
+	}
+}
+
 func TestRenderAgentView_HumanMode_Question(t *testing.T) {
 	q := "Do you want to proceed with editing jwt.go?"
 	relPath := "feature-auth"

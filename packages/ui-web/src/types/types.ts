@@ -2,7 +2,7 @@ export type LifecycleState = "RUNNING" | "EXITED";
 
 export type ActivityState = "BUSY" | "WAITING_QUESTION" | "ERROR" | "RATE_LIMITED" | "IDLE";
 
-export type HarnessType = "claude-code" | "pi" | "codex" | "opencode";
+export type HarnessType = "claude-code" | "pi" | "codex" | "opencode" | "agy";
 
 export type AgentPhase = "planning" | "editing" | "testing" | "debugging" | "investigating";
 

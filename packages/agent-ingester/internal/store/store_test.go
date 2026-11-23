@@ -29,8 +29,8 @@ func TestOpen_Memory(t *testing.T) {
 	if err := st.DB().QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("query user_version failed: %v", err)
 	}
-	if version != 8 {
-		t.Errorf("got user_version = %d, want 8", version)
+	if version != 9 {
+		t.Errorf("got user_version = %d, want 9", version)
 	}
 }
 
@@ -382,8 +382,8 @@ func TestMigrate_V2ToV4(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 8 {
-		t.Errorf("got user_version = %d, want 8", version)
+	if version != 9 {
+		t.Errorf("got user_version = %d, want 9", version)
 	}
 }
 
@@ -424,8 +424,8 @@ func TestMigrate_V4ToV5(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 8 {
-		t.Errorf("got user_version = %d, want 8", version)
+	if version != 9 {
+		t.Errorf("got user_version = %d, want 9", version)
 	}
 
 	// Verify new columns exist by selecting them
@@ -561,8 +561,8 @@ CREATE INDEX IF NOT EXISTS idx_events_ts       ON telemetry_events(timestamp);
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 8 {
-		t.Errorf("got user_version = %d, want 8", version)
+	if version != 9 {
+		t.Errorf("got user_version = %d, want 9", version)
 	}
 
 	// Verify existing agent and telemetry event rows survived migration
@@ -820,8 +820,8 @@ func TestMigrate_V6ToV7(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 8 {
-		t.Errorf("got user_version = %d, want 8", version)
+	if version != 9 {
+		t.Errorf("got user_version = %d, want 9", version)
 	}
 
 	// Verify columns exist by querying them
@@ -869,8 +869,8 @@ func TestMigrate_V7ToV8(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 8 {
-		t.Errorf("got user_version = %d, want 8", version)
+	if version != 9 {
+		t.Errorf("got user_version = %d, want 9", version)
 	}
 
 	// Verify columns exist by querying them
@@ -1115,8 +1115,8 @@ func TestMigrate_V3ToV4(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 8 {
-		t.Errorf("got user_version = %d, want 8", version)
+	if version != 9 {
+		t.Errorf("got user_version = %d, want 9", version)
 	}
 }
 
@@ -1146,8 +1146,8 @@ func TestMigrate_V1ToV2(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 8 {
-		t.Errorf("got user_version = %d, want 8", version)
+	if version != 9 {
+		t.Errorf("got user_version = %d, want 9", version)
 	}
 
 	var indexCount int

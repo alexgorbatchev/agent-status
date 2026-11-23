@@ -198,9 +198,9 @@ func newRootCmd() *cobra.Command {
 	flags.StringVar(&rFlags.exportDB, "export-db", "", "Path to save populated SQLite database on disk")
 	flags.BoolVar(&rFlags.summarize, "summarize", false, "Enable live LLM summarizer provider verification")
 	flags.StringVar(&rFlags.envFlag, "env", "debug", "Environment label override")
-	flags.StringVar(&rFlags.harnessFlag, "harness", "", "Explicit harness override (claude-code, pi, codex, opencode)")
+	flags.StringVar(&rFlags.harnessFlag, "harness", "", "Explicit harness override (claude-code, pi, codex, opencode, agy)")
 	flags.BoolVar(&rFlags.strictLifecycle, "strict-lifecycle", false, "Disable automatic synthesis of run_started and run_exited boundary frames")
-	flags.BoolVar(&rFlags.strictLifecycle, "no-synthetic-lifecycle", false, "Disable automatic synthesis of run_started and run_exited boundary frames (alias)")
+	flags.BoolVar(&rFlags.strictLifecycle, "no-synthetic-lifecycle", false, "Alias for --strict-lifecycle")
 	flags.StringVar(&rFlags.dbPath, "db", "", "Path to agent-status.db for discrepancy comparison (or 'auto' for auto-detection)")
 
 	// 3. session validate
@@ -405,9 +405,9 @@ func newRootCmd() *cobra.Command {
 	vflags.StringVar(&vFlags.cwd, "cwd", "", "Override transcript working directory for local Git resolution")
 	vflags.BoolVar(&vFlags.jsonOut, "json", false, "Output validation report as JSON")
 	vflags.StringVar(&vFlags.envFlag, "env", "debug", "Environment label override")
-	vflags.StringVar(&vFlags.harnessFlag, "harness", "", "Explicit harness override (claude-code, pi, codex, opencode)")
+	vflags.StringVar(&vFlags.harnessFlag, "harness", "", "Explicit harness override (claude-code, pi, codex, opencode, agy)")
 	vflags.BoolVar(&vFlags.strictLifecycle, "strict-lifecycle", false, "Disable automatic synthesis of run_started and run_exited boundary frames")
-	vflags.BoolVar(&vFlags.strictLifecycle, "no-synthetic-lifecycle", false, "Disable automatic synthesis of run_started and run_exited boundary frames (alias)")
+	vflags.BoolVar(&vFlags.strictLifecycle, "no-synthetic-lifecycle", false, "Alias for --strict-lifecycle")
 	vflags.StringVar(&vFlags.dbPath, "db", "", "Path to agent-status.db for discrepancy comparison (or 'auto' for auto-detection)")
 
 	// 4. session view
@@ -468,7 +468,7 @@ func newRootCmd() *cobra.Command {
 	viewCmdFlags.StringVar(&viewFlags.sessionID, "session-id", "", "OpenCode session ID to replay")
 	viewCmdFlags.StringVar(&viewFlags.cwd, "cwd", "", "Override transcript working directory for local Git resolution")
 	viewCmdFlags.StringVar(&viewFlags.envFlag, "env", "debug", "Environment label override")
-	viewCmdFlags.StringVar(&viewFlags.harnessFlag, "harness", "", "Explicit harness override (claude-code, pi, codex, opencode)")
+	viewCmdFlags.StringVar(&viewFlags.harnessFlag, "harness", "", "Explicit harness override (claude-code, pi, codex, opencode, agy)")
 	viewCmdFlags.IntVar(&viewFlags.untilLine, "until-line", 0, "Halt replay after processing source line N")
 	viewCmdFlags.StringVar(&viewFlags.untilEvent, "until-event", "", "Halt replay after encountering event type")
 	viewCmdFlags.BoolVar(&viewFlags.jsonOut, "json", false, "Output final agent state as JSON")
@@ -554,7 +554,7 @@ func newRootCmd() *cobra.Command {
 		cmd.Flags().StringVar(&fFlags.dbPath, "db", "auto", "Path to agent-status.db (default: auto)")
 		cmd.Flags().StringVar(&fFlags.cwd, "cwd", "", "Override transcript working directory for local Git resolution")
 		cmd.Flags().StringVar(&fFlags.envFlag, "env", "debug", "Environment label override")
-		cmd.Flags().StringVar(&fFlags.harnessFlag, "harness", "", "Explicit harness override (claude-code, pi, codex, opencode)")
+		cmd.Flags().StringVar(&fFlags.harnessFlag, "harness", "", "Explicit harness override (claude-code, pi, codex, opencode, agy)")
 		cmd.Flags().BoolVar(&fFlags.jsonOut, "json", false, "Output fleet agents as JSON")
 		return cmd
 	}
@@ -739,7 +739,7 @@ func newRootCmd() *cobra.Command {
 		Short: "Audit harness process discovery, pairing deltas, and orphan sessions",
 		RunE:  runAudit,
 	}
-	auditCmd.Flags().StringVar(&sHarness, "harness", "", "Filter audit by harness (claude, pi, codex, opencode)")
+	auditCmd.Flags().StringVar(&sHarness, "harness", "", "Filter audit by harness (claude, pi, codex, opencode, agy)")
 	auditCmd.Flags().StringVar(&sCWD, "cwd", "", "Filter audit by working directory")
 	auditCmd.Flags().BoolVar(&sJSON, "json", false, "Output audit results as JSON")
 
@@ -748,7 +748,7 @@ func newRootCmd() *cobra.Command {
 		Short: "List harness processes and pairing status (alias for scanner audit)",
 		RunE:  runAudit,
 	}
-	scannerListCmd.Flags().StringVar(&sHarness, "harness", "", "Filter audit by harness (claude, pi, codex, opencode)")
+	scannerListCmd.Flags().StringVar(&sHarness, "harness", "", "Filter audit by harness (claude, pi, codex, opencode, agy)")
 	scannerListCmd.Flags().StringVar(&sCWD, "cwd", "", "Filter audit by working directory")
 	scannerListCmd.Flags().BoolVar(&sJSON, "json", false, "Output audit results as JSON")
 
@@ -769,7 +769,7 @@ func newRootCmd() *cobra.Command {
 		Short: "List running harness processes and pairing status",
 		RunE:  runAudit,
 	}
-	processListCmd.Flags().StringVar(&sHarness, "harness", "", "Filter audit by harness (claude, pi, codex, opencode)")
+	processListCmd.Flags().StringVar(&sHarness, "harness", "", "Filter audit by harness (claude, pi, codex, opencode, agy)")
 	processListCmd.Flags().StringVar(&sCWD, "cwd", "", "Filter audit by working directory")
 	processListCmd.Flags().BoolVar(&sJSON, "json", false, "Output audit results as JSON")
 	processCmd.AddCommand(processListCmd)

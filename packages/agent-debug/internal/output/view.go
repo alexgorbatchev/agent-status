@@ -15,6 +15,7 @@ var harnessLabels = map[types.HarnessType]string{
 	types.HarnessPi:         "Pi",
 	types.HarnessCodex:      "Codex",
 	types.HarnessOpencode:   "OpenCode",
+	types.HarnessAgy:        "Antigravity",
 }
 
 // FormatHarnessLabel returns the human display name for a harness.

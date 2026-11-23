@@ -34,6 +34,9 @@ type LoadedSession struct {
 
 // LoadSession loads and prepares transcript events across all harnesses with full fidelity.
 func LoadSession(ctx context.Context, filePath string, harness types.HarnessType, sessionID string, cwdOverride string, strictLifecycle ...bool) (*LoadedSession, error) {
+	if harness == "antigravity" {
+		harness = types.HarnessAgy
+	}
 	if harness == "" {
 		detected, err := DetectHarness(filePath)
 		if err != nil {
@@ -51,6 +54,8 @@ func LoadSession(ctx context.Context, filePath string, harness types.HarnessType
 		return loadClaudeCodeSession(filePath, sessionID, cwdOverride, strict)
 	case types.HarnessPi:
 		return loadPiSession(filePath, sessionID, cwdOverride, strict)
+	case types.HarnessAgy:
+		return loadAgySession(ctx, filePath, sessionID, cwdOverride, strict)
 	case types.HarnessCodex:
 		return loadCodexSession(filePath, sessionID, cwdOverride, strict)
 	default:

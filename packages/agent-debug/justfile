@@ -65,3 +65,10 @@ session-replay-opencode session_id *args:
 
 # Alias for session-replay-claude
 alias session-replay-claude-code := session-replay-claude
+
+# Replay an Antigravity session by ID or path
+[working-directory('../..')]
+session-replay-agy session_id *args:
+    just --justfile packages/agent-debug/justfile run session replay --harness agy {{ session_id }} {{ args }}
+
+alias session-replay-antigravity := session-replay-agy

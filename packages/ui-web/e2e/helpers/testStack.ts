@@ -1,8 +1,10 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
-import { closeSync, existsSync, mkdirSync, openSync, rmSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, resolve, dirname, relative } from "node:path";
-import { fileURLToPath } from "node:url";
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, rmSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, resolve, dirname } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { DatabaseSync } from "node:sqlite";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 
@@ -22,6 +24,8 @@ export interface ITestStack {
   stop: () => Promise<void>;
   createClaudeSession: (sessionId: string, cwd: string) => Promise<string>;
   appendClaudeTranscript: (sessionId: string, cwd: string, lineObj: Record<string, unknown>) => Promise<void>;
+  createAgySession: (sessionId: string, cwd: string) => Promise<string>;
+  appendAgyTranscript: (filePath: string, lineObj: Record<string, unknown>) => Promise<void>;
   createPiSession: (sessionId: string, cwd: string) => Promise<string>;
   appendPiTranscript: (filePath: string, lineObj: Record<string, unknown>) => Promise<void>;
 }
@@ -44,24 +48,18 @@ async function getAvailablePort(): Promise<number> {
 
 export async function createTestStack(testId: string): Promise<ITestStack> {
   const rootDir = resolve(currentDir, "../../../..");
-  const testDir = resolve(rootDir, ".tmp", `e2e-${testId}-${Date.now().toString(36)}`);
-
-  if (existsSync(testDir)) {
-    rmSync(testDir, { recursive: true, force: true });
-  }
-  mkdirSync(testDir, { recursive: true });
+  const testDir = mkdtempSync(resolve(tmpdir(), `agent-status-e2e-${testId}-`));
   // Daemon output outlives stop() so a failed run can be diagnosed.
-  const logDir = resolve(rootDir, ".tmp", "e2e-logs", basename(testDir));
+  const logDir = resolve(rootDir, ".state", "e2e-logs", basename(testDir));
   mkdirSync(logDir, { recursive: true });
 
   const dbPath = resolve(testDir, "db.sqlite");
-  // Unix socket addresses are limited to about 104 bytes, which an absolute path
-  // inside a deep checkout exceeds. The daemons run from rootDir, so pass the
-  // socket relative to it, as the dev stack does.
-  const notifySock = relative(rootDir, resolve(testDir, "n.sock"));
+  // System-temp fixtures keep Unix socket addresses below the platform limit.
+  const notifySock = resolve(testDir, "n.sock");
   const claudeSessionsDir = resolve(testDir, "claude-sessions");
   const claudeProjectsDir = resolve(testDir, "claude-projects");
   const piSessionsDir = resolve(testDir, "pi-sessions");
+  const agySessionsDir = resolve(testDir, "antigravity-cli", "brain");
   const cursorPath = resolve(testDir, "cursors.json");
 
   mkdirSync(claudeSessionsDir, { recursive: true });
@@ -87,7 +85,12 @@ export async function createTestStack(testId: string): Promise<ITestStack> {
   const spawnDaemon = (name: string, bin: string, args: string[], env: NodeJS.ProcessEnv): ChildProcess => {
     const log = openSync(resolve(logDir, `${name}.log`), "w");
     try {
-      const child = spawn(bin, args, { cwd: rootDir, env: { ...process.env, ...env }, stdio: ["ignore", log, log] });
+      const child = spawn(bin, args, {
+        cwd: rootDir,
+        detached: true,
+        env: { ...process.env, ...env },
+        stdio: ["ignore", log, log],
+      });
       procs.push(child);
       return child;
     } finally {
@@ -159,24 +162,53 @@ export async function createTestStack(testId: string): Promise<ITestStack> {
         claudeProjectsDir,
         "--pi-sessions-dir",
         piSessionsDir,
+        "--agy-sessions-dir",
+        agySessionsDir,
         "--log-level",
         "info",
       ],
       // Harness defaults without a flag (Codex, OpenCode) resolve under HOME;
       // keep the observer away from the developer's real sessions.
-      { ...stateEnv, HOME: testDir },
+      {
+        ...stateEnv,
+        HOME: testDir,
+        GEMINI_HOME: testDir,
+        AGY_SESSIONS_DIR: agySessionsDir,
+        CODEX_HOME: testDir,
+        CODEX_SESSIONS_DIR: resolve(testDir, "codex"),
+        OPENCODE_DB_PATH: resolve(testDir, "opencode.db"),
+      },
     );
     await sleep(600);
   };
 
   const stop = async () => {
-    for (const p of procs) {
-      try {
-        p.kill("SIGKILL");
-      } catch {
-        // already stopped
-      }
-    }
+    await Promise.all(
+      procs.map(
+        (child) =>
+          new Promise<void>((resolveStopped) => {
+            const signal = (name: NodeJS.Signals) => {
+              try {
+                if (child.pid !== undefined) process.kill(-child.pid, name);
+              } catch {
+                // The process group has already exited.
+              }
+            };
+            if (child.exitCode !== null || child.signalCode !== null) {
+              signal("SIGKILL");
+              resolveStopped();
+              return;
+            }
+            const timeout = setTimeout(() => signal("SIGKILL"), 2000);
+            child.once("exit", () => {
+              clearTimeout(timeout);
+              signal("SIGKILL");
+              resolveStopped();
+            });
+            signal("SIGTERM");
+          }),
+      ),
+    );
     if (existsSync(testDir)) {
       rmSync(testDir, { recursive: true, force: true });
     }
@@ -197,7 +229,7 @@ export async function createTestStack(testId: string): Promise<ITestStack> {
     mkdirSync(cwd, { recursive: true });
     const script = resolve(binDir, harnessCommand);
     writeFileSync(script, "setInterval(() => {}, 1 << 30);\n");
-    const standIn = spawn(process.execPath, [script], { cwd, stdio: "ignore" });
+    const standIn = spawn(process.execPath, [script], { cwd, detached: true, stdio: "ignore" });
     procs.push(standIn);
     await new Promise<void>((res, rej) => {
       standIn.once("spawn", res);
@@ -235,6 +267,39 @@ export async function createTestStack(testId: string): Promise<ITestStack> {
     const transcriptPath = resolve(claudeProjectsDir, slug, `${sessionId}.jsonl`);
     const current = existsSync(transcriptPath) ? readFileSync(transcriptPath, "utf-8") : "";
     writeFileSync(transcriptPath, current + JSON.stringify(lineObj) + "\n");
+  };
+
+  const createAgySession = async (sessionId: string, cwd: string) => {
+    await startHarnessStandIn("agy", cwd);
+    const conversations = resolve(agySessionsDir, "..", "conversations");
+    mkdirSync(conversations, { recursive: true });
+    writeFileSync(resolve(conversations, `${sessionId}.meta`), JSON.stringify({ cwd }));
+    const summaries = new DatabaseSync(resolve(agySessionsDir, "..", "conversation_summaries.db"));
+    try {
+      summaries.exec(`CREATE TABLE IF NOT EXISTS conversation_summaries (
+        conversation_id TEXT PRIMARY KEY, title TEXT, workspace_uris TEXT, status TEXT,
+        parent_conversation_id TEXT, last_modified_time TEXT, not_fully_idle INTEGER, killed INTEGER
+      )`);
+      summaries
+        .prepare("INSERT INTO conversation_summaries VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+        .run(
+          sessionId,
+          "Inspect Antigravity telemetry",
+          JSON.stringify([pathToFileURL(cwd).href]),
+          "",
+          "",
+          new Date().toISOString(),
+          1,
+          0,
+        );
+    } finally {
+      summaries.close();
+    }
+    const logs = resolve(agySessionsDir, sessionId, ".system_generated", "logs");
+    mkdirSync(logs, { recursive: true });
+    const transcript = resolve(logs, "transcript_full.jsonl");
+    writeFileSync(transcript, "");
+    return transcript;
   };
 
   const createPiSession = async (sessionId: string, cwd: string) => {
@@ -277,6 +342,8 @@ export async function createTestStack(testId: string): Promise<ITestStack> {
     stop,
     createClaudeSession,
     appendClaudeTranscript,
+    createAgySession,
+    appendAgyTranscript: appendPiTranscript,
     createPiSession,
     appendPiTranscript,
   };

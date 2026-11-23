@@ -28,6 +28,7 @@ func TestEnumConstants(t *testing.T) {
 		{"HarnessPi", string(HarnessPi), "pi"},
 		{"HarnessCodex", string(HarnessCodex), "codex"},
 		{"HarnessOpencode", string(HarnessOpencode), "opencode"},
+		{"HarnessAgy", string(HarnessAgy), "agy"},
 
 		// AgentPhase
 		{"PhasePlanning", string(PhasePlanning), "planning"},

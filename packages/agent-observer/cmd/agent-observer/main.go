@@ -37,6 +37,7 @@ type observerOptions struct {
 	piSessionsDir        string
 	codexSessionsDir     string
 	opencodeDBPath       string
+	agySessionsDir       string
 	logLevel             string
 	logDir               string
 	logFile              string
@@ -103,6 +104,7 @@ func newRootCmd() (*cobra.Command, *observerOptions) {
 	flags.StringVar(&opts.claudeProjectsDir, "claude-projects-dir", "", "Custom directory for Claude Code projects/transcripts")
 	flags.StringVar(&opts.piSessionsDir, "pi-sessions-dir", "", "Custom directory for Pi sessions")
 	flags.StringVar(&opts.codexSessionsDir, "codex-sessions-dir", "", "Custom directory for Codex sessions")
+	flags.StringVar(&opts.agySessionsDir, "agy-sessions-dir", "", "Custom directory for Antigravity sessions")
 	flags.StringVar(&opts.opencodeDBPath, "opencode-db-path", "", "Custom path for OpenCode database")
 	flags.StringVar(&opts.logLevel, "log-level", opts.logLevel, "Log level (debug, info, warn, error)")
 	flags.StringVar(&opts.logDir, "log-dir", "", "Custom directory for rotating log files on disk (default: $XDG_STATE_HOME/agent-status/logs)")
@@ -163,7 +165,7 @@ func runObserverContext(ctx context.Context, opts observerOptions) error {
 	cfg := watcher.Config{
 		ScanInterval: opts.scanInterval, ClaudeProjectsDir: opts.claudeProjectsDir,
 		PiSessionsDir: opts.piSessionsDir, CodexSessionsDir: opts.codexSessionsDir,
-		OpencodeDBPath: opts.opencodeDBPath, CursorPath: opts.cursorPath,
+		AgySessionsDir: opts.agySessionsDir, OpencodeDBPath: opts.opencodeDBPath, CursorPath: opts.cursorPath,
 		SessionStatePath: opts.sessionStatePath, CursorRetention: opts.cursorRetention,
 		CursorPruneInterval: opts.cursorPruneInterval, CursorFlushInterval: opts.cursorFlushInterval,
 		ProcessSnapshotProvider: opts.procSnapshotProvider, Logger: logging.Default(),

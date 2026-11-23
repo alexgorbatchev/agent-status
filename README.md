@@ -1,4 +1,4 @@
-A centralized monitoring dashboard and telemetry aggregation pipeline for AI coding agents running across an engineer's machines and worktrees. It observes agent sessions from Claude Code, Pi, OpenAI Codex, and OpenCode, tracks live activity and token costs, and highlights sessions requiring user attention.
+A centralized monitoring dashboard and telemetry aggregation pipeline for AI coding agents running across an engineer's machines and worktrees. It observes agent sessions from Claude Code, Pi, OpenAI Codex, OpenCode, and Antigravity (`agy`), tracks live activity and token costs, and highlights sessions requiring user attention.
 
 # What It Does
 
@@ -10,7 +10,7 @@ A centralized monitoring dashboard and telemetry aggregation pipeline for AI cod
 
 # How It Works
 
-- Scans local harness storage directories to detect active sessions from Claude Code, Pi, OpenAI Codex, and OpenCode.
+- Scans local harness storage directories to detect active sessions from Claude Code, Pi, OpenAI Codex, OpenCode, and Antigravity (`agy`).
 - Tails session logs and transcript files incrementally, resolving git repositories, branches, and worktrees.
 - Streams raw events over WebSocket to a central ingester daemon that classifies state, calculates token pricing, and records structured events into SQLite.
 - Broadcasts status changes over a Unix domain socket to a lightweight query server.
@@ -21,7 +21,7 @@ A centralized monitoring dashboard and telemetry aggregation pipeline for AI cod
 - `agent-observer` uses the standalone [`agent-watcher`](https://github.com/alexgorbatchev/agent-watcher) library to discover sessions, follow JSONL transcripts, and poll OpenCode's read-only SQLite database. It formats events and ships them over a bounded WebSocket queue, advancing transcript offsets only after ingester acknowledgements. Cursors live at `$XDG_CACHE_HOME/agent-status/observer-cursors.json` (or `~/.cache/agent-status/observer-cursors.json`); OpenCode event checkpoints live beside them with the `.opencode` suffix. Checkpoints flush periodically and on shutdown.
 - `agent-ingester` receives WebSocket connections at `:4501/ws/ingest` with a 64 MiB read limit, computes token costs using a static model price registry, derives concise action descriptions via asynchronous per-agent queues and specialized prompt templates with Jaccard deduplication, and writes structured records into `$XDG_DATA_HOME/agent-status/agent-status.db` using WAL mode.
 - `agent-server` opens the SQLite database strictly in read-only mode, listens for change signals on `$XDG_RUNTIME_DIR/agent-status/notify.sock`, and fans out events to browser clients over Server-Sent Events (`/api/v1/events`) at `:4502`.
-- `agent-debug` replays and validates agent session transcripts across Claude Code, Pi, OpenAI Codex, and OpenCode through the ingestion and query pipeline offline, running in-process against an ephemeral in-memory SQLite database without modifying active daemon logs or databases.
+- `agent-debug` replays and validates agent session transcripts across Claude Code, Pi, OpenAI Codex, OpenCode, and Antigravity (`agy`) through the ingestion and query pipeline offline, running in-process against an ephemeral in-memory SQLite database without modifying active daemon logs or databases.
 - `ui-web` serves a React 19 dashboard on port `3000`, grouping agents by upstream git project repository and observing environment rather than machine-local folder paths, reconnecting to the SSE stream using exponential backoff with jitter to prevent reconnect storms.
 - Inactive agents and old event streams are automatically pruned every hour from SQLite according to a 48-hour event and 30-day exited session retention policy.
 - Running with `AGENT=1` enables token-conservative, agent-facing CLI output across dev stack orchestration.
@@ -73,6 +73,7 @@ Replay sessions offline with `just debug session-replay-pi <session-id>` or `jus
 | `--claude-sessions-dir <path>`       | (none) | `~/.claude/sessions`                          | Custom directory for Claude Code session metadata    |
 | `--claude-projects-dir <path>`       | (none) | `~/.claude/projects`                          | Custom directory for Claude Code project transcripts |
 | `--pi-sessions-dir <path>`           | (none) | `~/.pi/agent/sessions`                        | Custom directory for Pi session logs                 |
+| `--agy-sessions-dir <path>` | (none) | `~/.gemini/antigravity-cli/brain` | Custom Antigravity brain directory (also `AGY_SESSIONS_DIR`) |
 | `--log-level <level>`                | (none) | `info`                                        | Log level (`debug`, `info`, `warn`, `error`)         |
 | `--version`                          | `-v`   | `false`                                       | Print version information and exit                   |
 | `--help`                             | `-h`   | `false`                                       | Print command line help                              |
@@ -111,7 +112,7 @@ Replay sessions offline with `just debug session-replay-pi <session-id>` or `jus
 
 | Flag                   | Short  | Default | Description                                                          |
 | :--------------------- | :----- | :------ | :------------------------------------------------------------------- |
-| `--harness <name>`     | (none) | `""`    | Explicit harness override (`claude-code`, `pi`, `codex`, `opencode`) |
+| `--harness <name>`     | (none) | `""`    | Explicit harness override (`claude-code`, `pi`, `codex`, `opencode`, `agy`) |
 | `--session-id <id>`    | (none) | `""`    | OpenCode session ID to replay                                        |
 | `--cwd <path>`         | (none) | `""`    | Override transcript working directory for local Git resolution       |
 | `--diff`               | (none) | `false` | Display turn-by-turn state mutations during replay                   |
@@ -136,6 +137,8 @@ The table below lists environment variables read by the system, in precedence an
 | `LITELLM_API_KEY`                | Alias: `LITELLM_KEY`, fallback: `OPENAI_API_KEY` | Primary API authentication key for LiteLLM or OpenAI-compatible proxy                         |
 | `LITELLM_KEY`                    | Fallback: `OPENAI_API_KEY`                       | Alias for `LITELLM_API_KEY`                                                                   |
 | `OPENAI_API_KEY`                 | (none)                                           | Fallback API authentication key when LiteLLM keys are unset                                   |
+| `AGY_SESSIONS_DIR` | `$GEMINI_HOME/antigravity-cli/brain`, or `~/.gemini/antigravity-cli/brain` | Antigravity transcript discovery root; explicit observer flag takes precedence |
+| `GEMINI_HOME` | `~/.gemini` | Native Antigravity configuration and conversation storage root |
 | `GEMINI_API_KEY`                 | (none)                                           | API key for Google Gemini action summarization provider                                       |
 | `ANTHROPIC_API_KEY`              | (none)                                           | API key for Anthropic Claude action summarization provider                                    |
 | `AGENT_STATUS_SUMMARIZER_MODEL`  | Provider default                                 | Custom model identifier override for action summarization                                     |

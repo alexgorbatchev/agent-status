@@ -41,6 +41,7 @@ type SessionInfo struct {
 	HeaderTime     int64  `json:"headerTime"` // unix millis
 	HarnessVersion string `json:"harnessVersion,omitempty"`
 	PID            int    `json:"pid,omitempty"` // if session descriptor recorded PID (e.g. Claude Code)
+	IsSubagent     bool   `json:"isSubagent,omitempty"`
 }
 
 type AuditRecord struct {
@@ -76,6 +77,9 @@ type Auditor struct {
 	CodexProcsFinder    func(ctx context.Context) ([]ProcessInfo, error)
 	CodexSessionsFinder func(ctx context.Context) ([]SessionInfo, error)
 
+	AgyProcsFinder    func(ctx context.Context) ([]ProcessInfo, error)
+	AgySessionsFinder func(ctx context.Context, procs []ProcessInfo) ([]SessionInfo, error)
+
 	OpencodeProcsFinder    func(ctx context.Context) ([]ProcessInfo, error)
 	OpencodeSessionsFinder func(ctx context.Context) ([]SessionInfo, error)
 }
@@ -83,6 +87,8 @@ type Auditor struct {
 func NewAuditor() *Auditor {
 	return &Auditor{
 		NowFunc:                time.Now,
+		AgyProcsFinder:         liveAgyProcs,
+		AgySessionsFinder:      liveAgySessionsForProcs,
 		PiProcsFinder:          livePiProcs,
 		PiSessionsFinder:       LivePiSessions,
 		ClaudeProcsFinder:      liveClaudeProcs,
@@ -138,7 +144,7 @@ func (a *Auditor) Audit(ctx context.Context, filter AuditFilter) ([]AuditRecord,
 	if checkHarness("claude-code", "claude") && a.ClaudeProcsFinder != nil && a.ClaudeSessionsFinder != nil {
 		procs, _ := a.ClaudeProcsFinder(ctx)
 		sessions, _ := a.ClaudeSessionsFinder(ctx)
-		records := auditClaudeHarness(procs, sessions, filterCWD, now)
+		records := auditPIDMatchedHarness("claude-code", procs, sessions, filterCWD, now)
 		allRecords = append(allRecords, records...)
 	}
 
@@ -156,6 +162,12 @@ func (a *Auditor) Audit(ctx context.Context, filter AuditFilter) ([]AuditRecord,
 		sessions, _ := a.OpencodeSessionsFinder(ctx)
 		records := auditCWDMatchedHarness("opencode", procs, sessions, filterCWD, now)
 		allRecords = append(allRecords, records...)
+	}
+
+	if checkHarness("agy", "antigravity") && a.AgyProcsFinder != nil && a.AgySessionsFinder != nil {
+		procs, _ := a.AgyProcsFinder(ctx)
+		sessions, _ := a.AgySessionsFinder(ctx, procs)
+		allRecords = append(allRecords, auditPIDMatchedHarness("agy", procs, sessions, filterCWD, now)...)
 	}
 
 	// Sort records
@@ -297,7 +309,7 @@ func auditCWDMatchedHarness(harness string, procs []ProcessInfo, sessions []Sess
 	return records
 }
 
-func auditClaudeHarness(procs []ProcessInfo, sessions []SessionInfo, filterCWD string, now time.Time) []AuditRecord {
+func auditPIDMatchedHarness(harness string, procs []ProcessInfo, sessions []SessionInfo, filterCWD string, now time.Time) []AuditRecord {
 	var filteredProcs []ProcessInfo
 	procsByPID := make(map[int]ProcessInfo)
 	for _, p := range procs {
@@ -322,13 +334,17 @@ func auditClaudeHarness(procs []ProcessInfo, sessions []SessionInfo, filterCWD s
 	var records []AuditRecord
 
 	for _, sess := range filteredSessions {
-		if sess.PID > 0 && !usedPIDs[sess.PID] {
+		if sess.PID > 0 && (sess.IsSubagent || !usedPIDs[sess.PID]) {
 			if proc, alive := procsByPID[sess.PID]; alive {
-				usedPIDs[sess.PID] = true
+				// Native subagents share their root process and must not consume
+				// the root's one-to-one process pairing.
+				if !sess.IsSubagent {
+					usedPIDs[sess.PID] = true
+				}
 				delta := sess.HeaderTime - proc.CreatedAt
 				statusDetails := ComputeStatusDetails(sess.HeaderTime, now)
 				records = append(records, AuditRecord{
-					Harness:       "claude-code",
+					Harness:       harness,
 					PID:           sess.PID,
 					CreatedAt:     proc.CreatedAt,
 					CWD:           proc.CWD,
@@ -347,7 +363,7 @@ func auditClaudeHarness(procs []ProcessInfo, sessions []SessionInfo, filterCWD s
 		}
 
 		records = append(records, AuditRecord{
-			Harness:     "claude-code",
+			Harness:     harness,
 			PID:         sess.PID,
 			CreatedAt:   sess.HeaderTime,
 			CWD:         sess.CWD,
@@ -361,7 +377,7 @@ func auditClaudeHarness(procs []ProcessInfo, sessions []SessionInfo, filterCWD s
 	for _, proc := range filteredProcs {
 		if !usedPIDs[proc.PID] {
 			records = append(records, AuditRecord{
-				Harness:    "claude-code",
+				Harness:    harness,
 				PID:        proc.PID,
 				CreatedAt:  proc.CreatedAt,
 				CWD:        proc.CWD,

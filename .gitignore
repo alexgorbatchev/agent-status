@@ -3,6 +3,8 @@
 .codegraph
 .tmp
 .cache
+.state/
+.worktrees/
 
 # Build output
 bin/

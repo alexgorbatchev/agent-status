@@ -317,7 +317,7 @@ func TestReplay_Codex(t *testing.T) {
 	codexContent := `{"type":"session_meta","timestamp":"2026-09-21T10:30:00.000Z","payload":{"id":"cdx-1","cwd":"/repo"}}
 {"type":"event_msg","timestamp":"2026-09-21T10:30:01.000Z","payload":{"type":"user_message","message":"Build project"}}
 {"type":"event_msg","timestamp":"2026-09-21T10:30:02.000Z","payload":{"type":"agent_message","message":"Building now"}}
-{"type":"event_msg","timestamp":"2026-09-21T10:30:03.000Z","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":1450,"prompt_tokens":1200,"completion_tokens":250}}}}
+{"type":"event_msg","timestamp":"2026-09-21T10:30:03.000Z","payload":{"type":"token_count","info":{"total_token_usage":{"total_tokens":1450,"input_tokens":1200,"output_tokens":250},"last_token_usage":{"total_tokens":1450,"input_tokens":1200,"output_tokens":250}}}}
 `
 	if err := os.WriteFile(codexFile, []byte(codexContent), 0644); err != nil {
 		t.Fatalf("writing codex transcript: %v", err)

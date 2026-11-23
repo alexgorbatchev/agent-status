@@ -3,9 +3,9 @@ module github.com/alexgorbatchev/agent-status/packages/agent-observer
 go 1.26.2
 
 require (
-	github.com/alexgorbatchev/agent-parser v1.1.0
+	github.com/alexgorbatchev/agent-parser v1.3.0
 	github.com/alexgorbatchev/agent-status/packages/agent-common v0.0.0-00010101000000-000000000000
-	github.com/alexgorbatchev/agent-watcher v1.1.1
+	github.com/alexgorbatchev/agent-watcher v1.2.0
 	github.com/alexgorbatchev/cobra-help-tree/v4 v4.0.0
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/coder/websocket v1.8.15
@@ -39,6 +39,7 @@ require (
 	modernc.org/libc v1.79.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
+	mvdan.cc/sh/v3 v3.14.1 // indirect
 )
 
 replace github.com/alexgorbatchev/agent-status/packages/agent-common => ../agent-common

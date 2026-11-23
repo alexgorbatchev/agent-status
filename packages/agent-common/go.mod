@@ -3,7 +3,7 @@ module github.com/alexgorbatchev/agent-status/packages/agent-common
 go 1.26.2
 
 require (
-	github.com/alexgorbatchev/agent-parser v1.1.0
+	github.com/alexgorbatchev/agent-parser v1.3.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
 
@@ -19,4 +19,5 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
 	modernc.org/sqlite v1.61.0 // indirect
+	mvdan.cc/sh/v3 v3.14.1 // indirect
 )

@@ -25,6 +25,9 @@ func ResolveSessionTarget(ctx context.Context, target string, harnessHint types.
 		return nil, fmt.Errorf("target file path or session ID cannot be empty")
 	}
 
+	if harnessHint == "antigravity" {
+		harnessHint = types.HarnessAgy
+	}
 	cleanTarget := filepath.Clean(target)
 
 	// 1. Direct file or directory path match
@@ -127,6 +130,30 @@ func ResolveSessionTarget(ctx context.Context, target string, harnessHint types.
 		}
 	}
 
+	if harnessHint == "" || harnessHint == types.HarnessAgy {
+		sources, err := parser.DiscoverSessions(ctx, parser.DiscoverOptions{Harnesses: []parser.Harness{parser.HarnessAgy}})
+		if err != nil {
+			return nil, fmt.Errorf("discovering agy sessions: %w", err)
+		}
+		var match *ResolvedTarget
+		matchCount := 0
+		for _, source := range sources {
+			if source.SessionID == target {
+				return &ResolvedTarget{FilePath: source.Path, Harness: types.HarnessAgy, SessionID: source.SessionID}, nil
+			}
+			if strings.HasPrefix(source.SessionID, target) {
+				matchCount++
+				match = &ResolvedTarget{FilePath: source.Path, Harness: types.HarnessAgy, SessionID: source.SessionID}
+			}
+		}
+		if matchCount > 1 {
+			return nil, fmt.Errorf("ambiguous agy session prefix %q", target)
+		}
+		if match != nil {
+			return match, nil
+		}
+	}
+
 	// D. OpenCode search
 	if harnessHint == "" || harnessHint == types.HarnessOpencode {
 		dbPath := filepath.Join(home, ".local", "share", "opencode", "opencode.db")
@@ -153,7 +180,7 @@ func ResolveSessionTarget(ctx context.Context, target string, harnessHint types.
 		return nil, fmt.Errorf("session matching %q not found in filesystem or standard %s storage directories", target, harnessHint)
 	}
 
-	return nil, fmt.Errorf("session matching %q not found as a file or in any standard harness directory (~/.claude, ~/.pi, ~/.codex, ~/.local/share/opencode)", target)
+	return nil, fmt.Errorf("session matching %q not found as a file or in any standard harness directory (~/.claude, ~/.pi, ~/.codex, ~/.gemini/antigravity-cli, ~/.local/share/opencode)", target)
 }
 
 func findTranscriptMatching(rootDir string, pattern string) string {

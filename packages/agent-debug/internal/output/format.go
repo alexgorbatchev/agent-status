@@ -64,6 +64,8 @@ func GetHarnessBrandColor(h types.HarnessType) string {
 		return AnsiCyan
 	case types.HarnessOpencode:
 		return AnsiBold + AnsiCyan
+	case types.HarnessAgy:
+		return AnsiBold + AnsiWhite
 	default:
 		return AnsiWhite
 	}

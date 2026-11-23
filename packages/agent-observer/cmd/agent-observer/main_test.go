@@ -165,6 +165,7 @@ func TestObserverCommandFlagParsing(t *testing.T) {
 		"--pi-sessions-dir", "/tmp/pi/sessions",
 		"--codex-sessions-dir", "/tmp/codex/sessions",
 		"--opencode-db-path", "/tmp/opencode.db",
+		"--agy-sessions-dir", "/tmp/agy-sessions",
 		"--log-level", "debug",
 		"--log-dir", "/tmp/logs",
 		"--log-file", "/tmp/logs/observer.log",
@@ -209,6 +210,9 @@ func TestObserverCommandFlagParsing(t *testing.T) {
 	}
 	if opts.codexSessionsDir != "/tmp/codex/sessions" {
 		t.Errorf("codexSessionsDir = %q, want /tmp/codex/sessions", opts.codexSessionsDir)
+	}
+	if opts.agySessionsDir != "/tmp/agy-sessions" {
+		t.Errorf("agySessionsDir = %q, want /tmp/agy-sessions", opts.agySessionsDir)
 	}
 	if opts.opencodeDBPath != "/tmp/opencode.db" {
 		t.Errorf("opencodeDBPath = %q, want /tmp/opencode.db", opts.opencodeDBPath)
@@ -1742,6 +1746,8 @@ func (h *harnessProcessTable) PiProcesses() []scanner.PiProcessInfo { return h.p
 
 func (h *harnessProcessTable) CodexProcesses() []scanner.CodexProcessInfo { return h.codex }
 
+func (h *harnessProcessTable) AgyProcesses() []scanner.AgyProcessInfo { return nil }
+
 func (h *harnessProcessTable) OpencodeProcesses() []scanner.OpencodeProcessInfo { return nil }
 
 func (h *harnessProcessTable) Process(pid int) (scanner.ProcessMeta, bool) {
@@ -1775,6 +1781,8 @@ func (m *mockProcessSnapshot) CodexProcesses() []scanner.CodexProcessInfo {
 		{PID: m.alivePID, CWD: m.cwd, CreateTime: time.Now().UnixMilli()},
 	}
 }
+
+func (m *mockProcessSnapshot) AgyProcesses() []scanner.AgyProcessInfo { return nil }
 
 func (m *mockProcessSnapshot) OpencodeProcesses() []scanner.OpencodeProcessInfo {
 	return []scanner.OpencodeProcessInfo{

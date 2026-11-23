@@ -131,6 +131,6 @@ jobs:
         with:
           name: e2e-diagnostics
           path: |
-            .tmp/e2e-logs/
+            .state/e2e-logs/
             packages/ui-web/test-results/
           if-no-files-found: ignore

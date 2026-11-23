@@ -10,12 +10,12 @@ replace (
 )
 
 require (
-	github.com/alexgorbatchev/agent-parser v1.1.0
+	github.com/alexgorbatchev/agent-parser v1.3.0
 	github.com/alexgorbatchev/agent-status/packages/agent-common v0.0.0-00010101000000-000000000000
 	github.com/alexgorbatchev/agent-status/packages/agent-ingester v0.0.0-00010101000000-000000000000
 	github.com/alexgorbatchev/agent-status/packages/agent-observer v0.0.0-00010101000000-000000000000
 	github.com/alexgorbatchev/agent-status/packages/agent-server v0.0.0-00010101000000-000000000000
-	github.com/alexgorbatchev/agent-watcher v1.1.1
+	github.com/alexgorbatchev/agent-watcher v1.2.0
 	github.com/alexgorbatchev/cobra-help-tree/v4 v4.0.0
 	github.com/mattn/go-isatty v0.0.24
 	github.com/mattn/go-runewidth v0.0.30
@@ -79,4 +79,5 @@ require (
 	modernc.org/libc v1.79.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
+	mvdan.cc/sh/v3 v3.14.1 // indirect
 )

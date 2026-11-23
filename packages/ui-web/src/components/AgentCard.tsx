@@ -37,6 +37,7 @@ const HARNESS_LABELS: Record<HarnessType, string> = {
   pi: "Pi",
   codex: "Codex",
   opencode: "OpenCode",
+  agy: "Antigravity",
 };
 
 const HARNESS_BRAND_TEXT_CLASSES: Record<HarnessType, string> = {
@@ -44,6 +45,7 @@ const HARNESS_BRAND_TEXT_CLASSES: Record<HarnessType, string> = {
   pi: "text-brand-pi",
   codex: "text-brand-codex",
   opencode: "text-brand-opencode",
+  agy: "text-brand-agy",
 };
 
 function getHarnessBrandTextColor(harness: HarnessType): string {

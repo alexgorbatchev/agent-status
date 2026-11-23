@@ -162,8 +162,8 @@ func TestMigrate_CrashAfterV7PartialCommit(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 8 {
-		t.Fatalf("expected user_version = 8, got %d", version)
+	if version != 9 {
+		t.Fatalf("expected user_version = 9, got %d", version)
 	}
 
 	// Assert tables and existing data are intact
@@ -259,8 +259,8 @@ func TestMigrate_CrashAfterV7SingleColumnCommit(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 8 {
-		t.Fatalf("expected user_version = 8, got %d", version)
+	if version != 9 {
+		t.Fatalf("expected user_version = 9, got %d", version)
 	}
 }
 
@@ -341,8 +341,8 @@ func TestMigrate_CrashAfterV8PartialCommit(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 8 {
-		t.Fatalf("expected user_version = 8, got %d", version)
+	if version != 9 {
+		t.Fatalf("expected user_version = 9, got %d", version)
 	}
 
 	// Assert tables and existing data are intact
@@ -437,8 +437,8 @@ func TestMigrate_CrashAfterV8SingleColumnCommit(t *testing.T) {
 	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
 		t.Fatalf("reading user_version: %v", err)
 	}
-	if version != 8 {
-		t.Fatalf("expected user_version = 8, got %d", version)
+	if version != 9 {
+		t.Fatalf("expected user_version = 9, got %d", version)
 	}
 }
 
@@ -561,7 +561,7 @@ func TestMigrate_ReportsUnwritableAutoVacuumConversion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := setup.Exec("PRAGMA journal_mode = wal; PRAGMA user_version = 8;"); err != nil {
+	if _, err := setup.Exec("PRAGMA journal_mode = wal; PRAGMA user_version = 9;"); err != nil {
 		t.Fatal(err)
 	}
 	if err := setup.Close(); err != nil {

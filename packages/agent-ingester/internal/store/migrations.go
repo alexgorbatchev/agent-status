@@ -300,6 +300,12 @@ func Migrate(db *sql.DB) error {
 		version = 8
 	}
 
+	if version < 9 {
+		if err := migrateV9(db); err != nil {
+			return err
+		}
+	}
+
 	return ensureIncrementalAutoVacuum(db)
 }
 

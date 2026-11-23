@@ -12,7 +12,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - Check status: `just status` (this checkout's devhost stack; `devhost stack list` shows all stacks)
 - Tail dev stack logs: `just logs` (or `tail -f .tmp/dev-stack/logs/*.log`)
 - Run debug CLI: `just debug run <args>`
-- Replay session offline: `just debug session-replay-[claude|pi|codex|opencode] <session-id>`
+- Replay session offline: `just debug session-replay-[claude|pi|codex|opencode|agy] <session-id>`
 - Print session transcript: `just debug print-session [claude|pi] [print|summary|handoff] <session-id>`
 - Build all: `just build-all`
 - Clean build outputs: `just clean` (preserves test scratch, dev-stack state, and running services; use `just stop` explicitly to stop the stack)
@@ -51,7 +51,7 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - Always: keep `clean` limited to package build outputs. Tests own their scratch cleanup; the workspace cleaner handles stale scratch. Never remove `.tmp/test-*` or dev-stack runtime state from `clean`.
 - Always: automatically record all new instructions in the most appropriate `AGENTS.md` file immediately upon receipt (check with user if existing instructions conflict)
 - Always: keep `agent-watcher` published on GitHub and consume its tagged module version here; do not commit sibling-checkout requirements.
-- Always: when resolving tickets, follow the `github-issues` skill workflow (`skills/agent/github-issues` in the private AI registry overlay) for claims, worktree isolation, independent PR review, CI gates, and fast-forward integration
+- Always: when resolving tickets, use `issue-tracker` for claims and task records, an isolated worktree for implementation, and `github-pr` plus the programming Git integration workflow for independent PR review, CI gates, and fast-forward integration
 - Always: design dashboard UX, activity summarization, and telemetry pipelines for long-running agent sessions rather than sub-second realtime mirroring (LLM inference latency of 1–3s and ~10s debounced summarization cadences are primary and intended; prioritize semantic stability, high-level intent, and stall detection over micro-second state churn)
 - Always: when designing or modifying UI presentation cards, update `agent-debug session view` first as the canonical reference specification, and ensure frontend implementations sync to that output (#50, #51)
 - Always: use structured logging via `packages/agent-common/logging` with concise snake_case actions (e.g. `action=hello_received`, no prose, no emojis) and support dual-mode output via `AGENT=1` (prefer human names over opaque IDs in human mode)
@@ -72,4 +72,4 @@ Designed for monitoring long-running agent sessions across minutes and hours, no
 - Reusable watching pipeline: [`alexgorbatchev/agent-watcher`](https://github.com/alexgorbatchev/agent-watcher) (`watcher.Run`, `scanner/`, `tailer/`)
 - Standalone session transcript printer: [`alexgorbatchev/agent-print-session-cli`](https://github.com/alexgorbatchev/agent-print-session-cli) (`v1.0.0`)
 - CI workflow: `.github/workflows/ci.yml` runs `just lint-all`, `just test-all`, `just build-all`, and the Playwright E2E suite (`just ui test-e2e`, inside Playwright's container image matching the pinned `@playwright/test`) on hosted Ubuntu for pull requests and pushes to `main`
-- Ticket workflow skill: `github-issues` (`skills/agent/github-issues` in the private AI registry overlay)
+- Ticket workflow skills: `issue-tracker` and `github-pr`

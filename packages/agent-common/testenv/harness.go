@@ -19,6 +19,8 @@ var harnessEnv = []string{
 	"CODEX_HOME",
 	"CODEX_SESSIONS_DIR",
 	"OPENCODE_DB_PATH",
+	"AGY_SESSIONS_DIR",
+	"GEMINI_HOME",
 	"AGENT_STATUS_DB_PATH",
 }
 

@@ -21,6 +21,7 @@
   --brand-claude: #db8659; /* Claude terracotta / warm bronze (21° hue, >5.2:1 contrast) */
   --brand-pi: #818cf8; /* Inflection Pi violet / indigo */
   --brand-codex: #a78bfa; /* OpenAI Codex purple / violet */
+  --brand-agy: #f0abfc; /* Antigravity fuchsia */
   --brand-opencode: #38bdf8; /* OpenCode sky blue */
   --brand-default: #94a3b8; /* Neutral slate-400 */
   --brand-muted: #94a3b8; /* Muted brand for attention states (slate-400, >= 4.5:1 on dark surfaces) */
@@ -36,6 +37,7 @@
   --color-brand-pi: var(--brand-pi);
   --color-brand-codex: var(--brand-codex);
   --color-brand-opencode: var(--brand-opencode);
+  --color-brand-agy: var(--brand-agy);
   --color-brand-default: var(--brand-default);
   --color-brand-muted: var(--brand-muted);
 }

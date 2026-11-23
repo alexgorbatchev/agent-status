@@ -107,6 +107,11 @@ func DetectHarness(filePath string) (types.HarnessType, error) {
 			return types.HarnessPi, nil
 		}
 
+		// Native Antigravity records, including whitespace-formatted JSON.
+		if evs, err := parser.ParseAgyLine(line); err == nil && len(evs) > 0 {
+			return types.HarnessAgy, nil
+		}
+
 		// Claude Code signatures
 		if strings.Contains(s, `"type":"ai-title"`) || strings.Contains(s, `"type":"progress"`) || strings.Contains(s, `"type":"user"`) || strings.Contains(s, `"type":"assistant"`) {
 			return types.HarnessClaudeCode, nil

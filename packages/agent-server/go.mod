@@ -13,7 +13,7 @@ require (
 )
 
 require (
-	github.com/alexgorbatchev/agent-parser v1.1.0 // indirect
+	github.com/alexgorbatchev/agent-parser v1.3.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.2.0 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
@@ -30,6 +30,7 @@ require (
 	modernc.org/libc v1.79.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
+	mvdan.cc/sh/v3 v3.14.1 // indirect
 )
 
 replace github.com/alexgorbatchev/agent-status/packages/agent-common => ../agent-common

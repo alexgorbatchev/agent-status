@@ -30,6 +30,7 @@ const (
 	HarnessPi         HarnessType = "pi"
 	HarnessCodex      HarnessType = "codex"
 	HarnessOpencode   HarnessType = "opencode"
+	HarnessAgy        HarnessType = "agy"
 )
 
 type AgentPhase string

@@ -634,3 +634,9 @@ export const fixture_telemetryFrameThinkingAnsi: ITelemetryFrame = {
     toolOutput: null,
   },
 };
+
+export const fixture_agentStateAgy: IAgentState = {
+  ...fixture_agentStateRunning,
+  id: "env-1:agy:session-1",
+  harness: "agy",
+};
