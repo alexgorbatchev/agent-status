@@ -1,7 +1,5 @@
 Agent Status tracks coding-agent sessions and usage in a web dashboard and provides offline tools for inspecting recorded sessions. Its daemons and diagnostic CLI are written in Rust.
 
-The Go implementation is deprecated. See the [`go-legacy` branch](https://github.com/alexgorbatchev/agent-status/tree/go-legacy) for its source.
-
 # What It Does
 
 - **Observe sessions:** Follow Claude Code, Pi, Codex, OpenCode, and Antigravity CLI activity and deliver acknowledged telemetry.
