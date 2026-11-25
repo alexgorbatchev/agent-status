@@ -13,7 +13,6 @@ use std::sync::Arc;
 struct Patch {
     is_hidden: Option<bool>,
     dismiss_completion: Option<bool>,
-    acknowledge_completion: Option<bool>,
 }
 
 pub(super) async fn patch(
@@ -30,10 +29,7 @@ pub(super) async fn patch(
         Ok(fields) => fields.unwrap_or_default(),
         Err(_) => return error(StatusCode::BAD_REQUEST, "invalid request body"),
     };
-    if fields.is_hidden.is_none()
-        && fields.dismiss_completion != Some(true)
-        && fields.acknowledge_completion != Some(true)
-    {
+    if fields.is_hidden.is_none() && fields.dismiss_completion != Some(true) {
         return error(StatusCode::BAD_REQUEST, "no recognized patch fields");
     }
     forward(&state, Method::PATCH, &id, false, headers, body).await

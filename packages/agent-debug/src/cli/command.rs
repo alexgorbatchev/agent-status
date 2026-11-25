@@ -1,9 +1,9 @@
-use clap::{Arg, ArgAction, Command};
+use clap::{Arg, ArgAction, Command, builder::PossibleValue};
 use cli_command_kit::{HelpOptions, Mode};
 pub fn help_options() -> HelpOptions {
     HelpOptions {
         skill: Some(
-            cli_command_kit::SkillSource::new("alexgorbatchev/agent-status", "main")
+            cli_command_kit::SkillSource::new("alexgorbatchev/agent-status-rust", "main")
                 .expect("the fixed skill source names a GitHub repository"),
         ),
         ..Default::default()
@@ -29,13 +29,13 @@ fn json(command: Command) -> Command {
 fn harness(command: Command) -> Command {
     command.arg(
         string("harness", "", "Override transcript harness").value_parser([
-            "",
-            "claude-code",
-            "pi",
-            "codex",
-            "opencode",
-            "agy",
-            "antigravity",
+            PossibleValue::new("").hide(true),
+            "claude-code".into(),
+            "pi".into(),
+            "codex".into(),
+            "opencode".into(),
+            "agy".into(),
+            "antigravity".into(),
         ]),
     )
 }

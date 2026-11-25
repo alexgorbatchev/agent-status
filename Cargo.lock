@@ -129,10 +129,10 @@ dependencies = [
 [[package]]
 name = "agent-parser"
 version = "0.1.0"
-source = "git+https://github.com/alexgorbatchev/agent-parser-rust.git?rev=dab13ad3920b6e3823f5ef44be38280e3e98f220#dab13ad3920b6e3823f5ef44be38280e3e98f220"
+source = "git+https://github.com/alexgorbatchev/agent-parser-rust.git?rev=201822cbf57aa5684088ae0fcbc3b1713dffa9e6#201822cbf57aa5684088ae0fcbc3b1713dffa9e6"
 dependencies = [
+ "base64 0.22.1",
  "chrono",
- "go-parse-duration",
  "prost",
  "regex",
  "rusqlite",
@@ -195,7 +195,7 @@ dependencies = [
 [[package]]
 name = "agent-watcher"
 version = "0.1.0"
-source = "git+https://github.com/alexgorbatchev/agent-watcher-rust.git?rev=63c08208c71cd4f50e248ead4db99650a330e0af#63c08208c71cd4f50e248ead4db99650a330e0af"
+source = "git+https://github.com/alexgorbatchev/agent-watcher-rust.git?rev=a1e69b21b052a2e8c643cf6ff4c5807fc08ab487#a1e69b21b052a2e8c643cf6ff4c5807fc08ab487"
 dependencies = [
  "agent-parser",
  "chrono",
@@ -1260,12 +1260,6 @@ dependencies = [
  "nom 8.0.0",
  "thiserror",
 ]
-
-[[package]]
-name = "go-parse-duration"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "558b88954871f5e5b2af0e62e2e176c8bde7a6c2c4ed41b13d138d96da2e2cbd"
 
 [[package]]
 name = "goglob"

@@ -321,4 +321,4 @@ async fn observation_with_cancelled_token_resolves_identity_without_state_writes
     cli::observe(&token, *options).await.unwrap();
 }
 
-const INSTALL_TEXT: &str = "Install the agent-observer skill using the Skills CLI:\n\n  npx skills add alexgorbatchev/agent-status --skill agent-observer\n\nSkill:\n\n  https://github.com/alexgorbatchev/agent-status/tree/main/skills/agent-observer\n";
+const INSTALL_TEXT: &str = "Install the agent-observer skill using the Skills CLI:\n\n  npx skills add alexgorbatchev/agent-status-rust --skill agent-observer\n\nSkill:\n\n  https://github.com/alexgorbatchev/agent-status-rust/tree/main/skills/agent-observer\n";

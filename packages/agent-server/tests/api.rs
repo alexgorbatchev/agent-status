@@ -361,6 +361,7 @@ async fn patch_validation_accepts_real_mutations_and_rejects_wrong_types_before_
         "{\"unknown\":true}",
         "{\"dismissCompletion\":false}",
         "{\"acknowledgeCompletion\":null}",
+        "{\"acknowledgeCompletion\":true}",
     ] {
         let response = fixture
             .request("PATCH", "/api/v1/agents/a", None, body)
@@ -371,11 +372,7 @@ async fn patch_validation_accepts_real_mutations_and_rejects_wrong_types_before_
             "no recognized patch fields"
         );
     }
-    for body in [
-        "{\"isHidden\":false}",
-        "{\"dismissCompletion\":true}",
-        "{\"acknowledgeCompletion\":true}",
-    ] {
+    for body in ["{\"isHidden\":false}", "{\"dismissCompletion\":true}"] {
         assert_eq!(
             fixture
                 .request("PATCH", "/api/v1/agents/a", None, body)

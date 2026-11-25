@@ -13,7 +13,6 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use serde::Deserialize;
 use serde_json::json;
 
 pub(super) async fn authorize(
@@ -29,40 +28,6 @@ pub(super) async fn authorize(
     }
     next.run(request).await
 }
-#[derive(Default, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-struct Visibility {
-    is_hidden: bool,
-}
-pub(super) async fn visibility(
-    State(receiver): State<Receiver>,
-    Path(id): Path<String>,
-    body: Bytes,
-) -> Response {
-    let Ok(body) = serde_json::from_slice::<Visibility>(&body) else {
-        return invalid_body();
-    };
-    mutate(
-        receiver,
-        id,
-        StateChange {
-            is_hidden: Some(body.is_hidden),
-            ..Default::default()
-        },
-    )
-    .await
-}
-pub(super) async fn dismiss(State(receiver): State<Receiver>, Path(id): Path<String>) -> Response {
-    mutate(
-        receiver,
-        id,
-        StateChange {
-            dismiss_completion: Some(true),
-            ..Default::default()
-        },
-    )
-    .await
-}
 pub(super) async fn change(
     State(receiver): State<Receiver>,
     Path(id): Path<String>,
@@ -71,13 +36,10 @@ pub(super) async fn change(
     let Ok(body) = serde_json::from_slice::<StateChange>(&body) else {
         return invalid_body();
     };
-    mutate(receiver, id, body).await
-}
-async fn mutate(receiver: Receiver, id: String, change: StateChange) -> Response {
     match receiver
         .0
         .owner
-        .call(move |ingestion| ingestion.change_state(&id, change, wall_time()))
+        .call(move |ingestion| ingestion.change_state(&id, body, wall_time()))
         .await
     {
         Ok(agent) => {

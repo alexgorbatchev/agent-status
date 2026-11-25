@@ -163,12 +163,14 @@ export type TelemetryEventType =
   | "run_started"
   | "run_exited"
   | "turn_start"
+  | "agent_message"
   | "thinking"
   | "tool_call"
   | "tool_result"
   | "question_prompt"
   | "error"
   | "turn_end"
+  | "usage"
   | "title_change";
 
 export interface ITelemetryFrame {

@@ -4,7 +4,7 @@ description: Use when operating agent-ingester to receive, classify, persist, an
 author: alexgorbatchev
 metadata:
   created_on: 2026-10-14 12:27
-  last_modified: 2026-11-25 05:23
+  last_modified: 2026-11-25 05:39
   status: current
 ---
 
@@ -64,10 +64,9 @@ disconnected. Existing active sockets and unrelated paths are preserved.
 Reconciliation checks local processes at startup and every 30s. Hourly cleanup
 prunes telemetry older than 48h and agents older than 30d, with stale runs/usage.
 
-Internal HTTP routes use the configured bearer token: PATCH
-/api/v1/internal/agents/{id}/visibility accepts {"isHidden":bool}; PATCH or POST
-.../{id}/dismiss-completion acknowledges completion. PATCH .../{id} accepts any
-combination of isHidden, dismissCompletion, acknowledgeCompletion boolean fields.
+Internal HTTP routes use the configured bearer token. PATCH
+`/api/v1/internal/agents/{id}` accepts an `isHidden` boolean,
+`dismissCompletion=true`, or both.
 Successful mutations return the updated agent and publish its notification.
 Malformed/empty changes return 400; missing agents 404; database failures 500.
 POST .../{id}/focus invokes Herdr. It returns ok, paneId, workspaceId, tabId on

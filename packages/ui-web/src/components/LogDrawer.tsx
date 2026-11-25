@@ -168,7 +168,7 @@ export function LogDrawer({
             <StatusBadge lifecycle={agent.activity.lifecycle} activity={agent.activity.activity} />
           </div>
           <p className="text-xs text-slate-400 font-mono truncate">
-            {agent.environment.label} • {agent.project.name} • {agent.workspace.branch}
+            {[agent.environment.label, agent.project.name, agent.workspace.branch].filter(Boolean).join(" • ")}
           </p>
         </div>
 

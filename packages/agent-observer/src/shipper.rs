@@ -266,7 +266,10 @@ impl Shipper {
         heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let healthy_at = sleep(self.config.sustained_health);
         tokio::pin!(healthy_at);
-        let mut healthy = false;
+        let mut healthy = self.config.sustained_health.is_zero();
+        if healthy {
+            backoff.reset();
+        }
         let mut sent_up_to = 0;
         loop {
             let next = self

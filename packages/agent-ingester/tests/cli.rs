@@ -163,4 +163,4 @@ fn operational_skill_matches_every_live_command_and_option() {
     assert!(omissions.is_empty(), "skill omissions: {omissions:?}");
 }
 
-const INSTALL_TEXT: &str = "Install the agent-ingester skill using the Skills CLI:\n\n  npx skills add alexgorbatchev/agent-status --skill agent-ingester\n\nSkill:\n\n  https://github.com/alexgorbatchev/agent-status/tree/main/skills/agent-ingester\n";
+const INSTALL_TEXT: &str = "Install the agent-ingester skill using the Skills CLI:\n\n  npx skills add alexgorbatchev/agent-status-rust --skill agent-ingester\n\nSkill:\n\n  https://github.com/alexgorbatchev/agent-status-rust/tree/main/skills/agent-ingester\n";

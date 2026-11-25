@@ -32,7 +32,6 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub struct StateChange {
     pub is_hidden: Option<bool>,
     pub dismiss_completion: Option<bool>,
-    pub acknowledge_completion: Option<bool>,
 }
 #[derive(Debug, Default)]
 pub struct Batch {
@@ -217,16 +216,11 @@ impl Ingestion {
         result
     }
     pub fn change_state(&mut self, id: &str, change: StateChange, now: i64) -> Result<AgentState> {
-        if change.is_hidden.is_none()
-            && change.dismiss_completion.is_none()
-            && change.acknowledge_completion.is_none()
-        {
+        let dismiss = change.dismiss_completion == Some(true);
+        if change.is_hidden.is_none() && !dismiss {
             return Err(Error::EmptyState);
         }
-        let dismiss = change.dismiss_completion.unwrap_or(false)
-            || change.acknowledge_completion.unwrap_or(false);
         let tx = self.db.transaction()?;
-        // Check existence even when a supplied boolean is false and has no mutation side effect.
         read::agent(&tx, id, now)?;
         if dismiss {
             write::dismiss_completion(&tx, id)?;

@@ -192,7 +192,7 @@ export function App({ apiBaseUrl, token = DEFAULT_DEV_TOKEN }: IAppProps = {}): 
             )}
           </div>
 
-          <span data-testid="App--agent-count" className="text-xs text-slate-500 font-mono">
+          <span data-testid="App--agent-count" className="text-xs text-slate-400 font-mono">
             {isActiveFilter
               ? `${displayedAgents.length} Active of ${visibleAgents.length} Agent${visibleAgents.length !== 1 ? "s" : ""}`
               : `${visibleAgents.length} Agent${visibleAgents.length !== 1 ? "s" : ""}`}

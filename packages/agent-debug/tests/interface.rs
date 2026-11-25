@@ -107,4 +107,4 @@ async fn every_help_path_and_bare_subject_uses_the_native_agent_alert() {
     }
 }
 
-const INSTALL_TEXT: &str = "Install the agent-debug skill using the Skills CLI:\n\n  npx skills add alexgorbatchev/agent-status --skill agent-debug\n\nSkill:\n\n  https://github.com/alexgorbatchev/agent-status/tree/main/skills/agent-debug\n";
+const INSTALL_TEXT: &str = "Install the agent-debug skill using the Skills CLI:\n\n  npx skills add alexgorbatchev/agent-status-rust --skill agent-debug\n\nSkill:\n\n  https://github.com/alexgorbatchev/agent-status-rust/tree/main/skills/agent-debug\n";

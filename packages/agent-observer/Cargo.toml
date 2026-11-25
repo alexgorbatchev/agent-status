@@ -7,7 +7,7 @@ description = "Local agent telemetry observer, workspace resolver, and acknowled
 
 [dependencies]
 agent-common = { path = "../agent-common" }
-agent-watcher = { git = "https://github.com/alexgorbatchev/agent-watcher-rust.git", rev = "63c08208c71cd4f50e248ead4db99650a330e0af" }
+agent-watcher = { git = "https://github.com/alexgorbatchev/agent-watcher-rust.git", rev = "a1e69b21b052a2e8c643cf6ff4c5807fc08ab487" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

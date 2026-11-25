@@ -290,7 +290,7 @@ async fn failures_never_acknowledge_or_partially_commit_and_http_mutations_are_t
     let result = client
         .patch(format!("{base}/agent"))
         .bearer_auth("fixture-token")
-        .json(&json!({"isHidden":true,"acknowledgeCompletion":true}))
+        .json(&json!({"isHidden":true,"dismissCompletion":true}))
         .send()
         .await
         .unwrap();
@@ -298,17 +298,23 @@ async fn failures_never_acknowledge_or_partially_commit_and_http_mutations_are_t
     let agent: AgentState = result.json().await.unwrap();
     assert!(agent.is_hidden);
     assert_eq!(agent.activity.has_unseen_completion, None);
-    assert_eq!(
-        client
-            .patch(format!("{base}/agent"))
-            .bearer_auth("fixture-token")
-            .json(&json!({}))
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        400
-    );
+    for body in [
+        json!({}),
+        json!({"acknowledgeCompletion":true}),
+        json!({"dismissCompletion":false}),
+    ] {
+        assert_eq!(
+            client
+                .patch(format!("{base}/agent"))
+                .bearer_auth("fixture-token")
+                .json(&body)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            400
+        );
+    }
     assert_eq!(
         client
             .patch(format!("{base}/agent"))
@@ -322,7 +328,7 @@ async fn failures_never_acknowledge_or_partially_commit_and_http_mutations_are_t
     );
     assert_eq!(
         client
-            .patch(format!("{base}/missing/visibility"))
+            .patch(format!("{base}/missing"))
             .bearer_auth("fixture-token")
             .json(&json!({"isHidden":false}))
             .send()
@@ -333,7 +339,7 @@ async fn failures_never_acknowledge_or_partially_commit_and_http_mutations_are_t
     );
     assert_eq!(
         client
-            .patch(format!("{base}/agent/visibility"))
+            .patch(format!("{base}/agent"))
             .bearer_auth("fixture-token")
             .json(&json!({"isHidden":false}))
             .send()
@@ -344,14 +350,28 @@ async fn failures_never_acknowledge_or_partially_commit_and_http_mutations_are_t
     );
     assert_eq!(
         client
-            .post(format!("{base}/agent/dismiss-completion"))
+            .patch(format!("{base}/agent"))
             .bearer_auth("fixture-token")
+            .json(&json!({"dismissCompletion":true}))
             .send()
             .await
             .unwrap()
             .status(),
         200
     );
+    for suffix in ["visibility", "dismiss-completion"] {
+        assert_eq!(
+            client
+                .patch(format!("{base}/agent/{suffix}"))
+                .bearer_auth("fixture-token")
+                .json(&json!({"isHidden":false,"dismissCompletion":true}))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            404
+        );
+    }
     assert_eq!(
         client
             .post(format!("{base}/agent/focus"))
@@ -471,10 +491,7 @@ async fn focus_resolves_real_herdr_rpc_and_distinguishes_service_and_storage_fai
         Ok(())
     }).await.unwrap();
     let response = client
-        .patch(format!(
-            "{}/api/v1/internal/agents/agent/visibility",
-            fixture.url
-        ))
+        .patch(format!("{}/api/v1/internal/agents/agent", fixture.url))
         .bearer_auth("fixture-token")
         .json(&json!({"isHidden":true}))
         .send()

@@ -308,4 +308,4 @@ async fn native_help_skill_version_and_argument_errors_are_complete() {
     assert!(err.is_empty());
 }
 
-const INSTALL_TEXT: &str = "Install the agent-debug skill using the Skills CLI:\n\n  npx skills add alexgorbatchev/agent-status --skill agent-debug\n\nSkill:\n\n  https://github.com/alexgorbatchev/agent-status/tree/main/skills/agent-debug\n";
+const INSTALL_TEXT: &str = "Install the agent-debug skill using the Skills CLI:\n\n  npx skills add alexgorbatchev/agent-status-rust --skill agent-debug\n\nSkill:\n\n  https://github.com/alexgorbatchev/agent-status-rust/tree/main/skills/agent-debug\n";

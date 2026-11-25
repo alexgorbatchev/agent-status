@@ -10,7 +10,7 @@ timeout = 120000
 [services.api]
 command = ["just", "server", "dev"]
 port = "auto"
-host = "agent-status{{ env.DEVHOST_DEV_EXT }}"
+host = "agent-status"
 path = "/api/*"
 dependsOn = ["ingester"]
 
@@ -35,7 +35,7 @@ timeout = 120000
 primary = true
 command = ["just", "ui", "run"]
 port = "auto"
-host = "agent-status{{ env.DEVHOST_DEV_EXT }}"
+host = "agent-status"
 proxyLocalOrigin = true
 dependsOn = ["api", "observer"]
 

@@ -6,7 +6,7 @@ license = "MIT"
 description = "Shared telemetry contracts, usage evidence, model capacity resolution, and structured logging"
 
 [dependencies]
-agent-parser = { git = "https://github.com/alexgorbatchev/agent-parser-rust.git", rev = "dab13ad3920b6e3823f5ef44be38280e3e98f220" }
+agent-parser = { git = "https://github.com/alexgorbatchev/agent-parser-rust.git", rev = "201822cbf57aa5684088ae0fcbc3b1713dffa9e6" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 regex = "1"

@@ -4,7 +4,7 @@ description: Use when operating agent-server to serve Agent Status queries and l
 author: alexgorbatchev
 metadata:
   created_on: 2026-10-14 13:35
-  last_modified: 2026-11-25 05:23
+  last_modified: 2026-11-25 05:39
   status: current
 ---
 
@@ -42,7 +42,7 @@ Read JSON at `/api/v1/status`, `/api/v1/projects`, `/api/v1/environments`, `/api
 
 Filter agents with `project`, `environment`, `lifecycle`, `activity`, and `hidden=true|false`. Logs accept positive `limit` (default 100, maximum 1000), positive `before` event ID, and `subagent` (empty selects top-level events). Encode an agent ID as one URL path component. Unknown agents return 404 on inspection and usage; failed database queries return 500 with a public error message.
 
-Send `PATCH /api/v1/agents/{id}` with `isHidden` boolean, `dismissCompletion=true`, or `acknowledgeCompletion=true`. Unknown JSON fields pass through; recognized false completion flags alone fail validation. Unreadable or invalid request bodies return 400 JSON. Bodies have no configured size ceiling. Send `POST /api/v1/agents/{id}/focus` to focus the associated terminal. Both go to `/api/v1/internal/agents/{id}` on the ingester, with `/focus` for focus. Upstream status and JSON body are returned. Transport or truncated-response failures return 502; REST requests have a 15-second deadline, forwarding has a 5-second deadline. Mutable requests get one attempt; redirect responses return without replay.
+Send `PATCH /api/v1/agents/{id}` with an `isHidden` boolean, `dismissCompletion=true`, or both. Unknown JSON fields pass through. Requests without a recognized mutation, and unreadable or invalid request bodies, return 400 JSON. Bodies have no configured size ceiling. Send `POST /api/v1/agents/{id}/focus` to focus the associated terminal. Both go to `/api/v1/internal/agents/{id}` on the ingester, with `/focus` for focus. Upstream status and JSON body are returned. Transport or truncated-response failures return 502. REST requests have a 15-second deadline, and forwarding has a 5-second deadline. Mutable requests get one attempt. Redirect responses return without replay.
 
 ## Live streams
 

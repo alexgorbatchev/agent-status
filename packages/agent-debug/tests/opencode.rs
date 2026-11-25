@@ -13,7 +13,8 @@ fn fixture(path: &Path) {
     db.execute_batch("CREATE TABLE session(id TEXT,project_id TEXT,parent_id TEXT,slug TEXT,directory TEXT,title TEXT,version TEXT,agent TEXT,model TEXT,cost REAL,tokens_input INTEGER,tokens_output INTEGER,tokens_reasoning INTEGER,tokens_cache_read INTEGER,tokens_cache_write INTEGER,time_created INTEGER,time_updated INTEGER,time_archived INTEGER,metadata TEXT); CREATE TABLE message(id TEXT,session_id TEXT,time_created INTEGER,data TEXT); CREATE TABLE part(id TEXT,message_id TEXT,session_id TEXT,time_created INTEGER,data TEXT);
     INSERT INTO session VALUES('shared','project',NULL,NULL,'/fixture/repo','Repair','1','build','model',0.25,10,2,0,0,0,1000,2000,NULL,'{}');
     INSERT INTO session VALUES('child','project','shared',NULL,'/fixture/repo','Child','1','build','model',0,0,0,0,0,0,1000,2000,NULL,'{}');
-    INSERT INTO message VALUES('user','shared',1100,'{\"role\":\"user\"}'); INSERT INTO part VALUES('text','user','shared',1100,'{\"type\":\"text\",\"text\":\"hello\"}');").unwrap();
+    INSERT INTO message VALUES('user','shared',1100,'{\"role\":\"user\"}'); INSERT INTO part VALUES('text','user','shared',1100,'{\"type\":\"text\",\"text\":\"hello\"}');
+    INSERT INTO message VALUES('assistant','shared',1200,'{\"role\":\"assistant\",\"finish\":\"stop\"}'); INSERT INTO part VALUES('answer','assistant','shared',1300,'{\"type\":\"text\",\"text\":\"done\"}');").unwrap();
 }
 #[tokio::test]
 async fn native_database_loading_selects_session_and_cli_renders_list_and_replay() {
@@ -34,11 +35,27 @@ async fn native_database_loading_selects_session_and_cli_renders_list_and_replay
     assert_eq!(loaded.harness, HarnessType::Opencode);
     assert_eq!(loaded.session_id, "shared");
     assert_eq!(loaded.cwd, Path::new("/fixture/repo"));
-    assert!(
-        loaded
-            .events
-            .iter()
-            .any(|e| e.event.event_type == "user_prompt")
+    let events: Vec<_> = loaded
+        .events
+        .iter()
+        .map(|entry| {
+            let event = &entry.event;
+            (
+                event.event_type.as_str(),
+                event.data.role.as_deref(),
+                event.data.content.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        events,
+        [
+            ("run_started", None, None),
+            ("turn_start", Some("user"), Some("hello")),
+            ("agent_message", Some("assistant"), Some("done")),
+            ("turn_end", Some("assistant"), None),
+            ("run_exited", None, None),
+        ]
     );
     assert!(
         transcript::load_session(

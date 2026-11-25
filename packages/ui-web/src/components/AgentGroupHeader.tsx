@@ -29,7 +29,7 @@ export function AgentGroupHeader({
           {title}
         </h2>
         {subtitle && (
-          <span data-testid={`${prefix}--subtitle`} className="text-xs text-slate-500 font-mono">
+          <span data-testid={`${prefix}--subtitle`} className="text-xs text-slate-400 font-mono">
             {subtitle}
           </span>
         )}

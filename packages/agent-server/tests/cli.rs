@@ -291,4 +291,4 @@ fn origin_csv_does_not_impose_document_limits_on_a_valid_single_flag_record() {
     assert_eq!(options.api.cors_origins.len(), 1100);
 }
 
-const INSTALL_TEXT: &str = "Install the agent-server skill using the Skills CLI:\n\n  npx skills add alexgorbatchev/agent-status --skill agent-server\n\nSkill:\n\n  https://github.com/alexgorbatchev/agent-status/tree/main/skills/agent-server\n";
+const INSTALL_TEXT: &str = "Install the agent-server skill using the Skills CLI:\n\n  npx skills add alexgorbatchev/agent-status-rust --skill agent-server\n\nSkill:\n\n  https://github.com/alexgorbatchev/agent-status-rust/tree/main/skills/agent-server\n";

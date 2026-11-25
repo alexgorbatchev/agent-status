@@ -42,7 +42,7 @@ pub enum Action {
 pub fn help_options() -> HelpOptions {
     let mut options = HelpOptions {
         skill: Some(
-            cli_command_kit::SkillSource::new("alexgorbatchev/agent-status", "main")
+            cli_command_kit::SkillSource::new("alexgorbatchev/agent-status-rust", "main")
                 .expect("the fixed skill source names a GitHub repository"),
         ),
         ..Default::default()

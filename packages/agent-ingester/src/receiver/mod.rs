@@ -47,14 +47,6 @@ impl Receiver {
     }
     pub fn router(&self) -> Router {
         let internal = Router::new()
-            .route(
-                "/api/v1/internal/agents/{id}/visibility",
-                patch(http::visibility),
-            )
-            .route(
-                "/api/v1/internal/agents/{id}/dismiss-completion",
-                patch(http::dismiss).post(http::dismiss),
-            )
             .route("/api/v1/internal/agents/{id}", patch(http::change))
             .route("/api/v1/internal/agents/{id}/focus", post(http::focus))
             .route_layer(middleware::from_fn_with_state(

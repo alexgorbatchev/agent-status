@@ -126,7 +126,6 @@ fn batches_validate_environment_binding_and_atomic_state_changes() {
             StateChange {
                 is_hidden: Some(false),
                 dismiss_completion: Some(true),
-                ..Default::default()
             },
             2100,
         )
@@ -218,7 +217,6 @@ fn persistent_lifecycle_hello_heartbeat_timers_summaries_and_pruning() {
                 StateChange {
                     is_hidden: Some(true),
                     dismiss_completion: Some(true),
-                    ..Default::default()
                 },
                 1013
             )
@@ -239,7 +237,7 @@ fn persistent_lifecycle_hello_heartbeat_timers_summaries_and_pruning() {
         .change_state(
             "agent",
             StateChange {
-                acknowledge_completion: Some(true),
+                dismiss_completion: Some(true),
                 ..Default::default()
             },
             1014,
