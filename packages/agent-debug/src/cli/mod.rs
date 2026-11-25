@@ -52,10 +52,10 @@ impl<W: Write> Write for Console<W> {
 pub(super) fn harness(m: &ArgMatches) -> Option<agent_common::types::HarnessType> {
     let name = value(m, "harness");
     (!name.is_empty()).then(|| {
-        serde_json::from_value(serde_json::json!(if name == "claude" {
-            "claude-code"
-        } else {
-            name
+        serde_json::from_value(serde_json::json!(match name {
+            "claude" => "claude-code",
+            "antigravity" => "agy",
+            name => name,
         }))
         .expect("string harness deserializes")
     })
@@ -267,6 +267,7 @@ pub async fn execute(
                     &token,
                     &crate::audit::SessionPaths::default(),
                     filter.harness.as_ref(),
+                    &processes.snapshot,
                 )?;
                 let records =
                     crate::audit::audit(&processes.groups, &sessions.sessions, &filter, now);

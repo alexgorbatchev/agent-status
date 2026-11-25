@@ -27,6 +27,35 @@ fn apply(c: &mut Classifier, state: &mut Option<AgentState>, event: TelemetryFra
     result
 }
 #[test]
+fn standalone_usage_updates_tokens_without_completing_an_active_turn() {
+    let mut classifier = Classifier::new(Config {
+        idle_grace: Duration::ZERO,
+        ..Default::default()
+    });
+    let mut state = None;
+    for (kind, time) in [("run_started", 1000), ("turn_start", 2000)] {
+        apply(&mut classifier, &mut state, frame(kind, time));
+    }
+    let mut usage = frame("usage", 3000);
+    usage.data.usage = Some(TokenUsage {
+        input: 40,
+        output: 2,
+        total: 42,
+        ..Default::default()
+    });
+    let reported = apply(&mut classifier, &mut state, usage);
+    assert_eq!(reported.activity.usage.total, 42);
+    assert_eq!(reported.activity.lifecycle, LifecycleState::Running);
+    assert_eq!(reported.activity.activity, ActivityState::Busy);
+    assert_eq!(reported.activity.completed_at, None);
+    let mut end = frame("turn_end", 4000);
+    end.data.stop_reason = Some("stop".into());
+    let completed = apply(&mut classifier, &mut state, end);
+    assert_eq!(completed.activity.completed_at, Some(4000));
+    assert_eq!(completed.activity.usage.total, 42);
+}
+
+#[test]
 fn root_turns_keep_tools_and_attention_then_mark_terminal_completion() {
     let mut c = Classifier::new(Config {
         idle_grace: Duration::ZERO,

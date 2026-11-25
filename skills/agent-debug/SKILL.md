@@ -4,7 +4,7 @@ description: Use when replaying, validating, viewing, or auditing Agent Status s
 author: alexgorbatchev
 metadata:
   created_on: 2026-10-14 15:01
-  last_modified: 2026-11-22 14:18
+  last_modified: 2026-11-25 05:29
   status: current
 ---
 
@@ -42,7 +42,7 @@ Read every session in an OpenCode database, resolving a session ID only within O
 
 Replay through offline ingestion and verify server read projections. Options:
 
-- `--harness <claude-code|pi|codex|opencode>`, default empty for auto detection.
+- `--harness <claude-code|pi|codex|opencode|agy>`, default empty for auto detection.
 - `--session-id <string>`, default empty; select an OpenCode session or override transcript identity.
 - `--cwd <path>`, default empty; override transcript working directory and local Git resolution.
 - `--env <string>`, default `debug`; replay environment label.
@@ -91,7 +91,7 @@ Read an agent, historical runs, event count, and event time window. Accept an ex
 
 ## `agent-debug scanner audit`
 
-Capture live process metadata and session headers, pair process identities with sessions, and report paired/orphan rows. `--harness <claude|pi|codex|opencode>` defaults empty for all. `--cwd <path>` defaults empty; match that directory and descendants. `--json[=bool]` defaults false. Corrupt individual files produce path diagnostics on stderr while valid sessions remain; directory and database access errors fail the command.
+Capture live process metadata and session headers, pair process identities with sessions, and report paired/orphan rows. `--harness <claude|pi|codex|opencode|agy>` defaults empty for all. `--cwd <path>` defaults empty; match that directory and descendants. `--json[=bool]` defaults false. Corrupt individual files produce path diagnostics on stderr while valid sessions remain; directory and database access errors fail the command.
 
 ## `agent-debug scanner list`
 

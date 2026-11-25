@@ -106,6 +106,7 @@ fn local_inventory_uses_native_scanners_and_retains_verified_session_metadata() 
         pi,
         codex,
         opencode: dir.path().join("absent.db"),
+        agy: dir.path().join("agy"),
     };
     let token = CancellationToken::new();
     let found = discovery::local(&token, &paths, &snapshot, "fixture-host").unwrap();

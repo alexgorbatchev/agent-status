@@ -70,7 +70,7 @@ Boolean flags accept a bare flag as true or `--flag=true|false`. Command-specifi
 
 | Flag | Short | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `--harness <name>` | — | automatic | `claude-code`, `pi`, `codex`, or `opencode`. |
+| `--harness <name>` | — | automatic | `claude-code`, `pi`, `codex`, `opencode`, or `agy` (alias `antigravity`). |
 | `--session-id <id>` | — | resolved identity | Select an OpenCode session or override the transcript identity. |
 | `--cwd <path>` | — | transcript directory | Override the working directory and local Git resolution. |
 | `--env <label>` | — | `debug` | Replay environment label. |
@@ -142,7 +142,7 @@ Boolean flags accept a bare flag as true or `--flag=true|false`. Command-specifi
 
 | Flag | Short | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `--harness <name>` | — | all | Filter `claude`, `pi`, `codex`, or `opencode`. |
+| `--harness <name>` | — | all | Filter `claude`, `pi`, `codex`, `opencode`, or `agy` (alias `antigravity`). |
 | `--cwd <path>` | — | all | Filter a directory and its descendants. |
 | `--json[=bool]` | — | `false` | Print process/session pairing records as JSON. |
 

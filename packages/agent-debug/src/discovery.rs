@@ -4,7 +4,7 @@ use agent_common::types::{
     AgentState, EnvironmentInfo, HarnessType, LifecycleState, RunInfo, WorkspaceInfo,
 };
 use agent_watcher::scanner::{
-    ClaudeCodeScanner, CodexScanner, OpencodeScanner, PiScanner, ProcessSnapshot,
+    AgyScanner, ClaudeCodeScanner, CodexScanner, OpencodeScanner, PiScanner, ProcessSnapshot,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -32,12 +32,17 @@ pub fn local(
             HarnessType::Opencode,
             OpencodeScanner::new(paths.opencode.clone()).scan(cancel, snapshot)?,
         ),
+        (
+            HarnessType::Agy,
+            AgyScanner::new(paths.agy.clone()).scan(cancel, snapshot)?,
+        ),
     ];
     let mut agents = Vec::new();
     for (harness, sessions) in groups {
         for s in sessions {
             check_cancel(cancel)?;
-            if harness != HarnessType::ClaudeCode && !s.is_active
+            if harness == HarnessType::Agy && s.is_subagent
+                || harness != HarnessType::ClaudeCode && !s.is_active
                 || !snapshot.verify_process_match(s.pid, s.started_at)
             {
                 continue;
@@ -52,7 +57,7 @@ pub fn local(
             let title = match harness {
                 HarnessType::ClaudeCode => s.name,
                 HarnessType::Codex => s.agent_nickname,
-                HarnessType::Opencode => s.title,
+                HarnessType::Opencode | HarnessType::Agy => s.title,
                 _ => String::new(),
             };
             let mut agent = AgentState {

@@ -228,58 +228,33 @@ pub enum DatabaseSearch {
 
 pub fn resolve_path(
     custom: &str,
-    mode: DatabaseSearch,
+    _mode: DatabaseSearch,
     home: &Path,
     cwd: &Path,
     lookup: impl Fn(&str) -> Option<String>,
 ) -> Result<PathBuf> {
-    if !custom.is_empty() && custom != "auto" {
-        let path = if let Some(relative) = custom.strip_prefix("~/") {
+    let value = |name| lookup(name).filter(|s| !s.is_empty());
+    let explicit = if !custom.is_empty() && custom != "auto" {
+        Some(custom.to_owned())
+    } else {
+        value("AGENT_STATUS_DB_PATH")
+    };
+    if let Some(explicit) = explicit {
+        let path = if let Some(relative) = explicit.strip_prefix("~/") {
             home.join(relative)
         } else {
-            PathBuf::from(custom)
+            PathBuf::from(explicit)
         }
         .clean();
         fs_exists(&path)?;
         return Ok(path);
     }
-    let value = |name| lookup(name).filter(|s| !s.is_empty()).map(PathBuf::from);
-    let mut candidates = Vec::new();
-    match mode {
-        DatabaseSearch::Sessions => {
-            if let Some(explicit) = value("AGENT_STATUS_DB_PATH") {
-                fs_exists(&explicit)?;
-                return Ok(explicit);
-            }
-            candidates.push(
-                value("XDG_DATA_HOME")
-                    .unwrap_or_else(|| home.join(".local/share"))
-                    .join("agent-status/agent-status.db"),
-            );
-            candidates.push(cwd.join(".tmp/dev-stack/data/agent-status/agent-status.db"));
-            candidates.push(home.join(".local/state/agent-status/agent-status.db"));
-        }
-        DatabaseSearch::Events => {
-            candidates.extend([
-                cwd.join(".tmp/dev-stack/data/agent-status/agent-status.db"),
-                cwd.join(".tmp/dev-stack/data/agent-status.db"),
-            ]);
-            for name in ["AGENT_DATA_DIR", "XDG_DATA_HOME"] {
-                if let Some(root) = value(name) {
-                    let pair = [
-                        root.join("agent-status.db"),
-                        root.join("agent-status/agent-status.db"),
-                    ];
-                    if name == "AGENT_DATA_DIR" {
-                        candidates.extend(pair);
-                    } else {
-                        candidates.extend(pair.into_iter().rev());
-                    }
-                }
-            }
-            candidates.push(home.join(".local/share/agent-status/agent-status.db"));
-        }
-    }
+    let candidates = [
+        value("XDG_DATA_HOME")
+            .map_or_else(|| home.join(".local/share"), PathBuf::from)
+            .join("agent-status/agent-status.db"),
+        cwd.join(".tmp/dev-stack/data/agent-status/agent-status.db"),
+    ];
     candidates.into_iter().find(|p| p.is_file()).ok_or_else(|| {
         Error::InvalidInput("agent-status SQLite database not found; specify --db <path>".into())
     })

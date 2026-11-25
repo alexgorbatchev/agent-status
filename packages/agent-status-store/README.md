@@ -3,7 +3,8 @@
 # What It Does
 
 - **Durable state**: Stores environments, runs, agents, telemetry, observer cursors, and explicit skill, command, and MCP usage.
-- **Historical upgrades**: Migrates schema versions 1–10 and backfills usage from retained telemetry.
+- **Historical upgrades**: Migrates schema versions 1–11 and backfills usage from retained telemetry.
+- **Incremental reclamation**: An existing database is rebuilt once to enable incremental auto-vacuum. The rebuild can require up to twice the database size in free disk space and truncates the WAL afterward.
 - **Dashboard queries**: Reads filtered agents, projects, attention counts, paginated events, subagents, and usage summaries.
 - **Read-only access**: Opens dashboard databases without creating or upgrading them.
 
@@ -51,6 +52,7 @@ fn main() -> agent_status_store::Result<()> {
 | `open_writer(path)` | Writable connection with migrations applied |
 | `open_reader(path)` | Existing database opened read-only |
 | `schema::migrate(&mut connection)` | Historical upgrades on an owned connection |
+- **Incremental reclamation**: An existing database is rebuilt once to enable incremental auto-vacuum. The rebuild can require up to twice the database size in free disk space and truncates the WAL afterward.
 | `write::{save_agent, record_event, save_cursor}` | State, telemetry/usage, and cursor writes inside a caller transaction |
 | `write::{upsert_environment, heartbeat, dropped_frames}` | Environment identity and delivery health updates |
 | `write::{set_visibility, dismiss_completion, end_current_run}` | Explicit state mutations |

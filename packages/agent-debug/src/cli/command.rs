@@ -34,6 +34,8 @@ fn harness(command: Command) -> Command {
             "pi",
             "codex",
             "opencode",
+            "agy",
+            "antigravity",
         ]),
     )
 }
@@ -127,10 +129,15 @@ fn event_list() -> Command {
 }
 fn audit(name: &'static str, about: &'static str) -> Command {
     json(Command::new(name).about(about))
-        .arg(
-            string("harness", "", "Filter harness")
-                .value_parser(["", "claude", "pi", "codex", "opencode"]),
-        )
+        .arg(string("harness", "", "Filter harness").value_parser([
+            "",
+            "claude",
+            "pi",
+            "codex",
+            "opencode",
+            "agy",
+            "antigravity",
+        ]))
         .arg(string(
             "cwd",
             "",

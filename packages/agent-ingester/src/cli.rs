@@ -101,7 +101,7 @@ pub fn command(mode: Mode) -> Command {
                 .default_missing_value("true")
                 .default_value("false")
                 .value_parser(clap::value_parser!(bool))
-                .help("Disable LLM action summarization; =false overrides environment disable"),
+                .help("Disable LLM summaries (=false overrides the environment)"),
         )
         .arg(
             Arg::new("idle-grace-period")

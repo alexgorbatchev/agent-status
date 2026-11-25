@@ -62,6 +62,8 @@ pub struct SessionInfo {
     pub harness_version: String,
     #[serde(skip_serializing_if = "pid_zero")]
     pub pid: i32,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub is_subagent: bool,
 }
 /// A file that could not contribute a session, without discarding valid peers.
 #[derive(Clone, Debug, Serialize)]
@@ -205,18 +207,21 @@ pub fn audit(
             .filter(|s| &s.harness == harness && match_cwd(&s.cwd, filter.cwd.as_deref()))
             .collect::<Vec<_>>();
         let mut used = HashSet::new();
-        if harness == &HarnessType::ClaudeCode {
+        if matches!(harness, HarnessType::ClaudeCode | HarnessType::Agy) {
             sessions.sort_by_key(|s| std::cmp::Reverse(s.header_time));
             for session in sessions {
                 let process = processes.iter().copied().find(|p| {
                     p.pid > 0
                         && p.pid == session.pid
-                        && !used.contains(&p.pid)
-                        && (p.created_at <= 0
+                        && (session.is_subagent || !used.contains(&p.pid))
+                        && (harness == &HarnessType::Agy
+                            || p.created_at <= 0
                             || session.header_time <= 0
                             || p.created_at.abs_diff(session.header_time) < 60_000)
                 });
-                if let Some(p) = process {
+                if let Some(p) = process
+                    && !session.is_subagent
+                {
                     used.insert(p.pid);
                 }
                 records.push(record(harness, process, Some(session), now));
@@ -323,6 +328,7 @@ pub fn capture(cancel: &CancellationToken, now: i64) -> Result<LiveProcesses> {
         (HarnessType::Pi, snapshot.pi_processes()),
         (HarnessType::Codex, snapshot.codex_processes()),
         (HarnessType::Opencode, snapshot.opencode_processes()),
+        (HarnessType::Agy, snapshot.agy_processes()),
     ] {
         groups.push((
             harness,
@@ -361,6 +367,7 @@ pub struct SessionPaths {
     pub claude: Vec<PathBuf>,
     pub codex: PathBuf,
     pub opencode: PathBuf,
+    pub agy: PathBuf,
 }
 impl Default for SessionPaths {
     fn default() -> Self {
@@ -369,6 +376,7 @@ impl Default for SessionPaths {
             claude: scanner::default_claude_session_dirs(),
             codex: scanner::default_codex_sessions_dir(),
             opencode: scanner::default_opencode_db_path(),
+            agy: scanner::default_agy_sessions_dir(),
         }
     }
 }
@@ -403,6 +411,7 @@ pub fn sessions(
     cancel: &CancellationToken,
     paths: &SessionPaths,
     harness: Option<&HarnessType>,
+    processes: &ProcessSnapshot,
 ) -> Result<SessionInventory> {
     check_cancel(cancel)?;
     let mut result = SessionInventory::default();
@@ -476,6 +485,7 @@ pub fn sessions(
                             .as_str()
                             .unwrap_or(&descriptor.harness_version)
                             .into(),
+                        ..Default::default()
                     })
                 });
             }
@@ -514,6 +524,20 @@ pub fn sessions(
                 file_path: paths.opencode.clone(),
                 header_time: session.time_created,
                 ..Default::default()
+            });
+        }
+    }
+    if harness.is_none_or(|h| h == &HarnessType::Agy) {
+        for session in scanner::AgyScanner::new(paths.agy.clone()).scan(cancel, processes)? {
+            result.sessions.push(SessionInfo {
+                harness: HarnessType::Agy,
+                session_id: session.session_id,
+                cwd: session.cwd,
+                file_path: session.transcript_path,
+                header_time: session.started_at,
+                harness_version: session.harness_version,
+                pid: session.pid,
+                is_subagent: session.is_subagent,
             });
         }
     }

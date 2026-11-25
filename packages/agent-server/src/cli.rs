@@ -73,7 +73,7 @@ pub fn command(mode: Mode) -> Command {
         .version(env!("CARGO_PKG_VERSION"))
         .args_conflicts_with_subcommands(true);
     for (name, description) in [
-        ("addr", "HTTP listen address; default :4502"),
+        ("addr", "HTTP listen address"),
         ("token", "Bearer token; defaults to AGENT_STATUS_TOKEN"),
         (
             "ingester-url",

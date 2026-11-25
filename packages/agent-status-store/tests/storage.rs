@@ -46,6 +46,55 @@ fn fixture() -> AgentState {
 }
 
 #[test]
+fn writer_converts_legacy_vacuum_mode_and_can_reclaim_pages() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("legacy.db");
+    let mut legacy = open_writer(&path).unwrap();
+    legacy
+        .execute_batch("PRAGMA auto_vacuum=NONE; VACUUM;")
+        .unwrap();
+    let tx = legacy.transaction().unwrap();
+    write::save_agent(&tx, &fixture()).unwrap();
+    write::save_cursor(&tx, "env", 42).unwrap();
+    tx.commit().unwrap();
+    assert_eq!(
+        legacy
+            .pragma_query_value(None, "auto_vacuum", |row| row.get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    drop(legacy);
+
+    let writer = open_writer(&path).unwrap();
+    let scalar = |pragma| {
+        writer
+            .pragma_query_value(None, pragma, |row| row.get::<_, i64>(0))
+            .unwrap()
+    };
+    assert_eq!(scalar("auto_vacuum"), 2);
+    assert_eq!(read::last_sequence(&writer, "env").unwrap(), 42);
+    let wal = path.with_file_name("legacy.db-wal");
+    assert!(
+        std::fs::metadata(wal)
+            .map(|meta| meta.len())
+            .unwrap_or_default()
+            == 0
+    );
+    writer
+        .execute_batch(
+            "CREATE TABLE ballast (v BLOB);
+        WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<200)
+        INSERT INTO ballast SELECT zeroblob(8192) FROM n;
+        DROP TABLE ballast;",
+        )
+        .unwrap();
+    let before = scalar("page_count");
+    assert!(scalar("freelist_count") > 0);
+    writer.execute_batch("PRAGMA incremental_vacuum;").unwrap();
+    assert!(scalar("page_count") < before);
+}
+
+#[test]
 fn native_transactions_round_trip_optional_fields_and_read_only_access() {
     let dir = tempfile::tempdir_in(".tmp").unwrap();
     let path = dir.path().join("nested/state.sqlite");

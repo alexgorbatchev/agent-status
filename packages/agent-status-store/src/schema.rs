@@ -4,7 +4,7 @@ use agent_common::{types::TelemetryFrame, usage};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use std::collections::HashSet;
 
-pub const VERSION: i64 = 10;
+pub const VERSION: i64 = 11;
 
 pub fn migrate(db: &mut Connection) -> Result<()> {
     let version: i64 = db.pragma_query_value(None, "user_version", |row| row.get(0))?;
@@ -13,7 +13,14 @@ pub fn migrate(db: &mut Connection) -> Result<()> {
     }
     for next in version + 1..=VERSION {
         if next == 6 {
-            rebuild_agents(db)?;
+            rebuild_agents(db, next, |tx| {
+                tx.execute_batch(include_str!("sql/v6.sql"))?;
+                Ok(())
+            })?;
+            continue;
+        }
+        if next == 11 {
+            rebuild_agents(db, next, allow_antigravity)?;
             continue;
         }
         let tx = db.transaction()?;
@@ -79,12 +86,16 @@ fn add_columns(tx: &Transaction<'_>, columns: &[(&str, &str)]) -> Result<()> {
     Ok(())
 }
 
-fn rebuild_agents(db: &mut Connection) -> Result<()> {
+fn rebuild_agents(
+    db: &mut Connection,
+    version: i64,
+    rebuild: impl FnOnce(&Transaction<'_>) -> Result<()>,
+) -> Result<()> {
     // SQLite requires disabling foreign keys before entering the rebuild transaction.
     db.pragma_update(None, "foreign_keys", false)?;
     let result = (|| {
         let tx = db.transaction()?;
-        tx.execute_batch(include_str!("sql/v6.sql"))?;
+        rebuild(&tx)?;
         let violation = tx
             .query_row("PRAGMA foreign_key_check", [], |row| {
                 Ok((
@@ -101,13 +112,42 @@ fn rebuild_agents(db: &mut Connection) -> Result<()> {
                 rowid,
             });
         }
-        tx.pragma_update(None, "user_version", 6)?;
+        tx.pragma_update(None, "user_version", version)?;
         tx.commit()?;
         Ok(())
     })();
     let restored = db.pragma_update(None, "foreign_keys", true);
     result?;
     restored?;
+    Ok(())
+}
+
+fn allow_antigravity(tx: &Transaction<'_>) -> Result<()> {
+    let definition: String = tx.query_row(
+        "SELECT sql FROM sqlite_schema WHERE type='table' AND name='agents'",
+        [],
+        |row| row.get(0),
+    )?;
+    let (_, columns) = definition.split_once('(').ok_or(Error::AgentSchema)?;
+    let old = "harness IN ('claude-code','pi','codex','opencode')";
+    let new = "harness IN ('claude-code','pi','codex','opencode','agy')";
+    if !columns.contains(old) {
+        return Err(Error::AgentSchema);
+    }
+    let columns = columns.replacen(old, new, 1);
+    let objects = tx
+        .prepare("SELECT sql FROM sqlite_schema WHERE tbl_name='agents' AND type IN ('index','trigger') AND sql IS NOT NULL")?
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    tx.execute_batch(&format!("CREATE TABLE agents_new ({columns}"))?;
+    tx.execute_batch(
+        "INSERT INTO agents_new SELECT * FROM agents;
+        DROP TABLE agents;
+        ALTER TABLE agents_new RENAME TO agents;",
+    )?;
+    for statement in objects {
+        tx.execute_batch(&statement)?;
+    }
     Ok(())
 }
 

@@ -21,6 +21,7 @@ fn session(id: &str, at: i64, pid: i32) -> SessionInfo {
         header_time: at,
         harness_version: "1".into(),
         pid,
+        ..Default::default()
     }
 }
 

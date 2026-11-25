@@ -171,7 +171,7 @@ fn explicit_tilde_and_environment_paths_follow_source_search_precedence() {
     );
     assert_eq!(
         database::resolve_path("auto", DatabaseSearch::Events, &home, &cwd, lookup).unwrap(),
-        dev
+        data
     );
     assert_eq!(
         database::resolve_path("~/direct.db", DatabaseSearch::Sessions, &home, &cwd, |_| {
@@ -210,6 +210,17 @@ fn explicit_tilde_and_environment_paths_follow_source_search_precedence() {
         .is_err()
     );
     let empty = temp.path().join("empty");
+    assert_eq!(
+        database::resolve_path("auto", DatabaseSearch::Events, &home, &cwd, |key| (key
+            == "AGENT_STATUS_DB_PATH")
+            .then(|| "~/direct.db".into()))
+        .unwrap(),
+        home.join("direct.db")
+    );
+    assert_eq!(
+        database::resolve_path("auto", DatabaseSearch::Sessions, &home, &cwd, |_| None).unwrap(),
+        dev
+    );
     assert!(
         database::resolve_path("auto", DatabaseSearch::Events, &empty, &empty, |_| None).is_err()
     );

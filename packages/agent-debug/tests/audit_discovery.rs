@@ -1,8 +1,12 @@
 use agent_common::types::HarnessType;
+use agent_debug::audit::ProcessInfo;
 use agent_debug::{
     Error,
-    audit::{AuditFilter, PairingStatus, SessionInfo, SessionPaths, audit, capture, sessions},
+    audit::{
+        AuditFilter, PairingStatus, SessionInfo, SessionInventory, SessionPaths, audit, capture,
+    },
 };
+use agent_watcher::scanner::{ProcessMeta, ProcessSnapshot};
 use std::{fs, path::Path};
 use tokio_util::sync::CancellationToken;
 
@@ -17,7 +21,75 @@ fn paths(root: &Path) -> SessionPaths {
         claude: vec![root.join("claude")],
         codex: root.join("codex"),
         opencode: root.join("missing-opencode.db"),
+        agy: root.join("agy"),
     }
+}
+
+fn sessions(
+    cancel: &CancellationToken,
+    paths: &SessionPaths,
+    harness: Option<&HarnessType>,
+) -> agent_debug::Result<SessionInventory> {
+    agent_debug::audit::sessions(cancel, paths, harness, &Default::default())
+}
+
+#[test]
+fn antigravity_root_and_child_share_the_verified_process() {
+    let temp = temporary();
+    let paths = paths(temp.path());
+    let parent = paths.agy.join("parent/.system_generated");
+    fs::create_dir_all(parent.join("subagents")).unwrap();
+    fs::write(parent.join("subagents/child.json"), "{}").unwrap();
+    for id in ["parent", "child", "inactive"] {
+        let logs = paths.agy.join(id).join(".system_generated/logs");
+        fs::create_dir_all(&logs).unwrap();
+        fs::write(logs.join("transcript_full.jsonl"), "").unwrap();
+    }
+    let conversations = temp.path().join("conversations");
+    fs::create_dir_all(&conversations).unwrap();
+    fs::write(conversations.join("parent.meta"), r#"{"cwd":"/repo"}"#).unwrap();
+    let snapshot = ProcessSnapshot::from_processes([ProcessMeta {
+        pid: 123,
+        name: "agy".into(),
+        create_time: 1_758_400_000_000,
+        alive: true,
+        cwd: "/repo".into(),
+        ..Default::default()
+    }]);
+    let token = CancellationToken::new();
+    let filter = AuditFilter {
+        harness: Some(HarnessType::Agy),
+        ..Default::default()
+    };
+    let inventory =
+        agent_debug::audit::sessions(&token, &paths, filter.harness.as_ref(), &snapshot).unwrap();
+    assert_eq!(inventory.sessions.len(), 3);
+    let groups = [(
+        HarnessType::Agy,
+        vec![ProcessInfo {
+            pid: 123,
+            created_at: 1_758_400_000_000,
+            cwd: "/repo".into(),
+            ..Default::default()
+        }],
+    )];
+    let records = audit(&groups, &inventory.sessions, &filter, 1_758_400_000_001);
+    for id in ["parent", "child"] {
+        let paired = records
+            .iter()
+            .find(|record| record.session_id == id)
+            .unwrap();
+        assert_eq!(paired.pid, 123);
+        assert_eq!(paired.status, PairingStatus::Paired);
+    }
+    assert_eq!(
+        records
+            .iter()
+            .find(|record| record.session_id == "inactive")
+            .unwrap()
+            .status,
+        PairingStatus::OrphanSession
+    );
 }
 
 #[test]

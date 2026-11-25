@@ -39,6 +39,7 @@ fn label(harness: &HarnessType) -> &str {
         HarnessType::Pi => "Pi",
         HarnessType::Codex => "Codex",
         HarnessType::Opencode => "OpenCode",
+        HarnessType::Agy => "Antigravity",
         _ => fallback(harness.as_str(), "Unknown"),
     }
 }
@@ -51,6 +52,7 @@ fn badge(agent: &AgentState) -> String {
             HarnessType::Pi => "1;35",
             HarnessType::Codex => "36",
             HarnessType::Opencode => "1;36",
+            HarnessType::Agy => "34",
             _ => "37",
         },
     };

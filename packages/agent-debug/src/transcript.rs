@@ -1,6 +1,6 @@
 use crate::{Error, Result, check_cancel};
 use agent_common::types::HarnessType;
-use agent_parser::{ClaudeCodeParser, CodexParser, OpencodeDb, ParsedEvent};
+use agent_parser::{AgyParser, ClaudeCodeParser, CodexParser, OpencodeDb, ParsedEvent};
 use path_clean::PathClean;
 use serde::Serialize;
 use serde_json::Value;
@@ -107,6 +107,9 @@ pub fn detect_harness(path: &Path) -> Result<HarnessType> {
             .unwrap_or_default();
         if kind == "session_meta" {
             return Ok(HarnessType::Codex);
+        }
+        if agent_parser::parse_agy_line(sample).is_ok_and(|events| !events.is_empty()) {
+            return Ok(HarnessType::Agy);
         }
         if kind == "session"
             && ["cwd", "version", "parentId"]
@@ -218,6 +221,9 @@ pub fn load_session(
         .map_or_else(|| detect_harness(path), Ok)?;
     if harness == HarnessType::Opencode {
         return load_opencode(cancel, path, options);
+    }
+    if harness == HarnessType::Agy {
+        return load_agy(cancel, path, options);
     }
     let mut claude = ClaudeCodeParser::new();
     let mut codex = CodexParser::new();
@@ -335,6 +341,85 @@ pub fn load_session(
         harness_version: String::new(),
         events,
         subagents,
+        diagnostics,
+    })
+}
+
+fn load_agy(
+    cancel: &CancellationToken,
+    path: &Path,
+    options: &LoadOptions,
+) -> Result<LoadedSession> {
+    let mut parser = AgyParser::new();
+    let (mut events, diagnostics) = jsonl(cancel, path, |line| parser.parse_line(line), false)?;
+    let native_layout = path.parent().and_then(Path::parent).filter(|generated| {
+        path.parent()
+            .and_then(Path::file_name)
+            .is_some_and(|name| name == "logs")
+            && generated
+                .file_name()
+                .is_some_and(|name| name == ".system_generated")
+    });
+    let native_session = native_layout.and_then(Path::parent);
+    let session_id = options
+        .session_id
+        .as_deref()
+        .filter(|id| !id.is_empty())
+        .or_else(|| {
+            native_session
+                .and_then(Path::file_name)
+                .and_then(|name| name.to_str())
+        })
+        .or_else(|| path.file_stem().and_then(|name| name.to_str()))
+        .ok_or_else(|| {
+            Error::InvalidInput("transcript name is not UTF-8; supply --session-id".into())
+        })?
+        .to_owned();
+    let mut title = String::new();
+    let mut workspace = None;
+    if let Some(app_data) = native_session.and_then(Path::parent).and_then(Path::parent) {
+        if let Ok(mut summaries) =
+            agent_parser::read_agy_summaries(app_data.join("conversation_summaries.db"))
+            && let Some(summary) = summaries.remove(&session_id)
+        {
+            title = summary.title;
+            workspace = summary.workspace_paths.into_iter().next();
+        }
+        if workspace.is_none() && options.cwd.is_none() {
+            workspace = agent_parser::read_agy_conversation_workspaces(
+                app_data.join("conversations"),
+                &session_id,
+            )
+            .ok()
+            .and_then(|paths| paths.into_iter().next());
+        }
+    }
+    let cwd = options
+        .cwd
+        .clone()
+        .or(workspace)
+        .map_or_else(PathBuf::new, |path| path.clean());
+    let cwd_text = cwd.to_str().ok_or_else(|| {
+        Error::InvalidInput(
+            "working directory is not UTF-8 and cannot be represented in telemetry".into(),
+        )
+    })?;
+    for event in &mut events {
+        event.event.cwd = cwd_text.into();
+    }
+    ensure_lifecycle(&mut events, 0, 0, &cwd, options.strict_lifecycle)?;
+    if !title.is_empty()
+        && let Some(first) = events.first_mut()
+    {
+        first.event.data.title = Some(title);
+    }
+    Ok(LoadedSession {
+        harness: HarnessType::Agy,
+        session_id,
+        cwd,
+        harness_version: String::new(),
+        events,
+        subagents: Vec::new(),
         diagnostics,
     })
 }
@@ -520,6 +605,15 @@ pub fn search_roots(home: &Path, lookup: impl Fn(&str) -> Option<String>) -> Vec
             home.join(".codex/sessions"),
         ),
         (
+            HarnessType::Agy,
+            "AGY_SESSIONS_DIR",
+            lookup("GEMINI_HOME")
+                .filter(|v| !v.is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home.join(".gemini"))
+                .join("antigravity-cli/brain"),
+        ),
+        (
             HarnessType::Opencode,
             "OPENCODE_DB_PATH",
             lookup("XDG_DATA_HOME")
@@ -553,6 +647,14 @@ fn files(cancel: &CancellationToken, root: &Path, result: &mut Vec<PathBuf>) -> 
     Ok(())
 }
 
+fn agy_transcript(session: &Path) -> Option<PathBuf> {
+    let logs = session.join(".system_generated/logs");
+    ["transcript_full.jsonl", "transcript.jsonl"]
+        .into_iter()
+        .map(|name| logs.join(name))
+        .find(|path| path.is_file())
+}
+
 pub fn resolve_target(
     cancel: &CancellationToken,
     target: &Path,
@@ -567,6 +669,18 @@ pub fn resolve_target(
     }
     if target.exists() {
         let path = if target.is_dir() {
+            if hint.as_ref().is_none_or(|h| h == &HarnessType::Agy)
+                && let Some(path) = agy_transcript(target)
+            {
+                return Ok(ResolvedTarget {
+                    file_path: path,
+                    harness: HarnessType::Agy,
+                    session_id: target
+                        .file_name()
+                        .and_then(|id| id.to_str())
+                        .map(str::to_owned),
+                });
+            }
             let mut listing = Vec::new();
             files(cancel, target, &mut listing)?;
             listing
@@ -598,6 +712,34 @@ pub fn resolve_target(
     {
         check_cancel(cancel)?;
         if !root.path.exists() {
+            continue;
+        }
+        if root.harness == HarnessType::Agy {
+            for session in entries(&root.path)? {
+                check_cancel(cancel)?;
+                let name = session.file_name();
+                let Some(canonical) = name.to_str().filter(|name| name.starts_with(id)) else {
+                    continue;
+                };
+                if !session.file_type()?.is_dir() {
+                    continue;
+                }
+                let Some(path) = agy_transcript(&session.path()) else {
+                    continue;
+                };
+                if visited.insert((path.clone(), canonical.to_owned())) {
+                    let matches = if canonical == id {
+                        &mut exact
+                    } else {
+                        &mut partial
+                    };
+                    matches.push(ResolvedTarget {
+                        file_path: path,
+                        harness: HarnessType::Agy,
+                        session_id: Some(canonical.into()),
+                    });
+                }
+            }
             continue;
         }
         if root.harness == HarnessType::Opencode {

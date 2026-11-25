@@ -1,6 +1,6 @@
 ---
 created_on: 2026-10-14 15:07
-last_modified: 2026-11-25 05:23
+last_modified: 2026-11-25 05:29
 status: current
 ---
 
@@ -10,21 +10,26 @@ Use local transcripts and an existing monitoring database for offline diagnostic
 
 ## Session discovery
 
-An existing file resolves directly. A directory resolves its first discovered `.jsonl` or `.db` file. Otherwise an exact session identity takes precedence over partial filename matches; multiple matches are errors.
+An existing file resolves directly. An Antigravity session directory resolves its native transcript. Other directories resolve their first discovered `.jsonl` or `.db` file. Exact IDs take priority over partial matches. Multiple matches produce an error.
 
 - Claude lookup searches `CLAUDE_SESSIONS_DIR` and `CLAUDE_PROJECTS_DIR` overrides, `~/.claude/{projects,sessions}`, `~/.local/share/ai-registry/claude-code/{projects,sessions}`, and the matching `XDG_DATA_HOME` locations.
 - Pi lookup uses `PI_SESSIONS_DIR`, then `~/.pi/agent/sessions`.
 - Codex lookup uses `CODEX_SESSIONS_DIR`, then `~/.codex/sessions`.
+- Antigravity CLI lookup uses `AGY_SESSIONS_DIR`, then `${GEMINI_HOME:-~/.gemini}/antigravity-cli/brain`. Search by exact ID or unique prefix, and pass `--harness agy` or `--harness antigravity` to restrict the search.
 - OpenCode lookup uses `OPENCODE_DB_PATH`, then `${XDG_DATA_HOME:-~/.local/share}/opencode/opencode.db`.
 - Native scanner/local discovery additionally honors `PI_CODING_AGENT_DIR` and `CODEX_HOME` when their explicit sessions directory variables are absent. Claude scanner directories use XDG data and home fallbacks beside explicit overrides.
 - OpenCode IDs match exactly. JSONL identities derive from the resolved transcript and harness metadata. A telemetry working directory must be representable as UTF-8.
 
 ## Monitoring database
 
-Explicit `--db <path>` selects that file; `~/` expands against the native home directory. `auto` and defaults use these existing-file searches:
+Database commands use the same search order:
 
-- Session, fleet, and agent operations: `AGENT_STATUS_DB_PATH` when set; `${XDG_DATA_HOME:-~/.local/share}/agent-status/agent-status.db`; `./.tmp/dev-stack/data/agent-status/agent-status.db`; `~/.local/state/agent-status/agent-status.db`. An explicitly configured missing `AGENT_STATUS_DB_PATH` fails immediately.
-- Event operations: `./.tmp/dev-stack/data/agent-status/agent-status.db`; `./.tmp/dev-stack/data/agent-status.db`; `AGENT_DATA_DIR/agent-status.db`; `AGENT_DATA_DIR/agent-status/agent-status.db`; `XDG_DATA_HOME/agent-status/agent-status.db`; `XDG_DATA_HOME/agent-status.db`; `~/.local/share/agent-status/agent-status.db`.
+1. Explicit `--db <path>`.
+2. `AGENT_STATUS_DB_PATH`, when set.
+3. `${XDG_DATA_HOME:-~/.local/share}/agent-status/agent-status.db`.
+4. `./.tmp/dev-stack/data/agent-status/agent-status.db`.
+
+Both explicit sources expand `~/` against the native home directory and fail immediately if the configured file is missing.
 
 These inputs remain read-only. An explicit `--export-db <path>` creates or opens a writable ingestion database and commits processed frames incrementally.
 

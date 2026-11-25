@@ -7,8 +7,101 @@ use agent_debug::{
     },
 };
 use agent_parser::ParsedEvent;
-use std::fs;
+use std::{fs, path::Path};
 use tokio_util::sync::CancellationToken;
+
+#[test]
+fn antigravity_replay_uses_native_metadata_and_preserves_tool_pairs() {
+    let temp = tempfile::tempdir().unwrap();
+    let brain = temp.path().join("custom-sessions");
+    let session = brain.join("fixture-123");
+    let path = session.join(".system_generated/logs/transcript_full.jsonl");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, concat!(
+        "{\"step_index\":0,\"type\":\"USER_INPUT\",\"created_at\":\"2026-11-21T00:00:00Z\",\"content\":\"Inspect the repository\"}\n",
+        "{\"step_index\":1,\"type\":\"PLANNER_RESPONSE\",\"created_at\":\"2026-11-21T00:00:01Z\",\"tool_calls\":[{\"id\":\"call-1\",\"name\":\"run_command\",\"args\":{\"CommandLine\":\"pwd\"}}]}\n",
+        "{\"step_index\":2,\"type\":\"GENERIC\",\"created_at\":\"2026-11-21T00:00:02Z\",\"content\":\"/repo\"}\n",
+        "{\"step_index\":3,\"type\":\"PLANNER_RESPONSE\",\"created_at\":\"2026-11-21T00:00:03Z\",\"content\":\"Done\",\"output_tokens\":12}\n",
+    )).unwrap();
+    let conversations = temp.path().join("conversations");
+    fs::create_dir(&conversations).unwrap();
+    fs::write(
+        conversations.join("fixture-123.meta"),
+        r#"{"cwd":"/repo/custom"}"#,
+    )
+    .unwrap();
+    let cancel = CancellationToken::new();
+    let roots = agent_debug::transcript::search_roots(temp.path(), |key| {
+        (key == "AGY_SESSIONS_DIR").then(|| brain.to_str().unwrap().into())
+    });
+    for target in [
+        session.as_path(),
+        Path::new("fixture-"),
+        Path::new("fixture-123"),
+    ] {
+        let resolved = resolve_target(&cancel, target, None, &roots).unwrap();
+        assert_eq!(resolved.harness, HarnessType::Agy);
+        assert_eq!(resolved.file_path, path);
+        assert_eq!(resolved.session_id.as_deref(), Some("fixture-123"));
+    }
+    let loaded = load_session(&cancel, &path, &LoadOptions::default()).unwrap();
+    assert_eq!(loaded.harness, HarnessType::Agy);
+    assert_eq!(loaded.session_id, "fixture-123");
+    assert_eq!(loaded.cwd, Path::new("/repo/custom"));
+    assert!(loaded.diagnostics.is_empty());
+    assert_eq!(
+        loaded.events.first().unwrap().event.event_type,
+        "run_started"
+    );
+    assert_eq!(loaded.events.last().unwrap().event.event_type, "run_exited");
+    let events = loaded
+        .events
+        .iter()
+        .filter(|e| !e.is_synthetic)
+        .collect::<Vec<_>>();
+    assert!(events.iter().all(|e| e.event.cwd == "/repo/custom"));
+    for (kind, line) in [("tool_call", 2), ("tool_result", 3)] {
+        let event = events.iter().find(|e| e.event.event_type == kind).unwrap();
+        assert_eq!(event.event.data.tool_call_id.as_deref(), Some("call-1"));
+        assert_eq!(event.source_line, line);
+    }
+    let summaries =
+        rusqlite::Connection::open(temp.path().join("conversation_summaries.db")).unwrap();
+    summaries.execute_batch(r#"
+        CREATE TABLE conversation_summaries (
+            conversation_id TEXT, title TEXT, workspace_uris TEXT, status TEXT,
+            parent_conversation_id TEXT, last_modified_time TEXT, not_fully_idle INTEGER, killed INTEGER
+        );
+        INSERT INTO conversation_summaries VALUES
+            ('fixture-123', 'Native title', '["file:///native"]', '', '', '', 0, 0);
+    "#).unwrap();
+    let strict = load_session(
+        &cancel,
+        &path,
+        &LoadOptions {
+            cwd: Some("/override".into()),
+            strict_lifecycle: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(strict.cwd, Path::new("/override"));
+    assert_eq!(
+        strict.events[0].event.data.title.as_deref(),
+        Some("Native title")
+    );
+    assert!(strict.events.iter().all(|event| !event.is_synthetic));
+    let fallback = brain.join("fixture-456/.system_generated/logs/transcript.jsonl");
+    fs::create_dir_all(fallback.parent().unwrap()).unwrap();
+    fs::copy(&path, &fallback).unwrap();
+    assert!(resolve_target(&cancel, Path::new("fixture-"), None, &roots).is_err());
+    assert_eq!(
+        resolve_target(&cancel, Path::new("fixture-456"), None, &roots)
+            .unwrap()
+            .file_path,
+        fallback
+    );
+}
 
 #[test]
 fn detects_structured_metadata_independent_of_json_whitespace() {

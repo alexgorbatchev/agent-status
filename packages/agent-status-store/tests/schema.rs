@@ -64,6 +64,67 @@ fn version_five(db: &Connection) {
     .unwrap();
 }
 
+fn version_ten(db: &Connection) {
+    version_five(db);
+    db.execute_batch(include_str!("../src/sql/v6.sql")).unwrap();
+    db.execute_batch(
+        "ALTER TABLE agents ADD COLUMN rate_limit_reset_at INTEGER;
+        ALTER TABLE agents ADD COLUMN retry_after_seconds INTEGER;
+        ALTER TABLE agents ADD COLUMN has_unseen_completion INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE agents ADD COLUMN completed_at INTEGER;
+        ALTER TABLE agents ADD COLUMN summary TEXT;
+        ALTER TABLE agents ADD COLUMN summary_updated_at INTEGER;
+        PRAGMA user_version=10;",
+    )
+    .unwrap();
+    db.execute_batch(include_str!("../src/sql/usage.sql"))
+        .unwrap();
+}
+
+#[test]
+fn antigravity_migration_preserves_agents_and_dependent_objects() {
+    let mut db = Connection::open_in_memory().unwrap();
+    version_ten(&db);
+    db.pragma_update(None, "foreign_keys", true).unwrap();
+    db.execute_batch(
+        "INSERT INTO environments VALUES('env','Local','host','linux','user',0,1000);
+        INSERT INTO agents(id,session_id,environment_id,harness,project_id,project_name,canonical_root,branch,cwd,first_started_at,updated_at,activity,summary)
+        VALUES('agent','session','env','codex','project','project','/repo','main','/repo',1000,1000,'IDLE','Retained summary');
+        INSERT INTO telemetry_events(agent_id,event_type,timestamp,data_json) VALUES('agent','session_start',1000,'{}');
+        CREATE INDEX custom_agent_summary ON agents(summary);
+        CREATE TRIGGER custom_agent_update AFTER UPDATE ON agents BEGIN
+            UPDATE telemetry_events SET timestamp = NEW.updated_at WHERE agent_id = NEW.id;
+        END;",
+    ).unwrap();
+
+    migrate(&mut db).unwrap();
+    db.execute("UPDATE agents SET harness='agy', updated_at=2000", [])
+        .unwrap();
+    assert!(
+        db.execute("UPDATE agents SET harness='unknown'", [])
+            .is_err()
+    );
+    assert_eq!(
+        db.query_row(
+            "SELECT summary FROM agents INDEXED BY custom_agent_summary",
+            [],
+            |row| row.get::<_, String>(0)
+        )
+        .unwrap(),
+        "Retained summary",
+    );
+    assert_eq!(
+        db.query_row("SELECT timestamp FROM telemetry_events", [], |row| row
+            .get::<_, i64>(0))
+            .unwrap(),
+        2000,
+    );
+    assert!(
+        db.pragma_query_value(None, "foreign_keys", |row| row.get::<_, bool>(0))
+            .unwrap()
+    );
+}
+
 #[test]
 fn rebuild_failure_restores_foreign_keys_and_preserves_original_schema() {
     let mut db = Connection::open_in_memory().unwrap();
@@ -136,7 +197,7 @@ fn partially_added_rate_limit_and_completion_columns_are_recovered() {
 #[test]
 fn invalid_historical_usage_rolls_back_and_newer_schema_is_rejected() {
     let mut db = Connection::open_in_memory().unwrap();
-    migrate(&mut db).unwrap();
+    version_ten(&db);
     db.execute_batch("DROP TABLE usage_observations; PRAGMA user_version=9;
         INSERT INTO environments VALUES('env','label','host','linux','user',0,1000);
         INSERT INTO agents(id,session_id,environment_id,harness,project_id,project_name,canonical_root,branch,cwd,first_started_at,updated_at,activity)
@@ -152,9 +213,9 @@ fn invalid_historical_usage_rolls_back_and_newer_schema_is_rejected() {
         9
     );
     assert!(db.prepare("SELECT * FROM usage_observations").is_err());
-    db.pragma_update(None, "user_version", 11).unwrap();
+    db.pragma_update(None, "user_version", 12).unwrap();
     assert!(matches!(
         migrate(&mut db),
-        Err(agent_status_store::Error::SchemaVersion(11))
+        Err(agent_status_store::Error::SchemaVersion(12))
     ));
 }
