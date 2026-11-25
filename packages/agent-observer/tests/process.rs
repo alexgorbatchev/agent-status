@@ -12,7 +12,7 @@ fn isolated(root: &std::path::Path) -> Command {
         .env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap())
         .env("HOME", root)
-        .env("AGENT_LOG_TO_DISK", "false")
+        .env("AGENT_STATUS_LOG_TO_DISK", "false")
         .env("AGENT", "1")
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_CACHE_HOME", root.join("cache"))

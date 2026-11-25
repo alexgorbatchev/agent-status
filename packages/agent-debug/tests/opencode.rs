@@ -104,7 +104,7 @@ fn session_list_resolves_only_opencode_even_when_other_harness_has_same_id() {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_agent-debug"))
         .args(["session", "list", "shared"])
         .env("AGENT", "1")
-        .env("AGENT_LOG_TO_DISK", "0")
+        .env("AGENT_STATUS_LOG_TO_DISK", "0")
         .env("OPENCODE_DB_PATH", &db)
         .env("PI_SESSIONS_DIR", pi.parent().unwrap())
         .env("CLAUDE_PROJECTS_DIR", dir.path().join("missing-claude"))

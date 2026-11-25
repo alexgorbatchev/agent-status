@@ -81,7 +81,7 @@ pub fn default_log_dir() -> PathBuf {
     default_log_dir_with(|key| std::env::var(key).ok())
 }
 fn default_log_dir_with(get: impl Fn(&str) -> Option<String>) -> PathBuf {
-    if let Some(dir) = get("AGENT_LOG_DIR").filter(|v| !v.trim().is_empty()) {
+    if let Some(dir) = get("AGENT_STATUS_LOG_DIR").filter(|v| !v.trim().is_empty()) {
         return PathBuf::from(dir.trim());
     }
     for key in ["XDG_STATE_HOME", "XDG_DATA_HOME"] {
@@ -108,24 +108,24 @@ impl FileConfig {
     }
     /// Inject a lookup to resolve configuration without mutating process environment.
     pub fn from_lookup(get: impl Fn(&str) -> Option<String>) -> Self {
-        let positive_size = get("AGENT_LOG_MAX_SIZE_MB")
+        let positive_size = get("AGENT_STATUS_LOG_MAX_SIZE_MB")
             .and_then(|v| v.parse::<u64>().ok())
             .filter(|v| *v > 0)
             .and_then(|v| v.checked_mul(1024 * 1024));
         Self {
-            filename: get("AGENT_LOG_FILE")
+            filename: get("AGENT_STATUS_LOG_FILE")
                 .filter(|v| !v.is_empty())
                 .map(PathBuf::from),
             dir: default_log_dir_with(&get),
             max_size_bytes: positive_size.unwrap_or(10 * 1024 * 1024),
-            max_backups: get("AGENT_LOG_MAX_BACKUPS")
+            max_backups: get("AGENT_STATUS_LOG_MAX_BACKUPS")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(5),
-            max_age_days: get("AGENT_LOG_MAX_AGE_DAYS")
+            max_age_days: get("AGENT_STATUS_LOG_MAX_AGE_DAYS")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(14),
-            compress: !disabled(get("AGENT_LOG_COMPRESS")),
-            disabled: disabled(get("AGENT_LOG_TO_DISK")),
+            compress: !disabled(get("AGENT_STATUS_LOG_COMPRESS")),
+            disabled: disabled(get("AGENT_STATUS_LOG_TO_DISK")),
         }
     }
     pub fn path(&self, service: &str) -> io::Result<PathBuf> {

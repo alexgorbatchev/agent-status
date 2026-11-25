@@ -22,7 +22,7 @@ macro_rules! string_enum {
 }
 string_enum!(LifecycleState { Running = "RUNNING", Exited = "EXITED" });
 string_enum!(ActivityState { Busy = "BUSY", WaitingQuestion = "WAITING_QUESTION", Error = "ERROR", RateLimited = "RATE_LIMITED", Idle = "IDLE" });
-string_enum!(HarnessType { ClaudeCode = "claude-code", Pi = "pi", Codex = "codex", Opencode = "opencode" });
+string_enum!(HarnessType { ClaudeCode = "claude-code", Pi = "pi", Codex = "codex", Opencode = "opencode", Agy = "agy" });
 string_enum!(AgentPhase { Planning = "planning", Editing = "editing", Testing = "testing", Debugging = "debugging", Investigating = "investigating" });
 string_enum!(SubagentStatus { Running = "running", Completed = "completed", Settling = "settling" });
 

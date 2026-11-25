@@ -94,10 +94,10 @@ fn agent_logfmt_preserves_service_ids_and_native_span_scopes() {
 #[test]
 fn configuration_resolves_paths_and_preserves_explicit_unlimited_retention() {
     let vars = [
-        ("AGENT_LOG_MAX_SIZE_MB", "2"),
-        ("AGENT_LOG_MAX_BACKUPS", "0"),
-        ("AGENT_LOG_MAX_AGE_DAYS", "0"),
-        ("AGENT_LOG_COMPRESS", "off"),
+        ("AGENT_STATUS_LOG_MAX_SIZE_MB", "2"),
+        ("AGENT_STATUS_LOG_MAX_BACKUPS", "0"),
+        ("AGENT_STATUS_LOG_MAX_AGE_DAYS", "0"),
+        ("AGENT_STATUS_LOG_COMPRESS", "off"),
         ("XDG_STATE_HOME", "/state"),
     ];
     let get = |key: &str| {

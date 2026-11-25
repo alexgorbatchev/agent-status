@@ -247,7 +247,7 @@ pub fn resolve_path(
     let mut candidates = Vec::new();
     match mode {
         DatabaseSearch::Sessions => {
-            if let Some(explicit) = value("AGENT_DB_PATH") {
+            if let Some(explicit) = value("AGENT_STATUS_DB_PATH") {
                 fs_exists(&explicit)?;
                 return Ok(explicit);
             }

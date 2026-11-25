@@ -4,9 +4,9 @@ fn command(dir: &std::path::Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_agent-debug"));
     command
         .env("AGENT", "1")
-        .env("AGENT_LOG_DIR", dir)
-        .env("AGENT_LOG_TO_DISK", "1")
-        .env_remove("AGENT_LOG_FILE");
+        .env("AGENT_STATUS_LOG_DIR", dir)
+        .env("AGENT_STATUS_LOG_TO_DISK", "1")
+        .env_remove("AGENT_STATUS_LOG_FILE");
     command
 }
 

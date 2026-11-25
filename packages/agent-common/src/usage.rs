@@ -86,7 +86,7 @@ impl Report {
                 "Skill tool invocation attempts and direct SKILL.md read attempts.",
                 "Recorded slash requests only; expanded commands may omit their original names.",
             )),
-            HarnessType::Unknown(_) => None,
+            HarnessType::Agy | HarnessType::Unknown(_) => None,
         };
         let coverage = ["skills", "commands", "mcp"].into_iter().map(|kind| {
             let detail = descriptions.map(|(skills, commands)| match kind {

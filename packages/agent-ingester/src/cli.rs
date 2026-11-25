@@ -57,7 +57,7 @@ pub fn command(mode: Mode) -> Command {
         (
             "token",
             "",
-            "Bearer authentication token; defaults to AGENT_BEARER_TOKEN or dev-secret-token",
+            "Bearer authentication token; defaults to AGENT_STATUS_TOKEN or dev-secret-token",
         ),
         (
             "db",
@@ -215,13 +215,14 @@ pub fn parse_with_env(
             .unwrap_or_default()
             .then_some(DisableSource::Flag)
     } else {
-        (lookup("AGENT_NO_SUMMARIZE").as_deref() == Some("1")).then_some(DisableSource::Environment)
+        (lookup("AGENT_STATUS_NO_SUMMARIZE").as_deref() == Some("1"))
+            .then_some(DisableSource::Environment)
     };
     let mut idle_grace = *matches
         .get_one::<Duration>("idle-grace-period")
         .expect("duration argument");
     if !flag("idle-grace-period")
-        && let Some(value) = nonempty(&lookup, "AGENT_IDLE_GRACE_PERIOD")
+        && let Some(value) = nonempty(&lookup, "AGENT_STATUS_IDLE_GRACE_PERIOD")
     {
         match duration(&value) {
             Ok(duration) => idle_grace = duration,
@@ -232,7 +233,7 @@ pub fn parse_with_env(
         let override_flag = match environment {
             "LITELLM_BASE_URL" | "OPENAI_BASE_URL" => Some("litellm-url"),
             "LITELLM_API_KEY" | "LITELLM_KEY" | "OPENAI_API_KEY" => Some("litellm-key"),
-            "AGENT_SUMMARIZER_MODEL" => Some("summarizer-model"),
+            "AGENT_STATUS_SUMMARIZER_MODEL" => Some("summarizer-model"),
             _ => None,
         };
         if let Some(name) = override_flag
@@ -244,8 +245,8 @@ pub fn parse_with_env(
         }
     });
     Ok(Action::Serve(Box::new(Options {
-        addr: setting("addr", &["AGENT_INGESTER_ADDR"], ":4501"),
-        token: setting("token", &["AGENT_BEARER_TOKEN"], "dev-secret-token"),
+        addr: setting("addr", &["AGENT_STATUS_INGESTER_ADDR"], ":4501"),
+        token: setting("token", &["AGENT_STATUS_TOKEN"], "dev-secret-token"),
         database: if flag("db") {
             value("db").into()
         } else {
@@ -263,8 +264,8 @@ pub fn parse_with_env(
         },
         summarizer,
         log_level: value("log-level"),
-        log_dir: setting("log-dir", &["AGENT_LOG_DIR"], "").into(),
-        log_file: setting("log-file", &["AGENT_LOG_FILE"], "").into(),
+        log_dir: setting("log-dir", &["AGENT_STATUS_LOG_DIR"], "").into(),
+        log_file: setting("log-file", &["AGENT_STATUS_LOG_FILE"], "").into(),
     })))
 }
 pub fn logging_options(

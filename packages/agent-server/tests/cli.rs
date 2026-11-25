@@ -35,9 +35,9 @@ fn native_flags_and_environment_precedence_preserve_paths_csv_and_sensitive_conf
         ("XDG_DATA_HOME", "/data"),
         ("XDG_RUNTIME_DIR", "/runtime"),
         ("AGENT_STATUS_TOKEN", "configured"),
-        ("AGENT_INGESTER_HTTP_URL", "http://ingester:4501"),
-        ("AGENT_LOG_DIR", "/logs"),
-        ("AGENT_LOG_FILE", "/logs/server.log"),
+        ("AGENT_STATUS_INGESTER_URL", "http://ingester:4501"),
+        ("AGENT_STATUS_LOG_DIR", "/logs"),
+        ("AGENT_STATUS_LOG_FILE", "/logs/server.log"),
     ];
     let Action::Serve(options) = parse(
         &["agent-server"],

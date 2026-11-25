@@ -24,7 +24,7 @@
 - Local diagnostics operate without a running server. `agent list --all` and `agent usage` contact `AGENT_SERVER_HTTP_URL`, defaulting to `http://127.0.0.1:4502`. `AGENT_STATUS_TOKEN` supplies an optional bearer token. Requests have a ten-second deadline, one attempt, and zero redirects.
 - Summarization is disabled by default and performs no provider environment lookup while disabled. `--summarize` enables configured OpenAI-compatible, Gemini, and Anthropic providers; calls may incur charges. Provider configuration and fallback order appear in the configuration reference.
 - Results go to stdout; scanner warnings and returned failures go to stderr. `AGENT=1`, `true`, or `yes` selects compact output. `--json` supplies structured output where listed below. Displayed home paths use `~` and terminal control sequences are removed.
-- Runtime commands also write rotating logs under `${XDG_STATE_HOME:-~/.local/state}/agent-status/logs`, with an intermediate `XDG_DATA_HOME` fallback. Defaults are 10 MiB, five compressed archives, and 14 days. `AGENT_LOG_TO_DISK=false` disables disk logging; help and version complete before logging starts.
+- Runtime commands also write rotating logs under `${XDG_STATE_HOME:-~/.local/state}/agent-status/logs`, with an intermediate `XDG_DATA_HOME` fallback. Defaults are 10 MiB, five compressed archives, and 14 days. `AGENT_STATUS_LOG_TO_DISK=false` disables disk logging; help and version complete before logging starts.
 - Successful commands exit 0. Argument, validation, cancellation, I/O, runtime, and output failures exit 1. Validation prints its report before returning a failed result. SIGINT and SIGTERM cancel current work and wait for owned tasks.
 
 # Installation
@@ -34,7 +34,7 @@ This Rust workspace package has no published release artifact. Its build recipe 
 # Setup
 
 - Provide an existing session transcript or OpenCode database for local replay. Set the harness-specific discovery overrides in the [configuration reference](../../skills/agent-debug/references/setup.md) when files live outside their usual locations.
-- Supply an existing Agent Status database through `--db` for persisted inspection. `AGENT_DB_PATH` participates in session and fleet database discovery; event commands have their own documented search order.
+- Supply an existing Agent Status database through `--db` for persisted inspection. `AGENT_STATUS_DB_PATH` participates in session and fleet database discovery; event commands have their own documented search order.
 - For remote reads, provide a running Agent Status server and set `AGENT_SERVER_HTTP_URL` and, when required, `AGENT_STATUS_TOKEN`.
 - For optional summarization, configure a provider using the configuration reference before passing `--summarize`.
 

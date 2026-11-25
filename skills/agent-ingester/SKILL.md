@@ -4,7 +4,7 @@ description: Use when operating agent-ingester to receive, classify, persist, an
 author: alexgorbatchev
 metadata:
   created_on: 2026-10-14 12:27
-  last_modified: 2026-11-22 14:18
+  last_modified: 2026-11-25 05:23
   status: current
 ---
 
@@ -28,17 +28,17 @@ loading daemon configuration or opening files or network listeners.
 
 | Flag | Short | Type | Default | Behavior |
 | --- | --- | --- | --- | --- |
-| --addr | — | string | :4501 | AGENT_INGESTER_ADDR overrides default; numeric port required. |
-| --token | — | string | development token | AGENT_BEARER_TOKEN overrides default; authenticate observers and internal controls. |
+| --addr | — | string | :4501 | AGENT_STATUS_INGESTER_ADDR overrides default; numeric port required. |
+| --token | — | string | development token | AGENT_STATUS_TOKEN overrides default; authenticate observers and internal controls. |
 | --db | — | string | empty | Runtime default: XDG_DATA_HOME/agent-status/agent-status.db, then ~/.local/share/agent-status/agent-status.db. |
 | --notify-sock | — | string | empty | Runtime default: XDG_RUNTIME_DIR/agent-status/notify.sock, then the system /tmp directory's agent-status/notify.sock. |
-| --no-summarize | — | bool | false | AGENT_NO_SUMMARIZE=1 disables summaries; bare flag means true; --no-summarize=false explicitly enables them. |
+| --no-summarize | — | bool | false | AGENT_STATUS_NO_SUMMARIZE=1 disables summaries; bare flag means true; --no-summarize=false explicitly enables them. |
 | --litellm-url | — | string | empty | LITELLM_BASE_URL, then OPENAI_BASE_URL; OpenAI-compatible base URL. |
 | --litellm-key | — | string | empty | LITELLM_API_KEY, then LITELLM_KEY, then OPENAI_API_KEY. |
-| --summarizer-model | — | string | empty | AGENT_SUMMARIZER_MODEL, then provider defaults; applies to all configured providers. |
-| --idle-grace-period | — | duration | 5s | AGENT_IDLE_GRACE_PERIOD overrides default; delay from terminal root turn end to IDLE. |
-| --log-dir | — | string | empty | AGENT_LOG_DIR or the default rotating-log directory. |
-| --log-file | — | string | empty | AGENT_LOG_FILE or ingester.log; exact filename. |
+| --summarizer-model | — | string | empty | AGENT_STATUS_SUMMARIZER_MODEL, then provider defaults; applies to all configured providers. |
+| --idle-grace-period | — | duration | 5s | AGENT_STATUS_IDLE_GRACE_PERIOD overrides default; delay from terminal root turn end to IDLE. |
+| --log-dir | — | string | empty | AGENT_STATUS_LOG_DIR or the default rotating-log directory. |
+| --log-file | — | string | empty | AGENT_STATUS_LOG_FILE or ingester.log; exact filename. |
 | --log-level | — | string | info | debug, info, warn, warning, error; case-insensitive, surrounding whitespace ignored. Empty selects info. |
 | --help | -h | bool | false | Print help and exit. |
 | --version | -V | bool | false | Print raw version and newline. |
@@ -91,12 +91,12 @@ prefers exact positive PID, then cleaned cwd plus harness name. macOS optionally
 activates HERDR_TERMINAL_APP or TERM_PROGRAM after successful focus. Activation
 is best effort and has no native macOS runtime verification in this Linux build.
 
-AGENT_LOG_TO_DISK=false, 0, no, or off disables disk output. AGENT_LOG_FILE sets
-an exact filename; AGENT_LOG_DIR selects a directory. Default directory is
+AGENT_STATUS_LOG_TO_DISK=false, 0, no, or off disables disk output. AGENT_STATUS_LOG_FILE sets
+an exact filename; AGENT_STATUS_LOG_DIR selects a directory. Default directory is
 XDG_STATE_HOME/agent-status/logs, then XDG_DATA_HOME/agent-status/logs, then
-~/.local/state/agent-status/logs; filename ingester.log. AGENT_LOG_MAX_SIZE_MB
-defaults to 10, AGENT_LOG_MAX_BACKUPS to 5, AGENT_LOG_MAX_AGE_DAYS to 14, and
-AGENT_LOG_COMPRESS to true. Zero backups or age means unlimited for that limit.
+~/.local/state/agent-status/logs; filename ingester.log. AGENT_STATUS_LOG_MAX_SIZE_MB
+defaults to 10, AGENT_STATUS_LOG_MAX_BACKUPS to 5, AGENT_STATUS_LOG_MAX_AGE_DAYS to 14, and
+AGENT_STATUS_LOG_COMPRESS to true. Zero backups or age means unlimited for that limit.
 The same false values disable compression. CLI paths override environment.
 Disk-open failures warn and continue on stderr; write/flush errors fail shutdown.
 
@@ -104,10 +104,10 @@ Disk-open failures warn and continue on stderr; write/flush errors fail shutdown
 
 ```sh
 agent-ingester --version
-AGENT_NO_SUMMARIZE=1 agent-ingester --addr 127.0.0.1:4501
+AGENT_STATUS_NO_SUMMARIZE=1 agent-ingester --addr 127.0.0.1:4501
 ```
 
-Configure AGENT_BEARER_TOKEN in the daemon environment and the matching token in
+Configure AGENT_STATUS_TOKEN in the daemon environment and the matching token in
 its observer/server consumers. Optional provider requests may incur billing.
 
 ## `agent-ingester skill`

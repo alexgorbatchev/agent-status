@@ -11,7 +11,7 @@ fn explicit_lookup_constructs_native_providers_in_precedence_order() {
         ("OPENAI_API_KEY", "third"),
         ("GEMINI_API_KEY", "fourth"),
         ("ANTHROPIC_API_KEY", "fifth"),
-        ("AGENT_SUMMARIZER_MODEL", "chosen"),
+        ("AGENT_STATUS_SUMMARIZER_MODEL", "chosen"),
     ]);
     let config = Config::from_lookup(None, |key| vars.get(key).map(|value| (*value).into()));
     assert_eq!(config.providers.len(), 3);
@@ -66,7 +66,7 @@ fn explicit_empty_cli_settings_suppress_all_environment_fallbacks() {
             "OPENAI_API_KEY" | "LITELLM_KEY" => Some("hidden".into()),
             "OPENAI_BASE_URL" => Some("http://127.0.0.1:1".into()),
             "GEMINI_API_KEY" => Some("gemini".into()),
-            "AGENT_SUMMARIZER_MODEL" => Some("hidden-model".into()),
+            "AGENT_STATUS_SUMMARIZER_MODEL" => Some("hidden-model".into()),
             _ => None,
         },
         agent_ingester::config::Paths::new(Some("/fixture".into())),

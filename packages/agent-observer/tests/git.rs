@@ -137,8 +137,7 @@ async fn resolves_actual_git_worktrees_detached_heads_and_cache_invalidation() {
 
 #[tokio::test]
 async fn non_git_fallback_preserves_cwd_and_branch_but_never_swallows_cancellation() {
-    std::fs::create_dir_all(".tmp").unwrap();
-    let dir = tempfile::tempdir_in(".tmp").unwrap();
+    let dir = tempfile::tempdir().unwrap();
     let resolver = Resolver::new(Duration::from_millis(1));
     let cancel = CancellationToken::new();
     let (project, workspace) = resolver.resolve(&cancel, dir.path(), "hint").await.unwrap();

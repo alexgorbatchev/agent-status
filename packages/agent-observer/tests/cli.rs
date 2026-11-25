@@ -94,6 +94,8 @@ fn environment_defaults_and_explicit_options_map_to_native_configuration() {
             "codex",
             "--opencode-db-path",
             "db",
+            "--agy-sessions-dir",
+            "agy",
             "--log-file",
             "observer.log",
             "--log-dir",
@@ -101,13 +103,17 @@ fn environment_defaults_and_explicit_options_map_to_native_configuration() {
         ],
         Mode::Agent,
         &[
-            ("AGENT_INGESTER_WS_URL", "ws://localhost:1234/ws/ingest"),
+            (
+                "AGENT_STATUS_INGESTER_WS_URL",
+                "ws://localhost:1234/ws/ingest",
+            ),
             ("AGENT_STATUS_TOKEN", "fixture"),
-            ("AGENT_SESSION_STATE_PATH", "sessions"),
+            ("AGENT_STATUS_SESSION_STATE_PATH", "sessions"),
+            ("AGY_SESSIONS_DIR", "agy-env"),
             ("CLAUDE_SESSIONS_DIR", "claude"),
-            ("AGENT_CURSOR_RETENTION", "48h"),
-            ("AGENT_CURSOR_PRUNE_INTERVAL", "bad"),
-            ("AGENT_CURSOR_FLUSH_INTERVAL", "250ms"),
+            ("AGENT_STATUS_CURSOR_RETENTION", "48h"),
+            ("AGENT_STATUS_CURSOR_PRUNE_INTERVAL", "bad"),
+            ("AGENT_STATUS_CURSOR_FLUSH_INTERVAL", "250ms"),
         ],
     ) else {
         panic!("expected observer configuration")
@@ -136,6 +142,7 @@ fn environment_defaults_and_explicit_options_map_to_native_configuration() {
     assert_eq!(options.watcher.pi_sessions_dir.to_str(), Some("pi"));
     assert_eq!(options.watcher.codex_sessions_dir.to_str(), Some("codex"));
     assert_eq!(options.watcher.opencode_db_path.to_str(), Some("db"));
+    assert_eq!(options.watcher.agy_sessions_dir.to_str(), Some("agy"));
     assert_eq!(
         options.watcher.cursor_retention,
         Duration::from_secs(172800)
@@ -289,7 +296,7 @@ fn log_configuration_and_console_fold_only_displayed_paths() {
     );
     assert!(matches!(
         cli::parse_with_env(["agent-observer"], Mode::Agent, &mut Vec::new(), |key| (key
-            == "AGENT_INGESTER_WS_URL")
+            == "AGENT_STATUS_INGESTER_WS_URL")
             .then(|| "invalid".into())),
         Err(cli::Error::Arguments(_))
     ));
@@ -298,7 +305,7 @@ fn log_configuration_and_console_fold_only_displayed_paths() {
             ["agent-observer", "--ingester-url", "ws://localhost:99"],
             Mode::Agent,
             &mut Vec::new(),
-            |key| (key == "AGENT_INGESTER_WS_URL").then(|| "invalid".into())
+            |key| (key == "AGENT_STATUS_INGESTER_WS_URL").then(|| "invalid".into())
         ),
         Ok(Action::Observe(_))
     ));

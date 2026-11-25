@@ -68,7 +68,7 @@ impl Config {
         };
         let url = first(&["LITELLM_BASE_URL", "OPENAI_BASE_URL"]);
         let key = first(&["LITELLM_API_KEY", "LITELLM_KEY", "OPENAI_API_KEY"]);
-        let chosen = first(&["AGENT_SUMMARIZER_MODEL"]);
+        let chosen = first(&["AGENT_STATUS_SUMMARIZER_MODEL"]);
         let model = |fallback: &str| chosen.clone().unwrap_or_else(|| fallback.into());
         if url.is_some() || key.is_some() {
             config.providers.push(ProviderSpec {

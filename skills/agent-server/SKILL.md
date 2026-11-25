@@ -4,7 +4,7 @@ description: Use when operating agent-server to serve Agent Status queries and l
 author: alexgorbatchev
 metadata:
   created_on: 2026-10-14 13:35
-  last_modified: 2026-11-22 14:18
+  last_modified: 2026-11-25 05:23
   status: current
 ---
 
@@ -17,16 +17,16 @@ Run the HTTP service against the database written by `agent-ingester`. Read rout
 | `--addr`, `-a` | string | `:4502`; host:port or :port; port 0 requests an available port |
 | `--db` | path | `$XDG_DATA_HOME/agent-status/agent-status.db`, otherwise `~/.local/share/agent-status/agent-status.db` |
 | `--socket` | path | `$XDG_RUNTIME_DIR/agent-status/notify.sock`, otherwise `/tmp/agent-status/notify.sock` |
-| `--ingester-url` | string | `$AGENT_INGESTER_HTTP_URL`, otherwise `http://127.0.0.1:4501` |
+| `--ingester-url` | string | `$AGENT_STATUS_INGESTER_URL`, otherwise `http://127.0.0.1:4501` |
 | `--cors-origin` | CSV string value, repeatable | `http://localhost:3000`; first occurrence replaces the default, subsequent occurrences append; quote comma-containing fields using CSV double quotes; malformed quoting or multiple records fails validation |
 | `--token` | string | `$AGENT_STATUS_TOKEN`, otherwise empty; empty disables authentication; an explicit empty flag overrides the environment |
 | `--log-level` | string | `info`; debug, info, warn, warning, error; case insensitive |
-| `--log-dir` | path | `$AGENT_LOG_DIR`, otherwise the shared logging state directory |
-| `--log-file` | path | `$AGENT_LOG_FILE`, otherwise `server.log` in the log directory |
+| `--log-dir` | path | `$AGENT_STATUS_LOG_DIR`, otherwise the shared logging state directory |
+| `--log-file` | path | `$AGENT_STATUS_LOG_FILE`, otherwise `server.log` in the log directory |
 | `--help`, `-h` | bool | Print help and exit |
 | `--version`, `-V` | bool | Print the raw package version and newline |
 
-Set `AGENT=1`, `true`, or `yes` for compact diagnostics and help. Displayed home-directory paths use `~`. `XDG_STATE_HOME` selects the default disk-log state directory; `AGENT_LOG_TO_DISK=false`, `0`, or `no` disables disk logging. `AGENT_LOG_MAX_SIZE_MB`, `AGENT_LOG_MAX_BACKUPS`, `AGENT_LOG_MAX_AGE_DAYS`, and `AGENT_LOG_COMPRESS` configure the shared rotating log policy. Path variables preserve native filesystem paths; non-UTF-8 token or ingester-URL environment values fail validation.
+Set `AGENT=1`, `true`, or `yes` for compact diagnostics and help. Displayed home-directory paths use `~`. `XDG_STATE_HOME` selects the default disk-log state directory; `AGENT_STATUS_LOG_TO_DISK=false`, `0`, or `no` disables disk logging. `AGENT_STATUS_LOG_MAX_SIZE_MB`, `AGENT_STATUS_LOG_MAX_BACKUPS`, `AGENT_STATUS_LOG_MAX_AGE_DAYS`, and `AGENT_STATUS_LOG_COMPRESS` configure the shared rotating log policy. Path variables preserve native filesystem paths; non-UTF-8 token or ingester-URL environment values fail validation.
 
 Example:
 

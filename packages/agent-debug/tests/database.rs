@@ -182,7 +182,7 @@ fn explicit_tilde_and_environment_paths_follow_source_search_precedence() {
     );
     assert_eq!(
         database::resolve_path("", DatabaseSearch::Sessions, &home, &cwd, |key| (key
-            == "AGENT_DB_PATH")
+            == "AGENT_STATUS_DB_PATH")
             .then(|| dev.to_str().unwrap().into()))
         .unwrap(),
         dev
@@ -205,7 +205,7 @@ fn explicit_tilde_and_environment_paths_follow_source_search_precedence() {
     );
     assert!(
         database::resolve_path("auto", DatabaseSearch::Sessions, &home, &cwd, |key| (key
-            == "AGENT_DB_PATH")
+            == "AGENT_STATUS_DB_PATH")
             .then(|| "missing.db".into()))
         .is_err()
     );

@@ -1,6 +1,6 @@
 ---
 created_on: 2026-10-14 15:07
-last_modified: 2026-10-14 15:07
+last_modified: 2026-11-25 05:23
 status: current
 ---
 
@@ -23,7 +23,7 @@ An existing file resolves directly. A directory resolves its first discovered `.
 
 Explicit `--db <path>` selects that file; `~/` expands against the native home directory. `auto` and defaults use these existing-file searches:
 
-- Session, fleet, and agent operations: `AGENT_DB_PATH` when set; `${XDG_DATA_HOME:-~/.local/share}/agent-status/agent-status.db`; `./.tmp/dev-stack/data/agent-status/agent-status.db`; `~/.local/state/agent-status/agent-status.db`. An explicitly configured missing `AGENT_DB_PATH` fails immediately.
+- Session, fleet, and agent operations: `AGENT_STATUS_DB_PATH` when set; `${XDG_DATA_HOME:-~/.local/share}/agent-status/agent-status.db`; `./.tmp/dev-stack/data/agent-status/agent-status.db`; `~/.local/state/agent-status/agent-status.db`. An explicitly configured missing `AGENT_STATUS_DB_PATH` fails immediately.
 - Event operations: `./.tmp/dev-stack/data/agent-status/agent-status.db`; `./.tmp/dev-stack/data/agent-status.db`; `AGENT_DATA_DIR/agent-status.db`; `AGENT_DATA_DIR/agent-status/agent-status.db`; `XDG_DATA_HOME/agent-status/agent-status.db`; `XDG_DATA_HOME/agent-status.db`; `~/.local/share/agent-status/agent-status.db`.
 
 These inputs remain read-only. An explicit `--export-db <path>` creates or opens a writable ingestion database and commits processed frames incrementally.
@@ -40,7 +40,7 @@ Enable `session replay --summarize` to resolve providers from environment variab
 2. Gemini: `GEMINI_API_KEY`; default model `gemini-2.0-flash`.
 3. Anthropic: `ANTHROPIC_API_KEY`; default model `claude-3-5-haiku-latest`.
 
-`AGENT_SUMMARIZER_MODEL` overrides each configured provider's default. Calls have a ten-second timeout and command cancellation; fallback summaries remain available when providers fail. Provider billing follows the configured service's terms.
+`AGENT_STATUS_SUMMARIZER_MODEL` overrides each configured provider's default. Calls have a ten-second timeout and command cancellation; fallback summaries remain available when providers fail. Provider billing follows the configured service's terms.
 
 ## Output and logs
 
@@ -50,12 +50,12 @@ Runtime logging rotates files; metadata/help/version parsing completes before fi
 
 | Variable | Effective default |
 | :--- | :--- |
-| `AGENT_LOG_FILE` | Shared directory plus `agent-debug.log`; native rotation adds its record suffix. |
-| `AGENT_LOG_DIR` | `${XDG_STATE_HOME}/agent-status/logs`, then `${XDG_DATA_HOME}/agent-status/logs`, then `~/.local/state/agent-status/logs`. |
-| `AGENT_LOG_TO_DISK` | enabled; `0`, `false`, `no`, or `off` disables files. |
-| `AGENT_LOG_MAX_SIZE_MB` | 10; positive integer MiB. |
-| `AGENT_LOG_MAX_BACKUPS` | 5; zero retains an unlimited archive count. |
-| `AGENT_LOG_MAX_AGE_DAYS` | 14; zero removes the age limit. |
-| `AGENT_LOG_COMPRESS` | enabled; `0`, `false`, `no`, or `off` disables compression. |
+| `AGENT_STATUS_LOG_FILE` | Shared directory plus `agent-debug.log`; native rotation adds its record suffix. |
+| `AGENT_STATUS_LOG_DIR` | `${XDG_STATE_HOME}/agent-status/logs`, then `${XDG_DATA_HOME}/agent-status/logs`, then `~/.local/state/agent-status/logs`. |
+| `AGENT_STATUS_LOG_TO_DISK` | enabled; `0`, `false`, `no`, or `off` disables files. |
+| `AGENT_STATUS_LOG_MAX_SIZE_MB` | 10; positive integer MiB. |
+| `AGENT_STATUS_LOG_MAX_BACKUPS` | 5; zero retains an unlimited archive count. |
+| `AGENT_STATUS_LOG_MAX_AGE_DAYS` | 14; zero removes the age limit. |
+| `AGENT_STATUS_LOG_COMPRESS` | enabled; `0`, `false`, `no`, or `off` disables compression. |
 
 Console logging defaults to warnings and errors; `--debug` enables diagnostic records. SIGINT and SIGTERM cancel current work and wait for owned tasks to finish.

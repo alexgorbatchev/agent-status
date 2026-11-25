@@ -30,15 +30,15 @@ This Rust project is unpublished. The local release artifact is `bin/agent-inges
 
 # Setup
 
-- Configure `AGENT_BEARER_TOKEN` and the observer's `AGENT_STATUS_TOKEN` with the same value. The source default is a fixed development token; configure your own token before exposing the listener.
-- Set `AGENT_NO_SUMMARIZE=1` for local deterministic summaries. Otherwise configure provider credentials described in [the operational skill](../../skills/agent-ingester/SKILL.md); provider requests may incur charges.
+- Configure `AGENT_STATUS_TOKEN` and the observer's `AGENT_STATUS_TOKEN` with the same value. The source default is a fixed development token; configure your own token before exposing the listener.
+- Set `AGENT_STATUS_NO_SUMMARIZE=1` for local deterministic summaries. Otherwise configure provider credentials described in [the operational skill](../../skills/agent-ingester/SKILL.md); provider requests may incur charges.
 - The Herdr multiplexer daemon is optional and needed only for focus requests. Set `HERDR_SOCKET_PATH` when its socket differs from `$XDG_CONFIG_HOME/herdr/herdr.sock` or `~/.config/herdr/herdr.sock`.
 
 # Quick Start
 
 ```sh
 agent-ingester --version
-AGENT_NO_SUMMARIZE=1 agent-ingester --addr 127.0.0.1:4501
+AGENT_STATUS_NO_SUMMARIZE=1 agent-ingester --addr 127.0.0.1:4501
 ```
 
 Sample Output for `--version`:
@@ -55,17 +55,17 @@ Explicit flags override environment defaults.
 
 | Flag | Short | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `--addr <address>` | — | `AGENT_INGESTER_ADDR` or `:4501` | HTTP/WebSocket listen address with numeric port. |
-| `--token <token>` | — | `AGENT_BEARER_TOKEN` or development token | Authentication for ingest and internal controls. |
+| `--addr <address>` | — | `AGENT_STATUS_INGESTER_ADDR` or `:4501` | HTTP/WebSocket listen address with numeric port. |
+| `--token <token>` | — | `AGENT_STATUS_TOKEN` or development token | Authentication for ingest and internal controls. |
 | `--db <path>` | — | XDG data database | Shared SQLite database. |
 | `--notify-sock <path>` | — | XDG runtime notification socket | Local subscriber socket. |
-| `--no-summarize[=true|false]` | — | `AGENT_NO_SUMMARIZE=1` or false | Disable provider summaries; explicit false enables them. |
+| `--no-summarize[=true|false]` | — | `AGENT_STATUS_NO_SUMMARIZE=1` or false | Disable provider summaries; explicit false enables them. |
 | `--litellm-url <url>` | — | Provider URL environment settings | OpenAI-compatible base URL. |
 | `--litellm-key <key>` | — | Provider key environment settings | OpenAI-compatible API key. |
-| `--summarizer-model <model>` | — | `AGENT_SUMMARIZER_MODEL` or per-provider default | Override every configured provider's model. |
-| `--idle-grace-period <duration>` | — | `AGENT_IDLE_GRACE_PERIOD` or `5s` | Nonnegative delay before BUSY becomes IDLE after turn end. |
-| `--log-dir <path>` | — | `AGENT_LOG_DIR` or XDG state logs | Rotating log directory. |
-| `--log-file <path>` | — | `AGENT_LOG_FILE` or `ingester.log` | Exact rotating log filename. |
+| `--summarizer-model <model>` | — | `AGENT_STATUS_SUMMARIZER_MODEL` or per-provider default | Override every configured provider's model. |
+| `--idle-grace-period <duration>` | — | `AGENT_STATUS_IDLE_GRACE_PERIOD` or `5s` | Nonnegative delay before BUSY becomes IDLE after turn end. |
+| `--log-dir <path>` | — | `AGENT_STATUS_LOG_DIR` or XDG state logs | Rotating log directory. |
+| `--log-file <path>` | — | `AGENT_STATUS_LOG_FILE` or `ingester.log` | Exact rotating log filename. |
 | `--log-level <level>` | — | `info` | debug, info, warn, warning, or error. |
 | `--help` | `-h` | false | Print help. |
 | `--version` | `-V` | false | Print raw version. |

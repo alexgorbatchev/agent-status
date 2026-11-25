@@ -104,6 +104,7 @@ pub fn command(mode: Mode) -> Command {
         ("pi-sessions-dir", "Pi session directory"),
         ("codex-sessions-dir", "Codex session directory"),
         ("opencode-db-path", "OpenCode SQLite database"),
+        ("agy-sessions-dir", "Antigravity CLI sessions directory"),
         ("log-file", "Rotating log file path"),
         ("log-dir", "Rotating log directory"),
     ] {
@@ -238,7 +239,7 @@ pub fn parse_with_env(
             .get_one::<Url>("ingester-url")
             .expect("URL parser")
             .clone()
-    } else if let Some(url) = lookup("AGENT_INGESTER_WS_URL").filter(|v| !v.is_empty()) {
+    } else if let Some(url) = lookup("AGENT_STATUS_INGESTER_WS_URL").filter(|v| !v.is_empty()) {
         websocket_url(&url)
             .map_err(|message| clap::Error::raw(clap::error::ErrorKind::ValueValidation, message))?
     } else {
@@ -253,8 +254,11 @@ pub fn parse_with_env(
             .get_one::<Duration>("scan-interval")
             .expect("duration"),
         cursor_path: value("cursor-path").into(),
-        session_state_path: environment_default("session-state-path", "AGENT_SESSION_STATE_PATH")
-            .into(),
+        session_state_path: environment_default(
+            "session-state-path",
+            "AGENT_STATUS_SESSION_STATE_PATH",
+        )
+        .into(),
         claude_sessions_dirs: if claude.is_empty() {
             vec![]
         } else {
@@ -264,9 +268,16 @@ pub fn parse_with_env(
         pi_sessions_dir: value("pi-sessions-dir").into(),
         codex_sessions_dir: value("codex-sessions-dir").into(),
         opencode_db_path: value("opencode-db-path").into(),
-        cursor_retention: interval("cursor-retention", "AGENT_CURSOR_RETENTION"),
-        cursor_prune_interval: interval("cursor-prune-interval", "AGENT_CURSOR_PRUNE_INTERVAL"),
-        cursor_flush_interval: interval("cursor-flush-interval", "AGENT_CURSOR_FLUSH_INTERVAL"),
+        agy_sessions_dir: environment_default("agy-sessions-dir", "AGY_SESSIONS_DIR").into(),
+        cursor_retention: interval("cursor-retention", "AGENT_STATUS_CURSOR_RETENTION"),
+        cursor_prune_interval: interval(
+            "cursor-prune-interval",
+            "AGENT_STATUS_CURSOR_PRUNE_INTERVAL",
+        ),
+        cursor_flush_interval: interval(
+            "cursor-flush-interval",
+            "AGENT_STATUS_CURSOR_FLUSH_INTERVAL",
+        ),
         ..Default::default()
     };
     Ok(Action::Observe(Box::new(Options {

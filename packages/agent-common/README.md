@@ -59,13 +59,13 @@ Consumers using the event macros also add `tracing` with `cargo add tracing`.
 | Variable | Default | Meaning |
 | :--- | :--- | :--- |
 | `AGENT` | human | `1`, `true`, or `yes`, ignoring case and surrounding whitespace, selects agent output. |
-| `AGENT_LOG_TO_DISK` | enabled | `0`, `false`, `no`, or `off` disables disk logging. |
-| `AGENT_LOG_FILE` | derived | File specification; its stem receives the current-file or archive infix. |
-| `AGENT_LOG_DIR` | XDG location | Directory used when no file is specified. |
-| `AGENT_LOG_MAX_SIZE_MB` | `10` | Positive size threshold in MiB. |
-| `AGENT_LOG_MAX_BACKUPS` | `5` | Archive count, or `0` for unlimited. |
-| `AGENT_LOG_MAX_AGE_DAYS` | `14` | Archive age, or `0` for unlimited. |
-| `AGENT_LOG_COMPRESS` | enabled | `0`, `false`, `no`, or `off` keeps plain archives. |
+| `AGENT_STATUS_LOG_TO_DISK` | enabled | `0`, `false`, `no`, or `off` disables disk logging. |
+| `AGENT_STATUS_LOG_FILE` | derived | File specification; its stem receives the current-file or archive infix. |
+| `AGENT_STATUS_LOG_DIR` | XDG location | Directory used when no file is specified. |
+| `AGENT_STATUS_LOG_MAX_SIZE_MB` | `10` | Positive size threshold in MiB. |
+| `AGENT_STATUS_LOG_MAX_BACKUPS` | `5` | Archive count, or `0` for unlimited. |
+| `AGENT_STATUS_LOG_MAX_AGE_DAYS` | `14` | Archive age, or `0` for unlimited. |
+| `AGENT_STATUS_LOG_COMPRESS` | enabled | `0`, `false`, `no`, or `off` keeps plain archives. |
 | `XDG_STATE_HOME` | unset | First fallback: `agent-status/logs` below this directory. |
 | `XDG_DATA_HOME` | unset | Second fallback: `agent-status/logs` below this directory. |
 

@@ -20,7 +20,7 @@
 - Every transmitted frame includes environment and session identity, harness, workspace, event data, and timestamp. The ingester receives transcript-derived text and tool metadata; select a trusted endpoint.
 - A line's checkpoint advances after every event derived from it is acknowledged. Reconnect can deliver duplicates. A full queue slows transcript reading instead of dropping events; restarting recovers unacknowledged data from source transcripts.
 - Git metadata comes from local commands and expires from the cache after 30 seconds. Git remotes are never contacted. Projects without an origin use distinct canonical-root identities, even when their directories share a name.
-- Logs go to stderr and a rotating `observer.log` under `${XDG_STATE_HOME:-~/.local/state}/agent-status/logs`. `XDG_DATA_HOME` supplies the intermediate fallback when set. Rotation defaults to 10 MiB, five compressed archives, and 14 days; `AGENT_LOG_TO_DISK=false` disables files.
+- Logs go to stderr and a rotating `observer.log` under `${XDG_STATE_HOME:-~/.local/state}/agent-status/logs`. `XDG_DATA_HOME` supplies the intermediate fallback when set. Rotation defaults to 10 MiB, five compressed archives, and 14 days; `AGENT_STATUS_LOG_TO_DISK=false` disables files.
 - Daemon stdout is empty. Help, version, skill installation information, and completion scripts use stdout. `AGENT=1`, `true`, or `yes` selects compact help and logs. Displayed home paths use `~`.
 - Metadata output and orderly shutdown exit 0; invalid arguments, startup, runtime, and output failures exit 1. A disk-open failure warns and continues on stderr; recorded log write or flush errors fail shutdown.
 
@@ -30,7 +30,7 @@ The local optimized executable is `bin/agent-observer`. This Rust workspace pack
 
 # Setup
 
-- Run an Agent Status ingester and supply its `ws://` or `wss://` ingestion endpoint with `--ingester-url` or `AGENT_INGESTER_WS_URL`.
+- Run an Agent Status ingester and supply its `ws://` or `wss://` ingestion endpoint with `--ingester-url` or `AGENT_STATUS_INGESTER_WS_URL`.
 - Set `AGENT_STATUS_TOKEN` to the token expected by that ingester.
 - Install [Git](https://git-scm.com/) on PATH for workspace metadata. Missing Git falls back to local directory identities.
 

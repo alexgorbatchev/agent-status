@@ -77,7 +77,7 @@ pub fn command(mode: Mode) -> Command {
         ("token", "Bearer token; defaults to AGENT_STATUS_TOKEN"),
         (
             "ingester-url",
-            "Mutation service URL; defaults to AGENT_INGESTER_HTTP_URL or http://127.0.0.1:4501",
+            "Mutation service URL; defaults to AGENT_STATUS_INGESTER_URL or http://127.0.0.1:4501",
         ),
     ] {
         let mut argument = Arg::new(name).long(name).help(description);
@@ -97,9 +97,12 @@ pub fn command(mode: Mode) -> Command {
         ),
         (
             "log-dir",
-            "Rotating log directory; defaults to AGENT_LOG_DIR",
+            "Rotating log directory; defaults to AGENT_STATUS_LOG_DIR",
         ),
-        ("log-file", "Rotating log file; defaults to AGENT_LOG_FILE"),
+        (
+            "log-file",
+            "Rotating log file; defaults to AGENT_STATUS_LOG_FILE",
+        ),
     ] {
         root = root.arg(
             Arg::new(name)
@@ -261,7 +264,7 @@ pub fn parse_with_env(
         api: ApiConfig {
             ingester_url: string(
                 "ingester-url",
-                "AGENT_INGESTER_HTTP_URL",
+                "AGENT_STATUS_INGESTER_URL",
                 "http://127.0.0.1:4501",
             )?,
             auth_token: string("token", "AGENT_STATUS_TOKEN", "")?,
@@ -272,8 +275,8 @@ pub fn parse_with_env(
             .get_one::<String>("log-level")
             .expect("log level argument")
             .clone(),
-        log_dir: path("log-dir", "AGENT_LOG_DIR"),
-        log_file: path("log-file", "AGENT_LOG_FILE"),
+        log_dir: path("log-dir", "AGENT_STATUS_LOG_DIR"),
+        log_file: path("log-file", "AGENT_STATUS_LOG_FILE"),
     })))
 }
 

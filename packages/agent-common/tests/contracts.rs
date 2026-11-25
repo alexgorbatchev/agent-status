@@ -2,6 +2,13 @@ use agent_common::{models, types::*, usage};
 use serde_json::json;
 
 #[test]
+fn antigravity_uses_the_canonical_wire_harness() {
+    let frame: TelemetryFrame = serde_json::from_value(json!({"harness":"agy"})).unwrap();
+    assert_eq!(frame.harness, HarnessType::Agy);
+    assert_eq!(serde_json::to_value(frame).unwrap()["harness"], "agy");
+}
+
+#[test]
 fn snapshots_preserve_required_empty_arrays_and_roundtrip_data() {
     let event: ServerEvent = serde_json::from_value(json!({"type":"snapshot","at":100})).unwrap();
     let wire = serde_json::to_value(&event).unwrap();

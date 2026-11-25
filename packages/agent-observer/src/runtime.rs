@@ -38,6 +38,7 @@ pub async fn telemetry_frame(
             agent_watcher::Harness::Pi => TelemetryHarness::Pi,
             agent_watcher::Harness::Codex => TelemetryHarness::Codex,
             agent_watcher::Harness::Opencode => TelemetryHarness::Opencode,
+            agent_watcher::Harness::Agy => TelemetryHarness::Agy,
         },
         harness_version: event.harness_version,
         project,

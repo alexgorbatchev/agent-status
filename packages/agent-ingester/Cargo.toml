@@ -8,7 +8,7 @@ description = "Agent telemetry classification, durable ingestion, and notificati
 [dependencies]
 agent-common = { path = "../agent-common" }
 agent-status-store = { path = "../agent-status-store" }
-agent-watcher = { git = "https://github.com/alexgorbatchev/agent-watcher-rust.git", rev = "9c7532c9950c6fd188374e8ff7266480c558ab7c" }
+agent-watcher = { git = "https://github.com/alexgorbatchev/agent-watcher-rust.git", rev = "63c08208c71cd4f50e248ead4db99650a330e0af" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

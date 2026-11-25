@@ -23,8 +23,8 @@ fn explicit_configuration_preserves_provider_precedence_and_paths() {
     let options = parse_options(
         &["agent-ingester"],
         &[
-            ("AGENT_INGESTER_ADDR", "127.0.0.1:0"),
-            ("AGENT_BEARER_TOKEN", "local"),
+            ("AGENT_STATUS_INGESTER_ADDR", "127.0.0.1:0"),
+            ("AGENT_STATUS_TOKEN", "local"),
             ("XDG_DATA_HOME", "/data"),
             ("XDG_RUNTIME_DIR", "/runtime"),
             ("XDG_CONFIG_HOME", "/config"),
@@ -35,9 +35,9 @@ fn explicit_configuration_preserves_provider_precedence_and_paths() {
             ("OPENAI_API_KEY", "three"),
             ("GEMINI_API_KEY", "four"),
             ("ANTHROPIC_API_KEY", "five"),
-            ("AGENT_LOG_DIR", "logs"),
-            ("AGENT_LOG_FILE", "custom.log"),
-            ("AGENT_IDLE_GRACE_PERIOD", "125ms"),
+            ("AGENT_STATUS_LOG_DIR", "logs"),
+            ("AGENT_STATUS_LOG_FILE", "custom.log"),
+            ("AGENT_STATUS_IDLE_GRACE_PERIOD", "125ms"),
         ],
     );
     assert_eq!(options.addr, "127.0.0.1:0");
@@ -100,9 +100,9 @@ fn flags_override_environment_and_disable_source_without_hidden_sdk_environment_
             "DEBUG",
         ],
         &[
-            ("AGENT_NO_SUMMARIZE", "1"),
+            ("AGENT_STATUS_NO_SUMMARIZE", "1"),
             ("OPENAI_API_KEY", "environment"),
-            ("AGENT_IDLE_GRACE_PERIOD", "bad"),
+            ("AGENT_STATUS_IDLE_GRACE_PERIOD", "bad"),
             ("HERDR_SOCKET_PATH", "chosen-herdr"),
         ],
     );
@@ -125,7 +125,7 @@ fn flags_override_environment_and_disable_source_without_hidden_sdk_environment_
         ),
         (
             vec!["agent-ingester"],
-            vec![("AGENT_NO_SUMMARIZE", "1")],
+            vec![("AGENT_STATUS_NO_SUMMARIZE", "1")],
             agent_ingester::summarizer::DisableSource::Environment,
         ),
     ] {
@@ -149,9 +149,12 @@ fn flags_override_environment_and_disable_source_without_hidden_sdk_environment_
     assert_eq!(defaults.token, "dev-secret-token");
     for bad in ["bad", "-1s"] {
         assert_eq!(
-            parse_options(&["agent-ingester"], &[("AGENT_IDLE_GRACE_PERIOD", bad)])
-                .classifier
-                .idle_grace,
+            parse_options(
+                &["agent-ingester"],
+                &[("AGENT_STATUS_IDLE_GRACE_PERIOD", bad)]
+            )
+            .classifier
+            .idle_grace,
             Duration::from_secs(5)
         );
     }

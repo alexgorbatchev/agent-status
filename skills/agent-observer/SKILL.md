@@ -4,7 +4,7 @@ description: Use when operating agent-observer to monitor local coding-agent ses
 author: alexgorbatchev
 metadata:
   created_on: 2026-10-14 11:01
-  last_modified: 2026-11-22 14:18
+  last_modified: 2026-11-25 05:23
   status: current
 ---
 
@@ -30,20 +30,21 @@ read-only. Local checkpoint files are written as ingester acknowledgements arriv
 
 | Flag | Short | Type | Default | Behavior |
 | --- | --- | --- | --- | --- |
-| --ingester-url | — | string | ws://127.0.0.1:4501/ws/ingest | Absolute ws or wss URL; AGENT_INGESTER_WS_URL overrides default. |
+| --ingester-url | — | string | ws://127.0.0.1:4501/ws/ingest | Absolute ws or wss URL; AGENT_STATUS_INGESTER_WS_URL overrides default. |
 | --token | — | string | empty | Bearer token; AGENT_STATUS_TOKEN overrides default. |
 | --env | — | string | empty | Environment label override. |
 | --scan-interval | — | duration | 2s | Discovery interval. |
 | --cursor-path | — | string | empty | Runtime default: XDG_CACHE_HOME/agent-status/observer-cursors.json. |
-| --cursor-retention | — | duration | 24h | Inactive cursor retention; AGENT_CURSOR_RETENTION overrides default. |
-| --cursor-prune-interval | — | duration | 1h | Pruning interval; AGENT_CURSOR_PRUNE_INTERVAL overrides default. |
-| --cursor-flush-interval | — | duration | 2s | Persistence interval; AGENT_CURSOR_FLUSH_INTERVAL overrides default. |
-| --session-state-path | — | string | empty | AGENT_SESSION_STATE_PATH, then XDG_CACHE_HOME/agent-status/observer-sessions.json. |
+| --cursor-retention | — | duration | 24h | Inactive cursor retention; AGENT_STATUS_CURSOR_RETENTION overrides default. |
+| --cursor-prune-interval | — | duration | 1h | Pruning interval; AGENT_STATUS_CURSOR_PRUNE_INTERVAL overrides default. |
+| --cursor-flush-interval | — | duration | 2s | Persistence interval; AGENT_STATUS_CURSOR_FLUSH_INTERVAL overrides default. |
+| --session-state-path | — | string | empty | AGENT_STATUS_SESSION_STATE_PATH, then XDG_CACHE_HOME/agent-status/observer-sessions.json. |
 | --claude-sessions-dir | — | string | empty | Custom descriptor directory; then CLAUDE_SESSIONS_DIR or standard roots. |
 | --claude-projects-dir | — | string | empty | Custom transcript directory or standard roots. |
 | --pi-sessions-dir | — | string | empty | Custom Pi sessions directory or environment/default. |
 | --codex-sessions-dir | — | string | empty | Custom Codex sessions directory or environment/default. |
 | --opencode-db-path | — | string | empty | Custom OpenCode database or environment/default. |
+| --agy-sessions-dir | — | string | empty | Antigravity CLI session directory or environment/default. |
 | --log-level | — | string | info | debug, info, warn, warning, error; case-insensitive with surrounding whitespace ignored. Empty selects info. |
 | --log-dir | — | string | empty | Override rotating-log directory. |
 | --log-file | — | string | empty | Override exact rotating-log filename. |
@@ -74,6 +75,7 @@ explicit --claude-projects-dir selects one directory.
 For Pi use PI_SESSIONS_DIR, then PI_CODING_AGENT_DIR/sessions, then ~/.pi/agent/sessions.
 For Codex use CODEX_SESSIONS_DIR, then CODEX_HOME/sessions, then ~/.codex/sessions.
 For OpenCode use OPENCODE_DB_PATH, then XDG_DATA_HOME/opencode/opencode.db.
+For Antigravity CLI use AGY_SESSIONS_DIR, then GEMINI_HOME/antigravity-cli/brain or ~/.gemini/antigravity-cli/brain.
 XDG_DATA_HOME falls back to ~/.local/share; HOME resolves the native home directory.
 
 ### Delivery and Git
@@ -94,12 +96,12 @@ back to a local project; cancellation stops and reaps the owned Git process.
 
 ### Logging
 
-AGENT_LOG_TO_DISK=false, 0, no, or off disables disk output. AGENT_LOG_FILE sets
-an exact filename; AGENT_LOG_DIR selects a directory. Default directory is
+AGENT_STATUS_LOG_TO_DISK=false, 0, no, or off disables disk output. AGENT_STATUS_LOG_FILE sets
+an exact filename; AGENT_STATUS_LOG_DIR selects a directory. Default directory is
 XDG_STATE_HOME/agent-status/logs, then XDG_DATA_HOME/agent-status/logs, then
 ~/.local/state/agent-status/logs; the filename is observer.log.
-AGENT_LOG_MAX_SIZE_MB defaults to 10, AGENT_LOG_MAX_BACKUPS to 5,
-AGENT_LOG_MAX_AGE_DAYS to 14, and AGENT_LOG_COMPRESS to true. Zero backups or age
+AGENT_STATUS_LOG_MAX_SIZE_MB defaults to 10, AGENT_STATUS_LOG_MAX_BACKUPS to 5,
+AGENT_STATUS_LOG_MAX_AGE_DAYS to 14, and AGENT_STATUS_LOG_COMPRESS to true. Zero backups or age
 means unlimited for that limit. The same false values disable compression.
 CLI log paths override their environment settings. A disk-open failure warns
 and continues on stderr; recorded write/flush errors make shutdown fail.
