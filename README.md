@@ -2,9 +2,9 @@ Agent Status collects coding-agent telemetry, stores activity and usage, serves 
 
 # What It Does
 
-- **Observe sessions:** Follow Claude Code, Pi, Codex, and OpenCode activity and deliver acknowledged telemetry.
+- **Observe sessions:** Follow Claude Code, Pi, Codex, OpenCode, and Antigravity CLI activity and deliver acknowledged telemetry.
 - **Ingest activity:** Commit telemetry, current state, usage, and delivery checkpoints together.
-- **Serve queries:** Provide read-only database queries and live streams, forwarding explicit mutations to the ingester.
+- **Serve queries:** Provide read-only database queries and live streams to the web dashboard, forwarding explicit mutations to the ingester.
 - **Diagnose locally:** Replay transcripts, inspect stored records, and audit native session discovery.
 
 # How It Works
@@ -16,7 +16,7 @@ Agent Status collects coding-agent telemetry, stores activity and usage, serves 
 
 # How it Really Works
 
-One Git repository contains six Cargo packages and one workspace lockfile. The ingester owns persistent writes; the server opens its input database read-only. Observers retain unacknowledged deliveries across reconnects. Debug normally replays in memory and writes only when explicitly exporting a database. Provider summarization is configurable and can incur charges.
+The six Cargo packages share one workspace lockfile. The dashboard uses Bun and React. The ingester owns persistent writes while the server opens its database read-only. Observers retain unacknowledged deliveries across reconnects. Debug normally replays in memory and writes only when explicitly exporting a database. Provider summarization is configurable and can incur charges.
 
 | Package | Role | Documentation |
 | :--- | :--- | :--- |
@@ -26,12 +26,13 @@ One Git repository contains six Cargo packages and one workspace lockfile. The i
 | `agent-ingester` | Durable ingestion and activity classification | [Ingester guide](packages/agent-ingester/README.md) |
 | `agent-server` | Queries, streams, mutation forwarding | [Server guide](packages/agent-server/README.md) |
 | `agent-debug` | Offline replay and diagnostics | [Debug guide](packages/agent-debug/README.md) |
+| `ui-web` | Live fleet, activity, and log dashboard | [Frontend guide](packages/ui-web/AGENTS.md) |
 
-The extracted storage crate belongs to this workspace. The separately sourced `agent-parser`, `agent-watcher`, and `cli-command-kit` repositories remain native Cargo path dependencies beside this repository.
+The extracted storage crate belongs to this workspace. Cargo pins the external `agent-parser`, `agent-watcher`, and `cli-command-kit` Git revisions. The [original Agent Status repository](https://github.com/alexgorbatchev/agent-status/tree/9895b3cf8c106ac39d0cd7e70fe5c3752bbd2a62/packages/ui-web) supplies the dashboard source and its tests.
 
 # Installation
 
-The Rust migration is unpublished. Build an executable with `just debug build`, `just observer build`, `just ingester build`, or `just server build`. Each recipe copies its optimized executable into that package's `bin/` directory. Rust 1.95 or newer is required by the resolved Debug dependencies; verification used Rust 1.98.1, without a separate minimum-version run.
+Build an executable with `just debug build`, `just observer build`, `just ingester build`, or `just server build`. Each recipe copies its optimized executable into that package's `bin/` directory. The Cargo packages declare their required Rust versions. Install dashboard dependencies with `just ui setup` and build the bundle with `just ui build`.
 
 # Quick Start
 
@@ -42,7 +43,9 @@ just debug run-ai session replay session.jsonl
 just test
 ```
 
-Root lifecycle recipes orchestrate package modules. Run `just <module> check` for a package's strict formatting, Clippy, tests, and coverage gate, or `just check` for all six. Cargo commands also accept native package selection, such as `cargo test --locked --package agent-debug`.
+With [devhost](https://github.com/alexgorbatchev/devhost) configured, `just start` runs the dashboard and daemons behind local HTTPS. Use `just status` to locate the current checkout's stack and `just stop` to stop it.
+
+Run `just <module> check` for a Rust package's strict formatting, Clippy, tests, and coverage gate, or `just check` for the workspace. `just ui test-e2e` builds the native daemons and exercises the dashboard in Chromium.
 
 # Operational References
 
@@ -53,7 +56,7 @@ The CLI `skill` commands print installation pointers. The corresponding usage do
 - [Agent Ingester](skills/agent-ingester/SKILL.md)
 - [Agent Server](skills/agent-server/SKILL.md)
 
-Read the selected package's guide and skill before configuring live services. Native macOS runtime behavior, live harness/service interoperability, and external provider integration retain the verification limits recorded in the package guides. This workspace migration does not include the source repository's web frontend.
+Read the selected package's guide and skill before configuring live services.
 
 # License
 

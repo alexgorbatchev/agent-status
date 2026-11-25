@@ -1,0 +1,288 @@
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useMachine } from "@xstate/react";
+import type { ILogDrawerProps } from "./types";
+import { StatusBadge } from "./StatusBadge";
+import { LogFrameItem } from "./LogFrameItem";
+import { IconWrapper } from "./IconWrapper";
+import { DEFAULT_DEV_TOKEN } from "../utils/config";
+import { LogBuffer } from "../utils/LogBuffer";
+import { correlateTelemetryFrames } from "../utils/correlateTelemetryFrames";
+import { getAgentDebugCommand } from "../utils/agentUtils";
+import { logDrawerMachine } from "../machines/logDrawerMachine";
+import { X, RefreshCw, AlertCircle, Terminal, Check, SquareTerminal, Loader2 } from "lucide-react";
+import { focusAgent } from "../services/api";
+
+import { getLogFrameKey } from "../utils";
+
+export function LogDrawer({
+  agent,
+  apiBaseUrl,
+  token = DEFAULT_DEV_TOKEN,
+  onClose,
+  logBuffer: externalLogBuffer,
+}: ILogDrawerProps): React.JSX.Element | null {
+  const internalLogBuffer = useMemo(() => new LogBuffer(), []);
+  const logBuffer = externalLogBuffer ?? internalLogBuffer;
+  const [snapshot, send] = useMachine(logDrawerMachine, {
+    input: {
+      agent,
+      apiBaseUrl,
+      token,
+      logBuffer,
+    },
+  });
+
+  const logs = useSyncExternalStore(logBuffer.subscribe, logBuffer.getSnapshot, logBuffer.getSnapshot);
+  const correlatedLogs = useMemo(() => correlateTelemetryFrames(logs), [logs]);
+
+  const [copiedAgentId, setCopiedAgentId] = useState<string | null>(null);
+  const [isFocusing, setIsFocusing] = useState<boolean>(false);
+  const [focusError, setFocusError] = useState<string | null>(null);
+  const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasCopied = agent !== null && copiedAgentId === agent.id;
+
+  const streamRef = useRef<HTMLDivElement | null>(null);
+  const prevScrollHeightRef = useRef<number>(0);
+  const prevScrollTopRef = useRef<number>(0);
+  const prevAgentIdRef = useRef<string>(agent?.id ?? "");
+
+  const handleScroll = useCallback((): void => {
+    const stream = streamRef.current;
+    if (!stream) {
+      return;
+    }
+    prevScrollTopRef.current = stream.scrollTop;
+    prevScrollHeightRef.current = stream.scrollHeight;
+  }, []);
+
+  useEffect(() => {
+    if (agent && prevAgentIdRef.current !== agent.id) {
+      prevAgentIdRef.current = agent.id;
+      prevScrollTopRef.current = 0;
+      prevScrollHeightRef.current = 0;
+      if (streamRef.current) {
+        streamRef.current.scrollTop = 0;
+      }
+    }
+  }, [agent]);
+
+  useLayoutEffect(() => {
+    const stream = streamRef.current;
+    if (!stream) {
+      return;
+    }
+
+    const prevScrollTop = prevScrollTopRef.current;
+    const prevScrollHeight = prevScrollHeightRef.current;
+    const currentScrollHeight = stream.scrollHeight;
+
+    if (prevScrollTop > 10 && prevScrollHeight > 0) {
+      const heightDelta = currentScrollHeight - prevScrollHeight;
+      if (heightDelta > 0) {
+        stream.scrollTop = prevScrollTop + heightDelta;
+      }
+    }
+
+    prevScrollTopRef.current = stream.scrollTop;
+    prevScrollHeightRef.current = stream.scrollHeight;
+  }, [correlatedLogs]);
+
+  useEffect(() => {
+    if (agent) {
+      send({ type: "SELECT_AGENT", agent, apiBaseUrl, token });
+    } else {
+      send({ type: "CLOSE" });
+    }
+  }, [agent, apiBaseUrl, token, send]);
+
+  useEffect(() => {
+    return () => {
+      if (copiedTimeoutRef.current) {
+        clearTimeout(copiedTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleCopyDebugCommand = useCallback(async (): Promise<void> => {
+    if (!agent) {
+      return;
+    }
+    const command = getAgentDebugCommand(agent);
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(command);
+        setCopiedAgentId(agent.id);
+        if (copiedTimeoutRef.current) {
+          clearTimeout(copiedTimeoutRef.current);
+        }
+        copiedTimeoutRef.current = setTimeout(() => {
+          setCopiedAgentId(null);
+        }, 2000);
+      } catch {
+        // Fallback gracefully if clipboard access fails
+      }
+    }
+  }, [agent]);
+
+  const handleFocus = useCallback(async (): Promise<void> => {
+    if (!agent || agent.activity.lifecycle !== "RUNNING" || isFocusing) {
+      return;
+    }
+    setIsFocusing(true);
+    setFocusError(null);
+    try {
+      const res = await focusAgent(agent.id, apiBaseUrl, token);
+      if (!res.ok) {
+        setFocusError(res.error || "Failed to focus in Herdr");
+      }
+    } catch (err: unknown) {
+      setFocusError(err instanceof Error ? err.message : "Failed to focus in Herdr");
+    } finally {
+      setIsFocusing(false);
+    }
+  }, [agent, apiBaseUrl, token, isFocusing]);
+
+  if (!agent) {
+    return null;
+  }
+
+  const isError = snapshot.matches("error");
+  const isReconnecting = snapshot.matches("reconnecting");
+  const isFetchingHistory = snapshot.matches("fetchingHistory");
+
+  return (
+    <div
+      data-testid="LogDrawer"
+      className="fixed inset-y-0 right-0 w-full max-w-3xl bg-slate-950 border-l border-slate-800 shadow-2xl z-50 flex flex-col font-sans"
+    >
+      {/* Header */}
+      <div
+        data-testid="LogDrawer--header"
+        className="flex items-center justify-between p-4 border-b border-slate-800 bg-slate-900/60 gap-3"
+      >
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 mb-1">
+            <h2 data-testid="LogDrawer--title" className="text-sm font-bold text-slate-100 line-clamp-1">
+              {agent.activity.title || "Agent Execution Log"}
+            </h2>
+            <StatusBadge lifecycle={agent.activity.lifecycle} activity={agent.activity.activity} />
+          </div>
+          <p className="text-xs text-slate-400 font-mono truncate">
+            {agent.environment.label} • {agent.project.name} • {agent.workspace.branch}
+          </p>
+        </div>
+
+        <div className="flex items-center gap-1 shrink-0">
+          {focusError && (
+            <span
+              data-testid="LogDrawer--focus-error"
+              role="alert"
+              className="text-[10px] text-red-400 font-medium px-1.5 py-0.5 rounded bg-red-950/40 border border-red-800/60"
+            >
+              {focusError}
+            </span>
+          )}
+
+          <button
+            type="button"
+            aria-label="Focus in Herdr"
+            title={
+              focusError
+                ? focusError
+                : agent.activity.lifecycle === "RUNNING"
+                  ? "Focus in Herdr"
+                  : "Agent session is not running"
+            }
+            data-testid="LogDrawer--focus-button"
+            disabled={agent.activity.lifecycle !== "RUNNING" || isFocusing}
+            onClick={handleFocus}
+            className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer flex items-center justify-center"
+          >
+            <IconWrapper size="lg" tone={focusError ? "error" : "muted"} spin={isFocusing}>
+              {isFocusing ? <Loader2 size={20} data-testid="LogDrawer--focus-spinner" /> : <SquareTerminal size={20} />}
+            </IconWrapper>
+          </button>
+
+          <button
+            type="button"
+            aria-label={hasCopied ? "Debug command copied" : "Copy debug command to clipboard"}
+            title={hasCopied ? "Copied to clipboard!" : "Copy debug command to clipboard"}
+            data-testid="LogDrawer--debug-button"
+            onClick={handleCopyDebugCommand}
+            className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
+          >
+            <IconWrapper size="lg" tone={hasCopied ? "success" : undefined}>
+              {hasCopied ? <Check size={20} /> : <Terminal size={20} />}
+            </IconWrapper>
+          </button>
+
+          <button
+            type="button"
+            aria-label="Close log drawer"
+            data-testid="LogDrawer--close-button"
+            onClick={onClose}
+            className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
+          >
+            <IconWrapper size="lg">
+              <X size={20} />
+            </IconWrapper>
+          </button>
+        </div>
+      </div>
+
+      {/* Error / Reconnect Banner */}
+      {isError && (
+        <div
+          data-testid="LogDrawer--error"
+          className="p-3 bg-red-950/70 border-b border-red-800/80 flex items-center justify-between text-xs text-red-200 font-mono"
+        >
+          <div className="flex items-center gap-2">
+            <IconWrapper size="sm" tone="error">
+              <AlertCircle size={14} />
+            </IconWrapper>
+            <span>{snapshot.context.errorMessage ?? "Failed to load agent telemetry logs"}</span>
+          </div>
+          <button
+            type="button"
+            data-testid="LogDrawer--retry-button"
+            onClick={() => send({ type: "RETRY" })}
+            className="px-2 py-1 bg-red-900/60 hover:bg-red-800/80 rounded text-red-100 flex items-center gap-1 transition-colors"
+          >
+            <IconWrapper size="xs">
+              <RefreshCw size={12} />
+            </IconWrapper>
+            <span>Retry</span>
+          </button>
+        </div>
+      )}
+
+      {isReconnecting && (
+        <div
+          data-testid="LogDrawer--reconnecting"
+          className="p-2 bg-amber-950/60 border-b border-amber-800/60 flex items-center gap-2 text-xs text-amber-200 font-mono"
+        >
+          <IconWrapper size="xs" tone="warning">
+            <RefreshCw size={12} />
+          </IconWrapper>
+          <span>Live tail disconnected. Reconnecting...</span>
+        </div>
+      )}
+
+      {/* Live Log Stream */}
+      <div
+        ref={streamRef}
+        onScroll={handleScroll}
+        data-testid="LogDrawer--stream"
+        className="flex-1 overflow-y-auto overflow-x-hidden min-w-0 w-full p-4 space-y-3 text-xs"
+      >
+        {correlatedLogs.length === 0 ? (
+          <div className="text-center py-12 text-slate-500 font-mono">
+            {isFetchingHistory ? "Loading telemetry log events..." : "No telemetry log events recorded yet."}
+          </div>
+        ) : (
+          correlatedLogs.map((log) => <LogFrameItem key={getLogFrameKey(log)} frame={log} />)
+        )}
+      </div>
+    </div>
+  );
+}

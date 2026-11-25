@@ -1,0 +1,44 @@
+# Justfile for ui-web
+
+# Default recipe
+default:
+    @just --justfile "{{ module_directory() }}/justfile" --list
+
+# Run dev server
+run:
+    bun run src/server.ts
+
+# Run dev server in AI mode
+run-ai:
+    AGENT=1 bun run src/server.ts
+
+# Build frontend bundle
+build:
+    bun run build
+
+# Start Storybook component explorer
+storybook *args:
+    bun run storybook {{ args }}
+
+# Run policy checks and TypeScript compiler check
+lint:
+    bun run check
+    bun x tsc --noEmit
+
+# Run policy checks followed by unit test suite
+test:
+    bun run check
+    NODE_ENV=test bun test src
+
+# Build the daemons the full-stack specs spawn, make sure Chromium is installed, then run the Playwright E2E suite
+test-e2e:
+    just --justfile ../../justfile build-daemons
+    bun x playwright install chromium
+    bun run test:e2e
+
+# Clean artifacts
+clean:
+    rm -rf dist/
+
+setup:
+    bun install --frozen-lockfile

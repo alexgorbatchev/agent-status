@@ -1,11 +1,16 @@
 /target/
 /.tmp/
 /.cache/
+/.state/
 /.codegraph/
 /.pi-subagents/
 /.workspaces/
 /packages/*/bin/
 /packages/*/.tmp/
+/packages/ui-web/node_modules/
+/packages/ui-web/dist/
+/packages/ui-web/test-results/
+/packages/ui-web/playwright-report/
 *.sqlite-wal
 *.sqlite-shm
 *.db-wal

@@ -25,3 +25,11 @@ run *args:
 
 run-ai *args:
     AGENT=1 cargo run --package agent-ingester --locked -- {{ args }}
+# Run the devhost service with repository-local application state
+dev: build
+    #!/usr/bin/env sh
+    set -eu
+    cd "{{ module_directory() }}/../.."
+    mkdir -p .tmp/dev-stack/data/agent-status .tmp/dev-stack/cache .tmp/dev-stack/logs .tmp/dev-stack/run
+    unset AGENT_STATUS_LOG_FILE
+    exec packages/agent-ingester/bin/agent-ingester --addr "$DEVHOST_BIND_HOST:$PORT" --token dev-secret-token --db .tmp/dev-stack/data/agent-status/agent-status.db --notify-sock .tmp/dev-stack/run/notify.sock --log-dir .tmp/dev-stack/logs
