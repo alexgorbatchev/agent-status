@@ -1,186 +1,172 @@
-An offline debugging and transcript replay utility for AI coding agent sessions. It executes the complete telemetry aggregation lifecycle — log parsing, Git resolution, token pricing, state machine classification, and read query verification — in-process against local session transcripts or SQLite databases without running daemons or network services.
+`agent-debug` helps Agent Status operators investigate session transcripts, replayed activity, and stored telemetry. It provides offline diagnostics for Claude Code, Pi, Codex, and OpenCode, plus explicit server reads and optional live summarization.
 
 # What It Does
 
-- **Replays agent sessions offline** from Claude Code, Pi, OpenAI Codex, and OpenCode transcripts through the ingestion pipeline.
-- **Validates state transitions** and lifecycle fidelity (`RUNNING` -> `EXITED`, `IDLE`, `BUSY`, `WAITING_QUESTION`, `ERROR`, `RATE_LIMITED`) and turn completion status (`Completed`) without launching live harnesses.
-- **Renders hierarchical fleet views** (`agent-debug session fleet` / `agent-debug fleet`) grouping sessions by project and linked worktree branches with idle freshness tiering.
-- **Audits token pricing and usage** against static pricing models to diagnose calculation drift.
-- **Inspects turn-by-turn state diffs** (`--diff`) to isolate the exact turn where state corrupts.
-- **Verifies read-side queries** (`GetAgentByID`, `GetAgentLogs`) against an in-memory SQLite store to guarantee dashboard renderability.
+- **Replay sessions:** Reconstruct agent activity, usage, and lifecycle state from transcripts or an OpenCode database.
+- **Validate records:** Check telemetry framing, lifecycle termination, usage, and database read projections.
+- **Inspect persisted state:** Read agents, historical runs, and individual events without modifying the monitoring database.
+- **Audit discovery:** Pair native processes with session files and report orphan processes or sessions.
+- **Compare results:** Show differences between replayed and persisted state, or group sessions by project and worktree.
 
 # How It Works
 
-- Auto-detects agent harness format from JSONL lines or SQLite headers.
-- Parses logs using pure Go parsing routines (`github.com/alexgorbatchev/agent-parser`).
-- Resolves Git repositories, branches, and worktrees (`packages/agent-observer/git`).
-- Classifies agent state, calculates pricing, and accumulates token usage (`packages/agent-ingester/classifier`).
-- Synthesizes lifecycle boundaries (`run_started`, `run_exited`) when transcripts do not persist OS process boundaries.
-- Executes read-side queries (`packages/agent-server/store`) against the populated database to verify schema compliance.
+- Give `session replay` a transcript path or session identity to inspect the reconstructed state.
+- Use `session validate` for a pass/fail report, or `session view` for an activity card.
+- Add `--export-db` to save replayed telemetry, then inspect it with `db inspect` and `event list`.
+- Use `scanner audit` to investigate process/session pairing and `agent list` to locate active agents.
+- Request remote observations with `agent usage`; enable provider calls explicitly with `session replay --summarize`.
 
 # How it Really Works
 
-- `agent-debug` runs entirely in-process against an ephemeral in-memory SQLite database (`:memory:`), never mutating live observer cursors or daemon databases unless explicitly exported with `--export-db`.
-- Foreign transcript paths are remapped to local checkouts using `--cwd <path>` so Git metadata resolves against local checkouts.
-- Sibling subagent directories (`<session_id>/subagents/*.jsonl` or `subagents/*.jsonl`) are automatically discovered and interleaved into the event stream by timestamp.
-- Intermediate state inspection is controlled via breakpoints: `--until-line <N>`, `--until-event <type>`, and `--stop-on-error`.
-- Dual-mode output (`AGENT=1`) switches from aligned terminal tables and ASCII tree glyphs to token-conservative key-value lines.
-- Every command that reads the agent-status database finds it the same way when `--db` is `auto` (the default for `fleet`, `db inspect`, and `events`; `session replay` and `session validate` compare against a database only when `--db` is given): `AGENT_STATUS_DB_PATH` if set, then the installed ingester's `$XDG_DATA_HOME/agent-status/agent-status.db` (default `~/.local/share/agent-status/agent-status.db`), then the dev stack's `.tmp/dev-stack/data/agent-status/agent-status.db` under the current directory. Pass `--db .tmp/dev-stack/data/agent-status/agent-status.db` to read the dev stack on a machine that also runs the installed ingester. An explicit `--db` may start with `~/`.
-
-# Prerequisites
-
-- [Go](https://go.dev) (v1.26+) - Required for building or running `agent-debug` from source.
-- [Git](https://git-scm.com) - Used for resolving repository canonical roots and branch names during replay.
+- Replay normally keeps its telemetry in memory. `--export-db` creates or opens a writable SQLite database and commits processed frames incrementally; a failed replay can leave partial exported evidence. Monitoring and OpenCode input databases remain read-only.
+- Replay supplies missing lifecycle boundaries by default. `--strict-lifecycle` preserves the transcript's boundaries. Replay accepts a missing termination event while still failing unrelated verification checks; validation requires termination. Database comparison treats only unended runs as current and keeps historical runs available for inspection.
+- An exact session identity takes precedence over partial filename matches; ambiguous partial matches fail. Select `--session-id` when replaying an OpenCode database containing multiple sessions. Session discovery paths and database search order are documented in the [configuration reference](../../skills/agent-debug/references/setup.md).
+- Local diagnostics operate without a running server. `agent list --all` and `agent usage` contact `AGENT_SERVER_HTTP_URL`, defaulting to `http://127.0.0.1:4502`. `AGENT_STATUS_TOKEN` supplies an optional bearer token. Requests have a ten-second deadline, one attempt, and zero redirects.
+- Summarization is disabled by default and performs no provider environment lookup while disabled. `--summarize` enables configured OpenAI-compatible, Gemini, and Anthropic providers; calls may incur charges. Provider configuration and fallback order appear in the configuration reference.
+- Results go to stdout; scanner warnings and returned failures go to stderr. `AGENT=1`, `true`, or `yes` selects compact output. `--json` supplies structured output where listed below. Displayed home paths use `~` and terminal control sequences are removed.
+- Runtime commands also write rotating logs under `${XDG_STATE_HOME:-~/.local/state}/agent-status/logs`, with an intermediate `XDG_DATA_HOME` fallback. Defaults are 10 MiB, five compressed archives, and 14 days. `AGENT_STATUS_LOG_TO_DISK=false` disables disk logging; help and version complete before logging starts.
+- Successful commands exit 0. Argument, validation, cancellation, I/O, runtime, and output failures exit 1. Validation prints its report before returning a failed result. SIGINT and SIGTERM cancel current work and wait for owned tasks.
 
 # Installation
 
-Download the prebuilt binary archive for your platform from the [latest release](https://github.com/alexgorbatchev/agent-status/releases/latest), replacing `X.X.X` with the version shown on that page.
+This Rust workspace package has no published release artifact. Its build recipe targets `bin/agent-debug`; the matching operational reference is [skills/agent-debug/SKILL.md](../../skills/agent-debug/SKILL.md). The `skill` command prints an installation pointer to the source repository.
 
-```bash
-# macOS (Apple Silicon)
-curl -sSL https://github.com/alexgorbatchev/agent-status/releases/latest/download/agent-debug_X.X.X_darwin_arm64.tar.gz | tar -xz -C ~/.local/bin
-```
+# Setup
+
+- Provide an existing session transcript or OpenCode database for local replay. Set the harness-specific discovery overrides in the [configuration reference](../../skills/agent-debug/references/setup.md) when files live outside their usual locations.
+- Supply an existing Agent Status database through `--db` for persisted inspection. `AGENT_STATUS_DB_PATH` participates in session and fleet database discovery; event commands have their own documented search order.
+- For remote reads, provide a running Agent Status server and set `AGENT_SERVER_HTTP_URL` and, when required, `AGENT_STATUS_TOKEN`.
+- For optional summarization, configure a provider using the configuration reference before passing `--summarize`.
 
 # Quick Start
 
-```bash
-# Replay a session transcript or session ID (auto-detects harness)
-agent-debug session replay ~/.claude/sessions/session-abc.jsonl
-
-# Replay with turn-by-turn state transition diffs
-agent-debug session replay --diff session-abc.jsonl
-
-# Compare transcript replay against a live agent-status database
-agent-debug session replay --db ~/.local/share/agent-status/agent-status.db session-abc.jsonl
-
-# Directly inspect persisted agent state in SQLite database
-agent-debug db inspect 01a0bd5b-0024-7222-9709-194e2fa6a892
-
-# Audit harness process discovery and session pairing across all harnesses
-agent-debug scanner audit
-
-# Audit process pairing filtered by harness and working directory
-agent-debug scanner audit --harness pi --cwd /Users/dev/agent-status
-
-# List running harness processes and pairing status
-agent-debug process list
-
-# Validate session transcript against parser, classifier, and query assertions
-agent-debug session validate session-abc.jsonl
-
-# View terminal UI card representation of agent session state
-agent-debug session view session-abc.jsonl
-
-# View hierarchical fleet tree across transcripts or SQLite database
-agent-debug session fleet ~/.claude/sessions/*.jsonl
-agent-debug session fleet .tmp/dev-stack/data/agent-status/agent-status.db
-
-# List sessions inside an OpenCode SQLite database
-agent-debug session list ~/.local/share/opencode/opencode.db
-
-# Inspect ingested telemetry event stream from live database
-agent-debug events 01a0b64b-b517-7569-9c97-dac1d07ce4dd --limit 10
+```sh
+agent-debug --version
+AGENT=1 agent-debug session replay readme-session.jsonl
+agent-debug session validate readme-session.jsonl --json
+agent-debug session replay readme-session.jsonl --export-db replay.db --diff
+agent-debug db inspect readme-session --db replay.db --json
+agent-debug event list readme-session --db replay.db --asc --limit 0
+agent-debug scanner audit --harness pi
 ```
 
-Sample Output:
+Sample output from replaying a Pi transcript with session ID `readme-session`:
 
-```
---------------------------------------------------------------------------------
-Session Replay Summary (pi)
---------------------------------------------------------------------------------
-  Session ID:      01a0b64b-b517-7569-9c97-dac1d07ce4dd
-  Agent ID:        env-debug:pi:01a0b64b-b517-7569-9c97-dac1d07ce4dd
-  Project:         my-repo (branch: main)
-  Directory:       /Users/you/development/my-repo
-  Title:           Implement offline session replay tool
-  Action:          Idle
-  Lifecycle:       EXITED
-  Activity:        IDLE
-  Token Usage:     Input: 951268 | Output: 29040 | Total: 6960642
-  Total Cost:      $0.2563 USD
-  Frames:          310 frames replayed in 109 ms
---------------------------------------------------------------------------------
-[OK] Read-side query verification passed (GetAgentByID, 310 logs scanned)
---------------------------------------------------------------------------------
+```text
+harness:pi session_id:readme-session agent_id:env-debug:pi:readme-session project:repo branch: activity:BUSY lifecycle:EXITED(synthetic) tokens_in:0 tokens_out:0 tokens_total:0 cost_usd:0.0000 subagents:0 frames:3 verification:OK ver_logs:3 duration_ms:22
 ```
 
 # Options & Flags
 
-### `agent-debug session replay`
+Boolean flags accept a bare flag as true or `--flag=true|false`. Command-specific options have no short aliases. Every command supports `--help` / `-h`.
 
-| Flag                   | Short  | Default | Description                                                                |
-| :--------------------- | :----- | :------ | :------------------------------------------------------------------------- |
-| `--harness <name>`     | (none) | `""`    | Explicit harness override (`claude-code`, `pi`, `codex`, `opencode`)       |
-| `--session-id <id>`    | (none) | `""`    | OpenCode session ID to replay (required if database has multiple sessions) |
-| `--cwd <path>`         | (none) | `""`    | Override transcript working directory for local Git resolution             |
-| `--diff`               | (none) | `false` | Display turn-by-turn state mutations during replay                         |
-| `--db <path>`          | (none) | `""`    | Path to `agent-status.db` for discrepancy comparison (or `auto`)           |
-| `--until-line <N>`     | (none) | `0`     | Halt replay after processing source line N                                 |
-| `--until-event <type>` | (none) | `""`    | Halt replay after encountering event type                                  |
-| `--stop-on-error`      | (none) | `false` | Halt immediately on first parse or state machine error                     |
-| `--json`               | (none) | `false` | Output final state and verification results as JSON                        |
-| `--export-db <path>`   | (none) | `""`    | Path to save populated SQLite database on disk                             |
-| `--summarize`          | (none) | `false` | Enable live LLM summarizer provider verification                           |
-| `--env <label>`        | (none) | `debug` | Environment label override                                                 |
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--debug[=bool]` | — | `false` | Enable diagnostic logs; accepted anywhere. |
+| `--help` | `-h` | `false` | Print command help. |
+| `--version` | `-V` | `false` | Print the raw version and newline at the root. |
 
-### `agent-debug session validate`
+`agent-debug session replay <file-or-session-id>`
 
-| Flag                | Short  | Default | Description                                                          |
-| :------------------ | :----- | :------ | :------------------------------------------------------------------- |
-| `--harness <name>`  | (none) | `""`    | Explicit harness override (`claude-code`, `pi`, `codex`, `opencode`) |
-| `--session-id <id>` | (none) | `""`    | OpenCode session ID to validate                                      |
-| `--cwd <path>`      | (none) | `""`    | Override transcript working directory for local Git resolution       |
-| `--db <path>`       | (none) | `""`    | Path to `agent-status.db` for discrepancy comparison (or `auto`)     |
-| `--json`            | (none) | `false` | Output validation report as JSON                                     |
-| `--env <label>`     | (none) | `debug` | Environment label override                                           |
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--harness <name>` | — | automatic | `claude-code`, `pi`, `codex`, `opencode`, or `agy` (alias `antigravity`). |
+| `--session-id <id>` | — | resolved identity | Select an OpenCode session or override the transcript identity. |
+| `--cwd <path>` | — | transcript directory | Override the working directory and local Git resolution. |
+| `--env <label>` | — | `debug` | Replay environment label. |
+| `--json[=bool]` | — | `false` | Print the complete replay result as JSON. |
+| `--strict-lifecycle[=bool]` | — | `false` | Preserve native lifecycle boundaries; alias `--no-synthetic-lifecycle`. |
+| `--until-line <integer>` | — | `0` | Stop after source line N; zero processes all lines. |
+| `--until-event <type>` | — | empty | Stop after the first matching telemetry event. |
+| `--diff[=bool]` | — | `false` | Include state changes; print them incrementally outside JSON mode. |
+| `--stop-on-error[=bool]` | — | `false` | Stop at the first parsing or ingestion failure. |
+| `--summarize[=bool]` | — | `false` | Enable configured live summarization providers. |
+| `--export-db <path>` | — | in memory | Save processed telemetry to SQLite. |
+| `--db <path\|auto>` | — | no comparison | Compare replayed state with a monitoring database. |
 
-### `agent-debug session view`
+`agent-debug session validate <file-or-session-id>`
 
-| Flag                   | Short  | Default | Description                                                          |
-| :--------------------- | :----- | :------ | :------------------------------------------------------------------- |
-| `--harness <name>`     | (none) | `""`    | Explicit harness override (`claude-code`, `pi`, `codex`, `opencode`) |
-| `--session-id <id>`    | (none) | `""`    | OpenCode session ID to view                                          |
-| `--cwd <path>`         | (none) | `""`    | Override transcript working directory for local Git resolution       |
-| `--env <label>`        | (none) | `debug` | Environment label override                                           |
-| `--until-line <N>`     | (none) | `0`     | Halt replay after processing source line N                           |
-| `--until-event <type>` | (none) | `""`    | Halt replay after encountering event type                            |
-| `--json`               | (none) | `false` | Output final agent state as JSON                                     |
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--harness <name>` | — | automatic | Same harness values as replay. |
+| `--session-id <id>` | — | resolved identity | Select or override the session identity. |
+| `--cwd <path>` | — | transcript directory | Override the working directory. |
+| `--env <label>` | — | `debug` | Replay environment label. |
+| `--json[=bool]` | — | `false` | Print the validation report as JSON. |
+| `--strict-lifecycle[=bool]` | — | `false` | Preserve native boundaries; alias `--no-synthetic-lifecycle`. |
+| `--db <path\|auto>` | — | no comparison | Add a database discrepancy check. |
 
-### `agent-debug session fleet` / `agent-debug fleet`
+`agent-debug session view <file-or-session-id>`
 
-| Flag               | Short  | Default | Description                                                          |
-| :----------------- | :----- | :------ | :------------------------------------------------------------------- |
-| `--db <path>`      | (none) | `auto`  | Path to `agent-status.db` (auto-detects if omitted)                  |
-| `--cwd <path>`     | (none) | `""`    | Override transcript working directory for local Git resolution       |
-| `--env <label>`    | (none) | `debug` | Environment label override                                           |
-| `--harness <name>` | (none) | `""`    | Explicit harness override (`claude-code`, `pi`, `codex`, `opencode`) |
-| `--json`           | (none) | `false` | Output fleet agents as JSON                                          |
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--harness <name>` | — | automatic | Same harness values as replay. |
+| `--session-id <id>` | — | resolved identity | Select or override the session identity. |
+| `--cwd <path>` | — | transcript directory | Override the working directory. |
+| `--env <label>` | — | `debug` | Replay environment label. |
+| `--json[=bool]` | — | `false` | Print the reconstructed agent as JSON. |
+| `--until-line <integer>` | — | `0` | Stop after source line N; zero processes all lines. |
+| `--until-event <type>` | — | empty | Stop after the first matching telemetry event. |
 
-### `agent-debug db inspect`
+`agent-debug fleet inspect [file-or-database-or-session-id...]`
 
-| Flag          | Short  | Default | Description                                         |
-| :------------ | :----- | :------ | :-------------------------------------------------- |
-| `--db <path>` | (none) | `auto`  | Path to `agent-status.db` (auto-detects if omitted) |
-| `--json`      | (none) | `false` | Output persisted session record as JSON             |
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--harness <name>` | — | automatic | Override transcript harness detection. |
+| `--cwd <path>` | — | transcript directory | Override transcript working directories. |
+| `--env <label>` | — | `debug` | Replay environment label. |
+| `--json[=bool]` | — | `false` | Print an array of agents. |
+| `--db <path\|auto>` | — | `auto` | Database used when no targets are supplied. |
 
-### `agent-debug events`
+`agent-debug event list <session-id>`
 
-| Flag                  | Short  | Default | Description                                                           |
-| :-------------------- | :----- | :------ | :-------------------------------------------------------------------- |
-| `--db <path>`         | (none) | `auto`  | Path to `agent-status.db` (auto-detects if omitted)                   |
-| `--limit <N>`         | (none) | `20`    | Maximum number of telemetry events to retrieve                        |
-| `--type <types>`      | (none) | `""`    | Filter by comma-separated event types (e.g. `run_started,run_exited`) |
-| `--subagent-id <id>`  | (none) | `""`    | Filter by specific subagent ID                                        |
-| `--include-subagents` | (none) | `true`  | Include events from subagents                                         |
-| `--json`              | (none) | `false` | Output events as JSON                                                 |
-| `--desc`              | (none) | `true`  | Order events by ID descending (newest first)                          |
-| `--asc`               | (none) | `false` | Order events by ID ascending (oldest first)                           |
-| `--id <id>`           | (none) | `0`     | Inspect specific telemetry event by ID                                |
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--db <path\|auto>` | — | `auto` | Monitoring database. |
+| `--limit <integer>` | — | `20` | Maximum records; zero is unlimited. |
+| `--type <CSV>` | — | empty | Filter telemetry event types. |
+| `--subagent-id <id>` | — | empty | Filter a subagent identity. |
+| `--include-subagents[=bool]` | — | `true` | Include subagent events. |
+| `--desc[=bool]` | — | `true` | Show newest events first. |
+| `--asc[=bool]` | — | `false` | Show oldest events first, overriding `--desc`. |
+| `--json[=bool]` | — | `false` | Print an array with payload data and summaries. |
 
-### `agent-debug scanner audit` / `agent-debug process list`
+`agent-debug event inspect <positive-id>` and `agent-debug db inspect <session-id>`
 
-| Flag               | Short  | Default | Description                                                   |
-| :----------------- | :----- | :------ | :------------------------------------------------------------ |
-| `--harness <name>` | (none) | `""`    | Filter audit by harness (`claude`, `pi`, `codex`, `opencode`) |
-| `--cwd <path>`     | (none) | `""`    | Filter audit by working directory                             |
-| `--json`           | (none) | `false` | Output audit results as JSON                                  |
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--db <path\|auto>` | — | `auto` | Monitoring database. |
+| `--json[=bool]` | — | `false` | Print the event or session record as JSON. |
+
+`agent-debug scanner audit`, `agent-debug scanner list`, and `agent-debug process list`
+
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--harness <name>` | — | all | Filter `claude`, `pi`, `codex`, `opencode`, or `agy` (alias `antigravity`). |
+| `--cwd <path>` | — | all | Filter a directory and its descendants. |
+| `--json[=bool]` | — | `false` | Print process/session pairing records as JSON. |
+
+`agent-debug agent list`
+
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--all[=bool]` | — | `false` | Query monitored machines from the server. |
+| `--db <path>` | — | local discovery | Read local monitoring state; mutually exclusive with `--all`. |
+| `--server-url <url>` | — | configured server URL | Override the server endpoint; requires `--all=true`. |
+
+`agent-debug agent usage <agent-id>`
+
+| Flag | Short | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--server-url <url>` | — | configured server URL | Override the server endpoint. |
+| `--json[=bool]` | — | `false` | Print the complete usage report as JSON. |
+
+`session list <file-or-database>` reads OpenCode session metadata and has no command-specific flags. `completion bash`, `completion zsh`, `completion fish`, and `completion powershell` print shell scripts. See the [operational skill](../../skills/agent-debug/SKILL.md) for full output contracts and generated help commands.
+
+# Limits
+
+Local fixture checks establish transcript, SQLite, HTTP, and process behavior. Live harness/server interoperability and native macOS execution remain unverified. The Rust executable and its operational skill are unpublished.
+
+# License
+
+[MIT](LICENSE), copyright 2026 Alex Gorbatchev.

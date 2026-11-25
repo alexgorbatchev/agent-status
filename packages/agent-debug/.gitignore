@@ -1,12 +1,10 @@
-# Compiled binaries
+/target/
 /bin/
-
-# Test binaries and coverage profiles
-*.test
-*.out
-*.prof
-
-# IDE and OS files
-.DS_Store
-.idea/
-.vscode/
+/.tmp/
+/.cache/
+/.codegraph/
+/.pi-subagents/
+*.sqlite-wal
+*.sqlite-shm
+*.db-wal
+*.db-shm

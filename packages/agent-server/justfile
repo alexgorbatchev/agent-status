@@ -1,41 +1,31 @@
-# Justfile for agent-server
-
-# Default recipe: list available tasks
 default:
-    @just --justfile "{{ module_directory() }}/justfile" --list
+    @just --list
 
-# Run in human-facing interactive mode
-run:
-    go run ./cmd/agent-server
+test:
+    mkdir -p .tmp
+    cargo test --package agent-server --locked --all-targets
+    cargo test --package agent-server --locked --doc
 
-# Run in agent-facing token-conservative mode
-run-ai:
-    @AGENT=1 go run ./cmd/agent-server
-
-# Build compiled binary strictly into bin/
-build:
-    @mkdir -p bin
-    go build -o bin/agent-server ./cmd/agent-server
-
-# Run all unit tests with race detector and verify >= 90% coverage
-test *args:
-    ../../scripts/check-coverage.sh -race {{ if args == "" { "./..." } else { args } }}
-
-# Check module hygiene and run vet + linter
 lint:
-    ../../scripts/check-format.sh
-    go mod tidy -diff
-    go vet ./...
-    golangci-lint run
+    cargo fmt --package agent-server -- --check
+    cargo clippy --package agent-server --locked --all-targets -- -D warnings
 
-# Clean build artifacts
-clean:
-    rm -rf bin/
+coverage:
+    mkdir -p .tmp
+    cargo llvm-cov --package agent-server --locked --all-targets --fail-under-lines 90
 
-# Download module dependencies
-setup:
-    go mod download
+check: lint test coverage
 
+build:
+    cargo build --package agent-server --locked --release
+    mkdir -p bin
+    cp "$(cargo metadata --locked --offline --format-version 1 --no-deps | jq -r .target_directory)/release/agent-server" bin/agent-server
+
+run *args:
+    cargo run --package agent-server --locked -- {{ args }}
+
+run-ai *args:
+    AGENT=1 cargo run --package agent-server --locked -- {{ args }}
 # Run the devhost service with repository-local application state
 dev: build
     #!/usr/bin/env sh

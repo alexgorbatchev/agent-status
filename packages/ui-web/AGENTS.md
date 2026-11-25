@@ -10,7 +10,7 @@ Web frontend dashboard for agent-status built with React 19, Tailwind CSS v4, Lu
 - Build: `just build`
 - Test: `just test`
 - Test E2E: `just test-e2e` (builds the observer, ingester, and server and installs the pinned Chromium first)
-- Check Go coverage (repo root): `just check-coverage` (verifies >= 90% statement coverage across Go packages)
+- Check Rust coverage (repo root): `just coverage` (verifies >= 90% line coverage across Rust packages)
 - Lint: `just lint`
 - Guidance: `bun run typescript-ai-policy guidance`
 
@@ -31,7 +31,7 @@ Web frontend dashboard for agent-status built with React 19, Tailwind CSS v4, Lu
 - Hierarchical project nesting uses `IProjectTreeGroup` and `IWorktreeBranchGroup` (`src/types/types.ts`) via `groupAgentsByProjectHierarchy`, separating root checkout agents from linked worktree branches with dedicated headers and subgrids.
 - Semantic color precedence strictly reserves green and red for lifecycle and activity states; tokens in `src/theme.css` guarantee WCAG AA contrast compliance (>= 4.5:1 text, >= 3:1 graphical) across dark card surfaces (`#020617`, `#0f172a`, `#1e293b`). Light-mode media query swapping is removed to prevent washed-out colors on dark surfaces.
 - Card border highlighting uses Tailwind utility classes directly; `src/theme.css` avoids `.status-*` classes or `[data-semantic-status]` selectors that collide with Tailwind card borders.
-- CLI parity and color gating: follow `agent-debug session view` color gating conventions where color output respects `NO_COLOR` and terminal detection (`go-isatty`).
+- CLI parity and color gating: follow `agent-debug session view` color gating conventions where color output respects `NO_COLOR` and terminal detection.
 - Unacknowledged completion state: When `hasUnseenCompletion` is true, cards display a green `(Completed)` status badge and completion callout with an acknowledge action to dismiss the completion state.
 - Idle freshness tiers classify idle sessions as `fresh` (<15m), `standard` (15m–2h), or `stale` (>2h, visually dimmed via opacity styling unless unacknowledged completion is active; within the idle category, stale idle sessions are stably partitioned below warm idle sessions while preserving relative order within each partition).
 - Redundant project prefixes in card titles are stripped with `trimProjectTitlePrefix` (`src/utils/agentUtils.ts`) strictly when displayed in project group context (`ProjectGroup` providing `projectName`); single cards or environment views without project headers preserve full titles. Matching requires exact case and whitespace-bounded separators (colons, slashes, hyphens, brackets) sharing test vectors with `packages/agent-common/testdata/project-prefix-fixtures.json`.
@@ -50,7 +50,6 @@ Web frontend dashboard for agent-status built with React 19, Tailwind CSS v4, Lu
 
 ## Boundaries
 
-- Always: automatically record all new user instructions in the most appropriate `AGENTS.md` file immediately upon receipt (check with user if existing instructions conflict)
 - Always: read typescript-ai-policy guidelines (`bun run typescript-ai-policy guidance`) before making changes
 - Always: run `just test` and `just lint` before committing changes
 - Always (code-based projects only): any time code is changed such that results from running that code are changed, a test file must be changed as well; 90% statement coverage is required (scripts/ folder is excluded from this rule)

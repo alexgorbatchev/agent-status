@@ -1,34 +1,19 @@
+---
+created_on: 2026-10-14 13:06
+last_modified: 2026-10-14 13:06
+status: current
+---
+
 # agent-common
 
-Shared Go types and structured logging definitions for the agent-status pipeline.
+Run `just check` for formatting, lint, behavioral tests, and the 90% line coverage gate. Run `just build` to compile all targets. Inherit the parent Rust instructions.
 
-## Commands
+- Keep JSON contracts aligned across observer, ingester, server, and frontend models; preserve completion-field precedence and required snapshot arrays.
+- Preserve unknown string tags without adding known lifecycle or activity variants. Ask before adding a lifecycle or activity state.
+- Extraction must use explicit telemetry evidence and exclude shell commands, conversational mentions, catalogs, and results. Native call IDs and fallback identities must remain stable across transport replay.
+- Use native tracing events and spans. Keep disk output open until command errors are reported; close the active logger through its owner and surface write/flush failures.
+- Zero retention limits mean unlimited. Compression, count, and age tests must use actual files; age cleanup must select only this logger's archives.
+- Any runtime behavior change requires a corresponding behavioral test-file change and at least 90% line coverage; scripts are excluded.
+- Never publish releases, tags, packages, or deployments without explicit authorization.
 
-- Test: `just test` (enforces >= 90% statement coverage gate via `scripts/check-coverage.sh`)
-- Check coverage: `just check-coverage` (repo root task checking all Go packages)
-- Lint: `just lint`
-
-## Local conventions
-
-- Keep types in `types/types.go` synchronized with frontend models in `packages/ui-web/src/types/types.ts`.
-- `ActivityRateLimited` (`"RATE_LIMITED"`) models rate-limiting state on `IAgentActivity` alongside `RateLimitResetAt` (epoch ms reset timestamp) and `RetryAfterSeconds` (retry delay).
-- Turn completion retention uses `HasUnseenCompletion` (boolean pointer) and `CompletedAt` (epoch ms timestamp) on `IAgentActivity` (and `CompletedAt` on `ISubagentSummary`) to flag unacknowledged completed turns that transitioned to idle.
-- Structured logging wraps `log/slog` via `logging/logging.go` and respects dual-mode output via `AGENT=1` (human mode formats clean tags and prefers human names over opaque IDs; agent mode produces token-conservative machine logfmt), with disk rotation and retention limits via lumberjack.
-
-## Local gotchas
-
-- Renaming struct tags in `types/types.go` breaks JSON contracts between `agent-observer`, `agent-ingester`, `agent-server`, and `ui-web`.
-- Tests must never read real harness sessions or write real state. Command packages and debug's scanner package call `testenv.IsolateStateDirs` and, when they discover or resolve sessions, `testenv.IsolateHarnessEnv` from `TestMain`, and a test in that package calls `testenv.RequireIsolated` and `testenv.RequireHarnessIsolated` so removing the isolation fails the package. Harness isolation includes HOME and clears inherited location overrides; individual tests set their own fixture paths with `t.Setenv`. Tests that create sessions under HOME use `testenv.IsolateHarnessHome(t)`. Add new harness location variables to `harnessEnv` in `testenv/harness.go`.
-
-## Boundaries
-
-- Always (code-based projects only): any time code is changed such that results from running that code are changed, a test file must be changed as well; 90% statement coverage is required and enforced on `just test` via `scripts/check-coverage.sh` (scripts/ folder is excluded from this rule)
-- Ask first: adding new lifecycle or activity enum values in `types/types.go`
-- Never: import internal packages from other `packages/*` modules into `agent-common`
-- Never: publish releases automatically without explicit user authorization
-
-## References
-
-- Domain types: `types/types.go`
-- Shared logging: `logging/logging.go`
-- Test isolation: `testenv/testenv.go`, `testenv/harness.go`
+Dependency choices and verified source differences are recorded in [the dependency reference](docs/internal/dependencies.md).

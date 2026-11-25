@@ -556,7 +556,7 @@ export function AgentCard({
           data-testid="AgentCard--usage"
           data-metric="usage"
           aria-label={`${activity.usage.total.toLocaleString()} tokens`}
-          className="text-[11px] text-slate-500 font-mono"
+          className="text-[11px] text-slate-400 font-mono"
         >
           {activity.usage.total.toLocaleString()} tokens
           {typeof activity.contextFullness === "number" && (

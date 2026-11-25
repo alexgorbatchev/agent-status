@@ -86,6 +86,15 @@ describe("LogDrawer Component", () => {
     expect(rendered).toMatch(/<p[^>]*class="[^"]*truncate[^"]*"[^>]*>.*main.*<\/p>/);
   });
 
+  it("omits the branch separator when the branch is unknown", () => {
+    const agent = {
+      ...fixture_agentStateRunning,
+      workspace: { ...fixture_agentStateRunning.workspace, branch: "" },
+    };
+    const rendered = renderToString(<LogDrawer agent={agent} onClose={() => {}} />);
+    expect(rendered).toContain("work-macbook • agent-status</p>");
+  });
+
   it("renders 500-character unbroken strings in log stream with overflow containment classes", () => {
     const longToken = "y".repeat(500);
     const longFrame: ITelemetryFrame = {

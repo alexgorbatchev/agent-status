@@ -1,24 +1,23 @@
-# Justfile for agent-common
-
-# Default recipe: list available tasks
 default:
-    @just --justfile "{{ module_directory() }}/justfile" --list
+    @just --list
 
-# Run all unit tests with race detector and verify >= 90% coverage
-test *args:
-    ../../scripts/check-coverage.sh -race {{ if args == "" { "./..." } else { args } }}
+build:
+    cargo build --package agent-common --locked --all-targets
 
-# Check module hygiene and run vet + linter
+test:
+    mkdir -p .tmp
+    cargo test --package agent-common --locked --all-targets
+    cargo test --package agent-common --locked --doc
+
+fmt:
+    cargo fmt --package agent-common
+
 lint:
-    ../../scripts/check-format.sh
-    go mod tidy -diff
-    go vet ./...
-    golangci-lint run
+    cargo fmt --package agent-common -- --check
+    cargo clippy --package agent-common --locked --all-targets -- -D warnings
 
-# Download module dependencies
-setup:
-    go mod download
+coverage:
+    mkdir -p .tmp
+    cargo llvm-cov --package agent-common --locked --all-targets --fail-under-lines 90
 
-# Clean build artifacts
-clean:
-    rm -rf bin/
+check: lint test coverage

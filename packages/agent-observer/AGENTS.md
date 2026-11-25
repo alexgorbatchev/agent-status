@@ -1,48 +1,33 @@
-# agent-observer
+---
+created_on: 2026-10-14 11:01
+last_modified: 2026-10-14 22:41
+status: current
+---
 
-Local observer daemon (`agent-observer`) that consumes `agent-watcher`, formats telemetry, resolves git workspaces, and ships events over WebSocket.
+# Agent observer
 
 ## Commands
 
-- Dev: `go run ./cmd/agent-observer`
-- Build: `just build`
-- Test: `just test` (>=90% statement coverage via `scripts/check-coverage.sh`)
-- Lint: `just lint`
+- `just check`: scoped formatting, strict Clippy, tests, and at least 90% line coverage.
+- `just build`: optimized binary at `bin/agent-observer`.
+- `just run <args>` and `just run-ai <args>`: human and compact output.
 
-## Local conventions
+## Contracts
 
-- Keep discovery, lifecycle, transcript/database watching, and parser-event emission in standalone `github.com/alexgorbatchev/agent-watcher`.
-- `cmd/agent-observer/main.go` maps `watcher.Event` to telemetry. Environment identity, git workspace resolution (`internal/git/`), and WebSocket delivery (`internal/shipper/`) belong here.
-- Pass explicit harness paths to `watcher.Config`; do not change process environment variables to configure the library.
-- Preserve agent-status cache locations using `config.ObserverCachePath`: `observer-cursors.json` and `observer-sessions.json` under `$XDG_CACHE_HOME/agent-status/` or `~/.cache/agent-status/`.
-- OpenCode messages use read-only database access and a separate acknowledged checkpoint file at the resolved cursor path + `.opencode`.
-- Pass the shipper's sequence-keyed ingester acknowledgement to the watcher. Transcript cursors advance only through contiguous acknowledged lines; only the last event from a line carries its acknowledgement.
-- Watcher pruning removes cursors for deleted or replaced transcripts; cursors for existing files with matching device and inode survive age pruning.
-- Shipper bounded dispatch supplies backpressure: reads pause when disconnected or the buffer is full. Backoff resets only on an ACK or after 5s of sustained error-free streaming.
-- Structured logging uses `packages/agent-common/logging`, including its logger injected into the watcher, with snake_case actions and dual-mode (`AGENT=1`) output.
+- Keep discovery and transcript behavior in agent-watcher; observer owns environment identity, Git metadata, and acknowledged WebSocket delivery.
+- Hold capacity for every unacknowledged frame, including disconnected frames. Reconnect preserves serialized bytes and sequence numbers. Invoke checkpoint callbacks in sequence order outside the shipper lock.
+- Keep pending transcript checkpoints durable only after all events for each line are acknowledged. Join and flush watcher workers before stopping transport on shutdown.
+- Pass path configuration directly rather than mutating environment variables. Treat harness databases and transcripts as read-only.
+- Use native cancellation to kill and reap owned Git children. Do not contact Git remotes when resolving metadata.
+- Keep origin-less project identities unique by canonical local root. Do not collapse different projects by basename.
+- Keep bearer tokens and URL credentials out of logs, help defaults, and diagnostics. Fold paths only for display through the shared helper.
+- Keep `../../skills/agent-observer/SKILL.md` synchronized in the same change as commands, flags, defaults, environment, outputs, or side effects. Update metadata and verify against the live Clap tree.
+- The skill command prints only the compiled installation pointer. Never embed the usage skill or read repository files at runtime.
 
-## Local gotchas
+## Verification and boundaries
 
-- Keep `agent-parser` at least `v1.1.0` (required by agent-watcher `v1.1.0`) across workspace modules; Codex tool outputs may be content arrays, and task timestamps may be numeric. Older decoders reject these records.
-- Watcher shutdown joins tailers and flushes cursors, database checkpoints, and session state before shipper shutdown.
-- Transcript files remain the durable queue when the bounded shipper buffer fills up.
-- Claude Code compaction replaces or truncates transcripts; file generation checks belong to the library.
-- Observer and debug consume the same tested watcher release, at least `v1.1.0`: it preserves cursors for existing transcripts, reads session recency from agent-parser's per-harness activity readers, and detects Pi under Node 24 on Linux. Keep sibling workspace overrides optional and out of committed manifests.
-
-## Boundaries
-
-- Always: keep the full reusable watching pipeline in `agent-watcher`; agent-status owns formatting and transport.
-- Always: preserve incoming fixes and their behavioral tests in `agent-watcher` when resolving conflicts in code extracted from observer.
-- Always: include OpenCode message watching, with acknowledged database checkpoints separate from transcript byte cursors.
-- Always: functional code changes require behavioral test changes, red/green verification, and >=90% statement coverage per package (scripts excluded).
-- Always: automatically record new user instructions in the appropriate `AGENTS.md`, checking conflicts with the user.
-- Ask first: modifying cursor storage structure or WebSocket wire protocol.
-- Never: lock, mutate, or delete active harness logs or databases.
-- Never: publish releases automatically without explicit authorization.
-
-## References
-
-- Entry point and telemetry adapter: `cmd/agent-observer/main.go`
-- Shipper: `internal/shipper/shipper.go`
-- Watcher API and implementation: `github.com/alexgorbatchev/agent-watcher`
-- Public git resolver used by debug: `git/export.go`
+- Read applicable skills before editing. Runtime changes require corresponding behavioral test changes and at least 90% measured line coverage; scripts are excluded.
+- Record a failing regression, implement it, then temporarily disable and restore the behavior to prove the tests detect it. Use real local WebSocket servers and subprocesses for transport and shutdown.
+- Keep temporary files and evidence in `.tmp/`; scope formatting to this package and leave sibling repositories untouched.
+- Persist standing guidance in place and keep progress/history outside agent instructions.
+- Never publish releases, tags, packages, or production deployments without explicit authorization.

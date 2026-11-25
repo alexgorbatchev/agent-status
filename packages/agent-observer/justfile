@@ -1,31 +1,30 @@
-# Default recipe: list available tasks
 default:
-    @just --justfile "{{ module_directory() }}/justfile" --list
+    @just --list
 
-# Build agent-observer binary strictly into bin/
-build:
-    @mkdir -p bin
-    go build -o bin/agent-observer ./cmd/agent-observer
+run *args:
+    cargo run --package agent-observer --locked -- {{ args }}
 
-# Run all unit tests with race detector and verify >= 90% coverage
-test *args:
-    ../../scripts/check-coverage.sh -race {{ if args == "" { "./..." } else { args } }}
+run-ai *args:
+    AGENT=1 cargo run --package agent-observer --locked -- {{ args }}
 
-# Check module hygiene and run vet + linter
+test:
+    mkdir -p .tmp
+    cargo test --package agent-observer --locked --all-targets
+
 lint:
-    ../../scripts/check-format.sh
-    go mod tidy -diff
-    go vet ./...
-    golangci-lint run
+    cargo fmt --package agent-observer -- --check
+    cargo clippy --package agent-observer --locked --all-targets -- -D warnings
 
-# Clean build artifacts
-clean:
-    rm -rf bin/
+coverage:
+    mkdir -p .tmp
+    cargo llvm-cov --package agent-observer --locked --all-targets --fail-under-lines 90
 
-# Download module dependencies
-setup:
-    go mod download
+check: lint test coverage
 
+build:
+    cargo build --package agent-observer --locked --release
+    mkdir -p bin
+    cp "$(cargo metadata --locked --offline --format-version 1 --no-deps | jq -r .target_directory)/release/agent-observer" bin/agent-observer
 # Run the devhost service with repository-local application state
 dev: build
     #!/usr/bin/env sh

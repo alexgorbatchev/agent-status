@@ -30,6 +30,13 @@ test("observes native Antigravity transcripts through the full ingestion pipelin
     });
     await expect(page.getByTestId("AgentCard--title")).toHaveText("Inspect Antigravity telemetry", { timeout: 10000 });
     await expect(page.getByLabel("120 tokens", { exact: true })).toBeVisible({ timeout: 10000 });
+
+    const patchResponse = page.waitForResponse((response) => response.request().method() === "PATCH");
+    await page.getByRole("button", { name: "Hide agent session" }).click();
+    expect((await patchResponse).status()).toBe(200);
+    await page.reload();
+    await expect(page.getByTestId("App--toggle-show-hidden")).toHaveText("Show 1 hidden");
+    await expect(badge).toBeHidden();
   } finally {
     await stack.stop();
   }

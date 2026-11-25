@@ -131,6 +131,8 @@ export async function createTestStack(testId: string): Promise<ITestStack> {
         dbPath,
         "--socket",
         notifySock,
+        "--ingester-url",
+        `http://127.0.0.1:${ingesterPort}`,
         "--token",
         token,
         "--cors-origin",

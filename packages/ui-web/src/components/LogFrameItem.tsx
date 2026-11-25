@@ -138,9 +138,7 @@ export function LogFrameItem({ frame }: ILogFrameItemProps): React.JSX.Element {
             {isUser ? "USER PROMPT" : isIntermediateToolTurnEnd ? "API RESPONSE" : frame.eventType}
           </span>
         </div>
-        <span data-testid="LogFrameItem--timestamp" className="text-slate-500">
-          {new Date(frame.timestamp).toLocaleTimeString()}
-        </span>
+        <span data-testid="LogFrameItem--timestamp">{new Date(frame.timestamp).toLocaleTimeString()}</span>
       </div>
 
       {processedContent && (

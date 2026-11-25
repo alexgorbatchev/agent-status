@@ -1,7 +1,6 @@
-# Compiled binaries
+/target/
 /bin/
-
-# Test binaries and coverage profiles
-*.test
-*.out
-*.prof
+/.tmp/
+/.workspaces/
+.env
+.env.*

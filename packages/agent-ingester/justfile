@@ -1,42 +1,30 @@
-# Justfile for agent-ingester
-
-# Default recipe: list available tasks
 default:
-    @just --justfile "{{ module_directory() }}/justfile" --list
+    @just --list
 
-# Run in human-facing interactive mode
-run *args:
-    @mkdir -p bin
-    go run ./cmd/agent-ingester {{ args }}
+test:
+    mkdir -p .tmp
+    cargo test --package agent-ingester --locked --all-targets
 
-# Run in agent-facing token-conservative mode
-run-ai *args:
-    AGENT=1 just run {{ args }}
-
-# Build compiled binary into bin/
-build:
-    @mkdir -p bin
-    go build -o bin/agent-ingester ./cmd/agent-ingester
-
-# Run all unit and integration tests with race detector and verify >= 90% coverage
-test *args:
-    ../../scripts/check-coverage.sh -race {{ if args == "" { "./..." } else { args } }}
-
-# Lint and check module hygiene
 lint:
-    ../../scripts/check-format.sh
-    go mod tidy -diff
-    go vet ./...
-    golangci-lint run
+    cargo fmt --package agent-ingester -- --check
+    cargo clippy --package agent-ingester --locked --all-targets -- -D warnings
 
-# Clean build artifacts
-clean:
-    rm -rf bin/
+coverage:
+    mkdir -p .tmp
+    cargo llvm-cov --package agent-ingester --locked --all-targets --fail-under-lines 90
 
-# Download module dependencies
-setup:
-    go mod download
+check: lint test coverage
 
+build:
+    cargo build --package agent-ingester --locked --release
+    mkdir -p bin
+    cp "$(cargo metadata --locked --offline --format-version 1 --no-deps | jq -r .target_directory)/release/agent-ingester" bin/agent-ingester
+
+run *args:
+    cargo run --package agent-ingester --locked -- {{ args }}
+
+run-ai *args:
+    AGENT=1 cargo run --package agent-ingester --locked -- {{ args }}
 # Run the devhost service with repository-local application state
 dev: build
     #!/usr/bin/env sh

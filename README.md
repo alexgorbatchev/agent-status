@@ -1,156 +1,65 @@
-A centralized monitoring dashboard and telemetry aggregation pipeline for AI coding agents running across an engineer's machines and worktrees. It observes agent sessions from Claude Code, Pi, OpenAI Codex, OpenCode, and Antigravity (`agy`), tracks live activity and token costs, and highlights sessions requiring user attention.
+Agent Status tracks coding-agent sessions and usage in a web dashboard and provides offline tools for inspecting recorded sessions. Its daemons and diagnostic CLI are written in Rust.
+
+The Go implementation is deprecated. See the [`go-legacy` branch](https://github.com/alexgorbatchev/agent-status/tree/go-legacy) for its source.
 
 # What It Does
 
-- **Monitors agent fleets** across multiple environments, machines, and git worktrees in real time.
-- **Tracks lifecycle and activity** to distinguish active runs from exited sessions, surfacing agents waiting on user input or stopped due to errors.
-- **Aggregates token usage and costs** with accurate breakdowns for input, output, cache reads, cache writes, and reasoning tokens against standard pricing tables.
-- **Streams live updates** using Server-Sent Events (SSE) and Unix domain socket fan-out from local file observers to the web dashboard.
-- **Preserves agent history** across resumes and reconnections without losing prior turns or delegated subagent contributions.
+- **Observe sessions:** Follow Claude Code, Pi, Codex, OpenCode, and Antigravity CLI activity and deliver acknowledged telemetry.
+- **Ingest activity:** Commit telemetry, current state, usage, and delivery checkpoints together.
+- **Serve queries:** Provide read-only database queries and live streams to the web dashboard, forwarding explicit mutations to the ingester.
+- **Diagnose locally:** Replay transcripts, inspect stored records, and audit native session discovery.
 
 # How It Works
 
-- Scans local harness storage directories to detect active sessions from Claude Code, Pi, OpenAI Codex, OpenCode, and Antigravity (`agy`).
-- Tails session logs and transcript files incrementally, resolving git repositories, branches, and worktrees.
-- Streams raw events over WebSocket to a central ingester daemon that classifies state, calculates token pricing, and records structured events into SQLite.
-- Broadcasts status changes over a Unix domain socket to a lightweight query server.
-- Displays live agent status, attention banners, usage breakdowns, and recent activity in a web dashboard.
+1. Run an ingester to own the database and local notification socket.
+2. Run observers on machines hosting coding agents.
+3. Run the server against the ingester's database and socket for dashboard clients.
+4. Use Agent Debug independently for local replay and inspection.
 
 # How it Really Works
 
-- `agent-observer` uses the standalone [`agent-watcher`](https://github.com/alexgorbatchev/agent-watcher) library to discover sessions, follow JSONL transcripts, and poll OpenCode's read-only SQLite database. It formats events and ships them over a bounded WebSocket queue, advancing transcript offsets only after ingester acknowledgements. Cursors live at `$XDG_CACHE_HOME/agent-status/observer-cursors.json` (or `~/.cache/agent-status/observer-cursors.json`); OpenCode event checkpoints live beside them with the `.opencode` suffix. Checkpoints flush periodically and on shutdown.
-- `agent-ingester` receives WebSocket connections at `:4501/ws/ingest` with a 64 MiB read limit, computes token costs using a static model price registry, derives concise action descriptions via asynchronous per-agent queues and specialized prompt templates with Jaccard deduplication, and writes structured records into `$XDG_DATA_HOME/agent-status/agent-status.db` using WAL mode.
-- `agent-server` opens the SQLite database strictly in read-only mode, listens for change signals on `$XDG_RUNTIME_DIR/agent-status/notify.sock`, and fans out events to browser clients over Server-Sent Events (`/api/v1/events`) at `:4502`.
-- `agent-debug` replays and validates agent session transcripts across Claude Code, Pi, OpenAI Codex, OpenCode, and Antigravity (`agy`) through the ingestion and query pipeline offline, running in-process against an ephemeral in-memory SQLite database without modifying active daemon logs or databases.
-- `ui-web` serves a React 19 dashboard on port `3000`, grouping agents by upstream git project repository and observing environment rather than machine-local folder paths, reconnecting to the SSE stream using exponential backoff with jitter to prevent reconnect storms.
-- Inactive agents and old event streams are automatically pruned every hour from SQLite according to a 48-hour event and 30-day exited session retention policy.
-- Running with `AGENT=1` enables token-conservative, agent-facing CLI output across dev stack orchestration.
+The six Cargo packages share one workspace lockfile. The dashboard uses Bun and React. The ingester owns persistent writes while the server opens its database read-only. Observers retain unacknowledged deliveries across reconnects. Debug normally replays in memory and writes only when explicitly exporting a database. Provider summarization is configurable and can incur charges.
 
-# Prerequisites
+| Package | Role | Documentation |
+| :--- | :--- | :--- |
+| `agent-common` | Shared telemetry, usage, models, logging | [API and configuration](packages/agent-common/README.md) |
+| `agent-status-store` | Transactional SQLite schema and queries | [Storage API](packages/agent-status-store/README.md) |
+| `agent-observer` | Local discovery and acknowledged delivery | [Observer guide](packages/agent-observer/README.md) |
+| `agent-ingester` | Durable ingestion and activity classification | [Ingester guide](packages/agent-ingester/README.md) |
+| `agent-server` | Queries, streams, mutation forwarding | [Server guide](packages/agent-server/README.md) |
+| `agent-debug` | Offline replay and diagnostics | [Debug guide](packages/agent-debug/README.md) |
+| `ui-web` | Live fleet, activity, and log dashboard | [Frontend guide](packages/ui-web/AGENTS.md) |
 
-- [Bun](https://bun.sh) (v1.2+) - Required for running the web server and bundling frontend assets.
-- [Go](https://go.dev) (v1.24+) - Required for compiling `agent-observer`, `agent-ingester`, and `agent-server` daemons.
-- [Just](https://github.com/casey/just) - Command runner used for build, test, and lifecycle recipes.
-- [devhost](https://github.com/alexgorbatchev/devhost) - Native service supervision and shared HTTPS proxy; complete its Caddy download and certificate trust setup first.
-- [direnv](https://direnv.net) - Loads the hostname suffix from `.envrc` and optional ignored `.envrc.local`.
-- [Git](https://git-scm.com) - Used by observer to resolve project identity, branches, and linked worktrees.
+Cargo pins the external `agent-parser`, `agent-watcher`, and `cli-command-kit` Git revisions. The dashboard and its tests live in [`packages/ui-web`](packages/ui-web/).
 
 # Installation
 
-Download the prebuilt binary archive for your platform from the [latest release](https://github.com/alexgorbatchev/agent-status/releases/latest), replacing `X.X.X` with the version shown on that page.
-
-```bash
-# macOS (Apple Silicon)
-curl -sSL https://github.com/alexgorbatchev/agent-status/releases/latest/download/agent-status_X.X.X_darwin_arm64.tar.gz | tar -xz -C ~/.local/bin
-```
+Build an executable with `just debug build`, `just observer build`, `just ingester build`, or `just server build`. Each recipe copies its optimized executable into that package's `bin/` directory. The Cargo packages declare their required Rust versions. Install dashboard dependencies with `just ui setup` and build the bundle with `just ui build`.
 
 # Quick Start
 
-1. Install the prerequisites, run `just setup`, and complete devhost's Caddy download and certificate trust setup.
-2. Run `direnv allow .`. The dashboard defaults to `https://agent-status.localhost`. For a machine-specific hostname, set `export DEVHOST_DEV_EXT='<suffix>'` in ignored `.envrc.local`; the hostname is `agent-status` followed by that suffix.
-3. Run `just run` (or `just start`). This starts the shared proxy and all four native devhost services. Each Go service builds before launch. The stack runs in the background. Run `just stop` to stop it.
-4. Use `just status` to see whether this checkout's stack is running and `just logs` to tail rotating daemon logs. Devhost also exposes service status and logs in its dashboard toolbar.
+```sh
+just --list --list-submodules
+just debug run --version
+just debug run-ai session replay session.jsonl
+just test
+```
 
-Devhost allocates loopback ports and starts services in dependency order. UI and `/api/*` share the HTTPS hostname. Application state stays under `.tmp/dev-stack/`: `data/` (SQLite), `cache/` (observer checkpoints), `logs/`, and `run/` (notify socket). Devhost stores its own supervisor and shared proxy state in its standard locations.
+With [devhost](https://github.com/alexgorbatchev/devhost) configured, `just start` runs the dashboard and daemons behind local HTTPS. Use `just status` to locate the current checkout's stack and `just stop` to stop it.
 
-Use `AGENT_STATUS_NO_SUMMARIZE=1 just run` to disable external summarization calls. Arguments to `just run` are passed to `devhost start`, for example `just run api` starts the API and its ingester dependency. The old stack script and its flags are retired.
+Run `just <module> check` for a Rust package's strict formatting, Clippy, tests, and coverage gate, or `just check` for the workspace. `just ui test-e2e` builds the native daemons and exercises the dashboard in Chromium.
 
-Replay sessions offline with `just debug session-replay-pi <session-id>` or `just debug run session replay <path-to-transcript.jsonl>`.
+# Operational References
 
-# Options & Flags
+The CLI `skill` commands print installation pointers. The corresponding usage documents reside at repository-root paths:
 
-### `agent-observer`
+- [Agent Debug](skills/agent-debug/SKILL.md)
+- [Agent Observer](skills/agent-observer/SKILL.md)
+- [Agent Ingester](skills/agent-ingester/SKILL.md)
+- [Agent Server](skills/agent-server/SKILL.md)
 
-| Flag                                 | Short  | Default                                       | Description                                          |
-| :----------------------------------- | :----- | :-------------------------------------------- | :--------------------------------------------------- |
-| `--ingester-url <url>`               | (none) | `ws://127.0.0.1:4501/ws/ingest`               | Ingester WebSocket endpoint URL                      |
-| `--token <token>`                    | (none) | `""`                                          | Bearer token for ingester authentication             |
-| `--env <label>`                      | (none) | `""`                                          | Environment label override                           |
-| `--scan-interval <duration>`         | (none) | `2s`                                          | Interval between harness session scans               |
-| `--cursor-path <path>`               | (none) | `~/.cache/agent-status/observer-cursors.json` | Path to persistent tailer cursor file                |
-| `--cursor-retention <duration>`      | (none) | `24h`                                         | Retention duration for inactive cursor entries       |
-| `--cursor-prune-interval <duration>` | (none) | `1h`                                          | Interval between periodic cursor pruning sweeps      |
-| `--claude-sessions-dir <path>`       | (none) | `~/.claude/sessions`                          | Custom directory for Claude Code session metadata    |
-| `--claude-projects-dir <path>`       | (none) | `~/.claude/projects`                          | Custom directory for Claude Code project transcripts |
-| `--pi-sessions-dir <path>`           | (none) | `~/.pi/agent/sessions`                        | Custom directory for Pi session logs                 |
-| `--agy-sessions-dir <path>` | (none) | `~/.gemini/antigravity-cli/brain` | Custom Antigravity brain directory (also `AGY_SESSIONS_DIR`) |
-| `--log-level <level>`                | (none) | `info`                                        | Log level (`debug`, `info`, `warn`, `error`)         |
-| `--version`                          | `-v`   | `false`                                       | Print version information and exit                   |
-| `--help`                             | `-h`   | `false`                                       | Print command line help                              |
-
-### `agent-ingester`
-
-| Flag                        | Short  | Default                                       | Description                                                     |
-| :-------------------------- | :----- | :-------------------------------------------- | :-------------------------------------------------------------- |
-| `--addr <addr>`             | (none) | `:4501`                                       | HTTP and WebSocket listen address                               |
-| `--token <token>`           | (none) | `dev-secret-token`                            | Bearer authentication token                                     |
-| `--db <path>`               | (none) | `~/.local/share/agent-status/agent-status.db` | SQLite database file path                                       |
-| `--notify-sock <path>`      | (none) | `/tmp/agent-status/notify.sock`               | Unix domain socket path for event notifications                 |
-| `--no-summarize`            | (none) | `false`                                       | Disable LLM-based action summarization                          |
-| `--litellm-url <url>`       | (none) | `""`                                          | Base URL for OpenAI-compatible or LiteLLM proxy                 |
-| `--litellm-key <key>`       | (none) | `""`                                          | API key for OpenAI-compatible or LiteLLM proxy                  |
-| `--summarizer-model <name>` | (none) | `""`                                          | Model identifier used for action summarization                  |
-| `--log-level <level>`       | (none) | `info`                                        | Log level (`debug`, `info`, `warn`, `error`)                    |
-| `--idle-grace-period <dur>` | (none) | `5s`                                          | Grace period before transitioning from BUSY to IDLE on turn end |
-| `--version`                 | `-v`   | `false`                                       | Print version information and exit                              |
-| `--help`                    | `-h`   | `false`                                       | Print command line help                                         |
-
-### `agent-server`
-
-| Flag                      | Short  | Default                                       | Description                                        |
-| :------------------------ | :----- | :-------------------------------------------- | :------------------------------------------------- |
-| `--addr <addr>`           | `-a`   | `:4502`                                       | HTTP listen address                                |
-| `--db <path>`             | (none) | `~/.local/share/agent-status/agent-status.db` | Path to agent-status SQLite database (read-only)   |
-| `--socket <path>`         | (none) | `/tmp/agent-status/notify.sock`               | Path to notify Unix domain socket                  |
-| `--cors-origin <origins>` | (none) | `http://localhost:3000`                       | Allowed CORS origins (comma-separated or repeated) |
-| `--token <token>`         | (none) | `""`                                          | Bearer authentication token                        |
-| `--log-level <level>`     | (none) | `info`                                        | Log level (`debug`, `info`, `warn`, `error`)       |
-| `--version`               | `-v`   | `false`                                       | Print version information and exit                 |
-| `--help`                  | `-h`   | `false`                                       | Print command line help                            |
-
-### `agent-debug` / `just debug run`
-
-| Flag                   | Short  | Default | Description                                                          |
-| :--------------------- | :----- | :------ | :------------------------------------------------------------------- |
-| `--harness <name>`     | (none) | `""`    | Explicit harness override (`claude-code`, `pi`, `codex`, `opencode`, `agy`) |
-| `--session-id <id>`    | (none) | `""`    | OpenCode session ID to replay                                        |
-| `--cwd <path>`         | (none) | `""`    | Override transcript working directory for local Git resolution       |
-| `--diff`               | (none) | `false` | Display turn-by-turn state mutations during replay                   |
-| `--until-line <N>`     | (none) | `0`     | Halt replay after processing source line N                           |
-| `--until-event <type>` | (none) | `""`    | Halt replay after encountering event type                            |
-| `--stop-on-error`      | (none) | `false` | Halt immediately on first parse or state machine error               |
-| `--json`               | (none) | `false` | Output final state and verification results as JSON                  |
-| `--export-db <path>`   | (none) | `""`    | Path to save populated SQLite database on disk                       |
-| `--summarize`          | (none) | `false` | Enable live LLM summarizer provider verification                     |
-| `--env <label>`        | (none) | `debug` | Environment label override                                           |
-| `--version`            | `-v`   | `false` | Print version information and exit                                   |
-| `--help`               | `-h`   | `false` | Print command line help                                              |
-
-### Environment Variables
-
-The table below lists environment variables read by the system, in precedence and resolution order:
-
-| Variable                         | Precedence / Default                             | Description                                                                                   |
-| :------------------------------- | :----------------------------------------------- | :-------------------------------------------------------------------------------------------- |
-| `LITELLM_BASE_URL`               | Fallback: `OPENAI_BASE_URL`                      | Base URL for OpenAI-compatible or LiteLLM proxy endpoint                                      |
-| `OPENAI_BASE_URL`                | (none)                                           | Fallback endpoint URL when `LITELLM_BASE_URL` is unset                                        |
-| `LITELLM_API_KEY`                | Alias: `LITELLM_KEY`, fallback: `OPENAI_API_KEY` | Primary API authentication key for LiteLLM or OpenAI-compatible proxy                         |
-| `LITELLM_KEY`                    | Fallback: `OPENAI_API_KEY`                       | Alias for `LITELLM_API_KEY`                                                                   |
-| `OPENAI_API_KEY`                 | (none)                                           | Fallback API authentication key when LiteLLM keys are unset                                   |
-| `AGY_SESSIONS_DIR` | `$GEMINI_HOME/antigravity-cli/brain`, or `~/.gemini/antigravity-cli/brain` | Antigravity transcript discovery root; explicit observer flag takes precedence |
-| `GEMINI_HOME` | `~/.gemini` | Native Antigravity configuration and conversation storage root |
-| `GEMINI_API_KEY`                 | (none)                                           | API key for Google Gemini action summarization provider                                       |
-| `ANTHROPIC_API_KEY`              | (none)                                           | API key for Anthropic Claude action summarization provider                                    |
-| `AGENT_STATUS_SUMMARIZER_MODEL`  | Provider default                                 | Custom model identifier override for action summarization                                     |
-| `AGENT_STATUS_NO_SUMMARIZE`      | `0`                                              | Set to `1` to disable LLM action summarization and use deterministic fallback heuristics      |
-| `AGENT_STATUS_IDLE_GRACE_PERIOD` | `5s`                                             | Grace period to debounce BUSY -> IDLE transitions after turn end                              |
-| `AGENT_STATUS_INGESTER_ADDR`     | `:4501`                                          | Listen address for `agent-ingester` WebSocket server                                          |
-| `AGENT_STATUS_INGESTER_URL`      | `http://127.0.0.1:4501`                          | HTTP URL of `agent-ingester` service for `agent-server` mutation proxying                     |
-| `AGENT_STATUS_INGESTER_WS_URL`   | `ws://127.0.0.1:4501/ws/ingest`                  | WebSocket ingestion endpoint URL of `agent-ingester` for `agent-observer` telemetry streaming |
-| `AGENT_STATUS_TOKEN`             | `dev-secret-token` (ingester), none (others)     | Shared bearer token for `agent-observer`, `agent-ingester`, and `agent-server`                |
-| `AGENT_STATUS_LOG_DIR`           | `~/.local/state/agent-status/logs`               | Directory path for rotating daemon disk logs                                                  |
-| `AGENT_STATUS_LOG_FILE`          | (none)                                           | Explicit file path override for daemon disk logging                                           |
+Read the selected package's guide and skill before configuring live services.
 
 # License
 
-MIT License (c) 2026 Alex Gorbatchev
+[MIT](LICENSE), copyright 2026 Alex Gorbatchev.

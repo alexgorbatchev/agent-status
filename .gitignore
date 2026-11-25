@@ -1,47 +1,18 @@
-# Agent and tooling scratch
-.pi-subagents
-.codegraph
-.tmp
-.cache
-.state/
-.worktrees/
-
-# Build output
-bin/
-dist/
-.dist/
-packages/*/bin/
-packages/ui-web/dist/
-
-# Test binaries & coverage
-*.test
-*.out
-*.prof
-test-results/
-playwright-report/
-
-# Dependencies
-node_modules/
-
-# Git worktrees
-.workspaces/
-
-# SQLite sidecar files
-*.sqlite
+/target/
+/.tmp/
+/.cache/
+/.state/
+/.envrc.local
+/.codegraph/
+/.pi-subagents/
+/.workspaces/
+/packages/*/bin/
+/packages/*/.tmp/
+/packages/ui-web/node_modules/
+/packages/ui-web/dist/
+/packages/ui-web/test-results/
+/packages/ui-web/playwright-report/
 *.sqlite-wal
 *.sqlite-shm
-*.db
 *.db-wal
 *.db-shm
-
-# Secrets and local config
-.env
-.env.*
-.envrc.local
-*.token
-
-# OS and IDE
-.DS_Store
-.idea/
-.vscode/
-/.claude/worktrees

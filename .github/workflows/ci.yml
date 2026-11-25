@@ -3,9 +3,9 @@ name: CI
 on:
   workflow_dispatch:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 permissions:
   contents: read
@@ -14,117 +14,94 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  BUN_VERSION: 1.4.4
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+  CARGO_PROFILE_RELEASE_LTO: thin
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: 1
+  CARGO_PROFILE_RELEASE_STRIP: symbols
+  RUSTUP_TOOLCHAIN: '1.100.0'
+
 jobs:
   lint:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
-
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.work
-          cache-dependency-path: packages/*/go.sum
-
+      - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component rustfmt --component clippy
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.3
-
+          bun-version: ${{ env.BUN_VERSION }}
       - uses: extractions/setup-just@v4
-
-      - uses: golangci/golangci-lint-action@v9
-        with:
-          version: v2.15.0
-          install-only: true
-
-      - name: Setup
-        run: just setup
-
-      - name: Lint
-        run: just lint-all
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fetch --locked
+      - run: just ui setup
+      - run: just lint
+      - run: git diff --exit-code -- Cargo.lock
 
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
-
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.work
-          cache-dependency-path: packages/*/go.sum
-
+      - run: rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal --component llvm-tools-preview
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.3
-
+          bun-version: ${{ env.BUN_VERSION }}
       - uses: extractions/setup-just@v4
-
-      - name: Setup
-        run: just setup
-
-      - name: Test with coverage floor
-        run: just test-all
-
-      - name: Build
-        run: just build-all
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov@0.9.1
+      - run: cargo fetch --locked
+      - run: just ui setup
+      - run: just test
+      - run: just coverage
+      - run: just build
+      - run: git diff --exit-code -- Cargo.lock
 
   playwright-version:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      version: ${{ steps.version.outputs.version }}
+      version: ${{ steps.playwright.outputs.version }}
     steps:
       - uses: actions/checkout@v7
-
-      # The e2e container's browsers must match @playwright/test, which
-      # package.json pins to an exact version.
-      - id: version
+      - id: playwright
         run: |
-          version="$(jq -r '.devDependencies["@playwright/test"]' packages/ui-web/package.json)"
+          version="$(jq -er '.devDependencies["@playwright/test"]' packages/ui-web/package.json)"
           if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "@playwright/test must be pinned to an exact version, got '$version'" >&2
+            echo "::error::@playwright/test must be pinned to an exact version"
             exit 1
           fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
 
   e2e:
     needs: playwright-version
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # Playwright's image ships Chromium and its system dependencies. The job
-    # runs as the image's root user so it can add unzip, which setup-bun needs.
     container:
       image: mcr.microsoft.com/playwright:v${{ needs.playwright-version.outputs.version }}-noble
     steps:
-      - name: Install unzip
-        run: apt-get update && apt-get install -y --no-install-recommends unzip
-
+      - name: Install native build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential cmake jq pkg-config unzip
       - uses: actions/checkout@v7
-
-      # The workspace belongs to the runner's user, not the container's root,
-      # and checkout trusts it only in a temporary git config. go build reads
-      # VCS status for its stamp, so trust the workspace for the whole job.
-      - name: Trust the workspace
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.work
-          cache-dependency-path: packages/*/go.sum
-
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs -o /tmp/rustup-init.sh && sh /tmp/rustup-init.sh -y --profile minimal --default-toolchain "$RUSTUP_TOOLCHAIN"
+      - run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.3
-
+          bun-version: ${{ env.BUN_VERSION }}
       - uses: extractions/setup-just@v4
-
-      - name: Setup
-        run: just setup
-
-      - name: End-to-end tests
-        run: just ui test-e2e
-
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fetch --locked
+      - run: just ui setup
+      - run: just ui test-e2e
+      - run: git diff --exit-code -- Cargo.lock
       - name: Upload E2E diagnostics
         if: failure()
         uses: actions/upload-artifact@v7
